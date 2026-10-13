@@ -87,4 +87,16 @@ manual: {
   title: '使用手册',
   description: '按平台查看接入方式、常见问题与示例配置。'
 },
+videoStudio: {
+  title: '视频工作台',
+  description: '用自己的 API 密钥生成视频，支持参考图、参考视频与参考音频。'
+},
+videoInspiration: {
+  title: '视频灵感库',
+  description: '浏览完整提示词与镜头模板，一键带入视频工作台。'
+},
+videoWorks: {
+  title: '我的作品',
+  description: '查看、下载和重新载入这个浏览器里生成的视频。'
+},
 }

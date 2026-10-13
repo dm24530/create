@@ -87,4 +87,16 @@ manual: {
   title: 'User Manual',
   description: 'Per-platform setup steps, FAQ, and example configuration.'
 },
+videoStudio: {
+  title: 'Video Studio',
+  description: 'Generate video with your own API key, including image, video, and audio references.'
+},
+videoInspiration: {
+  title: 'Video Inspiration',
+  description: 'Browse complete prompts and shot templates, then send one to the studio.'
+},
+videoWorks: {
+  title: 'My Video Works',
+  description: 'Review, download, and reload the videos generated in this browser.'
+},
 }

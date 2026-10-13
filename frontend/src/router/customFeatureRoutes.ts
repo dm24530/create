@@ -25,6 +25,42 @@ export const userCustomFeatureRoutesAfterKeys: RouteRecordRaw[] = [
       title: 'Image Studio',
       keepAlive: true,
     }
+  },
+  {
+    path: '/video-studio',
+    name: 'VideoStudio',
+    component: () => import('@/features/video-studio/VideoStudioView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      title: 'Video Studio',
+      titleKey: 'videoStudio.title',
+      descriptionKey: 'videoStudio.description'
+    }
+  },
+  {
+    path: '/video-inspiration',
+    name: 'VideoInspiration',
+    component: () => import('@/features/video-studio/VideoInspirationView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      title: 'Video Inspiration',
+      titleKey: 'videoInspiration.title',
+      descriptionKey: 'videoInspiration.description'
+    }
+  },
+  {
+    path: '/video-works',
+    name: 'VideoWorks',
+    component: () => import('@/features/video-studio/VideoWorksView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      title: 'My Video Works',
+      titleKey: 'videoWorks.title',
+      descriptionKey: 'videoWorks.description'
+    }
   }
 ]
 

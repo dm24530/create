@@ -1,0 +1,342 @@
+import { flushPromises, mount } from '@vue/test-utils'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+import VideoStudioView from '../VideoStudioView.vue'
+
+const { listKeys, getPublicSettings, copyToClipboard, routeQuery } = vi.hoisted(() => ({
+  listKeys: vi.fn(),
+  getPublicSettings: vi.fn(),
+  copyToClipboard: vi.fn(),
+  routeQuery: { value: {} as Record<string, string> },
+}))
+
+vi.mock('@/api', () => ({
+  keysAPI: { list: listKeys },
+  authAPI: { getPublicSettings },
+}))
+
+vi.mock('@/composables/useClipboard', () => ({
+  useClipboard: () => ({ copyToClipboard }),
+}))
+
+vi.mock('vue-router', () => ({
+  useRoute: () => ({ query: routeQuery.value }),
+}))
+
+function mountStudio() {
+  return mount(VideoStudioView, {
+    global: {
+      stubs: {
+        AppLayout: { template: '<div><slot /></div>' },
+        BaseDialog: {
+          props: ['show', 'title'],
+          emits: ['close'],
+          template: '<div v-if="show"><h3>{{ title }}</h3><slot /><slot name="footer" /></div>',
+        },
+        Icon: { template: '<span />' },
+        RouterLink: { props: ['to'], template: '<a><slot /></a>' },
+        ImageStudioSelect: {
+          props: ['modelValue', 'options', 'placeholder', 'disabled'],
+          emits: ['update:modelValue'],
+          template:
+            '<div><span>{{ options.find(o => o.value === modelValue)?.label || placeholder }}</span>' +
+            '<button v-for="o in options" :key="o.value" @click="$emit(\'update:modelValue\', o.value)">{{ o.label }}</button></div>',
+        },
+      },
+    },
+  })
+}
+
+function jsonResponse(body: unknown, ok = true): Response {
+  return {
+    ok,
+    status: ok ? 200 : 400,
+    statusText: ok ? 'OK' : 'Bad Request',
+    json: async () => body,
+  } as unknown as Response
+}
+
+function resetMocks() {
+  listKeys.mockReset()
+  getPublicSettings.mockReset()
+  copyToClipboard.mockReset()
+  routeQuery.value = {}
+  listKeys.mockResolvedValue({
+    items: [{ id: 7, name: 'video-key', key: 'sk-video', status: 'active', group_id: 1 }],
+  })
+  getPublicSettings.mockResolvedValue({ api_base_url: 'https://api.superai.sbs/v1' })
+  copyToClipboard.mockResolvedValue(true)
+}
+
+describe('VideoStudioView model loading', () => {
+  beforeEach(() => {
+    resetMocks()
+    localStorage.clear()
+    vi.stubGlobal('fetch', vi.fn())
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      value: { hostname: 'localhost' },
+    })
+  })
+
+  it('only lists video-capable models from the key model list', async () => {
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/models')) {
+        return jsonResponse({
+          data: [
+            { id: 'gpt-image-1' },
+            { id: 'seedance-2-720p' },
+            { id: 'grok-imagine-video' },
+            { id: 'gpt-5' },
+          ],
+        })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountStudio()
+    await flushPromises()
+    await flushPromises()
+
+    const modelSelect = wrapper.get('[data-testid="video-model-select"]')
+    expect(modelSelect.text()).toContain('seedance-2-720p')
+    expect(modelSelect.text()).toContain('grok-imagine-video')
+    expect(modelSelect.text()).not.toContain('gpt-image-1')
+    expect(modelSelect.text()).not.toContain('gpt-5')
+  })
+})
+
+describe('VideoStudioView seedance generation', () => {
+  beforeEach(() => {
+    resetMocks()
+    localStorage.clear()
+    vi.stubGlobal('fetch', vi.fn())
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      value: { hostname: 'localhost' },
+    })
+  })
+
+  it('submits the Ark task payload and plays the finished video', async () => {
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = String(input)
+      if (url.endsWith('/models')) {
+        return jsonResponse({ data: [{ id: 'seedance-2-720p' }] })
+      }
+      if (url.endsWith('/contents/generations/tasks') && init?.method === 'POST') {
+        return jsonResponse({ id: 'task-1' })
+      }
+      if (url.endsWith('/contents/generations/tasks/task-1')) {
+        return jsonResponse({
+          id: 'task-1',
+          status: 'succeeded',
+          content: { video_url: 'https://cdn.example.com/out.mp4' },
+        })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountStudio()
+    await flushPromises()
+    await flushPromises()
+
+    await wrapper.get('textarea').setValue('镜头缓慢推进，海雾从左侧涌入')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    await flushPromises()
+
+    const createCall = fetchMock.mock.calls.find(
+      (call) => String(call[0]).endsWith('/contents/generations/tasks') && call[1]?.method === 'POST',
+    )
+    expect(createCall).toBeDefined()
+    const payload = JSON.parse(String(createCall?.[1]?.body))
+    expect(payload.model).toBe('seedance-2-720p')
+    expect(payload.content[0]).toEqual({ type: 'text', text: '镜头缓慢推进，海雾从左侧涌入' })
+    expect(payload.duration).toBe(5)
+    expect(payload.resolution).toBe('720p')
+    expect(payload.ratio).toBe('16:9')
+
+    const video = wrapper.get('video')
+    expect(video.attributes('src')).toBe('https://cdn.example.com/out.mp4')
+  })
+
+  it('keeps the duration parameter inside the range the upstream accepts', async () => {
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/models')) return jsonResponse({ data: [{ id: 'seedance-2-720p' }] })
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountStudio()
+    await flushPromises()
+    await flushPromises()
+
+    const durationInput = wrapper.get('[data-testid="video-duration-control"] input')
+    await durationInput.setValue('99')
+    await durationInput.trigger('blur')
+
+    expect((durationInput.element as HTMLInputElement).value).toBe('15')
+  })
+})
+
+describe('VideoStudioView grok generation', () => {
+  beforeEach(() => {
+    resetMocks()
+    localStorage.clear()
+    vi.stubGlobal('fetch', vi.fn())
+    vi.stubGlobal('URL', { ...URL, createObjectURL: vi.fn(() => 'blob:video'), revokeObjectURL: vi.fn() })
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      value: { hostname: 'localhost' },
+    })
+  })
+
+  it('uses the xAI video endpoints and downloads the content with the key', async () => {
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = String(input)
+      if (url.endsWith('/models')) {
+        return jsonResponse({ data: [{ id: 'grok-imagine-video' }] })
+      }
+      if (url.endsWith('/videos/generations') && init?.method === 'POST') {
+        return jsonResponse({ request_id: 'req-9' })
+      }
+      if (url.endsWith('/videos/req-9') && !url.endsWith('/content')) {
+        return jsonResponse({ status: 'done', video: { url: 'https://xai.example.com/v.mp4', duration: 8 } })
+      }
+      if (url.endsWith('/videos/req-9/content')) {
+        return { ok: true, status: 200, statusText: 'OK', blob: async () => new Blob(['video']) } as unknown as Response
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountStudio()
+    await flushPromises()
+    await flushPromises()
+
+    await wrapper.get('textarea').setValue('海浪拍打礁石')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    await flushPromises()
+    await flushPromises()
+
+    const createCall = fetchMock.mock.calls.find(
+      (call) => String(call[0]).endsWith('/videos/generations') && call[1]?.method === 'POST',
+    )
+    expect(createCall).toBeDefined()
+    const payload = JSON.parse(String(createCall?.[1]?.body))
+    expect(payload.aspect_ratio).toBe('16:9')
+    expect(payload.duration).toBe(5)
+
+    const contentCall = fetchMock.mock.calls.find((call) => String(call[0]).endsWith('/videos/req-9/content'))
+    expect(contentCall).toBeDefined()
+    expect((contentCall?.[1]?.headers as Record<string, string>).Authorization).toBe('Bearer sk-video')
+    expect(wrapper.get('video').attributes('src')).toBe('blob:video')
+  })
+})
+
+describe('VideoStudioView references', () => {
+  beforeEach(() => {
+    resetMocks()
+    localStorage.clear()
+    vi.stubGlobal('fetch', vi.fn())
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      value: { hostname: 'localhost' },
+    })
+  })
+
+  it('adds a reference video url into the Seedance content array', async () => {
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = String(input)
+      if (url.endsWith('/models')) return jsonResponse({ data: [{ id: 'seedance-2-720p' }] })
+      if (url.endsWith('/contents/generations/tasks') && init?.method === 'POST') {
+        return jsonResponse({ id: 'task-2' })
+      }
+      if (url.endsWith('/contents/generations/tasks/task-2')) {
+        return jsonResponse({ status: 'succeeded', content: { video_url: 'https://cdn.example.com/x.mp4' } })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountStudio()
+    await flushPromises()
+    await flushPromises()
+
+    await wrapper.get('[data-testid="video-reference-trigger"]').trigger('click')
+    await wrapper.get('[data-testid="reference-kind-video"]').trigger('click')
+    await wrapper.get('[data-testid="reference-url-input"]').setValue('https://cdn.example.com/ref.mp4')
+    const addButton = wrapper.findAll('button').find((button) => button.text() === '添加')
+    await addButton!.trigger('click')
+    await flushPromises()
+
+    await wrapper.get('textarea').setValue('延续上一个镜头')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    await flushPromises()
+
+    const createCall = fetchMock.mock.calls.find(
+      (call) => String(call[0]).endsWith('/contents/generations/tasks') && call[1]?.method === 'POST',
+    )
+    const payload = JSON.parse(String(createCall?.[1]?.body))
+    expect(payload.content).toContainEqual({
+      type: 'video_url',
+      video_url: { url: 'https://cdn.example.com/ref.mp4' },
+    })
+  })
+})
+
+describe('VideoStudioView inspiration handoff', () => {
+  beforeEach(() => {
+    resetMocks()
+    localStorage.clear()
+    vi.stubGlobal('fetch', vi.fn())
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      value: { hostname: 'localhost' },
+    })
+  })
+
+  it('prefills the editor from the inspiration query parameter', async () => {
+    routeQuery.value = { inspiration: 'clay-fox-starlight' }
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/models')) return jsonResponse({ data: [] })
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountStudio()
+    await flushPromises()
+    await flushPromises()
+
+    expect((wrapper.get('textarea').element as HTMLTextAreaElement).value).toContain('手工黏土动画风格')
+    expect(wrapper.get('[data-testid="inspiration-hint"]').text()).toContain('小狐狸发现星光')
+    const durationInput = wrapper.get('[data-testid="video-duration-control"] input')
+    expect((durationInput.element as HTMLInputElement).value).toBe('10')
+  })
+
+  it('picks up an online prompt handed over from the inspiration library', async () => {
+    sessionStorage.setItem('sub2api:video-studio:pending-prompt', '动物耳朵女孩的微笑，耳朵微微颤动。')
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/models')) return jsonResponse({ data: [{ id: 'seedance-2-720p' }] })
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountStudio()
+    await flushPromises()
+    await flushPromises()
+
+    expect((wrapper.get('textarea').element as HTMLTextAreaElement).value).toBe(
+      '动物耳朵女孩的微笑，耳朵微微颤动。',
+    )
+    expect(wrapper.get('[data-testid="inspiration-hint"]').text()).toContain('已带入在线灵感提示词')
+    // 读完即清，避免下次进来又被旧提示词覆盖。
+    expect(sessionStorage.getItem('sub2api:video-studio:pending-prompt')).toBeNull()
+  })
+})

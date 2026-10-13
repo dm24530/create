@@ -25,6 +25,9 @@ describe('custom feature routes', () => {
     expect(userCustomFeatureRoutesAfterKeys.map((route) => route.path)).toEqual([
       '/playground',
       '/image-studio',
+      '/video-studio',
+      '/video-inspiration',
+      '/video-works',
     ])
     expect(userCustomFeatureRoutesAfterRedeem.map((route) => route.path)).toEqual(['/lottery'])
     expect(userCustomFeatureRoutesAfterAvailableChannels.map((route) => route.path)).toEqual([
@@ -43,7 +46,15 @@ describe('custom feature routes', () => {
     const paths = routes.map((route) => route.path)
 
     expectPathOrder(paths, ['/key-usage', '/legal/:documentId'])
-    expectPathOrder(paths, ['/keys', '/playground', '/image-studio', '/usage'])
+    expectPathOrder(paths, [
+      '/keys',
+      '/playground',
+      '/image-studio',
+      '/video-studio',
+      '/video-inspiration',
+      '/video-works',
+      '/usage',
+    ])
     expectPathOrder(paths, ['/redeem', '/lottery', '/affiliate'])
     expectPathOrder(paths, ['/available-channels', '/manual', '/manual/:platform', '/models', '/profile'])
     expectPathOrder(paths, ['/admin/announcements', '/admin/lottery', '/admin/proxies'])
