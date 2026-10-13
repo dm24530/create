@@ -1,6 +1,7 @@
 package admin
 
 import (
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -227,6 +228,8 @@ func (h *BackupHandler) GetImageStorageConfig(c *gin.Context) {
 	response.Success(c, gin.H{
 		"config":            cfg,
 		"secret_configured": h.imageStorage.SecretConfigured(ctx),
+		// 后台要靠它区分"保存成功"和"真的生效"：开关打开但缺凭证时功能仍然不可用。
+		"status": h.imageStorage.Status(ctx),
 	})
 }
 
@@ -251,7 +254,8 @@ func (h *BackupHandler) TestImageStorageConnection(c *gin.Context) {
 		return
 	}
 	if err := h.imageStorage.TestConnection(c.Request.Context(), req); err != nil {
-		response.Success(c, gin.H{"ok": false, "message": err.Error()})
+		// Message() 只取面向用户的说明，避免把 "error: code=... reason=..." 的内部形式抛到后台页面上。
+		response.Success(c, gin.H{"ok": false, "message": infraerrors.Message(err)})
 		return
 	}
 	response.Success(c, gin.H{"ok": true, "message": "connection successful"})

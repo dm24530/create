@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"go.uber.org/zap"
 )
@@ -17,7 +19,32 @@ import (
 const settingKeyImageStorageConfig = "image_storage_config"
 
 // ErrImageStorageIncomplete 表示开关已打开但凭证不全，无法启用异步生图。
-var ErrImageStorageIncomplete = errors.New("image storage is enabled but bucket/access_key_id/secret_access_key are incomplete")
+//
+// 用可对外的业务错误而不是裸 error：裸 error 会被响应层折成 500 internal error，
+// 前端只看得到"保存失败"，真正的缺项只留在服务端日志里。
+var ErrImageStorageIncomplete = infraerrors.New(
+	http.StatusServiceUnavailable,
+	"IMAGE_STORAGE_INCOMPLETE",
+	"image storage credentials are incomplete",
+)
+
+// ErrImageStorageDisabled 表示管理员还没有开启异步生图对象存储。
+//
+// 必须与 ErrImageStorageIncomplete 分开：两者在后台是两种不同的处置动作
+// （去打开开关 vs 去补凭证）。历史上两者共用一句"enabled but ... incomplete"
+// 的文案，导致"根本没开"也被读成"配错了"，把排查引向错误方向。
+var ErrImageStorageDisabled = infraerrors.New(
+	http.StatusServiceUnavailable,
+	"IMAGE_STORAGE_DISABLED",
+	"image storage is not enabled; turn it on in Admin > Settings > Backups",
+)
+
+// ImageStorageStatus 描述当前配置的实际生效状态，供后台页面提示"保存了但没生效"。
+type ImageStorageStatus struct {
+	Ready   bool     `json:"ready"`   // 开关打开且凭证齐全，功能真正可用
+	Enabled bool     `json:"enabled"` // 管理员是否打开了开关
+	Missing []string `json:"missing"` // 还缺哪些字段：bucket / access_key_id / secret_access_key
+}
 
 // ImageStorageFactory 由 repository 层提供，把配置变成一个可用的对象存储实现。
 // 与 BackupObjectStoreFactory 同样的注入方式，避免 service 反向依赖 repository。
@@ -100,6 +127,9 @@ func (s *ImageStorageSettingService) Resolver() ImageStorageResolver {
 // SaveImage stores an image using the currently effective image storage
 // configuration. It is used by user-facing gallery uploads.
 func (s *ImageStorageSettingService) SaveImage(ctx context.Context, key, contentType string, data []byte) (string, error) {
+	if reason := s.unusableReason(ctx); reason != nil {
+		return "", reason
+	}
 	uploader, enabled := s.resolve()
 	if !enabled || uploader == nil || uploader.storage == nil {
 		return "", ErrImageStorageIncomplete
@@ -111,12 +141,87 @@ func (s *ImageStorageSettingService) SaveImage(ctx context.Context, key, content
 	return uploader.storage.Save(ctx, key, contentType, data)
 }
 
+// Status 解析当前生效状态。ReuseBackupS3 打开时以备份凭证的实际取值为准，
+// 这样"勾了复用但备份那块是空的"也能被准确报成缺凭证，而不是看起来配好了。
+func (s *ImageStorageSettingService) Status(ctx context.Context) ImageStorageStatus {
+	if s == nil {
+		return ImageStorageStatus{Missing: missingImageStorageFields(nil)}
+	}
+	stored, err := s.load(ctx)
+	if err != nil {
+		return ImageStorageStatus{Missing: missingImageStorageFields(nil)}
+	}
+	if stored == nil {
+		// 从未保存过：以 config.yaml 的回落配置为准。
+		fallback := s.fallback
+		missing := missingImageStorageFields(&fallback)
+		return ImageStorageStatus{
+			Ready:   fallback.Enabled && len(missing) == 0,
+			Enabled: fallback.Enabled,
+			Missing: missing,
+		}
+	}
+	cfg, err := s.toImageStorageConfig(ctx, stored)
+	if err != nil || cfg == nil {
+		// 例：勾了"复用备份 S3"但备份配置为空。开关确实是开着的，
+		// 只是拿不到可用凭证，所以 Enabled 必须如实返回，缺项按未解析处理。
+		return ImageStorageStatus{Enabled: stored.Enabled, Missing: missingImageStorageFields(nil)}
+	}
+	missing := missingImageStorageFields(cfg)
+	return ImageStorageStatus{
+		Ready:   cfg.Enabled && len(missing) == 0,
+		Enabled: cfg.Enabled,
+		Missing: missing,
+	}
+}
+
+// unusableReason 把"现在为什么不能落盘"归一成两种可区分的错误。
+func (s *ImageStorageSettingService) unusableReason(ctx context.Context) error {
+	status := s.Status(ctx)
+	if status.Ready {
+		return nil
+	}
+	if !status.Enabled {
+		return ErrImageStorageDisabled
+	}
+	if len(status.Missing) == 0 {
+		return ErrImageStorageIncomplete
+	}
+	// 把缺的字段直接写进消息：调用方拿到的就是"还差什么"，不用再去翻服务端日志。
+	return infraerrors.New(
+		http.StatusServiceUnavailable,
+		"IMAGE_STORAGE_INCOMPLETE",
+		"image storage credentials are incomplete; missing: "+strings.Join(status.Missing, ", "),
+	)
+}
+
+// missingImageStorageFields 报告缺失的必填项，字段名与后台表单一一对应。
+func missingImageStorageFields(cfg *config.ImageStorageConfig) []string {
+	if cfg == nil {
+		return []string{"bucket", "access_key_id", "secret_access_key"}
+	}
+	missing := make([]string, 0, 3)
+	if strings.TrimSpace(cfg.Bucket) == "" {
+		missing = append(missing, "bucket")
+	}
+	if strings.TrimSpace(cfg.AccessKeyID) == "" {
+		missing = append(missing, "access_key_id")
+	}
+	if strings.TrimSpace(cfg.SecretAccessKey) == "" {
+		missing = append(missing, "secret_access_key")
+	}
+	return missing
+}
+
 // FetchImageURL 在服务端下载上游图片，供图库转存使用。
 // 浏览器直接抓上游链接会受 CORS 限制，且上游多为短期签名地址，服务端抓取更可靠。
 func (s *ImageStorageSettingService) FetchImageURL(ctx context.Context, rawURL string) ([]byte, string, error) {
 	rawURL = strings.TrimSpace(rawURL)
 	if s == nil || rawURL == "" {
 		return nil, "", ErrImageStorageIncomplete
+	}
+	if reason := s.unusableReason(ctx); reason != nil {
+		return nil, "", reason
 	}
 	uploader, enabled := s.resolve()
 	if !enabled || uploader == nil {

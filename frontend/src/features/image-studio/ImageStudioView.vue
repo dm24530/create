@@ -883,6 +883,17 @@ async function fetchModelNames(endpoint: string, apiKey: string, filterImages = 
 }
 
 function errorMessageFrom(error: unknown, fallback = '加载图片模型失败') {
+  // 后端对"没开启"和"凭证不全"给了可区分的业务码，直接给出可执行的下一步，
+  // 而不是让用户对着笼统的失败提示猜。
+  const reason = typeof error === 'object' && error !== null && 'reason' in error
+    ? String((error as { reason?: unknown }).reason || '')
+    : ''
+  if (reason === 'IMAGE_STORAGE_DISABLED') {
+    return '图片存储未启用：请到后台「设置 → 数据备份」打开「异步生图对象存储」。'
+  }
+  if (reason === 'IMAGE_STORAGE_INCOMPLETE') {
+    return '图片存储凭证不完整：请到后台「设置 → 数据备份」补齐存储桶与密钥。'
+  }
   const message = error instanceof Error
     ? error.message
     : typeof error === 'object' && error !== null && 'message' in error

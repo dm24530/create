@@ -115,7 +115,14 @@ export default {
         publicBaseUrlPlaceholder: '留空则返回预签名临时链接',
         presignExpiryHours: '预签名链接有效期（小时）',
         galleryRetentionDays: '图片工作台保留天数',
-        saved: '异步生图对象存储配置已保存'
+        saved: '异步生图对象存储配置已保存',
+        secretHint: '留空表示沿用已保存的密钥；第一次配置必须填写，否则功能不会生效。',
+        notReady: '已保存，但这个配置不会生效：开关是打开的，凭证还不完整，生成结果无法转存。',
+        missingFields: '还缺：{fields}',
+        disabledHint: '当前未启用，生成结果只会留在浏览器里，不会转存到对象存储。',
+        fieldBucket: '存储桶',
+        fieldAccessKeyId: 'Access Key ID',
+        fieldSecretAccessKey: 'Secret Access Key'
       },
       schedule: {
         title: '定时备份',

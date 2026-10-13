@@ -114,9 +114,16 @@ export interface ImageStorageConfig {
   force_path_style: boolean
 }
 
+export interface ImageStorageStatus {
+  ready: boolean
+  enabled: boolean
+  missing: string[]
+}
+
 export interface ImageStorageConfigResponse {
   config: ImageStorageConfig
   secret_configured: boolean
+  status?: ImageStorageStatus
 }
 
 export async function getImageStorageConfig(): Promise<ImageStorageConfigResponse> {

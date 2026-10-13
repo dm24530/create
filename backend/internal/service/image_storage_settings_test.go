@@ -242,6 +242,77 @@ func TestImageStorageSettingsIncompleteStaysDisabled(t *testing.T) {
 	require.Empty(t, *built, "no client is built from an incomplete configuration")
 }
 
+// 后台必须能分辨"没开启"和"开启但凭证不全"：两者要做的事完全不同。
+func TestImageStorageStatusReportsWhatIsMissing(t *testing.T) {
+	svc, _, _ := newImageStorageFixture(t, config.ImageStorageConfig{})
+	ctx := context.Background()
+
+	status := svc.Status(ctx)
+	require.False(t, status.Ready)
+	require.False(t, status.Enabled, "nothing stored yet means the switch is off")
+	require.Equal(t, []string{"bucket", "access_key_id", "secret_access_key"}, status.Missing)
+
+	_, err := svc.Update(ctx, ImageStorageSettings{Enabled: true, Bucket: "my-images"})
+	require.NoError(t, err)
+	status = svc.Status(ctx)
+	require.True(t, status.Enabled)
+	require.False(t, status.Ready, "enabled without credentials is still not usable")
+	require.Equal(t, []string{"access_key_id", "secret_access_key"}, status.Missing)
+
+	_, err = svc.Update(ctx, ImageStorageSettings{
+		Enabled:         true,
+		Bucket:          "my-images",
+		Endpoint:        "https://acct.r2.cloudflarestorage.com",
+		Region:          "auto",
+		AccessKeyID:     "ak",
+		SecretAccessKey: "sk",
+	})
+	require.NoError(t, err)
+	status = svc.Status(ctx)
+	require.True(t, status.Ready)
+	require.Empty(t, status.Missing)
+}
+
+// 复用备份 S3 但备份配置为空时，状态必须报成缺凭证，而不是看起来已配好。
+func TestImageStorageStatusReuseBackupWithoutCredentials(t *testing.T) {
+	svc, _, _ := newImageStorageFixture(t, config.ImageStorageConfig{})
+	ctx := context.Background()
+
+	_, err := svc.Update(ctx, ImageStorageSettings{Enabled: true, ReuseBackupS3: true})
+	require.NoError(t, err)
+	status := svc.Status(ctx)
+	require.True(t, status.Enabled)
+	require.False(t, status.Ready)
+	require.NotEmpty(t, status.Missing)
+}
+
+// 落库失败时必须给出可行动的原因：没开就去开，缺凭证就去补。
+func TestImageStorageSaveImageDistinguishesDisabledFromIncomplete(t *testing.T) {
+	svc, _, _ := newImageStorageFixture(t, config.ImageStorageConfig{})
+	ctx := context.Background()
+
+	_, err := svc.SaveImage(ctx, "images/a.png", "image/png", []byte("data"))
+	require.ErrorIs(t, err, ErrImageStorageDisabled)
+
+	_, err = svc.Update(ctx, ImageStorageSettings{Enabled: true, Bucket: "my-images"})
+	require.NoError(t, err)
+	_, err = svc.SaveImage(ctx, "images/a.png", "image/png", []byte("data"))
+	require.ErrorIs(t, err, ErrImageStorageIncomplete)
+
+	_, err = svc.Update(ctx, ImageStorageSettings{
+		Enabled:         true,
+		Bucket:          "my-images",
+		Endpoint:        "https://acct.r2.cloudflarestorage.com",
+		Region:          "auto",
+		AccessKeyID:     "ak",
+		SecretAccessKey: "sk",
+	})
+	require.NoError(t, err)
+	url, err := svc.SaveImage(ctx, "images/a.png", "image/png", []byte("data"))
+	require.NoError(t, err)
+	require.Contains(t, url, "images/a.png")
+}
+
 func TestImageStorageTestConnectionChecksBucket(t *testing.T) {
 	repo := newStubSettingRepo()
 	backup := NewBackupService(repo, &config.Config{

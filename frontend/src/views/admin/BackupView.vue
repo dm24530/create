@@ -76,6 +76,25 @@
           <span>{{ t('admin.backup.imageStorage.reuseBackupS3') }}</span>
         </label>
 
+        <!-- 保存成功不等于生效：开关打开但凭证不全时功能仍然是关的，这里直接说清缺什么。 -->
+        <p
+          v-if="imageStorageNotReady"
+          class="mt-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-700/60 dark:bg-amber-900/20 dark:text-amber-200"
+          data-testid="image-storage-not-ready"
+        >
+          {{ t('admin.backup.imageStorage.notReady') }}
+          <span v-if="imageStorageMissingLabels.length">
+            {{ t('admin.backup.imageStorage.missingFields', { fields: imageStorageMissingLabels.join('、') }) }}
+          </span>
+        </p>
+        <p
+          v-else-if="imageStorageStatus && !imageStorageStatus.enabled"
+          class="mt-3 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-600 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-300"
+          data-testid="image-storage-disabled-hint"
+        >
+          {{ t('admin.backup.imageStorage.disabledHint') }}
+        </p>
+
         <div class="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
           <div>
             <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">{{ t('admin.backup.imageStorage.bucket') }}</label>
@@ -102,6 +121,9 @@
             <div>
               <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">{{ t('admin.backup.s3.secretAccessKey') }}</label>
               <input v-model="imageStorageForm.secret_access_key" type="password" class="input w-full" :placeholder="imageStorageSecretConfigured ? t('admin.backup.s3.secretConfigured') : ''" />
+              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                {{ t('admin.backup.imageStorage.secretHint') }}
+              </p>
             </div>
             <label class="inline-flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300 md:col-span-2">
               <input v-model="imageStorageForm.force_path_style" type="checkbox" />
@@ -429,6 +451,7 @@ import type {
   BackupRecord,
   BackupDownloadPart,
   ImageStorageConfig,
+  ImageStorageStatus,
 } from '@/api/admin/backup'
 import { useStepUp, isStepUpBlocked, isStepUpCancelled, stepUpBlockReason } from '@/composables/useStepUp'
 import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'
@@ -481,7 +504,27 @@ const imageStorageForm = ref<ImageStorageConfig>({
   force_path_style: false,
 })
 const imageStorageSecretConfigured = ref(false)
+const imageStorageStatus = ref<ImageStorageStatus | null>(null)
 const savingImageStorage = ref(false)
+
+// 后台必须能看出"保存成功但不会生效"：开关打开而凭证不全时，生成结果不会转存。
+const imageStorageNotReady = computed(
+  () => Boolean(imageStorageStatus.value?.enabled) && !imageStorageStatus.value?.ready,
+)
+const imageStorageMissingLabels = computed(() =>
+  (imageStorageStatus.value?.missing ?? []).map((field) => {
+    switch (field) {
+      case 'bucket':
+        return t('admin.backup.imageStorage.fieldBucket')
+      case 'access_key_id':
+        return t('admin.backup.imageStorage.fieldAccessKeyId')
+      case 'secret_access_key':
+        return t('admin.backup.imageStorage.fieldSecretAccessKey')
+      default:
+        return field
+    }
+  }),
+)
 const testingImageStorage = ref(false)
 
 // Schedule config
@@ -695,7 +738,7 @@ async function saveS3Config() {
 
 async function loadImageStorageConfig() {
   try {
-    const { config, secret_configured } = await adminAPI.backup.getImageStorageConfig()
+    const { config, secret_configured, status } = await adminAPI.backup.getImageStorageConfig()
     imageStorageForm.value = {
       ...config,
       prefix: config.prefix || 'images/',
@@ -703,6 +746,7 @@ async function loadImageStorageConfig() {
       secret_access_key: '',
     }
     imageStorageSecretConfigured.value = secret_configured
+    imageStorageStatus.value = status ?? null
   } catch (error) {
     appStore.showError((error as { message?: string })?.message || t('errors.networkError'))
   }

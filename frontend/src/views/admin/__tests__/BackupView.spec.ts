@@ -60,7 +60,13 @@ vi.mock('@/composables/useStepUp', () => ({
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({
     t: (key: string, params?: Record<string, unknown>) =>
-      params?.index !== undefined ? `${key}:${params.index}` : params?.day !== undefined ? `${key}:${params.day}` : key,
+      params?.index !== undefined
+        ? `${key}:${params.index}`
+        : params?.day !== undefined
+          ? `${key}:${params.day}`
+          : params?.fields !== undefined
+            ? `${key}:${params.fields}`
+            : key,
   }),
 }))
 
@@ -155,6 +161,53 @@ describe('admin BackupView', () => {
     expect(document.body.textContent).toContain('admin.backup.actions.partLabel:1')
     expect(document.body.textContent).toContain('admin.backup.actions.partLabel:3')
     expect(document.body.querySelector('a[href="https://example.test/part-2"]')).not.toBeNull()
+  })
+
+  // 保存成功但凭证不全时，后台必须当场说清"不会生效、还缺什么"，
+  // 否则只会在生成图片时以一句看不懂的落库失败暴露出来。
+  it('开关打开但凭证不全时提示缺哪些字段', async () => {
+    getImageStorageConfig.mockResolvedValue({
+      config: {
+        enabled: true,
+        reuse_backup_s3: false,
+        bucket: 'my-images',
+        prefix: 'images/',
+        public_base_url: '',
+        presign_expiry_hours: 24,
+        gallery_retention_days: 7,
+        endpoint: 'https://acct.r2.cloudflarestorage.com',
+        region: 'auto',
+        access_key_id: '',
+        force_path_style: true,
+      },
+      secret_configured: false,
+      status: { ready: false, enabled: true, missing: ['access_key_id', 'secret_access_key'] },
+    })
+
+    const wrapper = mountBackupView()
+    await flushPromises()
+
+    const banner = wrapper.get('[data-testid="image-storage-not-ready"]')
+    expect(banner.text()).toContain('admin.backup.imageStorage.notReady')
+    expect(banner.text()).toContain('admin.backup.imageStorage.fieldAccessKeyId')
+    expect(banner.text()).toContain('admin.backup.imageStorage.fieldSecretAccessKey')
+    expect(wrapper.find('[data-testid="image-storage-disabled-hint"]').exists()).toBe(false)
+  })
+
+  it('未启用时提示生成结果不会转存', async () => {
+    getImageStorageConfig.mockResolvedValue({
+      config: { enabled: false, prefix: 'images/', region: 'auto' },
+      secret_configured: false,
+      status: { ready: false, enabled: false, missing: ['bucket', 'access_key_id', 'secret_access_key'] },
+    })
+
+    const wrapper = mountBackupView()
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="image-storage-disabled-hint"]').text()).toContain(
+      'admin.backup.imageStorage.disabledHint',
+    )
+    expect(wrapper.find('[data-testid="image-storage-not-ready"]').exists()).toBe(false)
   })
 
   it('旧单文件记录仍使用单个下载地址', async () => {

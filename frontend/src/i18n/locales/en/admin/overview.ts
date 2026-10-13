@@ -115,7 +115,14 @@ export default {
         publicBaseUrlPlaceholder: 'Leave empty to return presigned links',
         presignExpiryHours: 'Presigned link TTL (hours)',
         galleryRetentionDays: 'Image Studio retention (days)',
-        saved: 'Async image object storage saved'
+        saved: 'Async image object storage saved',
+        secretHint: 'Leave empty to keep the saved secret. The first setup must fill it in, otherwise nothing is offloaded.',
+        notReady: 'Saved, but this configuration will not work: the switch is on while credentials are still incomplete, so generated images are not offloaded.',
+        missingFields: 'Missing: {fields}',
+        disabledHint: 'Currently disabled: generated images stay in the browser and are not offloaded to object storage.',
+        fieldBucket: 'Bucket',
+        fieldAccessKeyId: 'Access Key ID',
+        fieldSecretAccessKey: 'Secret Access Key'
       },
       schedule: {
         title: 'Scheduled Backup',
