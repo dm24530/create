@@ -424,7 +424,8 @@ onBeforeUnmount(() => {
 .works {
   display: flex;
   width: 100%;
-  max-width: 90rem;
+  /* 与图片工作台保持同宽。 */
+  max-width: 120rem;
   margin: 0 auto;
   flex-direction: column;
   gap: 1rem;
