@@ -90,6 +90,10 @@ type ImageStorageSettingService struct {
 	backup      *BackupService
 	factory     ImageStorageFactory
 
+	// mirrorCache 记住"远端地址 → 已转存地址"，避免每次请求都重新下载。
+	mirrorMu    sync.Mutex
+	mirrorCache map[string]mirrorCacheEntry
+
 	// fallback 是 config.yaml 里的配置。后台从未保存过设置时沿用它，
 	// 保证升级前已用配置文件开启该功能的部署不被打断。
 	fallback config.ImageStorageConfig

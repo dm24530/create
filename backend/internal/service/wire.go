@@ -887,6 +887,7 @@ var ProviderSet = wire.NewSet(
 	NewImageStudioGalleryService,
 	NewVideoStudioGalleryService,
 	ProvideVideoInspirationService,
+	ProvideInspirationLibraryService,
 	// Lets `wire` regenerate cmd/server/wire_gen.go without hand editing:
 	// the gallery service needs an ImageStudioImageSaver, which the image
 	// storage settings service already implements.

@@ -15,10 +15,38 @@ import (
 // VideoInspirationHandler 在服务端拉取在线灵感，并代理媒体回源。
 type VideoInspirationHandler struct {
 	inspiration *service.VideoInspirationService
+	library     *service.InspirationLibraryService
 }
 
-func NewVideoInspirationHandler(inspiration *service.VideoInspirationService) *VideoInspirationHandler {
-	return &VideoInspirationHandler{inspiration: inspiration}
+func NewVideoInspirationHandler(
+	inspiration *service.VideoInspirationService,
+	library *service.InspirationLibraryService,
+) *VideoInspirationHandler {
+	return &VideoInspirationHandler{inspiration: inspiration, library: library}
+}
+
+// Library 返回自家灵感站的作品库（视频提示词 / 图片灵感），支持模型、分类、关键词与分页。
+func (h *VideoInspirationHandler) Library(c *gin.Context) {
+	page, _ := strconv.Atoi(strings.TrimSpace(c.DefaultQuery("page", "1")))
+	pageSize, _ := strconv.Atoi(strings.TrimSpace(c.DefaultQuery("page_size", "24")))
+	result, err := h.library.Library(c.Request.Context(), service.InspirationLibraryQuery{
+		Type:     c.Query("type"),
+		Model:    c.Query("model"),
+		Category: c.Query("category"),
+		Keyword:  c.Query("q"),
+		Page:     page,
+		PageSize: pageSize,
+		Refresh:  strings.TrimSpace(c.Query("refresh")) == "1",
+	})
+	if err != nil {
+		response.ErrorFrom(c, infraerrors.New(
+			http.StatusBadGateway,
+			"VIDEO_INSPIRATION_LIBRARY_UNAVAILABLE",
+			"inspiration library is unreachable: "+err.Error(),
+		))
+		return
+	}
+	response.Success(c, result)
 }
 
 func (h *VideoInspirationHandler) Online(c *gin.Context) {
@@ -50,6 +78,12 @@ func (h *VideoInspirationHandler) Online(c *gin.Context) {
 // 这个接口必须免登录：<img>/<video> 发出的请求带不上 JWT。安全边界靠主机白名单，
 // 它不是通用代理，只能回源到灵感源的 CDN。
 func (h *VideoInspirationHandler) Media(c *gin.Context) {
+	// 配了对象存储就先把图片转存到自己的桶里，之后直接重定向过去：
+	// 素材不再依赖上游可用性，也不再经过这台服务器。
+	if target, ok := h.inspiration.MirrorToStorage(c.Request.Context(), c.Query("u")); ok {
+		c.Redirect(http.StatusFound, target)
+		return
+	}
 	resp, err := h.inspiration.FetchMedia(c.Request.Context(), c.Query("u"), c.GetHeader("Range"))
 	if err != nil {
 		response.ErrorFrom(c, infraerrors.New(

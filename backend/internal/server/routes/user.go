@@ -117,6 +117,7 @@ func RegisterUserRoutes(
 		accessibleInspiration := authenticated.Group("/video-inspiration")
 		{
 			accessibleInspiration.GET("/online", h.VideoInspiration.Online)
+			accessibleInspiration.GET("/library", h.VideoInspiration.Library)
 		}
 
 		// 使用记录（聚合统计属重查询，叠加更严格的按用户限流）

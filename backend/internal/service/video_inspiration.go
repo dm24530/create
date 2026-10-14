@@ -70,12 +70,23 @@ type InspirationFeed struct {
 
 type VideoInspirationService struct {
 	client *http.Client
+	// mirror 为空表示没配对象存储：素材走代理转发。
+	mirror InspirationMediaMirror
 
 	mu    sync.Mutex
 	cache map[string]inspirationCacheEntry
 }
 
-func NewVideoInspirationService(proxyURL string, allowDirectOnProxyError bool) *VideoInspirationService {
+// InspirationMediaMirror 由对象存储设置服务实现：把远端素材转存到自己的桶。
+type InspirationMediaMirror interface {
+	MirrorRemoteImage(ctx context.Context, rawURL string) (string, bool)
+}
+
+func NewVideoInspirationService(
+	proxyURL string,
+	allowDirectOnProxyError bool,
+	mirror InspirationMediaMirror,
+) *VideoInspirationService {
 	client, err := httpclient.GetClient(httpclient.Options{
 		Timeout:  20 * time.Second,
 		ProxyURL: proxyURL,
@@ -87,16 +98,25 @@ func NewVideoInspirationService(proxyURL string, allowDirectOnProxyError bool) *
 			client = &http.Client{Timeout: 20 * time.Second}
 		}
 	}
-	return &VideoInspirationService{client: client, cache: map[string]inspirationCacheEntry{}}
+	return &VideoInspirationService{client: client, mirror: mirror, cache: map[string]inspirationCacheEntry{}}
 }
 
 // ProvideVideoInspirationService 复用「更新检查」已经配好的出网代理：
 // 灵感源在海外，服务器通常也需要走代理才能拉取。
-func ProvideVideoInspirationService(cfg *config.Config) *VideoInspirationService {
+func ProvideVideoInspirationService(cfg *config.Config, storage *ImageStorageSettingService) *VideoInspirationService {
 	if cfg == nil {
-		return NewVideoInspirationService("", true)
+		return NewVideoInspirationService("", true, storage)
 	}
-	return NewVideoInspirationService(cfg.Update.ProxyURL, cfg.Security.ProxyFallback.AllowDirectOnError)
+	return NewVideoInspirationService(cfg.Update.ProxyURL, cfg.Security.ProxyFallback.AllowDirectOnError, storage)
+}
+
+// MirrorToStorage 尝试把素材转存到自己的对象存储：
+// 转存成功返回可长期使用的地址（调用方重定向过去），未配置存储时返回 false。
+func (s *VideoInspirationService) MirrorToStorage(ctx context.Context, rawURL string) (string, bool) {
+	if s == nil || s.mirror == nil || strings.TrimSpace(rawURL) == "" {
+		return "", false
+	}
+	return s.mirror.MirrorRemoteImage(ctx, rawURL)
 }
 
 func (s *VideoInspirationService) Online(
