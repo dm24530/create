@@ -11,6 +11,15 @@ const { listKeys, getPublicSettings, copyToClipboard, routeQuery } = vi.hoisted(
   routeQuery: { value: {} as Record<string, string> },
 }))
 
+const { archiveVideo } = vi.hoisted(() => ({ archiveVideo: vi.fn() }))
+
+vi.mock('../videoArchiveApi', () => ({
+  archiveVideo,
+  listArchivedVideos: vi.fn().mockResolvedValue([]),
+  deleteArchivedVideo: vi.fn(),
+  fetchOnlineInspirationsFromServer: vi.fn().mockResolvedValue([]),
+}))
+
 vi.mock('@/api', () => ({
   keysAPI: { list: listKeys },
   authAPI: { getPublicSettings },
@@ -61,6 +70,9 @@ function resetMocks() {
   listKeys.mockReset()
   getPublicSettings.mockReset()
   copyToClipboard.mockReset()
+  archiveVideo.mockReset()
+  // 默认按"对象存储没配"处理：归档失败只提示，不影响生成结果本身。
+  archiveVideo.mockRejectedValue({ reason: 'IMAGE_STORAGE_DISABLED', message: 'image storage is not enabled' })
   routeQuery.value = {}
   listKeys.mockResolvedValue({
     items: [{ id: 7, name: 'video-key', key: 'sk-video', status: 'active', group_id: 1 }],
@@ -181,6 +193,48 @@ describe('VideoStudioView seedance generation', () => {
     await durationInput.trigger('blur')
 
     expect((durationInput.element as HTMLInputElement).value).toBe('15')
+  })
+
+  it('archives a finished video and switches the card to the stored copy', async () => {
+    archiveVideo.mockResolvedValue({
+      id: 'arch-1',
+      url: 'https://cdn.example.com/archived.mp4',
+      prompt: '',
+      model: '',
+      format: 'mp4',
+      duration_seconds: 5,
+      created_at: 1,
+      expires_at: 2,
+    })
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = String(input)
+      if (url.endsWith('/models')) return jsonResponse({ data: [{ id: 'seedance-2-720p' }] })
+      if (url.endsWith('/contents/generations/tasks') && init?.method === 'POST') {
+        return jsonResponse({ id: 'task-9' })
+      }
+      if (url.endsWith('/contents/generations/tasks/task-9')) {
+        return jsonResponse({ status: 'succeeded', content: { video_url: 'https://cdn.example.com/out.mp4' } })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountStudio()
+    await flushPromises()
+    await flushPromises()
+
+    await wrapper.get('textarea').setValue('一段会被归档的镜头')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    await flushPromises()
+
+    // 公开直链交给服务端抓取归档，浏览器不用下载再上传。
+    expect(archiveVideo).toHaveBeenCalledWith(
+      expect.objectContaining({ video_url: 'https://cdn.example.com/out.mp4', model: 'seedance-2-720p' }),
+    )
+    await vi.waitFor(() => {
+      expect(wrapper.get('video').attributes('src')).toBe('https://cdn.example.com/archived.mp4')
+    })
   })
 })
 

@@ -100,14 +100,15 @@
       <template v-else>
         <div class="online-bar">
           <span class="online-bar__hint">
-            来自公开创作社区（Civitai）的真实作品与提示词，素材直接来自其 CDN，不需要中转。
+            来自公开创作社区（Civitai）的真实作品与提示词，由服务端拉取并经本站代理，
+            访问者不需要能直连第三方站点。
           </span>
           <button
             type="button"
             class="secondary-button"
             data-testid="online-refresh"
             :disabled="onlineLoading"
-            @click="loadOnline()"
+            @click="loadOnline(true)"
           >
             <Icon name="refresh" size="sm" :class="{ 'is-spinning': onlineLoading }" />
             <span>{{ onlineLoading ? '加载中' : '换一批' }}</span>
@@ -418,25 +419,24 @@ function openOnline(item: OnlineInspirationItem) {
   }
 }
 
-async function loadOnline() {
+async function loadOnline(refresh = false) {
   onlineAbort?.abort()
   const controller = new AbortController()
   onlineAbort = controller
   onlineLoading.value = true
   onlineError.value = ''
   try {
-    const items = await fetchOnlineInspirations({ limit: 24, mediaType: 'video', signal: controller.signal })
+    const items = await fetchOnlineInspirations({ limit: 24, mediaType: 'video', refresh, signal: controller.signal })
     if (controller.signal.aborted) return
     onlineItems.value = items
     if (!items.length) onlineError.value = '这次没有拉到带提示词的视频作品，点「换一批」再试。'
   } catch (error) {
     if (controller.signal.aborted) return
-    // civitai.com 在部分网络下不可达，这里要说清原因而不是显示空白。
-    onlineError.value = error instanceof TypeError
-      ? '无法访问在线灵感源（civitai.com）：当前网络到不了该站点，需要代理或换网络后重试。'
-      : error instanceof Error
-        ? error.message
-        : '拉取在线灵感失败'
+    // 拉取在服务端进行：失败通常是服务器出网不通（可配 update.proxy_url 代理）。
+    const message = error instanceof Error ? error.message : ''
+    onlineError.value = message
+      ? `拉取在线灵感失败：${message}。如果服务器在国内，请给 update.proxy_url 配一个代理后重试。`
+      : '拉取在线灵感失败：请检查服务器的出网与代理配置。'
   } finally {
     if (!controller.signal.aborted) onlineLoading.value = false
   }

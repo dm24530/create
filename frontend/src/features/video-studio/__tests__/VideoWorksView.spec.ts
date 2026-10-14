@@ -12,6 +12,19 @@ const { listKeys, getPublicSettings, copyToClipboard, push } = vi.hoisted(() => 
   push: vi.fn(),
 }))
 
+const { listArchivedVideos, deleteArchivedVideo, fetchOnlineInspirationsFromServer } = vi.hoisted(() => ({
+  listArchivedVideos: vi.fn(),
+  deleteArchivedVideo: vi.fn(),
+  fetchOnlineInspirationsFromServer: vi.fn(),
+}))
+
+vi.mock('../videoArchiveApi', () => ({
+  listArchivedVideos,
+  deleteArchivedVideo,
+  fetchOnlineInspirationsFromServer,
+  archiveVideo: vi.fn(),
+}))
+
 vi.mock('@/api', () => ({
   keysAPI: { list: listKeys },
   authAPI: { getPublicSettings },
@@ -94,65 +107,47 @@ describe('VideoInspirationView', () => {
 })
 
 describe('VideoInspirationView online source', () => {
-  const onlinePayload = {
-    items: [
-      {
-        id: 60183831,
-        url: 'https://image.civitai.com/example/clip.mp4',
-        thumbnail: { url: 'https://image.civitai.com/example/thumb.jpeg' },
-        width: 1080,
-        height: 1920,
-        type: 'video',
-        nsfw: false,
-        nsfwLevel: 'None',
-        baseModel: 'Illustrious',
-        username: 'HshiKoi',
-        stats: { likeCount: 5989 },
-        meta: {
-          prompt: '动物耳朵女孩的微笑，头发轻轻飘动，耳朵微微颤动。',
-          negativePrompt: 'blurry, watermark',
-        },
-      },
-      {
-        // 没有提示词的条目会被丢掉，只保留可复制的灵感。
-        id: 2,
-        url: 'https://image.civitai.com/example/nop.mp4',
-        type: 'video',
-        nsfw: false,
-        nsfwLevel: 'None',
-        meta: {},
-      },
-    ],
-  }
+  const onlineItems = [
+    {
+      id: '60183831',
+      media_type: 'video' as const,
+      media_url: '/api/v1/public/video-inspiration/media?u=clip.mp4',
+      poster_url: '/api/v1/public/video-inspiration/media?u=thumb.jpeg',
+      prompt: '动物耳朵女孩的微笑，头发轻轻飘动，耳朵微微颤动。',
+      negative_prompt: 'blurry, watermark',
+      model: 'Illustrious',
+      author: 'HshiKoi',
+      width: 1080,
+      height: 1920,
+      likes: 5989,
+      source_url: 'https://civitai.com/images/60183831',
+    },
+  ]
 
   beforeEach(() => {
     push.mockReset()
     copyToClipboard.mockReset()
     copyToClipboard.mockResolvedValue(true)
-    vi.stubGlobal('fetch', vi.fn())
+    fetchOnlineInspirationsFromServer.mockReset()
   })
 
   it('plays the sample video next to its prompt and copies the prompt', async () => {
-    vi.mocked(fetch).mockResolvedValue({
-      ok: true,
-      json: async () => onlinePayload,
-    } as unknown as Response)
+    fetchOnlineInspirationsFromServer.mockResolvedValue(onlineItems)
 
     const wrapper = mount(VideoInspirationView, { global: { stubs: globalStubs } })
     await wrapper.get('[data-testid="inspiration-source-online"]').trigger('click')
     await flushPromises()
 
-    expect(String(vi.mocked(fetch).mock.calls[0][0])).toContain('type=video')
-    expect(String(vi.mocked(fetch).mock.calls[0][0])).toContain('withMeta=true')
-    expect(wrapper.find('[data-testid="online-2"]').exists()).toBe(false)
+    // 拉取走本站后端，浏览器不再直连第三方站点。
+    expect(fetchOnlineInspirationsFromServer).toHaveBeenCalledWith('video', 24, false)
 
     const card = wrapper.get('[data-testid="online-60183831"]')
     expect(card.text()).toContain('Illustrious')
     await card.get('button').trigger('click')
 
     const video = wrapper.get('[data-testid="inspiration-video"]')
-    expect(video.attributes('src')).toBe('https://image.civitai.com/example/clip.mp4')
-    expect(video.attributes('poster')).toBe('https://image.civitai.com/example/thumb.jpeg')
+    expect(video.attributes('src')).toBe('/api/v1/public/video-inspiration/media?u=clip.mp4')
+    expect(video.attributes('poster')).toBe('/api/v1/public/video-inspiration/media?u=thumb.jpeg')
     expect(wrapper.text()).toContain('动物耳朵女孩的微笑')
 
     await wrapper.get('[data-testid="inspiration-copy"]').trigger('click')
@@ -163,20 +158,19 @@ describe('VideoInspirationView online source', () => {
   })
 
   it('explains an unreachable source instead of showing an empty page', async () => {
-    vi.mocked(fetch).mockRejectedValue(new TypeError('Failed to fetch'))
+    fetchOnlineInspirationsFromServer.mockRejectedValue(new Error('online inspiration source is unreachable'))
 
     const wrapper = mount(VideoInspirationView, { global: { stubs: globalStubs } })
     await wrapper.get('[data-testid="inspiration-source-online"]').trigger('click')
     await flushPromises()
 
-    expect(wrapper.get('[data-testid="online-error"]').text()).toContain('无法访问在线灵感源')
+    const error = wrapper.get('[data-testid="online-error"]').text()
+    expect(error).toContain('拉取在线灵感失败')
+    expect(error).toContain('update.proxy_url')
   })
 
   it('hands an online prompt to the studio without a long query string', async () => {
-    vi.mocked(fetch).mockResolvedValue({
-      ok: true,
-      json: async () => onlinePayload,
-    } as unknown as Response)
+    fetchOnlineInspirationsFromServer.mockResolvedValue(onlineItems)
 
     const wrapper = mount(VideoInspirationView, { global: { stubs: globalStubs } })
     await wrapper.get('[data-testid="inspiration-source-online"]').trigger('click')
@@ -191,12 +185,30 @@ describe('VideoInspirationView online source', () => {
     expect(sessionStorage.getItem('sub2api:video-studio:pending-prompt')).toContain('动物耳朵女孩的微笑')
     expect(push).toHaveBeenCalledWith({ path: '/video-studio' })
   })
+
+  it('bypasses the server cache when asking for another batch', async () => {
+    fetchOnlineInspirationsFromServer.mockResolvedValue(onlineItems)
+
+    const wrapper = mount(VideoInspirationView, { global: { stubs: globalStubs } })
+    await wrapper.get('[data-testid="inspiration-source-online"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-testid="online-refresh"]').trigger('click')
+    await flushPromises()
+
+    // 首次加载走缓存；点「换一批」必须要求服务端重新拉取。
+    expect(fetchOnlineInspirationsFromServer).toHaveBeenNthCalledWith(1, 'video', 24, false)
+    expect(fetchOnlineInspirationsFromServer).toHaveBeenNthCalledWith(2, 'video', 24, true)
+  })
 })
 
 describe('VideoWorksView', () => {
   beforeEach(() => {
     localStorage.clear()
     vi.stubGlobal('fetch', vi.fn())
+    listArchivedVideos.mockReset()
+    listArchivedVideos.mockResolvedValue([])
+    deleteArchivedVideo.mockReset()
+    deleteArchivedVideo.mockResolvedValue(undefined)
     listKeys.mockResolvedValue({
       items: [{ id: 7, name: 'video-key', key: 'sk-video', status: 'active', group_id: 1 }],
     })
@@ -228,5 +240,55 @@ describe('VideoWorksView', () => {
 
     expect(wrapper.findAll('article').length).toBe(0)
     expect(wrapper.text()).toContain('还没有作品')
+  })
+
+  it('lists archived videos and hides the duplicate local record', async () => {
+    const archivedEntry = {
+      id: 'arch-1',
+      url: 'https://cdn.example.com/archived.mp4',
+      prompt: '已归档的镜头',
+      model: 'seedance-2-720p',
+      format: 'mp4',
+      duration_seconds: 8,
+      created_at: 1760000000,
+      expires_at: 1900000000,
+    }
+    listArchivedVideos.mockResolvedValue([archivedEntry])
+    // 同一条视频本地也留了记录：不该重复显示。
+    saveVideoWork(seedRecord({ archivedUrl: archivedEntry.url }))
+
+    const wrapper = mount(VideoWorksView, { global: { stubs: globalStubs } })
+    await flushPromises()
+
+    const card = wrapper.get('[data-testid="archived-arch-1"]')
+    expect(card.text()).toContain('已归档的镜头')
+    expect(card.get('video').attributes('src')).toBe('https://cdn.example.com/archived.mp4')
+    expect(wrapper.findAll('[data-testid^="work-"]').length).toBe(0)
+  })
+
+  it('deletes an archived entry through the archive API', async () => {
+    listArchivedVideos.mockResolvedValue([
+      {
+        id: 'arch-2',
+        url: 'https://cdn.example.com/archived-2.mp4',
+        prompt: '要删掉的镜头',
+        model: 'seedance-2-720p',
+        format: 'mp4',
+        duration_seconds: 5,
+        created_at: 1760000000,
+        expires_at: 1900000000,
+      },
+    ])
+
+    const wrapper = mount(VideoWorksView, { global: { stubs: globalStubs } })
+    await flushPromises()
+
+    const card = wrapper.get('[data-testid="archived-arch-2"]')
+    const deleteButton = card.findAll('button').find((button) => button.attributes('title') === '删除归档')
+    await deleteButton!.trigger('click')
+    await flushPromises()
+
+    expect(deleteArchivedVideo).toHaveBeenCalledWith('arch-2')
+    expect(wrapper.find('[data-testid="archived-arch-2"]').exists()).toBe(false)
   })
 })

@@ -138,6 +138,12 @@
             <Icon name="x" size="xs" />
           </button>
         </div>
+        <div v-if="archiveHint" class="video-composer__alert" data-testid="archive-hint">
+          <span>{{ archiveHint }}</span>
+          <button type="button" class="video-composer__alert-close" @click="archiveHint = ''">
+            <Icon name="x" size="xs" />
+          </button>
+        </div>
 
         <div v-if="references.length" class="reference-row">
           <div v-for="asset in references" :key="asset.id" class="reference-chip">
@@ -418,6 +424,10 @@ import {
   type VideoTaskStatus,
 } from './videoStudioApi'
 import {
+  archiveVideo,
+  type ArchivedVideoEntry,
+} from './videoArchiveApi'
+import {
   createVideoWorkId,
   listVideoWorks,
   removeVideoWork,
@@ -470,6 +480,7 @@ const modelLoadError = ref('')
 
 const errorMessage = ref('')
 const inspirationHint = ref('')
+const archiveHint = ref('')
 const prompt = ref('')
 const durationSeconds = ref(5)
 const resolution = ref('720p')
@@ -489,6 +500,8 @@ const works = ref<VideoWorkRecord[]>([])
 const previewTask = ref<StudioTask | null>(null)
 const activeGenerations = ref(0)
 const cancelledTasks = new Set<string>()
+// 换成归档地址后退役的 blob URL：等离开页面再统一释放。
+const retiredObjectURLs: string[] = []
 
 let nextReferenceId = 1
 let modelRequestId = 0
@@ -655,7 +668,8 @@ function resumeWorks() {
     if (tasks.value.some((task) => task.localId === record.id)) continue
     const task = taskFromRecord(record)
     tasks.value.push(task)
-    void runTask(task, null)
+    // 取回响应式代理再驱动：直接改原始对象不会触发重渲染。
+    void runTask(tasks.value[tasks.value.length - 1], null)
   }
 }
 
@@ -941,10 +955,12 @@ async function generate() {
     createdAt: Date.now(),
   }
   tasks.value.unshift(task)
-  saveVideoWork(recordFromTask(task, 'queued', '正在提交任务'))
+  // 同上：后续状态更新必须打在响应式代理上。
+  const tracked = tasks.value[0]
+  saveVideoWork(recordFromTask(tracked, 'queued', '正在提交任务'))
   works.value = listVideoWorks()
   errorMessage.value = ''
-  await runTask(task, {
+  await runTask(tracked, {
     key,
     references: references.value.slice(),
   })
@@ -1012,6 +1028,8 @@ async function runTask(
       task.stageText = '已完成'
       task.error = ''
       persistTask(task, 'succeeded', '')
+      // 归档到对象存储（失败不影响本次结果，本地记录仍然可用）。
+      void archiveTaskVideo(task, snapshot.videoUrl)
       return
     }
 
@@ -1040,6 +1058,60 @@ async function refreshTask(task: StudioTask) {
   if (!task.requestId || task.status === 'succeeded') return
   errorMessage.value = ''
   await runTask(task, null)
+}
+
+// 归档成对象存储的长期地址：换浏览器/清缓存后「我的作品」还能播放。
+// Seedance 给的是公开直链，交给服务端抓取；Grok 的内容接口需要密钥，
+// 浏览器已经拿到字节，直接上传。
+async function archiveTaskVideo(task: StudioTask, upstreamUrl: string) {
+  archiveHint.value = ''
+  try {
+    const request = {
+      prompt: task.prompt,
+      model: task.model,
+      format: 'mp4',
+      duration_seconds: task.durationSeconds,
+    }
+    let entry: ArchivedVideoEntry
+    if (/^https?:\/\//i.test(upstreamUrl)) {
+      entry = await archiveVideo({ ...request, video_url: upstreamUrl })
+    } else {
+      const dataURL = await blobUrlToDataURL(task.videoUrl)
+      if (!dataURL) {
+        archiveHint.value = '视频较大，未自动归档；可在「我的作品」里手动下载保留。'
+        return
+      }
+      entry = await archiveVideo({ ...request, video_data_url: dataURL })
+    }
+    if (!entry?.url) return
+    // 旧 blob 先留着：DOM 还指着它，立即撤销会让正在播放的视频黑掉。
+    if (task.revokeUrl && task.videoUrl) retiredObjectURLs.push(task.videoUrl)
+    task.videoUrl = entry.url
+    task.revokeUrl = false
+    updateVideoWork(task.localId, { videoUrl: entry.url, archivedUrl: entry.url })
+    works.value = listVideoWorks()
+  } catch (error) {
+    // 常见原因是对象存储没启用；说清楚而不是静默。
+    const reason = typeof error === 'object' && error !== null && 'reason' in error
+      ? String((error as { reason?: unknown }).reason || '')
+      : ''
+    archiveHint.value = reason === 'IMAGE_STORAGE_DISABLED' || reason === 'IMAGE_STORAGE_INCOMPLETE'
+      ? '视频已生成，但未归档到对象存储：请在后台「设置 → 数据备份」开启并补齐「异步生图对象存储」。'
+      : `视频已生成，但归档失败：${errorMessageFrom(error, '未知原因')}`
+  }
+}
+
+async function blobUrlToDataURL(url: string): Promise<string | null> {
+  const response = await fetch(url)
+  const blob = await response.blob()
+  // base64 会膨胀 1/3，过大的视频不自动上传，避免卡住页面。
+  if (blob.size > 96 * 1024 * 1024) return null
+  return await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result || ''))
+    reader.onerror = () => reject(reader.error || new Error('读取视频失败'))
+    reader.readAsDataURL(blob)
+  })
 }
 
 function discardTask(task: StudioTask) {
@@ -1093,6 +1165,7 @@ onBeforeUnmount(() => {
   for (const task of tasks.value) {
     if (task.revokeUrl && task.videoUrl) URL.revokeObjectURL(task.videoUrl)
   }
+  for (const url of retiredObjectURLs) URL.revokeObjectURL(url)
 })
 </script>
 

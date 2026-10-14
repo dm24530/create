@@ -53,7 +53,45 @@
       </div>
 
       <section class="works__stage">
-        <div v-if="!records.length" class="works__empty">
+        <!-- 已归档：文件在对象存储、记录在后端，换浏览器/清缓存都还在。 -->
+        <template v-if="archived.length">
+          <div class="works__section-head">
+            <h2>已归档</h2>
+            <span>存在对象存储里，换设备也能看到</span>
+          </div>
+          <div class="works-grid works-grid--archived">
+            <article v-for="entry in archived" :key="entry.id" class="work-card" :data-testid="`archived-${entry.id}`">
+              <div class="work-card__media">
+                <video v-if="entry.url" :src="entry.url" class="work-card__video" controls playsinline preload="metadata" />
+                <div v-else class="work-card__placeholder"><Icon name="play" size="lg" /><strong>已归档</strong></div>
+              </div>
+              <div class="work-card__body">
+                <p class="work-card__prompt" :title="entry.prompt">{{ entry.prompt || '未填写提示词' }}</p>
+                <p class="work-card__meta">{{ archivedMeta(entry) }}</p>
+                <p class="work-card__time">{{ formatTime(entry.created_at * 1000) }}</p>
+              </div>
+              <div class="work-card__actions">
+                <button type="button" class="mini-action" title="下载视频" @click="downloadArchived(entry)">
+                  <Icon name="download" size="sm" />
+                </button>
+                <button
+                  type="button"
+                  class="mini-action"
+                  title="复制提示词"
+                  :disabled="!entry.prompt"
+                  @click="copyPromptText(entry.prompt)"
+                >
+                  <Icon name="copy" size="sm" />
+                </button>
+                <button type="button" class="mini-action" title="删除归档" @click="removeArchived(entry)">
+                  <Icon name="trash" size="sm" />
+                </button>
+              </div>
+            </article>
+          </div>
+        </template>
+
+        <div v-if="!records.length && !archived.length" class="works__empty">
           <div class="works__empty-icon">
             <Icon name="grid" size="xl" />
           </div>
@@ -65,7 +103,12 @@
           </RouterLink>
         </div>
 
-        <div v-else class="works-grid">
+        <template v-if="records.length">
+          <div v-if="archived.length" class="works__section-head">
+            <h2>本机记录</h2>
+            <span>只存在这个浏览器里，可用来重试或重新载入</span>
+          </div>
+          <div class="works-grid">
           <article
             v-for="record in records"
             :key="record.id"
@@ -136,7 +179,8 @@
               </button>
             </div>
           </article>
-        </div>
+          </div>
+        </template>
       </section>
     </div>
 
@@ -213,6 +257,11 @@ import {
   type VideoTaskStatus,
 } from './videoStudioApi'
 import {
+  deleteArchivedVideo,
+  listArchivedVideos,
+  type ArchivedVideoEntry,
+} from './videoArchiveApi'
+import {
   clearVideoWorks,
   listVideoWorks,
   removeVideoWork,
@@ -226,6 +275,7 @@ const keys = ref<ApiKey[]>([])
 const selectedKeyId = ref('')
 const apiBaseUrl = ref('')
 const records = ref<VideoWorkRecord[]>([])
+const archived = ref<ArchivedVideoEntry[]>([])
 const playable = ref<Record<string, string>>({})
 const activeRecord = ref<VideoWorkRecord | null>(null)
 const errorMessage = ref('')
@@ -279,7 +329,8 @@ function formatTime(timestamp: number): string {
 
 async function loadData() {
   errorMessage.value = ''
-  records.value = listVideoWorks()
+  await loadArchivedVideos()
+  records.value = visibleLocalRecords()
   const keysPromise = keysAPI.list(1, 100, { status: 'active' })
     .then((response) => {
       keys.value = response.items || []
@@ -298,6 +349,43 @@ async function loadData() {
 
   await Promise.allSettled([keysPromise, settingsPromise])
   await restoreAvailableVideos()
+}
+
+// 已归档的记录会同时留下一条本机记录，这里把重复的本地条目过滤掉，
+// 免得同一段视频既显示在「已归档」又显示在「本机记录」。
+function visibleLocalRecords(): VideoWorkRecord[] {
+  const archivedUrls = new Set(archived.value.map((entry) => entry.url))
+  return listVideoWorks().filter((record) => !record.archivedUrl || !archivedUrls.has(record.archivedUrl))
+}
+
+async function loadArchivedVideos() {
+  try {
+    archived.value = await listArchivedVideos()
+  } catch {
+    // 归档接口不可用（例如对象存储没配）时不影响本机记录展示。
+    archived.value = []
+  }
+}
+
+function archivedMeta(entry: ArchivedVideoEntry): string {
+  return [entry.model || '未知模型', entry.duration_seconds ? `${entry.duration_seconds}秒` : '']
+    .filter(Boolean)
+    .join(' · ')
+}
+
+async function downloadArchived(entry: ArchivedVideoEntry) {
+  await downloadUrl(entry.url, `video-${entry.created_at}.mp4`)
+}
+
+async function removeArchived(entry: ArchivedVideoEntry) {
+  try {
+    await deleteArchivedVideo(entry.id)
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : '删除归档失败'
+    return
+  }
+  archived.value = archived.value.filter((item) => item.id !== entry.id)
+  records.value = visibleLocalRecords()
 }
 
 async function refreshKeys() {
@@ -371,13 +459,17 @@ function updateRecord(
 async function downloadRecord(record: VideoWorkRecord) {
   const url = playable.value[record.id]
   if (!url) return
+  await downloadUrl(url, `video-${record.createdAt}.mp4`)
+}
+
+async function downloadUrl(url: string, filename: string) {
   try {
     const response = await fetch(url)
     const blob = await response.blob()
     const objectUrl = URL.createObjectURL(blob)
     const link = document.createElement('a')
     link.href = objectUrl
-    link.download = `video-${record.createdAt}.mp4`
+    link.download = filename
     link.click()
     URL.revokeObjectURL(objectUrl)
   } catch {
@@ -391,7 +483,8 @@ function removeRecord(record: VideoWorkRecord) {
   const next = { ...playable.value }
   delete next[record.id]
   playable.value = next
-  records.value = removeVideoWork(record.id)
+  removeVideoWork(record.id)
+  records.value = visibleLocalRecords()
   if (activeRecord.value?.id === record.id) activeRecord.value = null
 }
 
@@ -402,12 +495,18 @@ function clearAll() {
   playable.value = {}
   clearVideoWorks()
   records.value = []
+  void loadArchivedVideos()
   activeRecord.value = null
 }
 
 async function copyPrompt(record: VideoWorkRecord) {
   if (!record.prompt) return
-  await copyToClipboard(record.prompt, '提示词已复制')
+  await copyPromptText(record.prompt)
+}
+
+async function copyPromptText(prompt: string) {
+  if (!prompt) return
+  await copyToClipboard(prompt, '提示词已复制')
 }
 
 onMounted(loadData)
@@ -561,6 +660,33 @@ onBeforeUnmount(() => {
   display: grid;
   grid-template-columns: repeat(1, minmax(0, 1fr));
   gap: 1rem;
+}
+
+.works-grid--archived {
+  margin-bottom: 1.25rem;
+}
+
+.works__section-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin-bottom: 0.6rem;
+}
+
+.works__section-head h2 {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: rgb(17 24 39);
+}
+
+.works__section-head span {
+  font-size: 0.75rem;
+  color: rgb(148 163 184);
+}
+
+:global(.dark .works__section-head h2) {
+  color: rgb(255 255 255);
 }
 
 .work-card {

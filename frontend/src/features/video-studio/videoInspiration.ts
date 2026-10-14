@@ -1,6 +1,8 @@
 // 灵感库模板：完整提示词 + 镜头思路 + 推荐参数，一键带入工作台。
 // 参数（时长/画幅/分辨率/参考素材）与工作台的请求字段一一对应。
 
+import { fetchOnlineInspirationsFromServer } from './videoArchiveApi'
+
 export interface VideoInspirationTemplate {
   slug: string
   title: string
@@ -201,15 +203,11 @@ export function videoInspirationCategories(): string[] {
   return Array.from(new Set(VIDEO_INSPIRATION_TEMPLATES.map((item) => item.category)))
 }
 
-/* --------------------------- 在线灵感（Civitai） ---------------------------
- * 公开接口 https://civitai.com/api/v1/images 支持 withMeta=true 取回提示词，
- * type=video 时返回 .mp4 直链 + 封面缩略图；接口和媒体 CDN 都返回
- * Access-Control-Allow-Origin: *，浏览器可以直接播放，不需要后端代理。
- *
- * 注意：civitai.com 在国内网络需要代理才能访问，所以调用失败要能优雅降级。
+/* ----------------------------- 在线灵感 -----------------------------
+ * 拉取与媒体回源都放在服务端（见 videoArchiveApi.ts）：第三方站点在国内网络
+ * 常不可达，服务端可以复用 update.proxy_url 里配好的代理，媒体再由本站代理转发，
+ * 于是访问者只需要能访问本站。
  */
-
-export const CIVITAI_IMAGES_ENDPOINT = 'https://civitai.com/api/v1/images'
 
 export interface OnlineInspirationItem {
   id: string
@@ -229,59 +227,30 @@ export interface OnlineInspirationItem {
 export interface FetchOnlineInspirationsOptions {
   limit?: number
   mediaType?: 'video' | 'image'
+  refresh?: boolean
   signal?: AbortSignal
-}
-
-function civitaiItemToOnlineInspiration(raw: any): OnlineInspirationItem | null {
-  const mediaUrl = String(raw?.url ?? '').trim()
-  const prompt = String(raw?.meta?.prompt ?? '').trim()
-  if (!mediaUrl || !prompt) return null
-  // 接口带了 nsfw 标记，宁可少几条也不要落到页面上。
-  if (raw?.nsfw === true || String(raw?.nsfwLevel ?? 'None') !== 'None') return null
-  const mediaType = raw?.type === 'video' ? 'video' : 'image'
-  const id = String(raw?.id ?? mediaUrl)
-  return {
-    id,
-    mediaType,
-    mediaUrl,
-    posterUrl: String(raw?.thumbnail?.url ?? '').trim(),
-    prompt,
-    negativePrompt: String(raw?.meta?.negativePrompt ?? '').trim(),
-    model: String(raw?.baseModel ?? '').trim(),
-    author: String(raw?.username ?? '').trim(),
-    width: Number(raw?.width ?? 0) || 0,
-    height: Number(raw?.height ?? 0) || 0,
-    likes: Number(raw?.stats?.likeCount ?? 0) || 0,
-    sourceUrl: `https://civitai.com/images/${id}`,
-  }
 }
 
 export async function fetchOnlineInspirations(
   options: FetchOnlineInspirationsOptions = {},
 ): Promise<OnlineInspirationItem[]> {
-  const limit = Math.min(Math.max(options.limit ?? 24, 1), 100)
-  const mediaType = options.mediaType ?? 'video'
-  const params = new URLSearchParams({
-    limit: String(limit),
-    nsfw: 'None',
-    withMeta: 'true',
-    type: mediaType,
-  })
-  const response = await fetch(`${CIVITAI_IMAGES_ENDPOINT}?${params.toString()}`, {
-    headers: { Accept: 'application/json' },
-    signal: options.signal,
-  })
-  if (!response.ok) throw new Error(`灵感源返回 ${response.status}`)
-  const payload = await response.json().catch(() => null)
-  const items = Array.isArray(payload?.items) ? payload.items : []
-  // 同一批里可能重复返回同一条（翻页边界），按 id 去重避免列表里出现重复卡片。
-  const seen = new Set<string>()
-  const normalized: OnlineInspirationItem[] = []
-  for (const raw of items) {
-    const item = civitaiItemToOnlineInspiration(raw)
-    if (!item || seen.has(item.id)) continue
-    seen.add(item.id)
-    normalized.push(item)
-  }
-  return normalized
+  const entries = await fetchOnlineInspirationsFromServer(
+    options.mediaType ?? 'video',
+    Math.min(Math.max(options.limit ?? 24, 1), 48),
+    options.refresh === true,
+  )
+  return entries.map((entry) => ({
+    id: String(entry.id),
+    mediaType: entry.media_type === 'image' ? 'image' : 'video',
+    mediaUrl: String(entry.media_url ?? ''),
+    posterUrl: String(entry.poster_url ?? ''),
+    prompt: String(entry.prompt ?? ''),
+    negativePrompt: String(entry.negative_prompt ?? ''),
+    model: String(entry.model ?? ''),
+    author: String(entry.author ?? ''),
+    width: Number(entry.width ?? 0) || 0,
+    height: Number(entry.height ?? 0) || 0,
+    likes: Number(entry.likes ?? 0) || 0,
+    sourceUrl: String(entry.source_url ?? ''),
+  }))
 }

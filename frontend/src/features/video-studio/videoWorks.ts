@@ -16,6 +16,8 @@ export interface VideoWorkRecord {
   generateAudio: boolean
   referenceCounts: { images: number; videos: number; audios: number }
   videoUrl: string
+  // 归档到对象存储后的长期地址（后端记录），换浏览器也能继续播放。
+  archivedUrl?: string
   createdAt: number
   status: VideoTaskStatus
   statusMessage: string
