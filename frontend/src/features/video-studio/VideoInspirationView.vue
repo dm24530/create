@@ -220,6 +220,7 @@
       :show="!!active"
       :title="active?.title || '镜头模板'"
       width="extra-wide"
+      :close-on-click-outside="true"
       @close="active = null"
     >
       <div v-if="active" class="detail">

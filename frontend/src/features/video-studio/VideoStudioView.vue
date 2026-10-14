@@ -341,6 +341,7 @@
       :show="!!previewTask"
       :title="previewTask?.model || '视频详情'"
       width="wide"
+      :close-on-click-outside="true"
       @close="closePreview"
     >
       <div v-if="previewTask" class="preview">

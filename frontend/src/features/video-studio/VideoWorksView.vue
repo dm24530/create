@@ -188,6 +188,7 @@
       :show="!!activeRecord"
       :title="activeRecord?.model || '作品详情'"
       width="wide"
+      :close-on-click-outside="true"
       @close="activeRecord = null"
     >
       <div v-if="activeRecord" class="work-detail">

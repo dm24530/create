@@ -39,9 +39,10 @@ function mountStudio() {
       stubs: {
         AppLayout: { template: '<div><slot /></div>' },
         BaseDialog: {
-          props: ['show', 'title'],
+          props: ['show', 'title', 'closeOnClickOutside'],
           emits: ['close'],
-          template: '<div v-if="show"><h3>{{ title }}</h3><slot /><slot name="footer" /></div>',
+          template:
+            '<div v-if="show"><button v-if="closeOnClickOutside" data-testid="dialog-backdrop" @click="$emit(\'close\')">backdrop</button><h3>{{ title }}</h3><slot /><slot name="footer" /></div>',
         },
         Icon: { template: '<span />' },
         RouterLink: { props: ['to'], template: '<a><slot /></a>' },
@@ -193,6 +194,22 @@ describe('VideoStudioView seedance generation', () => {
     await durationInput.trigger('blur')
 
     expect((durationInput.element as HTMLInputElement).value).toBe('15')
+  })
+
+  // 查看类弹窗点外面关掉，带输入的表单弹窗不能：误点会丢掉刚填的链接/类型。
+  it('keeps the reference-material dialog open when clicking outside', async () => {
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/models')) return jsonResponse({ data: [] })
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountStudio()
+    await flushPromises()
+
+    await wrapper.get('[data-testid="video-reference-trigger"]').trigger('click')
+    expect(wrapper.text()).toContain('添加参考素材')
+    expect(wrapper.find('[data-testid="dialog-backdrop"]').exists()).toBe(false)
   })
 
   it('archives a finished video and switches the card to the stored copy', async () => {

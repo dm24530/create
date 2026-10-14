@@ -41,9 +41,11 @@ vi.mock('vue-router', () => ({
 const globalStubs = {
   AppLayout: { template: '<div><slot /></div>' },
   BaseDialog: {
-    props: ['show', 'title'],
+    props: ['show', 'title', 'closeOnClickOutside'],
     emits: ['close'],
-    template: '<div v-if="show"><h3>{{ title }}</h3><slot /><slot name="footer" /></div>',
+    // 只有打开 close-on-click-outside 时才有遮罩点击区域，用来验证"点周围关闭"。
+    template:
+      '<div v-if="show"><button v-if="closeOnClickOutside" data-testid="dialog-backdrop" @click="$emit(\'close\')">backdrop</button><h3>{{ title }}</h3><slot /><slot name="footer" /></div>',
   },
   Icon: { template: '<span />' },
   RouterLink: { props: ['to'], template: '<a><slot /></a>' },
@@ -103,6 +105,16 @@ describe('VideoInspirationView', () => {
       path: '/video-studio',
       query: { inspiration: 'perfume-light-reveal' },
     })
+  })
+
+  it('closes the template detail when clicking outside, like the X button', async () => {
+    const wrapper = mount(VideoInspirationView, { global: { stubs: globalStubs } })
+    await wrapper.get('[data-testid="template-perfume-light-reveal"]').get('button').trigger('click')
+    // 弹窗标题用 h3，卡片标题用 h2：用它判断弹窗开/关，避免和卡片里的提示词混淆。
+    expect(wrapper.findAll('h3').length).toBe(1)
+
+    await wrapper.get('[data-testid="dialog-backdrop"]').trigger('click')
+    expect(wrapper.findAll('h3').length).toBe(0)
   })
 })
 
