@@ -271,7 +271,7 @@
             :class="{ 'segmented__item--active': referenceKind === option.value }"
             :aria-selected="referenceKind === option.value"
             :data-testid="`reference-kind-${option.value}`"
-            @click="referenceKind = option.value"
+            @click="selectReferenceKind(option.value)"
           >
             <Icon :name="option.icon" size="sm" />
             <span>{{ option.label }}</span>
@@ -611,8 +611,6 @@ async function loadData() {
     })
 
   await Promise.allSettled([keysPromise, settingsPromise])
-  applyInspirationFromRoute()
-  resumeWorks()
 }
 
 // 灵感库「带入工作台」通过 query 传递模板标识，这里把参数写进编辑器。
@@ -653,6 +651,8 @@ function resumeWorks() {
   works.value = records
   for (const record of records) {
     if (record.status === 'succeeded' || record.status === 'failed') continue
+    // 这个会话里已经挂着的任务不要再挂一次，否则会重复弹卡片、重复轮询。
+    if (tasks.value.some((task) => task.localId === record.id)) continue
     const task = taskFromRecord(record)
     tasks.value.push(task)
     void runTask(task, null)
@@ -809,6 +809,12 @@ function closeReferenceDialog() {
 
 function referenceCount(kind: 'image' | 'video' | 'audio'): number {
   return references.value.filter((asset) => asset.kind === kind).length
+}
+
+// 切换参考素材类型时清掉上一种类型留下的报错（比如"只支持 PNG 图片"）。
+function selectReferenceKind(kind: 'image' | 'video' | 'audio') {
+  referenceKind.value = kind
+  referenceDialogError.value = ''
 }
 
 function addReference(asset: Omit<VideoReferenceAsset, 'id'>): boolean {
@@ -1075,7 +1081,13 @@ watch([selectedKeyId, apiBaseUrl], () => {
   void loadModels()
 })
 
-onMounted(loadData)
+// 灵感参数与未完成任务只在进入页面时处理一次：刷新密钥/模型不能覆盖用户
+// 已经改过的提示词，也不能把同一份未完成任务重复挂起来。
+onMounted(async () => {
+  await loadData()
+  applyInspirationFromRoute()
+  resumeWorks()
+})
 
 onBeforeUnmount(() => {
   for (const task of tasks.value) {

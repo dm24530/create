@@ -353,7 +353,6 @@ async function loadVideo(record: VideoWorkRecord) {
 
 async function refreshRecord(record: VideoWorkRecord) {
   await loadVideo(record)
-  if (!errorMessage.value) errorMessage.value = ''
 }
 
 function updateRecord(

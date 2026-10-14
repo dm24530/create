@@ -274,7 +274,14 @@ export async function fetchOnlineInspirations(
   if (!response.ok) throw new Error(`灵感源返回 ${response.status}`)
   const payload = await response.json().catch(() => null)
   const items = Array.isArray(payload?.items) ? payload.items : []
-  return items
-    .map(civitaiItemToOnlineInspiration)
-    .filter((item: OnlineInspirationItem | null): item is OnlineInspirationItem => item !== null)
+  // 同一批里可能重复返回同一条（翻页边界），按 id 去重避免列表里出现重复卡片。
+  const seen = new Set<string>()
+  const normalized: OnlineInspirationItem[] = []
+  for (const raw of items) {
+    const item = civitaiItemToOnlineInspiration(raw)
+    if (!item || seen.has(item.id)) continue
+    seen.add(item.id)
+    normalized.push(item)
+  }
+  return normalized
 }

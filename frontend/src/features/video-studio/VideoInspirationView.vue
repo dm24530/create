@@ -285,7 +285,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 import AppLayout from '@/components/layout/AppLayout.vue'
@@ -481,6 +481,11 @@ function useActive() {
 async function copyPrompt(prompt: string) {
   await copyToClipboard(prompt, '提示词已复制')
 }
+
+// 离开页面时取消还在飞的请求，避免回来后把旧结果覆盖到新列表上。
+onBeforeUnmount(() => {
+  onlineAbort?.abort()
+})
 </script>
 
 <style scoped>

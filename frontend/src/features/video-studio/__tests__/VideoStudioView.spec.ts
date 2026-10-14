@@ -2,6 +2,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import VideoStudioView from '../VideoStudioView.vue'
+import { saveVideoWork } from '../videoWorks'
 
 const { listKeys, getPublicSettings, copyToClipboard, routeQuery } = vi.hoisted(() => ({
   listKeys: vi.fn(),
@@ -338,5 +339,88 @@ describe('VideoStudioView inspiration handoff', () => {
     expect(wrapper.get('[data-testid="inspiration-hint"]').text()).toContain('已带入在线灵感提示词')
     // 读完即清，避免下次进来又被旧提示词覆盖。
     expect(sessionStorage.getItem('sub2api:video-studio:pending-prompt')).toBeNull()
+  })
+
+  it('keeps the edited prompt when the toolbar refresh reloads keys and models', async () => {
+    routeQuery.value = { inspiration: 'clay-fox-starlight' }
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/models')) return jsonResponse({ data: [{ id: 'seedance-2-720p' }] })
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountStudio()
+    await flushPromises()
+    await flushPromises()
+    expect((wrapper.get('textarea').element as HTMLTextAreaElement).value).toContain('手工黏土动画风格')
+
+    await wrapper.get('textarea').setValue('我自己改过的镜头描述')
+    await wrapper.get('[data-testid="video-refresh"]').trigger('click')
+    await flushPromises()
+    await flushPromises()
+
+    // 刷新只该重载密钥和模型，不能把模板提示词再套一遍覆盖用户输入。
+    expect((wrapper.get('textarea').element as HTMLTextAreaElement).value).toBe('我自己改过的镜头描述')
+  })
+})
+
+describe('VideoStudioView unfinished work resumption', () => {
+  beforeEach(() => {
+    resetMocks()
+    localStorage.clear()
+    vi.stubGlobal('fetch', vi.fn())
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      value: { hostname: 'localhost' },
+    })
+  })
+
+  it('does not mount a second card for the same unfinished record on refresh', async () => {
+    saveVideoWork({
+      id: 'vw_pending',
+      provider: 'seedance',
+      requestId: 'task-pending',
+      keyId: 7,
+      model: 'seedance-2-720p',
+      prompt: '还没跑完的镜头',
+      durationSeconds: 5,
+      resolution: '720p',
+      aspectRatio: '16:9',
+      generateAudio: false,
+      referenceCounts: { images: 0, videos: 0, audios: 0 },
+      videoUrl: '',
+      createdAt: Date.now(),
+      status: 'running',
+      statusMessage: '生成中',
+    })
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/models')) return jsonResponse({ data: [{ id: 'seedance-2-720p' }] })
+      if (url.includes('/contents/generations/tasks/')) {
+        // 立刻收敛成失败，避免测试里留着一条长轮询。
+        return jsonResponse({ status: 'failed', failure_reason: 'test' })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountStudio()
+    await flushPromises()
+    await flushPromises()
+    expect(wrapper.findAll('article').length).toBe(1)
+    const pollsAfterMount = fetchMock.mock.calls.filter((call) =>
+      String(call[0]).includes('/contents/generations/tasks/'),
+    ).length
+    expect(pollsAfterMount).toBe(1)
+
+    await wrapper.get('[data-testid="video-refresh"]').trigger('click')
+    await flushPromises()
+    await flushPromises()
+
+    // 未完成的任务在刷新后仍然只占一张卡，也不会再发起第二路轮询。
+    expect(wrapper.findAll('article').length).toBe(1)
+    expect(
+      fetchMock.mock.calls.filter((call) => String(call[0]).includes('/contents/generations/tasks/')).length,
+    ).toBe(pollsAfterMount)
   })
 })
