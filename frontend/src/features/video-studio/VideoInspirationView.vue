@@ -71,6 +71,14 @@
           >
             <button type="button" class="template-card__poster" @click="openTemplate(template)">
               <span class="template-card__frame" :style="posterStyle(template)">
+                <img
+                  v-if="templatePoster(template)"
+                  :src="templatePoster(template)"
+                  alt=""
+                  loading="lazy"
+                  class="template-card__poster-image"
+                  @error="markPosterFailed(template.slug)"
+                />
                 <span class="template-card__play">
                   <Icon name="play" size="md" />
                 </span>
@@ -243,6 +251,12 @@
             data-testid="inspiration-image"
           />
           <span v-else class="detail__placeholder" :style="active.placeholderStyle">
+            <img
+              v-if="active.posterPreviewUrl"
+              :src="active.posterPreviewUrl"
+              alt=""
+              class="detail__placeholder-image"
+            />
             <span class="template-card__play">
               <Icon name="play" size="md" />
             </span>
@@ -345,6 +359,7 @@ import {
   type VideoInspirationTemplate,
 } from './videoInspiration'
 import { fetchOnlineInspirationFeed } from './videoArchiveApi'
+import { inspirationMediaProxyUrl } from './videoArchiveApi'
 
 interface MetaRow {
   label: string
@@ -365,6 +380,7 @@ interface ActiveInspiration {
   checkpoints: string
   requirements: string[]
   placeholderStyle: Record<string, string>
+  posterPreviewUrl: string
   template: VideoInspirationTemplate | null
 }
 
@@ -376,6 +392,8 @@ const { copyToClipboard } = useClipboard()
 const source = ref<'curated' | 'online'>('curated')
 const activeCategory = ref('')
 const active = ref<ActiveInspiration | null>(null)
+// 分镜图取不到时记下来，退回色板底图，避免一直重试破图。
+const failedPosters = ref<Record<string, boolean>>({})
 
 const onlineItems = ref<OnlineInspirationItem[]>([])
 const onlineLoading = ref(false)
@@ -426,6 +444,15 @@ function posterStyle(template: VideoInspirationTemplate) {
   }
 }
 
+function templatePoster(template: VideoInspirationTemplate): string {
+  if (!template.storyboard || failedPosters.value[template.slug]) return ''
+  return inspirationMediaProxyUrl(template.storyboard)
+}
+
+function markPosterFailed(slug: string) {
+  failedPosters.value = { ...failedPosters.value, [slug]: true }
+}
+
 function onlineFrameStyle(item: OnlineInspirationItem) {
   const ratio = item.width > 0 && item.height > 0
     ? `${item.width} / ${item.height}`
@@ -464,6 +491,7 @@ function openTemplate(template: VideoInspirationTemplate) {
     checkpoints: template.checkpoints,
     requirements: requirementList(template),
     placeholderStyle: posterStyle(template),
+    posterPreviewUrl: templatePoster(template),
     template,
   }
 }
@@ -488,6 +516,7 @@ function openOnline(item: OnlineInspirationItem) {
     checkpoints: '',
     requirements: [],
     placeholderStyle: onlineFrameStyle(item),
+    posterPreviewUrl: '',
     template: null,
   }
 }
@@ -946,6 +975,16 @@ onBeforeUnmount(() => {
   width: 100%;
   align-items: center;
   justify-content: center;
+  overflow: hidden;
+}
+
+.detail__placeholder-image {
+  position: absolute;
+  inset: 0;
+  height: 100%;
+  width: 100%;
+  object-fit: cover;
+  opacity: 0.85;
 }
 
 .detail__panel {

@@ -22,6 +22,8 @@ vi.mock('../videoArchiveApi', () => ({
   listArchivedVideos,
   deleteArchivedVideo,
   fetchOnlineInspirationFeed,
+  inspirationMediaProxyUrl: (rawUrl: string) =>
+    `/api/v1/public/video-inspiration/media?u=${encodeURIComponent(rawUrl)}`,
   archiveVideo: vi.fn(),
 }))
 
@@ -115,6 +117,21 @@ describe('VideoInspirationView', () => {
 
     await wrapper.get('[data-testid="dialog-backdrop"]').trigger('click')
     expect(wrapper.findAll('h3').length).toBe(0)
+  })
+
+  // 模板库从自建灵感站接过来，卡片示例图（分镜图）经本站代理加载。
+  it('loads the template storyboard through the media proxy', async () => {
+    const wrapper = mount(VideoInspirationView, { global: { stubs: globalStubs } })
+    const poster = wrapper.get('[data-testid="template-perfume-light-reveal"] img')
+    expect(poster.attributes('src')).toBe(
+      '/api/v1/public/video-inspiration/media?u=' +
+        encodeURIComponent('https://gen.nbility.ai/media/video-storyboards/perfume-light-reveal.webp'),
+    )
+    expect(poster.attributes('loading')).toBe('lazy')
+
+    // 分镜图取不到时退回色板底图，不再留破图。
+    await poster.trigger('error')
+    expect(wrapper.find('[data-testid="template-perfume-light-reveal"] img').exists()).toBe(false)
   })
 })
 

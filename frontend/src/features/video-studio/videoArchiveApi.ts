@@ -40,6 +40,15 @@ export async function deleteArchivedVideo(id: string): Promise<void> {
   await apiClient.delete(`/video-studio/gallery/${encodeURIComponent(id)}`)
 }
 
+// 远端素材（在线灵感、模板分镜图）统一走本站代理：
+// 页面只有一个来源域名，也顺带拿到服务端缓存。
+export function inspirationMediaProxyUrl(rawUrl: string): string {
+  const trimmed = rawUrl.trim()
+  if (!trimmed) return ''
+  if (trimmed.startsWith('/')) return trimmed
+  return `/api/v1/public/video-inspiration/media?u=${encodeURIComponent(trimmed)}`
+}
+
 export interface OnlineInspirationEntry {
   id: string
   media_type: 'video' | 'image'

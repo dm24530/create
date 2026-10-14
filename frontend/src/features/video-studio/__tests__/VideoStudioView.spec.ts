@@ -18,6 +18,8 @@ vi.mock('../videoArchiveApi', () => ({
   listArchivedVideos: vi.fn().mockResolvedValue([]),
   deleteArchivedVideo: vi.fn(),
   fetchOnlineInspirationsFromServer: vi.fn().mockResolvedValue([]),
+  fetchOnlineInspirationFeed: vi.fn().mockResolvedValue({ items: [] }),
+  inspirationMediaProxyUrl: (rawUrl: string) => `/proxied?u=${encodeURIComponent(rawUrl)}`,
 }))
 
 vi.mock('@/api', () => ({
