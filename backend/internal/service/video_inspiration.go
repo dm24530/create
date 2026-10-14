@@ -116,6 +116,11 @@ func (s *VideoInspirationService) MirrorToStorage(ctx context.Context, rawURL st
 	if s == nil || s.mirror == nil || strings.TrimSpace(rawURL) == "" {
 		return "", false
 	}
+	// 这个入口是免登录的，转存前必须先过主机白名单，否则配了对象存储之后
+	// 任何人都能用它让服务器去抓任意地址再把结果存进桶里。
+	if !isAllowedInspirationMediaURL(rawURL) {
+		return "", false
+	}
 	return s.mirror.MirrorRemoteImage(ctx, rawURL)
 }
 
@@ -291,6 +296,27 @@ func inspirationMediaProxyPath(rawURL string) string {
 	return "/api/v1/public/video-inspiration/media?u=" + url.QueryEscape(rawURL)
 }
 
+// isAllowedInspirationMediaHost 判断解析后的地址是否落在灵感源 CDN 白名单内。
+func isAllowedInspirationMediaHost(target *url.URL) bool {
+	if target == nil {
+		return false
+	}
+	if target.Scheme != "http" && target.Scheme != "https" {
+		return false
+	}
+	_, ok := allowedInspirationMediaHosts[strings.ToLower(target.Hostname())]
+	return ok
+}
+
+// isAllowedInspirationMediaURL 是上面那个判断的字符串入口，供转存路径复用。
+func isAllowedInspirationMediaURL(rawURL string) bool {
+	target, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return false
+	}
+	return isAllowedInspirationMediaHost(target)
+}
+
 func (s *VideoInspirationService) FetchMedia(ctx context.Context, rawURL, rangeHeader string) (*http.Response, error) {
 	if s == nil || s.client == nil {
 		return nil, fmt.Errorf("inspiration media proxy is unavailable")
@@ -302,7 +328,7 @@ func (s *VideoInspirationService) FetchMedia(ctx context.Context, rawURL, rangeH
 	if target.Scheme != "http" && target.Scheme != "https" {
 		return nil, fmt.Errorf("unsupported media scheme")
 	}
-	if _, ok := allowedInspirationMediaHosts[strings.ToLower(target.Hostname())]; !ok {
+	if !isAllowedInspirationMediaHost(target) {
 		return nil, fmt.Errorf("media host is not allowed")
 	}
 

@@ -47,7 +47,8 @@ func TestNormalizeOnlineInspirationKeepsOnlyUsableItems(t *testing.T) {
 
 // 媒体代理只允许回源到灵感源 CDN，否则就成了任意 URL 代理（SSRF）。
 func TestFetchMediaRejectsHostsOutsideAllowlist(t *testing.T) {
-	svc := NewVideoInspirationService("", true)
+	// 这个用例只关心主机白名单，对象存储镜像留空走代理转发分支。
+	svc := NewVideoInspirationService("", true, nil)
 
 	_, err := svc.FetchMedia(context.Background(), "http://127.0.0.1:8080/health", "")
 	require.Error(t, err)
@@ -56,6 +57,39 @@ func TestFetchMediaRejectsHostsOutsideAllowlist(t *testing.T) {
 	_, err = svc.FetchMedia(context.Background(), "file:///etc/passwd", "")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "unsupported media scheme")
+}
+
+type recordingInspirationMirror struct {
+	calls []string
+}
+
+func (r *recordingInspirationMirror) MirrorRemoteImage(_ context.Context, rawURL string) (string, bool) {
+	r.calls = append(r.calls, rawURL)
+	return "https://cdn.example.com/mirrored.png", true
+}
+
+// 转存入口同样是免登录的：白名单必须挡在抓取之前，
+// 否则配好对象存储后任何人都能借这台服务器抓任意地址并存进桶里。
+func TestMirrorToStorageStaysInsideMediaAllowlist(t *testing.T) {
+	mirror := &recordingInspirationMirror{}
+	svc := NewVideoInspirationService("", true, mirror)
+
+	for _, blocked := range []string{
+		"http://127.0.0.1:8080/health",
+		"http://169.254.169.254/latest/meta-data/",
+		"file:///etc/passwd",
+		"",
+	} {
+		target, ok := svc.MirrorToStorage(context.Background(), blocked)
+		require.False(t, ok, "blocked url %q must not be mirrored", blocked)
+		require.Empty(t, target)
+	}
+	require.Empty(t, mirror.calls)
+
+	target, ok := svc.MirrorToStorage(context.Background(), "https://image.civitai.com/a/clip.mp4")
+	require.True(t, ok)
+	require.Equal(t, "https://cdn.example.com/mirrored.png", target)
+	require.Equal(t, []string{"https://image.civitai.com/a/clip.mp4"}, mirror.calls)
 }
 
 func TestNormalizeInspirationMediaTypeDefaultsToVideo(t *testing.T) {
