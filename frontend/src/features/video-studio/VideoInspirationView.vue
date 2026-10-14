@@ -99,20 +99,63 @@
 
       <template v-else>
         <div class="online-bar">
-          <span class="online-bar__hint">
-            来自公开创作社区（Civitai）的真实作品与提示词，由服务端拉取并经本站代理，
-            访问者不需要能直连第三方站点。
-          </span>
-          <button
-            type="button"
-            class="secondary-button"
-            data-testid="online-refresh"
-            :disabled="onlineLoading"
-            @click="loadOnline(true)"
-          >
-            <Icon name="refresh" size="sm" :class="{ 'is-spinning': onlineLoading }" />
-            <span>{{ onlineLoading ? '加载中' : '换一批' }}</span>
-          </button>
+          <div class="online-bar__controls">
+            <div class="segmented segmented--compact" role="tablist" aria-label="素材类型">
+              <button
+                v-for="option in mediaTypeOptions"
+                :key="option.value"
+                type="button"
+                role="tab"
+                class="segmented__item"
+                :class="{ 'segmented__item--active': onlineQuery.mediaType === option.value }"
+                :data-testid="`online-media-${option.value}`"
+                @click="setOnlineQuery({ mediaType: option.value })"
+              >
+                {{ option.label }}
+              </button>
+            </div>
+            <div class="segmented segmented--compact" role="tablist" aria-label="排序">
+              <button
+                v-for="option in sortOptions"
+                :key="option.value"
+                type="button"
+                role="tab"
+                class="segmented__item"
+                :class="{ 'segmented__item--active': onlineQuery.sort === option.value }"
+                :data-testid="`online-sort-${option.value}`"
+                @click="setOnlineQuery({ sort: option.value })"
+              >
+                {{ option.label }}
+              </button>
+            </div>
+            <div class="segmented segmented--compact" role="tablist" aria-label="时间范围">
+              <button
+                v-for="option in periodOptions"
+                :key="option.value"
+                type="button"
+                role="tab"
+                class="segmented__item"
+                :class="{ 'segmented__item--active': onlineQuery.period === option.value }"
+                :data-testid="`online-period-${option.value}`"
+                @click="setOnlineQuery({ period: option.value })"
+              >
+                {{ option.label }}
+              </button>
+            </div>
+          </div>
+          <div class="online-bar__actions">
+            <span class="online-bar__hint" data-testid="online-fetched-at">{{ onlineFetchedLabel }}</span>
+            <button
+              type="button"
+              class="secondary-button"
+              data-testid="online-refresh"
+              :disabled="onlineLoading"
+              @click="loadOnline(true)"
+            >
+              <Icon name="refresh" size="sm" :class="{ 'is-spinning': onlineLoading }" />
+              <span>{{ onlineLoading ? '加载中' : '换一批' }}</span>
+            </button>
+          </div>
         </div>
 
         <div v-if="onlineError" class="online-error" data-testid="online-error">
@@ -286,7 +329,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from 'vue'
+import { computed, onBeforeUnmount, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 import AppLayout from '@/components/layout/AppLayout.vue'
@@ -296,11 +339,11 @@ import { useClipboard } from '@/composables/useClipboard'
 
 import {
   VIDEO_INSPIRATION_TEMPLATES,
-  fetchOnlineInspirations,
   videoInspirationCategories,
   type OnlineInspirationItem,
   type VideoInspirationTemplate,
 } from './videoInspiration'
+import { fetchOnlineInspirationFeed } from './videoArchiveApi'
 
 interface MetaRow {
   label: string
@@ -336,7 +379,36 @@ const active = ref<ActiveInspiration | null>(null)
 const onlineItems = ref<OnlineInspirationItem[]>([])
 const onlineLoading = ref(false)
 const onlineError = ref('')
+const onlineFetchedAt = ref(0)
 let onlineAbort: AbortController | null = null
+
+// 公开社区每天都有新作品：默认「视频 + 最新 + 本周」，按需切到图片或当天。
+const onlineQuery = reactive<{ mediaType: 'video' | 'image'; sort: 'newest' | 'reactions'; period: 'day' | 'week' | 'month' | 'all' }>({
+  mediaType: 'video',
+  sort: 'newest',
+  period: 'week',
+})
+const mediaTypeOptions = [
+  { value: 'video' as const, label: '视频' },
+  { value: 'image' as const, label: '图片' },
+]
+const sortOptions = [
+  { value: 'newest' as const, label: '最新' },
+  { value: 'reactions' as const, label: '最热' },
+]
+const periodOptions = [
+  { value: 'day' as const, label: '今天' },
+  { value: 'week' as const, label: '本周' },
+  { value: 'month' as const, label: '本月' },
+  { value: 'all' as const, label: '全部' },
+]
+const onlineFetchedLabel = computed(() => {
+  if (onlineLoading.value) return '正在拉取…'
+  if (!onlineFetchedAt.value) return '来自公开创作社区，服务端拉取并经本站代理'
+  const date = new Date(onlineFetchedAt.value * 1000)
+  const pad = (value: number) => String(value).padStart(2, '0')
+  return `更新于 ${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
+})
 
 const categories = videoInspirationCategories()
 const filteredTemplates = computed(() =>
@@ -426,10 +498,32 @@ async function loadOnline(refresh = false) {
   onlineLoading.value = true
   onlineError.value = ''
   try {
-    const items = await fetchOnlineInspirations({ limit: 24, mediaType: 'video', refresh, signal: controller.signal })
+    const feed = await fetchOnlineInspirationFeed({
+      mediaType: onlineQuery.mediaType,
+      sort: onlineQuery.sort,
+      period: onlineQuery.period,
+      limit: 24,
+      refresh,
+    })
     if (controller.signal.aborted) return
-    onlineItems.value = items
-    if (!items.length) onlineError.value = '这次没有拉到带提示词的视频作品，点「换一批」再试。'
+    onlineFetchedAt.value = feed.fetched_at
+    onlineItems.value = feed.items.map((entry) => ({
+      id: String(entry.id),
+      mediaType: entry.media_type === 'image' ? 'image' : 'video',
+      mediaUrl: String(entry.media_url ?? ''),
+      posterUrl: String(entry.poster_url ?? ''),
+      prompt: String(entry.prompt ?? ''),
+      negativePrompt: String(entry.negative_prompt ?? ''),
+      model: String(entry.model ?? ''),
+      author: String(entry.author ?? ''),
+      width: Number(entry.width ?? 0) || 0,
+      height: Number(entry.height ?? 0) || 0,
+      likes: Number(entry.likes ?? 0) || 0,
+      sourceUrl: String(entry.source_url ?? ''),
+    }))
+    if (!onlineItems.value.length) {
+      onlineError.value = '这个时间范围里没有拉到带提示词的作品，换个时间范围或点「换一批」。'
+    }
   } catch (error) {
     if (controller.signal.aborted) return
     // 拉取在服务端进行：失败通常是服务器出网不通（可配 update.proxy_url 代理）。
@@ -440,6 +534,11 @@ async function loadOnline(refresh = false) {
   } finally {
     if (!controller.signal.aborted) onlineLoading.value = false
   }
+}
+
+function setOnlineQuery(patch: Partial<typeof onlineQuery>) {
+  Object.assign(onlineQuery, patch)
+  void loadOnline()
 }
 
 function switchSource(next: 'curated' | 'online') {
@@ -598,6 +697,24 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
+}
+
+.online-bar__controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.online-bar__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.segmented--compact .segmented__item {
+  padding: 0.25rem 0.6rem;
+  font-size: 0.75rem;
 }
 
 .online-bar__hint {

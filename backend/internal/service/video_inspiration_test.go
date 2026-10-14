@@ -63,3 +63,20 @@ func TestNormalizeInspirationMediaTypeDefaultsToVideo(t *testing.T) {
 	require.Equal(t, "video", normalizeInspirationMediaType(""))
 	require.Equal(t, "video", normalizeInspirationMediaType("something-else"))
 }
+
+// 排序与时间范围要映射成灵感源认识的参数名，非法值回落而不是透传。
+func TestInspirationSortAndPeriodMapping(t *testing.T) {
+	require.Equal(t, "reactions", normalizeInspirationSort("REACTIONS"))
+	require.Equal(t, "newest", normalizeInspirationSort(""))
+	require.Equal(t, "newest", normalizeInspirationSort("weird"))
+	require.Equal(t, "Most Reactions", inspirationSortParam("reactions"))
+	require.Equal(t, "Newest", inspirationSortParam("newest"))
+
+	require.Equal(t, "day", normalizeInspirationPeriod("DAY"))
+	require.Equal(t, "week", normalizeInspirationPeriod(""))
+	require.Equal(t, "week", normalizeInspirationPeriod("yesterday"))
+	require.Equal(t, "Day", inspirationPeriodParam("day"))
+	require.Equal(t, "Week", inspirationPeriodParam("week"))
+	require.Equal(t, "Month", inspirationPeriodParam("month"))
+	require.Equal(t, "AllTime", inspirationPeriodParam("all"))
+}

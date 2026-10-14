@@ -24,8 +24,13 @@ func NewVideoInspirationHandler(inspiration *service.VideoInspirationService) *V
 func (h *VideoInspirationHandler) Online(c *gin.Context) {
 	limit, _ := strconv.Atoi(strings.TrimSpace(c.DefaultQuery("limit", "24")))
 	// refresh=1 绕过缓存：后台的「换一批」要真的能换到新内容。
-	forceRefresh := strings.TrimSpace(c.Query("refresh")) == "1"
-	items, err := h.inspiration.Online(c.Request.Context(), c.Query("type"), limit, forceRefresh)
+	feed, err := h.inspiration.Online(c.Request.Context(), service.InspirationQuery{
+		MediaType: c.Query("type"),
+		Sort:      c.Query("sort"),
+		Period:    c.Query("period"),
+		Limit:     limit,
+		Refresh:   strings.TrimSpace(c.Query("refresh")) == "1",
+	})
 	if err != nil {
 		response.ErrorFrom(c, infraerrors.New(
 			http.StatusBadGateway,
@@ -34,10 +39,10 @@ func (h *VideoInspirationHandler) Online(c *gin.Context) {
 		))
 		return
 	}
-	if items == nil {
-		items = []service.OnlineInspirationItem{}
+	if feed.Items == nil {
+		feed.Items = []service.OnlineInspirationItem{}
 	}
-	response.Success(c, gin.H{"items": items})
+	response.Success(c, feed)
 }
 
 // Media 代理第三方素材（视频/封面）。

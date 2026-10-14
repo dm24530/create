@@ -12,16 +12,16 @@ const { listKeys, getPublicSettings, copyToClipboard, push } = vi.hoisted(() => 
   push: vi.fn(),
 }))
 
-const { listArchivedVideos, deleteArchivedVideo, fetchOnlineInspirationsFromServer } = vi.hoisted(() => ({
+const { listArchivedVideos, deleteArchivedVideo, fetchOnlineInspirationFeed } = vi.hoisted(() => ({
   listArchivedVideos: vi.fn(),
   deleteArchivedVideo: vi.fn(),
-  fetchOnlineInspirationsFromServer: vi.fn(),
+  fetchOnlineInspirationFeed: vi.fn(),
 }))
 
 vi.mock('../videoArchiveApi', () => ({
   listArchivedVideos,
   deleteArchivedVideo,
-  fetchOnlineInspirationsFromServer,
+  fetchOnlineInspirationFeed,
   archiveVideo: vi.fn(),
 }))
 
@@ -107,39 +107,53 @@ describe('VideoInspirationView', () => {
 })
 
 describe('VideoInspirationView online source', () => {
-  const onlineItems = [
-    {
-      id: '60183831',
-      media_type: 'video' as const,
-      media_url: '/api/v1/public/video-inspiration/media?u=clip.mp4',
-      poster_url: '/api/v1/public/video-inspiration/media?u=thumb.jpeg',
-      prompt: '动物耳朵女孩的微笑，头发轻轻飘动，耳朵微微颤动。',
-      negative_prompt: 'blurry, watermark',
-      model: 'Illustrious',
-      author: 'HshiKoi',
-      width: 1080,
-      height: 1920,
-      likes: 5989,
-      source_url: 'https://civitai.com/images/60183831',
-    },
-  ]
+  const onlineFeed = {
+    items: [
+      {
+        id: '60183831',
+        media_type: 'video' as const,
+        media_url: '/api/v1/public/video-inspiration/media?u=clip.mp4',
+        poster_url: '/api/v1/public/video-inspiration/media?u=thumb.jpeg',
+        prompt: '动物耳朵女孩的微笑，头发轻轻飘动，耳朵微微颤动。',
+        negative_prompt: 'blurry, watermark',
+        model: 'Illustrious',
+        author: 'HshiKoi',
+        width: 1080,
+        height: 1920,
+        likes: 5989,
+        source_url: 'https://civitai.com/images/60183831',
+      },
+    ],
+    source: 'civitai',
+    media_type: 'video',
+    sort: 'newest',
+    period: 'week',
+    fetched_at: 1760400000,
+    cached: false,
+  }
 
   beforeEach(() => {
     push.mockReset()
     copyToClipboard.mockReset()
     copyToClipboard.mockResolvedValue(true)
-    fetchOnlineInspirationsFromServer.mockReset()
+    fetchOnlineInspirationFeed.mockReset()
   })
 
   it('plays the sample video next to its prompt and copies the prompt', async () => {
-    fetchOnlineInspirationsFromServer.mockResolvedValue(onlineItems)
+    fetchOnlineInspirationFeed.mockResolvedValue(onlineFeed)
 
     const wrapper = mount(VideoInspirationView, { global: { stubs: globalStubs } })
     await wrapper.get('[data-testid="inspiration-source-online"]').trigger('click')
     await flushPromises()
 
-    // 拉取走本站后端，浏览器不再直连第三方站点。
-    expect(fetchOnlineInspirationsFromServer).toHaveBeenCalledWith('video', 24, false)
+    // 拉取走本站后端，浏览器不再直连第三方站点；默认按「最新」取，做出日更效果。
+    expect(fetchOnlineInspirationFeed).toHaveBeenCalledWith({
+      mediaType: 'video',
+      sort: 'newest',
+      period: 'week',
+      limit: 24,
+      refresh: false,
+    })
 
     const card = wrapper.get('[data-testid="online-60183831"]')
     expect(card.text()).toContain('Illustrious')
@@ -158,7 +172,7 @@ describe('VideoInspirationView online source', () => {
   })
 
   it('explains an unreachable source instead of showing an empty page', async () => {
-    fetchOnlineInspirationsFromServer.mockRejectedValue(new Error('online inspiration source is unreachable'))
+    fetchOnlineInspirationFeed.mockRejectedValue(new Error('online inspiration source is unreachable'))
 
     const wrapper = mount(VideoInspirationView, { global: { stubs: globalStubs } })
     await wrapper.get('[data-testid="inspiration-source-online"]').trigger('click')
@@ -170,7 +184,7 @@ describe('VideoInspirationView online source', () => {
   })
 
   it('hands an online prompt to the studio without a long query string', async () => {
-    fetchOnlineInspirationsFromServer.mockResolvedValue(onlineItems)
+    fetchOnlineInspirationFeed.mockResolvedValue(onlineFeed)
 
     const wrapper = mount(VideoInspirationView, { global: { stubs: globalStubs } })
     await wrapper.get('[data-testid="inspiration-source-online"]').trigger('click')
@@ -187,7 +201,7 @@ describe('VideoInspirationView online source', () => {
   })
 
   it('bypasses the server cache when asking for another batch', async () => {
-    fetchOnlineInspirationsFromServer.mockResolvedValue(onlineItems)
+    fetchOnlineInspirationFeed.mockResolvedValue(onlineFeed)
 
     const wrapper = mount(VideoInspirationView, { global: { stubs: globalStubs } })
     await wrapper.get('[data-testid="inspiration-source-online"]').trigger('click')
@@ -196,8 +210,26 @@ describe('VideoInspirationView online source', () => {
     await flushPromises()
 
     // 首次加载走缓存；点「换一批」必须要求服务端重新拉取。
-    expect(fetchOnlineInspirationsFromServer).toHaveBeenNthCalledWith(1, 'video', 24, false)
-    expect(fetchOnlineInspirationsFromServer).toHaveBeenNthCalledWith(2, 'video', 24, true)
+    expect(fetchOnlineInspirationFeed).toHaveBeenNthCalledWith(1, expect.objectContaining({ refresh: false }))
+    expect(fetchOnlineInspirationFeed).toHaveBeenNthCalledWith(2, expect.objectContaining({ refresh: true }))
+  })
+
+  it('reloads with the chosen media type and period', async () => {
+    fetchOnlineInspirationFeed.mockResolvedValue(onlineFeed)
+
+    const wrapper = mount(VideoInspirationView, { global: { stubs: globalStubs } })
+    await wrapper.get('[data-testid="inspiration-source-online"]').trigger('click')
+    await flushPromises()
+
+    await wrapper.get('[data-testid="online-media-image"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-testid="online-period-day"]').trigger('click')
+    await flushPromises()
+
+    // 切到「图片 + 今天」要重新按新条件取，而不是复用视频那批。
+    expect(fetchOnlineInspirationFeed).toHaveBeenLastCalledWith(
+      expect.objectContaining({ mediaType: 'image', period: 'day' }),
+    )
   })
 })
 

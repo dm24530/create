@@ -55,17 +55,48 @@ export interface OnlineInspirationEntry {
   source_url: string
 }
 
+export interface OnlineInspirationFeed {
+  items: OnlineInspirationEntry[]
+  source: string
+  media_type: string
+  sort: string
+  period: string
+  fetched_at: number
+  cached: boolean
+}
+
+export interface OnlineInspirationQuery {
+  mediaType?: 'video' | 'image'
+  sort?: 'newest' | 'reactions'
+  period?: 'day' | 'week' | 'month' | 'all'
+  limit?: number
+  refresh?: boolean
+}
+
 // 在线灵感由服务端拉取（可走 update.proxy_url 里配的代理），媒体同样经本站代理，
-// 因此不再要求访问者自己能连上第三方站点。
-export async function fetchOnlineInspirationsFromServer(
-  mediaType: 'video' | 'image' = 'video',
-  limit = 24,
-  refresh = false,
-): Promise<OnlineInspirationEntry[]> {
-  const { data } = await apiClient.get<{ items: OnlineInspirationEntry[] }>('/video-inspiration/online', {
+// 因此不再要求访问者自己能连上第三方站点。公开社区每天都有新作品，
+// 所以带上 sort/period 让前端能按"最新 / 今天"取，做出日更效果。
+export async function fetchOnlineInspirationFeed(
+  query: OnlineInspirationQuery = {},
+): Promise<OnlineInspirationFeed> {
+  const { data } = await apiClient.get<OnlineInspirationFeed>('/video-inspiration/online', {
     // refresh=1 让后端跳过它的短时缓存，「换一批」才有新内容。
-    params: { type: mediaType, limit, ...(refresh ? { refresh: 1 } : {}) },
+    params: {
+      type: query.mediaType ?? 'video',
+      sort: query.sort ?? 'newest',
+      period: query.period ?? 'week',
+      limit: query.limit ?? 24,
+      ...(query.refresh ? { refresh: 1 } : {}),
+    },
     timeout: 60000,
   })
-  return Array.isArray(data?.items) ? data.items : []
+  return {
+    items: Array.isArray(data?.items) ? data.items : [],
+    source: String(data?.source ?? ''),
+    media_type: String(data?.media_type ?? ''),
+    sort: String(data?.sort ?? ''),
+    period: String(data?.period ?? ''),
+    fetched_at: Number(data?.fetched_at ?? 0) || 0,
+    cached: Boolean(data?.cached),
+  }
 }

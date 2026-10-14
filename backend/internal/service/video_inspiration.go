@@ -45,6 +45,27 @@ type inspirationCacheEntry struct {
 	cachedAt time.Time
 }
 
+// InspirationQuery 描述一次在线灵感请求：素材类型 + 排序 + 时间范围。
+// 公开创作社区的内容每天都有新作品，所以默认给"最新"，让灵感库有日更的感觉。
+type InspirationQuery struct {
+	MediaType string // video | image
+	Sort      string // newest | reactions
+	Period    string // day | week | month | all
+	Limit     int
+	Refresh   bool
+}
+
+// InspirationFeed 除了条目本身，还带上"这批是什么时候拉的"，前端可以显示更新时间。
+type InspirationFeed struct {
+	Items     []OnlineInspirationItem `json:"items"`
+	Source    string                  `json:"source"`
+	MediaType string                  `json:"media_type"`
+	Sort      string                  `json:"sort"`
+	Period    string                  `json:"period"`
+	FetchedAt int64                   `json:"fetched_at"`
+	Cached    bool                    `json:"cached"`
+}
+
 type VideoInspirationService struct {
 	client *http.Client
 
@@ -78,51 +99,70 @@ func ProvideVideoInspirationService(cfg *config.Config) *VideoInspirationService
 
 func (s *VideoInspirationService) Online(
 	ctx context.Context,
-	mediaType string,
-	limit int,
-	forceRefresh bool,
-) ([]OnlineInspirationItem, error) {
+	query InspirationQuery,
+) (InspirationFeed, error) {
+	feed := InspirationFeed{}
 	if s == nil || s.client == nil {
-		return nil, fmt.Errorf("inspiration source is not reachable: outbound client is unavailable")
+		return feed, fmt.Errorf("inspiration source is not reachable: outbound client is unavailable")
 	}
-	mediaType = normalizeInspirationMediaType(mediaType)
-	if limit <= 0 || limit > inspirationMaxItems {
-		limit = 24
+	query.MediaType = normalizeInspirationMediaType(query.MediaType)
+	query.Sort = normalizeInspirationSort(query.Sort)
+	query.Period = normalizeInspirationPeriod(query.Period)
+	if query.Limit <= 0 || query.Limit > inspirationMaxItems {
+		query.Limit = 24
 	}
+	cacheKey := query.MediaType + "|" + query.Sort + "|" + query.Period
 
-	if !forceRefresh {
+	feed.Source = "civitai"
+	feed.MediaType = query.MediaType
+	feed.Sort = query.Sort
+	feed.Period = query.Period
+
+	if !query.Refresh {
 		s.mu.Lock()
-		if entry, ok := s.cache[mediaType]; ok && time.Since(entry.cachedAt) < inspirationCacheTTL {
+		if entry, ok := s.cache[cacheKey]; ok && time.Since(entry.cachedAt) < inspirationCacheTTL {
 			items := entry.items
+			cachedAt := entry.cachedAt
 			s.mu.Unlock()
-			return items, nil
+			feed.Items = items
+			feed.FetchedAt = cachedAt.Unix()
+			feed.Cached = true
+			return feed, nil
 		}
 		s.mu.Unlock()
 	}
 
-	items, err := s.fetch(ctx, mediaType, limit)
+	items, err := s.fetch(ctx, query)
 	if err != nil {
 		s.mu.Lock()
-		entry, ok := s.cache[mediaType]
+		entry, ok := s.cache[cacheKey]
 		s.mu.Unlock()
 		if ok {
-			return entry.items, nil
+			feed.Items = entry.items
+			feed.FetchedAt = entry.cachedAt.Unix()
+			feed.Cached = true
+			return feed, nil
 		}
-		return nil, err
+		return feed, err
 	}
 
+	now := time.Now()
 	s.mu.Lock()
-	s.cache[mediaType] = inspirationCacheEntry{items: items, cachedAt: time.Now()}
+	s.cache[cacheKey] = inspirationCacheEntry{items: items, cachedAt: now}
 	s.mu.Unlock()
-	return items, nil
+	feed.Items = items
+	feed.FetchedAt = now.Unix()
+	return feed, nil
 }
 
-func (s *VideoInspirationService) fetch(ctx context.Context, mediaType string, limit int) ([]OnlineInspirationItem, error) {
+func (s *VideoInspirationService) fetch(ctx context.Context, query InspirationQuery) ([]OnlineInspirationItem, error) {
 	params := url.Values{}
-	params.Set("limit", fmt.Sprintf("%d", limit))
+	params.Set("limit", fmt.Sprintf("%d", query.Limit))
 	params.Set("nsfw", "None")
 	params.Set("withMeta", "true")
-	params.Set("type", mediaType)
+	params.Set("type", query.MediaType)
+	params.Set("sort", inspirationSortParam(query.Sort))
+	params.Set("period", inspirationPeriodParam(query.Period))
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, inspirationSourceEndpoint+"?"+params.Encode(), nil)
 	if err != nil {
@@ -263,4 +303,44 @@ func normalizeInspirationMediaType(mediaType string) string {
 		return "image"
 	}
 	return "video"
+}
+
+func normalizeInspirationSort(sort string) string {
+	if strings.EqualFold(strings.TrimSpace(sort), "reactions") {
+		return "reactions"
+	}
+	return "newest"
+}
+
+func inspirationSortParam(sort string) string {
+	if sort == "reactions" {
+		return "Most Reactions"
+	}
+	return "Newest"
+}
+
+func normalizeInspirationPeriod(period string) string {
+	switch strings.ToLower(strings.TrimSpace(period)) {
+	case "day":
+		return "day"
+	case "month":
+		return "month"
+	case "all":
+		return "all"
+	default:
+		return "week"
+	}
+}
+
+func inspirationPeriodParam(period string) string {
+	switch period {
+	case "day":
+		return "Day"
+	case "month":
+		return "Month"
+	case "all":
+		return "AllTime"
+	default:
+		return "Week"
+	}
 }

@@ -1,7 +1,6 @@
 // 灵感库模板：完整提示词 + 镜头思路 + 推荐参数，一键带入工作台。
 // 参数（时长/画幅/分辨率/参考素材）与工作台的请求字段一一对应。
-
-import { fetchOnlineInspirationsFromServer } from './videoArchiveApi'
+// 在线灵感见 videoArchiveApi.ts（由服务端拉取并代理媒体）。
 
 export interface VideoInspirationTemplate {
   slug: string
@@ -224,33 +223,3 @@ export interface OnlineInspirationItem {
   sourceUrl: string
 }
 
-export interface FetchOnlineInspirationsOptions {
-  limit?: number
-  mediaType?: 'video' | 'image'
-  refresh?: boolean
-  signal?: AbortSignal
-}
-
-export async function fetchOnlineInspirations(
-  options: FetchOnlineInspirationsOptions = {},
-): Promise<OnlineInspirationItem[]> {
-  const entries = await fetchOnlineInspirationsFromServer(
-    options.mediaType ?? 'video',
-    Math.min(Math.max(options.limit ?? 24, 1), 48),
-    options.refresh === true,
-  )
-  return entries.map((entry) => ({
-    id: String(entry.id),
-    mediaType: entry.media_type === 'image' ? 'image' : 'video',
-    mediaUrl: String(entry.media_url ?? ''),
-    posterUrl: String(entry.poster_url ?? ''),
-    prompt: String(entry.prompt ?? ''),
-    negativePrompt: String(entry.negative_prompt ?? ''),
-    model: String(entry.model ?? ''),
-    author: String(entry.author ?? ''),
-    width: Number(entry.width ?? 0) || 0,
-    height: Number(entry.height ?? 0) || 0,
-    likes: Number(entry.likes ?? 0) || 0,
-    sourceUrl: String(entry.source_url ?? ''),
-  }))
-}
