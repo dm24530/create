@@ -12,7 +12,7 @@ export default {
       publicOnly: '仅展示公开分组',
       priceHint: '价格为当前公开分组的价格，实际计费以调用时为准。'
     },
-    seoDescription: 'SuperAI 提供兼容 OpenAI、GPT、Claude、DeepSeek 等模型的 AI API 中转与聚合服务，支持 OpenAI 兼容接口、模型价格对比和灵活计费。',
+    seoDescription: 'Create 提供兼容 OpenAI、GPT、Claude、DeepSeek 等模型的 AI API 中转与聚合服务，支持 OpenAI 兼容接口、模型价格对比和灵活计费。',
     viewOnGithub: '在 GitHub 上查看',
     viewDocs: '查看文档',
     docs: '文档',

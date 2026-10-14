@@ -12,7 +12,7 @@ export default {
       publicOnly: 'Public groups only',
       priceHint: 'Prices reflect the current public groups; final billing follows the request.'
     },
-    seoDescription: 'SuperAI is an AI API gateway and aggregation service compatible with OpenAI, GPT, Claude, DeepSeek and other leading models.',
+    seoDescription: 'Create is an AI API gateway and aggregation service compatible with OpenAI, GPT, Claude, DeepSeek and other leading models.',
     viewOnGithub: 'View on GitHub',
     viewDocs: 'View Documentation',
     docs: 'Docs',

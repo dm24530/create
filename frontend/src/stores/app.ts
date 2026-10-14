@@ -26,7 +26,7 @@ export const useAppStore = defineStore('app', () => {
   // Public settings cache state
   const publicSettingsLoaded = ref<boolean>(false)
   const publicSettingsLoading = ref<boolean>(false)
-  const siteName = ref<string>('SuperAI')
+  const siteName = ref<string>('Create')
   const siteLogo = ref<string>('')
   const siteVersion = ref<string>('')
   const contactInfo = ref<string>('')
@@ -291,8 +291,8 @@ export const useAppStore = defineStore('app', () => {
    */
   function normalizeSiteName(name?: string): string {
     const trimmed = typeof name === 'string' ? name.trim() : ''
-    if (!trimmed) return 'SuperAI'
-    if (['sub2api', 'sub2 api', 'sub2-api'].includes(trimmed.toLowerCase())) return 'SuperAI'
+    if (!trimmed) return 'Create'
+    if (['sub2api', 'sub2 api', 'sub2-api'].includes(trimmed.toLowerCase())) return 'Create'
     return trimmed
   }
 

@@ -330,7 +330,7 @@ func TestEmailQueueAnnouncementBatchContinuesAfterRecipientFailure(t *testing.T)
 	emailSvc := NewEmailService(repo, nil)
 	emailSvc.sendWithConfig = func(gotConfig *SMTPConfig, to, subject, body string) error {
 		require.Equal(t, "smtp.example.com", gotConfig.Host)
-		require.Equal(t, "[SuperAI] New offer", subject)
+		require.Equal(t, "[Create] New offer", subject)
 		require.Contains(t, body, "Offer details")
 		require.Contains(t, body, "email-unsubscribe?token=")
 		require.NotContains(t, body, "<script>")

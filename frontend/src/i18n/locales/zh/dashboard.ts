@@ -656,7 +656,7 @@ export default {
   // Model Plaza (public group/model pricing showcase)
   modelPlaza: {
     title: '模型广场',
-    seoDescription: '在 SuperAI 模型广场查看 GPT、OpenAI、Claude、DeepSeek 等模型的可用分组、价格和倍率。',
+    seoDescription: '在 Create 模型广场查看 GPT、OpenAI、Claude、DeepSeek 等模型的可用分组、价格和倍率。',
     description: '按分组浏览可用模型与价格',
     loading: '加载中...',
     empty: '暂无可展示的分组',

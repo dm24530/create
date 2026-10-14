@@ -21,8 +21,8 @@ describe('resolveDocumentTitle', () => {
   })
 
   it('站点名为空时，回退默认站点名', () => {
-    expect(resolveDocumentTitle('Dashboard', '')).toBe('Dashboard - SuperAI')
-    expect(resolveDocumentTitle(undefined, '   ')).toBe('SuperAI')
+    expect(resolveDocumentTitle('Dashboard', '')).toBe('Dashboard - Create')
+    expect(resolveDocumentTitle(undefined, '   ')).toBe('Create')
   })
 
   it('站点名变更时仅影响后续路由标题计算', () => {

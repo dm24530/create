@@ -4,7 +4,7 @@
       <section class="rounded-xl border border-gray-200 bg-white p-6 dark:border-dark-700 dark:bg-dark-900">
         <div class="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
           <div class="max-w-3xl">
-            <p class="text-sm font-semibold text-primary-600 dark:text-primary-400">SuperAI 使用手册</p>
+            <p class="text-sm font-semibold text-primary-600 dark:text-primary-400">Create 使用手册</p>
             <h2 class="mt-2 text-2xl font-bold text-gray-900 dark:text-white">{{ pageTitle }}</h2>
             <p class="mt-3 text-sm leading-6 text-gray-500 dark:text-gray-400">{{ pageDescription }}</p>
           </div>
@@ -203,7 +203,7 @@ const quickLinks = [
 
 const commonChecks = [
   { title: '发送一次简单对话', desc: '输入“你好，请用一句话回复我”之类的短问题，确认客户端能正常返回内容。' },
-  { title: '核对使用记录', desc: '回到 SuperAI 的使用记录页，查看是否出现刚才的模型、费用、耗时和请求时间。' },
+  { title: '核对使用记录', desc: '回到 Create 的使用记录页，查看是否出现刚才的模型、费用、耗时和请求时间。' },
   { title: '核对余额变化', desc: '如果请求成功但没有记录，刷新页面后再看；如果余额不足，先到充值页补充余额。' },
 ]
 
@@ -233,7 +233,7 @@ const platformGuides = computed<ManualGuide[]>(() => {
     slug: 'chatbox',
     name: 'ChatBox',
     type: '桌面客户端',
-    summary: '适合桌面聊天使用，在自定义 OpenAI API 设置里填写 SuperAI 的接口地址和密钥。',
+    summary: '适合桌面聊天使用，在自定义 OpenAI API 设置里填写 Create 的接口地址和密钥。',
     tags: ['Base URL', 'API Key', '模型名'],
     prerequisites: currentDefaultPrerequisites,
     configRows: currentConfigRows,
@@ -241,7 +241,7 @@ const platformGuides = computed<ManualGuide[]>(() => {
       { no: 1, title: '打开 ChatBox 设置', desc: '进入 ChatBox 后打开设置页，找到“模型提供方”“AI 服务”“API 设置”或类似入口。不同版本名称可能略有差异。' },
       { no: 2, title: '选择 OpenAI 兼容模式', desc: '提供方选择 OpenAI API、自定义 OpenAI、OpenAI Compatible 或类似选项。不要选择只支持官方登录的模式。' },
       { no: 3, title: '填写接口地址', desc: `Base URL / API Host 填写 ${currentApiBaseUrl}。注意必须包含 /v1；如果客户端已经固定拼接 /v1，则只填写 ${currentBaseUrl}。` },
-      { no: 4, title: '填写 API Key', desc: 'API Key 粘贴 SuperAI 里创建的 sk- 开头密钥。复制后检查前后没有空格，也不要把密钥名称当成密钥。' },
+      { no: 4, title: '填写 API Key', desc: 'API Key 粘贴 Create 里创建的 sk- 开头密钥。复制后检查前后没有空格，也不要把密钥名称当成密钥。' },
       { no: 5, title: '添加模型名称', desc: '模型填写“模型”页面显示的完整名称，例如 gpt5.5。如果 ChatBox 支持自定义模型列表，就手动添加该模型。' },
       { no: 6, title: '保存并新建对话', desc: '保存配置后新建一个会话，选择刚配置的模型，发送短问题测试。测试成功后再开始长文本或文件任务。' },
     ],
@@ -258,11 +258,11 @@ const platformGuides = computed<ManualGuide[]>(() => {
     configRows: currentConfigRows,
     steps: [
       { no: 1, title: '进入模型服务设置', desc: '打开 Cherry Studio 设置，进入“模型服务”“供应商”或 Provider 管理页面。' },
-      { no: 2, title: '新增自定义供应商', desc: '新增一个供应商，名称建议写 SuperAI，类型选择 OpenAI Compatible / OpenAI 兼容。' },
+      { no: 2, title: '新增自定义供应商', desc: '新增一个供应商，名称建议写 Create，类型选择 OpenAI Compatible / OpenAI 兼容。' },
       { no: 3, title: '填写 API 地址', desc: `API 地址、API Host 或 Base URL 填写 ${currentApiBaseUrl}。如果界面分成 Host 和 Path，Host 填 ${currentBaseUrl}，Path 填 /v1。` },
-      { no: 4, title: '填写密钥', desc: 'API Key 填写 SuperAI 生成的 sk- 密钥。保存前确认密钥没有换行、空格或中文引号。' },
-      { no: 5, title: '添加模型列表', desc: '在该供应商下手动添加模型名称。模型名必须和 SuperAI 模型页一致，否则聊天页会提示模型不可用。' },
-      { no: 6, title: '设置默认模型并测试', desc: '回到聊天页面选择 SuperAI 供应商和对应模型，发送一条短消息。成功后可以把该模型设为默认模型。' },
+      { no: 4, title: '填写密钥', desc: 'API Key 填写 Create 生成的 sk- 密钥。保存前确认密钥没有换行、空格或中文引号。' },
+      { no: 5, title: '添加模型列表', desc: '在该供应商下手动添加模型名称。模型名必须和 Create 模型页一致，否则聊天页会提示模型不可用。' },
+      { no: 6, title: '设置默认模型并测试', desc: '回到聊天页面选择 Create 供应商和对应模型，发送一条短消息。成功后可以把该模型设为默认模型。' },
     ],
     checks: commonChecks,
     troubleshooting: [
@@ -280,9 +280,9 @@ const platformGuides = computed<ManualGuide[]>(() => {
     configRows: currentConfigRows,
     steps: [
       { no: 1, title: '打开 API 设置', desc: '进入 OpenCat 设置，找到 API、服务商、Provider、自定义 Endpoint 或 OpenAI 配置入口。' },
-      { no: 2, title: '新增 OpenAI 兼容服务', desc: '服务类型选择 OpenAI 或 OpenAI-compatible，自定义名称建议填写 SuperAI，方便后续识别。' },
+      { no: 2, title: '新增 OpenAI 兼容服务', desc: '服务类型选择 OpenAI 或 OpenAI-compatible，自定义名称建议填写 Create，方便后续识别。' },
       { no: 3, title: '填写 Endpoint', desc: `Endpoint / Base URL 填写 ${currentApiBaseUrl}。如果客户端只接受服务器地址，则填写 ${currentBaseUrl}，再确认路径或接口版本是 /v1。` },
-      { no: 4, title: '填写 API Key', desc: 'API Key 填写 SuperAI 的 sk- 密钥。移动端复制时尤其注意不要带入空格、换行或自动纠错字符。' },
+      { no: 4, title: '填写 API Key', desc: 'API Key 填写 Create 的 sk- 密钥。移动端复制时尤其注意不要带入空格、换行或自动纠错字符。' },
       { no: 5, title: '设置默认模型', desc: '默认模型填写模型页完整名称。如果支持模型列表，建议只添加你最常用的几个模型。' },
       { no: 6, title: '保存后测试网络', desc: '在移动网络和 Wi-Fi 下各测试一次。如果只有移动网络失败，多半是本地地址或内网地址无法访问。' },
     ],
@@ -296,7 +296,7 @@ const platformGuides = computed<ManualGuide[]>(() => {
     slug: 'cursor',
     name: 'Cursor',
     type: '代码编辑器',
-    summary: '适合编码场景，在 OpenAI API Key 和 Override Base URL 中接入 SuperAI。',
+    summary: '适合编码场景，在 OpenAI API Key 和 Override Base URL 中接入 Create。',
     tags: ['编辑器', 'Override URL', '代码辅助'],
     prerequisites: currentDefaultPrerequisites,
     configRows: currentConfigRows,
@@ -304,14 +304,14 @@ const platformGuides = computed<ManualGuide[]>(() => {
       { no: 1, title: '打开 Cursor 设置', desc: '进入 Cursor Settings，找到 Models、Provider、OpenAI API Key 或自定义模型配置区域。' },
       { no: 2, title: '启用自定义 OpenAI 配置', desc: '打开自定义 API Key、Override OpenAI Base URL、OpenAI Compatible Provider 或类似选项。' },
       { no: 3, title: '填写密钥和地址', desc: `OpenAI API Key 填写 sk- 密钥，Override Base URL 填写 ${currentApiBaseUrl}。如果 Cursor 自动附加 /v1，则改填 ${currentBaseUrl}。` },
-      { no: 4, title: '添加模型名称', desc: '在模型配置中添加 SuperAI 模型页显示的模型名。建议先用一个便宜或常用模型测试，再添加更多模型。' },
-      { no: 5, title: '选择模型范围', desc: '如果 Cursor 区分 Chat、Composer、Agent、Inline Edit，分别确认这些入口使用的是同一个 SuperAI 模型。' },
+      { no: 4, title: '添加模型名称', desc: '在模型配置中添加 Create 模型页显示的模型名。建议先用一个便宜或常用模型测试，再添加更多模型。' },
+      { no: 5, title: '选择模型范围', desc: '如果 Cursor 区分 Chat、Composer、Agent、Inline Edit，分别确认这些入口使用的是同一个 Create 模型。' },
       { no: 6, title: '用代码任务测试', desc: '打开 Chat 或 Composer，让它解释当前文件的一小段代码。成功后再执行更长的生成或重构任务。' },
     ],
     checks: commonChecks,
     troubleshooting: [
       ...currentCommonTroubleshooting,
-      { title: '编辑器仍走官方模型', desc: '检查当前会话选择的模型是否是你新增的 SuperAI 模型。有些编辑器保存 Key 后，还需要在聊天窗口手动切换模型。' },
+      { title: '编辑器仍走官方模型', desc: '检查当前会话选择的模型是否是你新增的 Create 模型。有些编辑器保存 Key 后，还需要在聊天窗口手动切换模型。' },
     ],
   },
   {
@@ -322,7 +322,7 @@ const platformGuides = computed<ManualGuide[]>(() => {
     tags: ['一键导入', 'Claude Code', 'Gemini CLI'],
     prerequisites: [
       '先在电脑上安装并启动 CC Switch，确认 ccswitch:// 协议可以被系统识别。',
-      '进入 SuperAI 的“API 密钥”页面创建密钥，并确认密钥所属分组支持你要使用的模型平台。',
+      '进入 Create 的“API 密钥”页面创建密钥，并确认密钥所属分组支持你要使用的模型平台。',
       '如果页面上看不到“导入到 CC Switch”按钮，可能是管理员隐藏了该按钮，此时使用手动配置方式。',
       `手动配置时接口地址通常使用 ${currentApiBaseUrl}；部分平台映射可能会由导入功能自动设置 endpoint。`,
     ],
@@ -330,26 +330,26 @@ const platformGuides = computed<ManualGuide[]>(() => {
       { label: '推荐方式', value: 'API 密钥页点击“导入到 CC Switch”' },
       { label: '协议', value: 'ccswitch://v1/import' },
       { label: 'Base URL', value: currentApiBaseUrl },
-      { label: 'API Key', value: '选择要导入的 SuperAI API 密钥' },
+      { label: 'API Key', value: '选择要导入的 Create API 密钥' },
       { label: '客户端类型', value: 'Claude Code 或 Gemini CLI' },
     ],
     steps: [
-      { no: 1, title: '打开 API 密钥页面', desc: '进入 SuperAI 左侧“API 密钥”，找到你准备给命令行工具使用的密钥。建议单独创建一个密钥，方便后续统计和禁用。' },
+      { no: 1, title: '打开 API 密钥页面', desc: '进入 Create 左侧“API 密钥”，找到你准备给命令行工具使用的密钥。建议单独创建一个密钥，方便后续统计和禁用。' },
       { no: 2, title: '点击导入到 CC Switch', desc: '在密钥操作区点击“导入到 CC Switch”。系统会根据密钥分组平台生成 ccswitch:// 导入链接。' },
       { no: 3, title: '选择客户端类型', desc: '弹窗里选择要导入的客户端类型，例如 Claude Code 或 Gemini CLI。不同类型会影响 CC Switch 里生成的 app 和 endpoint。' },
-      { no: 4, title: '允许浏览器打开 CC Switch', desc: '浏览器弹出确认时允许打开 CC Switch。成功后 CC Switch 会新增一个 SuperAI Provider。' },
+      { no: 4, title: '允许浏览器打开 CC Switch', desc: '浏览器弹出确认时允许打开 CC Switch。成功后 CC Switch 会新增一个 Create Provider。' },
       { no: 5, title: '在 CC Switch 中启用 Provider', desc: '打开 CC Switch，确认新 Provider 的名称、endpoint 和 API Key 已写入，然后把它设为当前使用项。' },
-      { no: 6, title: '在命令行工具中测试', desc: '打开 Claude Code、Gemini CLI 或对应工具，发送一个简单请求。成功后回到 SuperAI 使用记录查看是否产生调用。' },
-      { no: 7, title: '导入失败时手动配置', desc: `如果提示未安装或协议未注册，就在 CC Switch 里手动新增 Provider：名称写 SuperAI，endpoint 填 ${currentApiBaseUrl}，API Key 粘贴 sk- 密钥。` },
+      { no: 6, title: '在命令行工具中测试', desc: '打开 Claude Code、Gemini CLI 或对应工具，发送一个简单请求。成功后回到 Create 使用记录查看是否产生调用。' },
+      { no: 7, title: '导入失败时手动配置', desc: `如果提示未安装或协议未注册，就在 CC Switch 里手动新增 Provider：名称写 Create，endpoint 填 ${currentApiBaseUrl}，API Key 粘贴 sk- 密钥。` },
     ],
     checks: [
-      { title: '确认 CC Switch Provider', desc: 'CC Switch 中应该能看到 SuperAI Provider，并且 endpoint、API Key 不为空。' },
-      { title: '确认 CLI 当前使用项', desc: '命令行工具调用前，确认 CC Switch 当前启用的是刚导入的 SuperAI Provider。' },
-      { title: '回看 SuperAI 使用记录', desc: 'CLI 测试后回到使用记录，User-Agent 或模型信息能帮助判断是否走了 SuperAI。' },
+      { title: '确认 CC Switch Provider', desc: 'CC Switch 中应该能看到 Create Provider，并且 endpoint、API Key 不为空。' },
+      { title: '确认 CLI 当前使用项', desc: '命令行工具调用前，确认 CC Switch 当前启用的是刚导入的 Create Provider。' },
+      { title: '回看 Create 使用记录', desc: 'CLI 测试后回到使用记录，User-Agent 或模型信息能帮助判断是否走了 Create。' },
     ],
     troubleshooting: [
       { title: '提示 CC-Switch 未安装', desc: '说明系统没有识别 ccswitch:// 协议。先安装并启动 CC Switch，或者在 CC Switch 中手动新增 Provider。' },
-      { title: '导入后 CLI 仍不可用', desc: '检查 CC Switch 当前选中的 Provider 是否是 SuperAI。有些 CLI 已经启动时不会立即读取新配置，重开终端再试。' },
+      { title: '导入后 CLI 仍不可用', desc: '检查 CC Switch 当前选中的 Provider 是否是 Create。有些 CLI 已经启动时不会立即读取新配置，重开终端再试。' },
       { title: 'Claude Code / Gemini CLI 类型选错', desc: '回到 API 密钥页重新导入一次，并选择正确客户端类型。错误类型可能导致 app 或 endpoint 不匹配。' },
       { title: 'OpenAI 平台模型不匹配', desc: '项目内导入逻辑会给 OpenAI 平台设置默认 Codex 模型。若你要用其它模型，请在 CC Switch 里手动修改模型名。' },
     ],
@@ -372,16 +372,16 @@ const platformGuides = computed<ManualGuide[]>(() => {
     ],
     steps: [
       { no: 1, title: '安装 OpenAI SDK', desc: 'Node.js 使用 openai 包，Python 使用 openai 包。确认 SDK 版本支持自定义 baseURL/base_url。' },
-      { no: 2, title: '设置环境变量', desc: '把 SuperAI API Key 放到环境变量，例如 SUPERAI_API_KEY。不要写进前端代码、公开仓库或日志。' },
+      { no: 2, title: '设置环境变量', desc: '把 Create API Key 放到环境变量，例如 CREATE_API_KEY。不要写进前端代码、公开仓库或日志。' },
       { no: 3, title: '设置 baseURL/base_url', desc: `SDK 初始化时把 baseURL/base_url 设置为 ${currentApiBaseUrl}。如果你有反向代理或公网域名，请使用最终用户能访问的域名。` },
       { no: 4, title: '填写模型名', desc: 'chat.completions.create、responses.create 或 embeddings.create 中的 model 填写模型页完整名称。' },
       { no: 5, title: '先跑最小请求', desc: '先发送一个短 prompt，只打印返回文本和错误码。确认成功后再接入流式输出、工具调用或长上下文。' },
-      { no: 6, title: '记录错误码', desc: '接入业务时保留 status、message、request id 等信息，方便在 SuperAI 使用记录和后端日志中排查。' },
+      { no: 6, title: '记录错误码', desc: '接入业务时保留 status、message、request id 等信息，方便在 Create 使用记录和后端日志中排查。' },
     ],
     checks: commonChecks,
     troubleshooting: [
       ...currentCommonTroubleshooting,
-      { title: '浏览器前端直连失败', desc: '不要把 SuperAI API Key 暴露在浏览器前端。正式产品应由你的后端调用 SuperAI，再把结果返回给前端。' },
+      { title: '浏览器前端直连失败', desc: '不要把 Create API Key 暴露在浏览器前端。正式产品应由你的后端调用 Create，再把结果返回给前端。' },
       { title: '流式输出中断', desc: '先用非流式请求测试。如果非流式正常，检查你的代理、网关或运行环境是否支持长连接和 SSE。' },
     ],
   },

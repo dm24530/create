@@ -1,7 +1,7 @@
 {
-  "name": "SuperAI - AI API Gateway",
-  "short_name": "SuperAI",
-  "description": "SuperAI AI API 中转与聚合平台",
+  "name": "Create - AI API Gateway",
+  "short_name": "Create",
+  "description": "Create AI API 中转与聚合平台",
   "start_url": "/home",
   "scope": "/",
   "display": "standalone",

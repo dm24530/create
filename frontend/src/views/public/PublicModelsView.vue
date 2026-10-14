@@ -203,7 +203,7 @@ const searchQuery = ref('')
 const selectedModelKey = ref('')
 const isDrawerOpen = ref(false)
 
-const siteName = computed(() => appStore.cachedPublicSettings?.site_name || appStore.siteName || 'SuperAI')
+const siteName = computed(() => appStore.cachedPublicSettings?.site_name || appStore.siteName || 'Create')
 const siteLogo = computed(() => appStore.cachedPublicSettings?.site_logo || appStore.siteLogo || '')
 const isAuthenticated = computed(() => authStore.isAuthenticated)
 const dashboardPath = computed(() => authStore.isAdmin ? '/admin/dashboard' : '/dashboard')

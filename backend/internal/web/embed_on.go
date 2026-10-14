@@ -334,7 +334,7 @@ func normalizeSeoPath(path string) string {
 func resolveRouteSeoDoc(path, siteName string) routeSeoDoc {
 	name := strings.TrimSpace(siteName)
 	if name == "" {
-		name = "SuperAI"
+		name = "Create"
 	}
 	normalized := normalizeSeoPath(path)
 	switch {
@@ -457,7 +457,7 @@ func buildSeoBlock(origin, path, siteName string) string {
 func buildStructuredData(origin, canonical, siteName string) string {
 	name := strings.TrimSpace(siteName)
 	if name == "" {
-		name = "SuperAI"
+		name = "Create"
 	}
 	provider := map[string]any{"@type": "Organization", "name": name}
 	if origin != "" {

@@ -361,8 +361,8 @@ func TestBuildPaymentSubjectAppliesAffixToSubscriptionPlanDefaultName(t *testing
 	plan := &dbent.SubscriptionPlan{Name: "Team Monthly"}
 
 	got := svc.buildPaymentSubject(plan, 0, cfg, nil)
-	if got != "PRE SuperAI Subscription Team Monthly SUF" {
-		t.Fatalf("buildPaymentSubject() = %q, want %q", got, "PRE SuperAI Subscription Team Monthly SUF")
+	if got != "PRE Create Subscription Team Monthly SUF" {
+		t.Fatalf("buildPaymentSubject() = %q, want %q", got, "PRE Create Subscription Team Monthly SUF")
 	}
 }
 

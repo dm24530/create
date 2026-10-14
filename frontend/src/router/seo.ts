@@ -1,10 +1,10 @@
 import { i18n } from '@/i18n'
 import type { RouteLocationNormalizedLoaded } from 'vue-router'
 
-const DEFAULT_DESCRIPTION = 'SuperAI 是兼容 OpenAI、GPT、Claude、DeepSeek 等模型的 AI API 中转与聚合平台。'
+const DEFAULT_DESCRIPTION = 'Create 是兼容 OpenAI、GPT、Claude、DeepSeek 等模型的 AI API 中转与聚合平台。'
 
 const DEFAULT_KEYWORDS = [
-  'SuperAI',
+  'Create',
   'AI API 中转站',
   'API 中转站',
   'GPT API',

@@ -45,7 +45,7 @@ func RunCLI() error {
 
 	fmt.Println()
 	fmt.Println("╔═══════════════════════════════════════════╗")
-	fmt.Println("║       SuperAI Installation Wizard         ║")
+	fmt.Println("║       Create Installation Wizard          ║")
 	fmt.Println("╚═══════════════════════════════════════════╝")
 	fmt.Println()
 
