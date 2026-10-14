@@ -38,5 +38,11 @@ func registerCustomUserRoutes(authenticated *gin.RouterGroup, h *handler.Handler
 }
 
 func registerCustomPublicRoutes(public *gin.RouterGroup, h *handler.Handlers) {
+	// 在线灵感的媒体代理：<img>/<video> 带不上 JWT，只能免登录，
+	// 安全边界由服务里的主机白名单保证（不是通用代理）。
+	inspiration := public.Group("/video-inspiration")
+	{
+		inspiration.GET("/media", h.VideoInspiration.Media)
+	}
 	public.GET("/models/available", h.AvailableChannel.ListPublicModels)
 }

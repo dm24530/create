@@ -105,6 +105,20 @@ func RegisterUserRoutes(
 			imageStudio.POST("/gallery", h.ImageStudioGallery.Save)
 		}
 
+		// 视频作品的持久化归档（与图片共用同一份对象存储配置，走 videos/ 前缀）。
+		videoStudio := authenticated.Group("/video-studio")
+		{
+			videoStudio.GET("/gallery", h.VideoStudioGallery.List)
+			videoStudio.POST("/gallery", h.VideoStudioGallery.Save)
+			videoStudio.DELETE("/gallery/:id", h.VideoStudioGallery.Delete)
+		}
+
+		// 在线灵感：由服务端拉取并缓存，媒体通过 /public/video-inspiration/media 代理。
+		accessibleInspiration := authenticated.Group("/video-inspiration")
+		{
+			accessibleInspiration.GET("/online", h.VideoInspiration.Online)
+		}
+
 		// 使用记录（聚合统计属重查询，叠加更严格的按用户限流）
 		usage := authenticated.Group("/usage")
 		usage.Use(panelRateLimiter.Heavy())

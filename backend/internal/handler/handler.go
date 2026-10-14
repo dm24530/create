@@ -72,6 +72,8 @@ type Handlers struct {
 	AsyncImage         *AsyncImageHandler
 	BatchImage         *BatchImageHandler
 	ImageStudioGallery *ImageStudioGalleryHandler
+	VideoStudioGallery *VideoStudioGalleryHandler
+	VideoInspiration   *VideoInspirationHandler
 }
 
 // BuildInfo contains build-time information

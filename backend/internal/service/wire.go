@@ -885,10 +885,14 @@ var ProviderSet = wire.NewSet(
 	ProvideImageStorageSettingService,
 	ProvideImageTaskService,
 	NewImageStudioGalleryService,
+	NewVideoStudioGalleryService,
+	ProvideVideoInspirationService,
 	// Lets `wire` regenerate cmd/server/wire_gen.go without hand editing:
 	// the gallery service needs an ImageStudioImageSaver, which the image
 	// storage settings service already implements.
 	wire.Bind(new(ImageStudioImageSaver), new(*ImageStorageSettingService)),
+	// 视频归档复用同一份对象存储配置（videos/ 前缀）。
+	wire.Bind(new(VideoStudioMediaSaver), new(*ImageStorageSettingService)),
 	ProvideBatchImageModelPricingResolver,
 	NewBatchImagePublicService,
 	NewBatchImageDownloadService,
