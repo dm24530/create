@@ -49,6 +49,79 @@ export function inspirationMediaProxyUrl(rawUrl: string): string {
   return `/api/v1/public/video-inspiration/media?u=${encodeURIComponent(trimmed)}`
 }
 
+export interface InspirationLibraryItem {
+  id: string
+  type: 'video' | 'image'
+  title: string
+  prompt: string
+  model: string
+  category: string
+  cover_url: string
+  source_cover: string
+  width: number
+  height: number
+  duration_seconds: number
+  aspect_ratio: string
+  resolution: string
+  likes: number
+  views: number
+  author: string
+  author_handle: string
+  source_url: string
+  has_cover: boolean
+}
+
+export interface InspirationLibraryResult {
+  items: InspirationLibraryItem[]
+  page: number
+  page_size: number
+  has_more: boolean
+  total: number
+  models: string[]
+  categories: string[]
+  fetched_at: number
+  stale: boolean
+}
+
+export interface InspirationLibraryQuery {
+  type?: 'video' | 'image'
+  model?: string
+  category?: string
+  keyword?: string
+  page?: number
+  pageSize?: number
+  refresh?: boolean
+}
+
+// 自家灵感站的作品库（服务端拉取 + 快照缓存），支持模型/分类/关键词与分页。
+export async function fetchInspirationLibrary(
+  query: InspirationLibraryQuery = {},
+): Promise<InspirationLibraryResult> {
+  const { data } = await apiClient.get<InspirationLibraryResult>('/video-inspiration/library', {
+    params: {
+      type: query.type ?? 'video',
+      model: query.model ?? 'all',
+      category: query.category ?? 'all',
+      q: query.keyword ?? '',
+      page: query.page ?? 1,
+      page_size: query.pageSize ?? 24,
+      ...(query.refresh ? { refresh: 1 } : {}),
+    },
+    timeout: 120000,
+  })
+  return {
+    items: Array.isArray(data?.items) ? data.items : [],
+    page: Number(data?.page ?? 1) || 1,
+    page_size: Number(data?.page_size ?? 24) || 24,
+    has_more: Boolean(data?.has_more),
+    total: Number(data?.total ?? 0) || 0,
+    models: Array.isArray(data?.models) ? data.models : [],
+    categories: Array.isArray(data?.categories) ? data.categories : [],
+    fetched_at: Number(data?.fetched_at ?? 0) || 0,
+    stale: Boolean(data?.stale),
+  }
+}
+
 export interface OnlineInspirationEntry {
   id: string
   media_type: 'video' | 'image'

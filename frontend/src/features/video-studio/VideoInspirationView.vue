@@ -30,6 +30,17 @@
             >
               在线灵感
             </button>
+              <button
+                type="button"
+                role="tab"
+                class="segmented__item"
+                :class="{ 'segmented__item--active': source === 'library' }"
+                :aria-selected="source === 'library'"
+                data-testid="inspiration-source-library"
+                @click="switchSource('library')"
+              >
+                作品库
+              </button>
           </div>
           <RouterLink class="toolbar-link" to="/video-studio">
             <Icon name="play" size="sm" />
@@ -105,7 +116,7 @@
         </div>
       </template>
 
-      <template v-else>
+      <template v-else-if="source === 'online'">
         <div class="online-bar">
           <div class="online-bar__controls">
             <div class="segmented segmented--compact" role="tablist" aria-label="素材类型">
@@ -221,6 +232,147 @@
             </div>
           </article>
         </div>
+      </template>
+
+      <template v-else>
+        <!-- 作品库：自家灵感站的数据（视频提示词 / 图片灵感），服务端筛选分页 -->
+        <div class="online-bar">
+          <div class="online-bar__controls">
+            <div class="segmented segmented--compact" role="tablist" aria-label="作品类型">
+              <button
+                v-for="option in libraryTypeOptions"
+                :key="option.value"
+                type="button"
+                role="tab"
+                class="segmented__item"
+                :class="{ 'segmented__item--active': libraryQuery.type === option.value }"
+                :data-testid="`library-type-${option.value}`"
+                @click="setLibraryQuery({ type: option.value })"
+              >
+                {{ option.label }}
+              </button>
+            </div>
+            <label class="inline-field">
+              <span>模型</span>
+              <ImageStudioSelect
+                v-model="libraryQuery.model"
+                data-testid="library-model-select"
+                :options="libraryModelOptions"
+                @update:modelValue="reloadLibrary"
+              />
+            </label>
+            <label class="inline-field">
+              <span>分类</span>
+              <ImageStudioSelect
+                v-model="libraryQuery.category"
+                data-testid="library-category-select"
+                :options="libraryCategoryOptions"
+                @update:modelValue="reloadLibrary"
+              />
+            </label>
+            <div class="inline-field">
+              <span>搜索</span>
+              <input
+                v-model="libraryQuery.keyword"
+                type="search"
+                class="text-input"
+                placeholder="关键词，如 product、城市"
+                data-testid="library-search"
+                @keydown.enter.prevent="reloadLibrary"
+              />
+            </div>
+            <button type="button" class="secondary-button" data-testid="library-search-button" @click="reloadLibrary">
+              <Icon name="search" size="sm" />
+              <span>搜索</span>
+            </button>
+          </div>
+          <div class="online-bar__actions">
+            <span class="online-bar__hint" data-testid="library-summary">{{ librarySummary }}</span>
+            <button
+              type="button"
+              class="secondary-button"
+              data-testid="library-refresh"
+              :disabled="libraryLoading"
+              @click="loadLibrary({ refresh: true })"
+            >
+              <Icon name="refresh" size="sm" :class="{ 'is-spinning': libraryLoading }" />
+              <span>刷新</span>
+            </button>
+          </div>
+        </div>
+
+        <div v-if="libraryError" class="online-error" data-testid="library-error">
+          <Icon name="exclamationCircle" size="sm" />
+          <span>{{ libraryError }}</span>
+        </div>
+
+        <div v-if="libraryLoading && !libraryItems.length" class="online-empty">
+          <span class="video-card__spinner" aria-hidden="true"></span>
+          <p>正在加载作品库…</p>
+        </div>
+
+        <div v-else-if="!libraryItems.length && !libraryError" class="online-empty">
+          <p>没有匹配的作品，试试换个模型或关键词。</p>
+        </div>
+
+        <template v-else>
+          <div class="inspiration__grid">
+            <article
+              v-for="item in libraryItems"
+              :key="item.id"
+              class="template-card"
+              :data-testid="`library-${item.id}`"
+            >
+              <button type="button" class="template-card__poster" @click="openLibraryItem(item)">
+                <span class="template-card__frame" :style="libraryFrameStyle(item)">
+                  <img
+                    v-if="item.cover_url"
+                    :src="item.cover_url"
+                    alt=""
+                    loading="lazy"
+                    class="template-card__poster-image"
+                    @error="markLibraryCoverFailed(item.id)"
+                  />
+                  <span class="template-card__play">
+                    <Icon :name="item.type === 'video' ? 'play' : 'grid'" size="md" />
+                  </span>
+                </span>
+                <span class="template-card__spec">{{ librarySpec(item) }}</span>
+              </button>
+              <div class="template-card__body">
+                <p class="template-card__category">{{ item.model || item.category || '作品' }}</p>
+                <h2 class="template-card__title">{{ item.title }}</h2>
+                <p class="template-card__prompt">{{ item.prompt }}</p>
+                <p v-if="item.author" class="template-card__summary">
+                  @{{ item.author_handle || item.author }} · {{ item.likes }} 赞
+                </p>
+              </div>
+              <div class="template-card__actions">
+                <button type="button" class="primary-button" @click="useLibraryItem(item)">
+                  <Icon name="sparkles" size="sm" />
+                  <span>带入工作台</span>
+                </button>
+                <button type="button" class="secondary-button" @click="copyPrompt(item.prompt)">
+                  <Icon name="copy" size="sm" />
+                  <span>复制提示词</span>
+                </button>
+              </div>
+            </article>
+          </div>
+
+          <div v-if="libraryHasMore" class="library-more">
+            <button
+              type="button"
+              class="secondary-button"
+              data-testid="library-load-more"
+              :disabled="libraryLoading"
+              @click="loadLibrary({ append: true })"
+            >
+              <Icon name="arrowDown" size="sm" />
+              <span>{{ libraryLoading ? '加载中' : '加载更多' }}</span>
+            </button>
+          </div>
+        </template>
       </template>
     </div>
 
@@ -351,6 +503,7 @@ import AppLayout from '@/components/layout/AppLayout.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { useClipboard } from '@/composables/useClipboard'
+import ImageStudioSelect from '../image-studio/ImageStudioSelect.vue'
 
 import {
   VIDEO_INSPIRATION_TEMPLATES,
@@ -358,7 +511,7 @@ import {
   type OnlineInspirationItem,
   type VideoInspirationTemplate,
 } from './videoInspiration'
-import { fetchOnlineInspirationFeed } from './videoArchiveApi'
+import { fetchInspirationLibrary, fetchOnlineInspirationFeed, type InspirationLibraryItem } from './videoArchiveApi'
 import { inspirationMediaProxyUrl } from './videoArchiveApi'
 
 interface MetaRow {
@@ -389,7 +542,7 @@ const PENDING_PROMPT_STORAGE_KEY = 'sub2api:video-studio:pending-prompt'
 const router = useRouter()
 const { copyToClipboard } = useClipboard()
 
-const source = ref<'curated' | 'online'>('curated')
+const source = ref<'curated' | 'online' | 'library'>('curated')
 const activeCategory = ref('')
 const active = ref<ActiveInspiration | null>(null)
 // 分镜图取不到时记下来，退回色板底图，避免一直重试破图。
@@ -427,6 +580,49 @@ const onlineFetchedLabel = computed(() => {
   const date = new Date(onlineFetchedAt.value * 1000)
   const pad = (value: number) => String(value).padStart(2, '0')
   return `更新于 ${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
+})
+
+/* ------------------------------ 作品库 ------------------------------ */
+
+const libraryItems = ref<InspirationLibraryItem[]>([])
+const libraryLoading = ref(false)
+const libraryError = ref('')
+const libraryTotal = ref(0)
+const libraryHasMore = ref(false)
+const libraryPageNumber = ref(1)
+const libraryFetchedAt = ref(0)
+const libraryStale = ref(false)
+const libraryModels = ref<string[]>([])
+const libraryCategories = ref<string[]>([])
+const libraryFailedCovers = ref<Record<string, boolean>>({})
+const libraryQuery = reactive<{ type: 'video' | 'image'; model: string; category: string; keyword: string }>({
+  type: 'video',
+  model: 'all',
+  category: 'all',
+  keyword: '',
+})
+const libraryTypeOptions = [
+  { value: 'video' as const, label: '视频提示词' },
+  { value: 'image' as const, label: '图片灵感' },
+]
+const libraryModelOptions = computed(() => [
+  { value: 'all', label: '全部模型' },
+  ...libraryModels.value.map((model) => ({ value: model, label: model })),
+])
+const libraryCategoryOptions = computed(() => [
+  { value: 'all', label: '全部分类' },
+  ...libraryCategories.value.map((category) => ({ value: category, label: category })),
+])
+const librarySummary = computed(() => {
+  if (libraryLoading.value && !libraryItems.value.length) return '正在加载…'
+  const parts = [`共 ${libraryTotal.value} 条`]
+  if (libraryFetchedAt.value) {
+    const date = new Date(libraryFetchedAt.value * 1000)
+    const pad = (value: number) => String(value).padStart(2, '0')
+    parts.push(`同步于 ${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`)
+  }
+  if (libraryStale.value) parts.push('（源暂时不可用，展示上次快照）')
+  return parts.join(' · ')
 })
 
 const categories = videoInspirationCategories()
@@ -571,9 +767,119 @@ function setOnlineQuery(patch: Partial<typeof onlineQuery>) {
   void loadOnline()
 }
 
-function switchSource(next: 'curated' | 'online') {
+function switchSource(next: 'curated' | 'online' | 'library') {
   source.value = next
   if (next === 'online' && !onlineItems.value.length && !onlineLoading.value) void loadOnline()
+  if (next === 'library' && !libraryItems.value.length && !libraryLoading.value) void loadLibrary()
+}
+
+/* ------------------------------ 作品库 ------------------------------ */
+
+function libraryFrameStyle(item: InspirationLibraryItem) {
+  const ratio = item.width > 0 && item.height > 0 ? `${item.width} / ${item.height}` : '16 / 9'
+  return { aspectRatio: ratio, background: 'rgb(15 23 42)' }
+}
+
+function librarySpec(item: InspirationLibraryItem): string {
+  if (item.type === 'image') return item.width > 0 ? `图片 · ${item.width}×${item.height}` : '图片'
+  return ['视频', item.duration_seconds ? `${item.duration_seconds}s` : '', item.aspect_ratio, item.resolution]
+    .filter(Boolean)
+    .join(' · ')
+}
+
+function markLibraryCoverFailed(id: string) {
+  libraryFailedCovers.value = { ...libraryFailedCovers.value, [id]: true }
+}
+
+function libraryCoverUrl(item: InspirationLibraryItem): string {
+  if (!item.cover_url || libraryFailedCovers.value[item.id]) return ''
+  return item.cover_url
+}
+
+function setLibraryQuery(patch: Partial<typeof libraryQuery>) {
+  Object.assign(libraryQuery, patch)
+  // 换类型时模型/分类的候选会变，回到"全部"再取。
+  if (patch.type) {
+    libraryQuery.model = 'all'
+    libraryQuery.category = 'all'
+  }
+  void loadLibrary()
+}
+
+function reloadLibrary() {
+  void loadLibrary()
+}
+
+async function loadLibrary(options: { append?: boolean; refresh?: boolean } = {}) {
+  const append = options.append === true
+  const page = append ? libraryPageNumber.value + 1 : 1
+  libraryLoading.value = true
+  libraryError.value = ''
+  try {
+    const result = await fetchInspirationLibrary({
+      type: libraryQuery.type,
+      model: libraryQuery.model,
+      category: libraryQuery.category,
+      keyword: libraryQuery.keyword,
+      page,
+      pageSize: 24,
+      refresh: options.refresh === true,
+    })
+    libraryItems.value = append ? [...libraryItems.value, ...result.items] : result.items
+    libraryPageNumber.value = page
+    libraryTotal.value = result.total
+    libraryHasMore.value = result.has_more
+    libraryFetchedAt.value = result.fetched_at
+    libraryStale.value = result.stale
+    // 模型/分类候选由服务端的整份快照给出，换类型后会一起更新。
+    if (result.models.length) libraryModels.value = result.models
+    if (result.categories.length) libraryCategories.value = result.categories
+    if (!libraryItems.value.length) libraryError.value = ''
+  } catch (error) {
+    const message = error instanceof Error ? error.message : ''
+    libraryError.value = message
+      ? `加载作品库失败：${message}`
+      : '加载作品库失败：请检查服务器能否访问灵感站。'
+  } finally {
+    libraryLoading.value = false
+  }
+}
+
+function openLibraryItem(item: InspirationLibraryItem) {
+  active.value = {
+    kind: 'online',
+    title: item.title || (item.type === 'video' ? '视频提示词' : '图片灵感'),
+    prompt: item.prompt,
+    negativePrompt: '',
+    mediaType: item.type === 'image' && libraryCoverUrl(item) ? 'image' : 'none',
+    mediaUrl: item.type === 'image' ? libraryCoverUrl(item) : '',
+    posterUrl: libraryCoverUrl(item),
+    sourceUrl: item.source_url || '',
+    meta: [
+      { label: '模型', value: item.model || '未知' },
+      { label: '分类', value: item.category || '—' },
+      ...(item.type === 'image'
+        ? [{ label: '尺寸', value: `${item.width}×${item.height}` }]
+        : [
+            { label: '时长', value: `${item.duration_seconds} 秒` },
+            { label: '画幅', value: item.aspect_ratio || '—' },
+            { label: '画质', value: item.resolution || '—' },
+          ]),
+      ...(item.author ? [{ label: '作者', value: item.author_handle || item.author }] : []),
+    ],
+    tips: '',
+    checkpoints: '',
+    requirements: [],
+    placeholderStyle: libraryFrameStyle(item),
+    // 视频提示词条目只有文字，左侧用它的封面/色板占位。
+    posterPreviewUrl: item.type === 'image' ? '' : libraryCoverUrl(item),
+    template: null,
+  }
+}
+
+function useLibraryItem(item: InspirationLibraryItem) {
+  active.value = null
+  handoffPrompt(item.prompt)
 }
 
 // 在线灵感没有本地参数，只把提示词交给工作台，避免长提示词塞进 URL。
@@ -750,6 +1056,43 @@ onBeforeUnmount(() => {
 .online-bar__hint {
   font-size: 0.8rem;
   color: rgb(107 114 128);
+}
+
+.inline-field {
+  display: inline-flex;
+  height: 2.2rem;
+  align-items: center;
+  gap: 0.35rem;
+  border: 1px solid rgb(226 232 240);
+  border-radius: 0.6rem;
+  background: rgb(255 255 255);
+  padding: 0 0.55rem;
+  font-size: 0.75rem;
+  color: rgb(107 114 128);
+}
+
+.inline-field .text-input {
+  height: 1.9rem;
+  min-width: 11rem;
+  border: 0;
+  padding: 0;
+}
+
+.library-more {
+  display: flex;
+  justify-content: center;
+  padding: 0.5rem 0 0.25rem;
+}
+
+.library-more .secondary-button {
+  flex: 0 0 auto;
+  padding: 0 1rem;
+}
+
+:global(.dark .inline-field) {
+  border-color: rgb(51 65 85);
+  background: rgb(30 41 59);
+  color: rgb(148 163 184);
 }
 
 .online-error {

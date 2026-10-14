@@ -12,16 +12,18 @@ const { listKeys, getPublicSettings, copyToClipboard, push } = vi.hoisted(() => 
   push: vi.fn(),
 }))
 
-const { listArchivedVideos, deleteArchivedVideo, fetchOnlineInspirationFeed } = vi.hoisted(() => ({
+const { listArchivedVideos, deleteArchivedVideo, fetchOnlineInspirationFeed, fetchInspirationLibrary } = vi.hoisted(() => ({
   listArchivedVideos: vi.fn(),
   deleteArchivedVideo: vi.fn(),
   fetchOnlineInspirationFeed: vi.fn(),
+  fetchInspirationLibrary: vi.fn(),
 }))
 
 vi.mock('../videoArchiveApi', () => ({
   listArchivedVideos,
   deleteArchivedVideo,
   fetchOnlineInspirationFeed,
+  fetchInspirationLibrary,
   inspirationMediaProxyUrl: (rawUrl: string) =>
     `/api/v1/public/video-inspiration/media?u=${encodeURIComponent(rawUrl)}`,
   archiveVideo: vi.fn(),
@@ -351,5 +353,96 @@ describe('VideoWorksView', () => {
 
     expect(deleteArchivedVideo).toHaveBeenCalledWith('arch-2')
     expect(wrapper.find('[data-testid="archived-arch-2"]').exists()).toBe(false)
+  })
+})
+
+describe('VideoInspirationView library source', () => {
+  const libraryPage = {
+    items: [
+      {
+        id: 'prompt-1',
+        type: 'video' as const,
+        title: '香水瓶的光影揭幕',
+        prompt: '一只无品牌、无文字的透明方形香水瓶立在深灰色石台中央。',
+        model: 'Seedance',
+        category: '产品广告',
+        cover_url: '/api/v1/public/video-inspiration/media?u=storyboard.webp',
+        source_cover: 'https://gen.nbility.ai/media/video-storyboards/perfume-light-reveal.webp',
+        width: 0,
+        height: 0,
+        duration_seconds: 5,
+        aspect_ratio: '16:9',
+        resolution: '720p',
+        likes: 0,
+        views: 0,
+        author: '',
+        author_handle: '',
+        source_url: 'https://gen.nbility.ai/video-prompts/perfume-light-reveal',
+        has_cover: true,
+      },
+    ],
+    page: 1,
+    page_size: 24,
+    has_more: true,
+    total: 418,
+    models: ['Seedance', 'Kling'],
+    categories: ['产品广告', '美食饮品'],
+    fetched_at: 1760400000,
+    stale: false,
+  }
+
+  beforeEach(() => {
+    push.mockReset()
+    copyToClipboard.mockReset()
+    copyToClipboard.mockResolvedValue(true)
+    fetchInspirationLibrary.mockReset()
+    fetchInspirationLibrary.mockResolvedValue(libraryPage)
+  })
+
+  it('lists library items with model, category and total', async () => {
+    const wrapper = mount(VideoInspirationView, { global: { stubs: globalStubs } })
+    await wrapper.get('[data-testid="inspiration-source-library"]').trigger('click')
+    await flushPromises()
+
+    expect(fetchInspirationLibrary).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'video', model: 'all', category: 'all', page: 1 }),
+    )
+    expect(wrapper.get('[data-testid="library-summary"]').text()).toContain('共 418 条')
+    const card = wrapper.get('[data-testid="library-prompt-1"]')
+    expect(card.text()).toContain('Seedance')
+    expect(card.get('img').attributes('src')).toBe('/api/v1/public/video-inspiration/media?u=storyboard.webp')
+  })
+
+  it('reloads with the keyword and keeps pagination state', async () => {
+    const wrapper = mount(VideoInspirationView, { global: { stubs: globalStubs } })
+    await wrapper.get('[data-testid="inspiration-source-library"]').trigger('click')
+    await flushPromises()
+
+    await wrapper.get('[data-testid="library-search"]').setValue('咖啡')
+    await wrapper.get('[data-testid="library-search-button"]').trigger('click')
+    await flushPromises()
+    expect(fetchInspirationLibrary).toHaveBeenLastCalledWith(
+      expect.objectContaining({ keyword: '咖啡', page: 1 }),
+    )
+
+    await wrapper.get('[data-testid="library-load-more"]').trigger('click')
+    await flushPromises()
+    // 加载更多要请求下一页，而不是把第一页再取一次。
+    expect(fetchInspirationLibrary).toHaveBeenLastCalledWith(expect.objectContaining({ page: 2 }))
+  })
+
+  it('hands a library prompt to the studio', async () => {
+    const wrapper = mount(VideoInspirationView, { global: { stubs: globalStubs } })
+    await wrapper.get('[data-testid="inspiration-source-library"]').trigger('click')
+    await flushPromises()
+
+    const useButton = wrapper
+      .get('[data-testid="library-prompt-1"]')
+      .findAll('button')
+      .find((button) => button.text().includes('带入工作台'))
+    await useButton!.trigger('click')
+
+    expect(sessionStorage.getItem('sub2api:video-studio:pending-prompt')).toContain('透明方形香水瓶')
+    expect(push).toHaveBeenCalledWith({ path: '/video-studio' })
   })
 })
