@@ -8,39 +8,115 @@
         </div>
 
         <div class="video-studio__toolbar">
-          <label class="toolbar-field">
-            <span>API Key</span>
-            <ImageStudioSelect
-              v-model="selectedKeyId"
-              class="toolbar-field__select"
-              data-testid="api-key-select"
-              :options="apiKeyOptions"
-              :placeholder="apiKeyOptions.length ? '选择密钥' : '没有可用密钥'"
-              direction="down"
-            />
-          </label>
-          <label class="toolbar-field">
-            <span>模型</span>
-            <ImageStudioSelect
-              v-model="videoModel"
-              class="toolbar-field__select toolbar-field__select--model"
-              data-testid="video-model-select"
-              :options="videoModelOptions"
-              :disabled="loadingModels || videoModels.length === 0"
-              :placeholder="modelSelectPlaceholder"
-              direction="down"
-            />
-          </label>
-          <button
-            type="button"
-            class="mini-action"
-            data-testid="video-refresh"
-            title="刷新密钥和模型"
-            :disabled="refreshing"
-            @click="refreshAll"
-          >
-            <Icon name="refresh" size="sm" :class="{ 'is-spinning': refreshing }" />
-          </button>
+          <div class="segmented segmented--compact provider-switch" role="tablist" aria-label="生成渠道">
+            <button
+              type="button"
+              role="tab"
+              class="segmented__item"
+              :class="{ 'segmented__item--active': providerMode === 'platform' }"
+              :aria-selected="providerMode === 'platform'"
+              data-testid="provider-platform"
+              @click="setProviderMode('platform')"
+            >
+              本站渠道
+            </button>
+            <button
+              type="button"
+              role="tab"
+              class="segmented__item"
+              :class="{ 'segmented__item--active': providerMode === 'custom' }"
+              :aria-selected="providerMode === 'custom'"
+              data-testid="provider-custom"
+              @click="setProviderMode('custom')"
+            >
+              自定义渠道
+            </button>
+          </div>
+
+          <template v-if="providerMode === 'platform'">
+            <label class="toolbar-field">
+              <span>API Key</span>
+              <ImageStudioSelect
+                v-model="selectedKeyId"
+                class="toolbar-field__select"
+                data-testid="api-key-select"
+                :options="apiKeyOptions"
+                :placeholder="apiKeyOptions.length ? '选择密钥' : '没有可用密钥'"
+                direction="down"
+              />
+            </label>
+            <label class="toolbar-field">
+              <span>模型</span>
+              <ImageStudioSelect
+                v-model="videoModel"
+                class="toolbar-field__select toolbar-field__select--model"
+                data-testid="video-model-select"
+                :options="videoModelOptions"
+                :disabled="loadingModels || videoModels.length === 0"
+                :placeholder="modelSelectPlaceholder"
+                direction="down"
+              />
+            </label>
+            <button
+              type="button"
+              class="mini-action"
+              data-testid="video-refresh"
+              title="刷新密钥和模型"
+              :disabled="refreshing"
+              @click="refreshAll"
+            >
+              <Icon name="refresh" size="sm" :class="{ 'is-spinning': refreshing }" />
+            </button>
+          </template>
+
+          <template v-else>
+            <label class="toolbar-field">
+              <span>接口地址</span>
+              <input
+                v-model="customBaseUrl"
+                type="text"
+                class="toolbar-input toolbar-input--url"
+                placeholder="https://api.example.com/v1"
+                data-testid="custom-base-url"
+              />
+            </label>
+            <label class="toolbar-field">
+              <span>密钥</span>
+              <input
+                v-model="customApiKey"
+                type="password"
+                class="toolbar-input"
+                placeholder="sk-..."
+                autocomplete="off"
+                data-testid="custom-api-key"
+              />
+            </label>
+            <label class="toolbar-field">
+              <span>模型</span>
+              <input
+                v-model="customModel"
+                type="text"
+                class="toolbar-input toolbar-input--model"
+                placeholder="模型名"
+                list="video-custom-models"
+                data-testid="custom-model"
+              />
+              <datalist id="video-custom-models">
+                <option v-for="model in customModels" :key="model" :value="model" />
+              </datalist>
+            </label>
+            <button
+              type="button"
+              class="mini-action"
+              data-testid="custom-models-load"
+              title="用这个渠道的密钥读取可用模型"
+              :disabled="customLoadingModels"
+              @click="loadCustomModels"
+            >
+              <Icon name="refresh" size="sm" :class="{ 'is-spinning': customLoadingModels }" />
+            </button>
+          </template>
+
           <RouterLink class="toolbar-link" to="/video-inspiration">
             <Icon name="lightbulb" size="sm" />
             <span>灵感库</span>
@@ -51,6 +127,7 @@
             <em v-if="works.length">{{ works.length }}</em>
           </RouterLink>
           <span v-if="modelLoadError" class="toolbar-error">{{ modelLoadError }}</span>
+          <span v-if="customModelError" class="toolbar-error">{{ customModelError }}</span>
         </div>
       </header>
 
@@ -170,9 +247,13 @@
           v-model="prompt"
           rows="3"
           class="video-composer__prompt"
+          :maxlength="MAX_PROMPT_CHARS"
           placeholder="描述画面、动作与运镜，例如：镜头缓慢推进，海雾从左侧涌入，光线逐渐转暖..."
           @paste="onPaste"
         />
+        <div class="video-composer__prompt-meta">
+          <span>{{ prompt.length }}/{{ MAX_PROMPT_CHARS }}</span>
+        </div>
 
         <div class="video-composer__controls">
           <button
@@ -302,19 +383,24 @@
             </div>
             <p class="reference-dialog__hint">{{ imageRoleHint }}</p>
           </div>
-
-          <input
-            ref="referenceFileInput"
-            type="file"
-            accept="image/png,image/jpeg,image/webp"
-            class="hidden"
-            @change="onReferenceFileSelected"
-          />
-          <button type="button" class="secondary-button" @click="referenceFileInput?.click()">
-            <Icon name="upload" size="sm" />
-            <span>选择本地图片</span>
-          </button>
         </template>
+
+        <input
+          ref="referenceFileInput"
+          type="file"
+          :accept="referenceFileAccept"
+          class="hidden"
+          @change="onReferenceFileSelected"
+        />
+        <button
+          type="button"
+          class="secondary-button"
+          data-testid="reference-file-trigger"
+          @click="referenceFileInput?.click()"
+        >
+          <Icon name="upload" size="sm" />
+          <span>{{ referenceFileLabel }}</span>
+        </button>
 
         <p class="reference-dialog__label">
           {{ referenceKind === 'image' ? '或粘贴图片链接' : referenceKind === 'video' ? '粘贴参考视频链接' : '粘贴参考音频链接' }}
@@ -334,6 +420,7 @@
         </div>
         <p v-if="referenceDialogError" class="reference-dialog__error">{{ referenceDialogError }}</p>
         <p class="reference-dialog__hint">{{ referenceLimitHint }}</p>
+        <p class="reference-dialog__hint">参考素材均可选，合计不超过 {{ MAX_REFERENCE_TOTAL_MB }}MB。</p>
       </div>
     </BaseDialog>
 
@@ -443,6 +530,9 @@ interface StudioTask {
   provider: VideoProvider
   requestId: string
   keyId: number
+  // 发起任务时用的渠道（仅内存保存，不写进本地记录，避免密钥落盘）。
+  baseUrl: string
+  apiKeyRef: string
   model: string
   prompt: string
   durationSeconds: number
@@ -460,12 +550,27 @@ interface StudioTask {
 
 const MIN_DURATION = 1
 const MAX_DURATION = 15
-const MAX_IMAGES = 4
+const MAX_IMAGES = 3
 const MAX_VIDEOS = 1
 const MAX_AUDIOS = 1
+// 参考素材限制对齐自家灵感站：单件体积 + 合计体积。
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024
+const MAX_VIDEO_BYTES = 20 * 1024 * 1024
+const MAX_AUDIO_BYTES = 8 * 1024 * 1024
+const MAX_REFERENCE_TOTAL_BYTES = 30 * 1024 * 1024
+const MAX_PROMPT_CHARS = 5000
+const MAX_REFERENCE_TOTAL_MB = MAX_REFERENCE_TOTAL_BYTES / (1024 * 1024)
+
+const ACCEPTED_TYPES: Record<'image' | 'video' | 'audio', string[]> = {
+  image: ['image/png', 'image/jpeg', 'image/webp'],
+  video: ['video/mp4', 'video/quicktime', 'video/webm'],
+  audio: ['audio/mpeg', 'audio/mp4', 'audio/wav', 'audio/x-wav', 'audio/aac', 'audio/ogg'],
+}
 
 // 与灵感库共用：在线灵感把提示词放这里，跳回工作台时读取。
 const PENDING_PROMPT_STORAGE_KEY = 'sub2api:video-studio:pending-prompt'
+// 自定义渠道的地址与模型名可以留在本地方便复用；密钥不落盘。
+const PROVIDER_STORAGE_KEY = 'sub2api:video-studio:provider'
 
 const route = useRoute()
 const { copyToClipboard } = useClipboard()
@@ -473,6 +578,14 @@ const { copyToClipboard } = useClipboard()
 const keys = ref<ApiKey[]>([])
 const selectedKeyId = ref('')
 const apiBaseUrl = ref('')
+// 生成渠道：默认走本站密钥；自定义渠道让用户直接填别家平台的地址与密钥。
+const providerMode = ref<'platform' | 'custom'>('platform')
+const customBaseUrl = ref('')
+const customApiKey = ref('')
+const customModel = ref('')
+const customModels = ref<string[]>([])
+const customLoadingModels = ref(false)
+const customModelError = ref('')
 const videoModel = ref('')
 const videoModels = ref<string[]>([])
 const loadingModels = ref(false)
@@ -513,13 +626,23 @@ const selectedKey = computed(() =>
   activeKeys.value.find((key) => String(key.id) === selectedKeyId.value) || null,
 )
 const videoModelOptions = computed(() => videoModels.value.map((model) => ({ value: model, label: model })))
+// 自定义渠道：地址与密钥都由用户自己填，模型既可以手写也可以用「获取模型」拉一次。
+const effectiveBaseUrl = computed(() =>
+  providerMode.value === 'custom' ? normalizeBaseUrl(customBaseUrl.value) : apiBaseUrl.value,
+)
+const effectiveApiKey = computed(() =>
+  providerMode.value === 'custom' ? customApiKey.value.trim() : (selectedKey.value?.key || ''),
+)
+const effectiveModel = computed(() =>
+  providerMode.value === 'custom' ? customModel.value.trim() : videoModel.value.trim(),
+)
 const modelSelectPlaceholder = computed(() => {
   if (loadingModels.value) return '正在加载...'
   if (!videoModels.value.length) return '未找到视频模型'
   return '选择模型'
 })
 const canGenerate = computed(() =>
-  Boolean(apiBaseUrl.value && selectedKey.value?.key && videoModel.value.trim() && prompt.value.trim()),
+  Boolean(effectiveBaseUrl.value && effectiveApiKey.value && effectiveModel.value && prompt.value.trim()),
 )
 const generating = computed(() => activeGenerations.value > 0)
 
@@ -551,12 +674,17 @@ const referenceUrlPlaceholder = computed(() => {
   if (referenceKind.value === 'video') return 'https://.../reference.mp4'
   return 'https://.../reference.mp3'
 })
+const referenceFileAccept = computed(() => ACCEPTED_TYPES[referenceKind.value].join(','))
+const referenceFileLabel = computed(() => {
+  if (referenceKind.value === 'image') return '选择本地图片'
+  return referenceKind.value === 'video' ? '选择本地视频' : '选择本地音频'
+})
 const referenceLimitHint = computed(() => {
   if (referenceKind.value === 'image') {
-    return `参考图最多 ${MAX_IMAGES} 张，支持上传本地图片或粘贴图片链接。`
+    return `参考图最多 ${MAX_IMAGES} 张，每张不超过 5MB，可上传本地图片或粘贴链接。`
   }
-  if (referenceKind.value === 'video') return `参考视频最多 ${MAX_VIDEOS} 个，请提供可公开访问的链接。`
-  return `参考音频最多 ${MAX_AUDIOS} 个，请提供可公开访问的链接。`
+  if (referenceKind.value === 'video') return `参考视频最多 ${MAX_VIDEOS} 个，不超过 20MB，可上传本地视频或粘贴链接。`
+  return `参考音频最多 ${MAX_AUDIOS} 个，不超过 8MB，可上传本地音频或粘贴链接。`
 })
 
 function resolveEndpoint(configured: string) {
@@ -564,8 +692,42 @@ function resolveEndpoint(configured: string) {
   return resolvePlaygroundApiEndpoint(configured, hostname)
 }
 
-function contextFor(key: ApiKey) {
-  return { baseUrl: apiBaseUrl.value, apiKey: key.key }
+// 用户填的地址可能带/不带尾部斜杠、也可能直接写到 /v1，统一归一化。
+function normalizeBaseUrl(raw: string): string {
+  return raw.trim().replace(/\/+$/, '')
+}
+
+// 切换渠道时清掉上一侧遗留的报错，避免"密钥缺失"之类的提示串台。
+function setProviderMode(mode: 'platform' | 'custom') {
+  if (providerMode.value === mode) return
+  providerMode.value = mode
+  errorMessage.value = ''
+  customModelError.value = ''
+  persistProviderSettings()
+}
+
+function persistProviderSettings() {
+  try {
+    localStorage.setItem(PROVIDER_STORAGE_KEY, JSON.stringify({
+      mode: providerMode.value,
+      baseUrl: customBaseUrl.value.trim(),
+      model: customModel.value.trim(),
+    }))
+  } catch {
+    // 浏览器存储可选，写入失败不影响本次生成。
+  }
+}
+
+function restoreProviderSettings() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(PROVIDER_STORAGE_KEY) || 'null')
+    if (!stored || typeof stored !== 'object') return
+    if (stored.mode === 'custom' || stored.mode === 'platform') providerMode.value = stored.mode
+    if (typeof stored.baseUrl === 'string') customBaseUrl.value = stored.baseUrl
+    if (typeof stored.model === 'string') customModel.value = stored.model
+  } catch {
+    // 忽略损坏的本地记录。
+  }
 }
 
 function resolveSelectedKey(keyId: number): ApiKey | null {
@@ -592,6 +754,11 @@ function kindLabel(asset: VideoReferenceAsset): string {
     return '参考图'
   }
   return asset.kind === 'video' ? '参考视频' : '参考音频'
+}
+
+function kindName(kind: 'image' | 'video' | 'audio'): string {
+  if (kind === 'image') return '参考图'
+  return kind === 'video' ? '参考视频' : '参考音频'
 }
 
 function taskMeta(task: StudioTask): string {
@@ -680,6 +847,9 @@ function taskFromRecord(record: VideoWorkRecord): StudioTask {
     provider: record.provider,
     requestId: record.requestId,
     keyId: record.keyId,
+    // 恢复历史任务时按本站密钥重新解析渠道，自定义渠道的密钥不落盘。
+    baseUrl: '',
+    apiKeyRef: '',
     model: record.model,
     prompt: record.prompt,
     durationSeconds: record.durationSeconds,
@@ -743,6 +913,31 @@ async function loadModels() {
     if (requestId === modelRequestId) modelLoadError.value = errorMessageFrom(error, '加载视频模型失败')
   } finally {
     if (requestId === modelRequestId) loadingModels.value = false
+  }
+}
+
+// 自定义渠道：用用户自己的地址与密钥拉一次模型列表，拉不到也不阻断手写模型名。
+async function loadCustomModels() {
+  const baseUrl = normalizeBaseUrl(customBaseUrl.value)
+  const apiKey = customApiKey.value.trim()
+  if (!baseUrl || !apiKey) {
+    customModelError.value = '请先填写接口地址和密钥。'
+    return
+  }
+  customLoadingModels.value = true
+  customModelError.value = ''
+  try {
+    const names = deduplicateModelNames(await fetchModelNames(`${baseUrl}/models`, apiKey))
+    const videoOnly = names.filter(isVideoModel)
+    // 别家渠道的模型命名五花八门，过滤后为空就退回全部，让用户自己挑。
+    customModels.value = videoOnly.length ? videoOnly : names
+    if (!customModels.value.length) customModelError.value = '没有读到模型，可以直接手写模型名。'
+    else if (!customModel.value.trim()) customModel.value = customModels.value[0]
+    persistProviderSettings()
+  } catch (error) {
+    customModelError.value = errorMessageFrom(error, '获取模型失败')
+  } finally {
+    customLoadingModels.value = false
   }
 }
 
@@ -832,6 +1027,19 @@ function selectReferenceKind(kind: 'image' | 'video' | 'audio') {
   referenceDialogError.value = ''
 }
 
+function referenceTotalBytes(): number {
+  return references.value.reduce((total, asset) => total + (asset.sizeBytes || 0), 0)
+}
+
+function referenceSizeLimit(kind: 'image' | 'video' | 'audio'): number {
+  if (kind === 'image') return MAX_IMAGE_BYTES
+  return kind === 'video' ? MAX_VIDEO_BYTES : MAX_AUDIO_BYTES
+}
+
+function referenceSizeLimitLabel(kind: 'image' | 'video' | 'audio'): string {
+  return `${referenceSizeLimit(kind) / (1024 * 1024)}MB`
+}
+
 function addReference(asset: Omit<VideoReferenceAsset, 'id'>): boolean {
   if (asset.kind === 'image' && referenceCount('image') >= MAX_IMAGES) {
     referenceDialogError.value = `参考图最多 ${MAX_IMAGES} 张。`
@@ -845,6 +1053,14 @@ function addReference(asset: Omit<VideoReferenceAsset, 'id'>): boolean {
     referenceDialogError.value = `参考音频最多 ${MAX_AUDIOS} 个。`
     return false
   }
+  if (asset.sizeBytes && asset.sizeBytes > referenceSizeLimit(asset.kind)) {
+    referenceDialogError.value = `单个${kindName(asset.kind)}不能超过 ${referenceSizeLimitLabel(asset.kind)}。`
+    return false
+  }
+  if (referenceTotalBytes() + (asset.sizeBytes || 0) > MAX_REFERENCE_TOTAL_BYTES) {
+    referenceDialogError.value = `参考素材合计不能超过 ${MAX_REFERENCE_TOTAL_MB}MB。`
+    return false
+  }
   references.value.push({ ...asset, id: nextReferenceId++ })
   return true
 }
@@ -854,17 +1070,23 @@ function onReferenceFileSelected(event: Event) {
   const file = input.files?.[0]
   input.value = ''
   if (!file) return
-  if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
-    referenceDialogError.value = '只支持 PNG、JPEG、WEBP 图片。'
+  const kind = referenceKind.value
+  if (!ACCEPTED_TYPES[kind].includes(file.type)) {
+    referenceDialogError.value = `${kindName(kind)}的格式不支持，请换一个文件。`
+    return
+  }
+  if (file.size > referenceSizeLimit(kind)) {
+    referenceDialogError.value = `单个文件不能超过 ${referenceSizeLimitLabel(kind)}。`
     return
   }
   const reader = new FileReader()
   reader.onload = () => {
     const added = addReference({
-      kind: 'image',
-      name: file.name || 'reference.png',
+      kind,
+      name: file.name || 'reference',
       url: String(reader.result || ''),
-      role: referenceRole.value,
+      role: kind === 'image' ? referenceRole.value : undefined,
+      sizeBytes: file.size,
     })
     if (added) closeReferenceDialog()
   }
@@ -926,17 +1148,21 @@ function clampDuration(value: number): number {
 }
 
 async function generate() {
-  const key = selectedKey.value
-  if (!canGenerate.value || !key) return
+  if (!canGenerate.value) return
 
   const localId = createVideoWorkId()
-  const model = videoModel.value.trim()
+  const model = effectiveModel.value
   const provider = resolveVideoProvider(model)
+  const platformKey = providerMode.value === 'platform' ? selectedKey.value : null
+  const baseUrl = effectiveBaseUrl.value
+  const apiKeyRef = effectiveApiKey.value
   const task: StudioTask = {
     localId,
     provider,
     requestId: '',
-    keyId: key.id,
+    keyId: platformKey?.id ?? 0,
+    baseUrl,
+    apiKeyRef,
     model,
     prompt: prompt.value.trim(),
     durationSeconds: clampDuration(durationSeconds.value),
@@ -962,24 +1188,29 @@ async function generate() {
   works.value = listVideoWorks()
   errorMessage.value = ''
   await runTask(tracked, {
-    key,
+    key: platformKey,
+    baseUrl,
+    apiKey: apiKeyRef,
     references: references.value.slice(),
   })
 }
 
 async function runTask(
   task: StudioTask,
-  submission: { key: ApiKey; references: VideoReferenceAsset[] } | null,
+  submission: { key: ApiKey | null; baseUrl: string; apiKey: string; references: VideoReferenceAsset[] } | null,
 ) {
-  const key = submission?.key || resolveSelectedKey(task.keyId)
-  if (!key) {
+  // 恢复历史任务时没有 submission：此时只能用本站密钥（自定义渠道的密钥不落盘）。
+  const resumedKey = submission ? null : resolveSelectedKey(task.keyId)
+  const baseUrl = submission?.baseUrl || task.baseUrl || apiBaseUrl.value
+  const apiKey = submission?.apiKey || task.apiKeyRef || resumedKey?.key || ''
+  if (!apiKey) {
     task.status = 'failed'
     task.stageText = '生成失败'
-    task.error = '找不到发起任务时使用的 API Key，请重新生成。'
+    task.error = '找不到发起任务时使用的密钥，请重新生成。'
     persistTask(task, 'failed', task.error)
     return
   }
-  if (!apiBaseUrl.value) {
+  if (!baseUrl) {
     task.status = 'failed'
     task.stageText = '生成失败'
     task.error = 'API 端点不可用，请检查站点设置。'
@@ -988,7 +1219,7 @@ async function runTask(
   }
 
   activeGenerations.value += 1
-  const context = contextFor(key)
+  const context = { baseUrl, apiKey }
   try {
     if (!task.requestId) {
       const created = await createVideoTask(context, {
@@ -1058,7 +1289,11 @@ async function runTask(
 async function refreshTask(task: StudioTask) {
   if (!task.requestId || task.status === 'succeeded') return
   errorMessage.value = ''
-  await runTask(task, null)
+  // 本会话内发起的任务还留着渠道密钥，用它继续查询，避免自定义渠道丢密钥。
+  const submission = task.apiKeyRef
+    ? { key: null, baseUrl: task.baseUrl, apiKey: task.apiKeyRef, references: [] }
+    : null
+  await runTask(task, submission)
 }
 
 // 归档成对象存储的长期地址：换浏览器/清缓存后「我的作品」还能播放。
@@ -1154,9 +1389,14 @@ watch([selectedKeyId, apiBaseUrl], () => {
   void loadModels()
 })
 
+watch([customBaseUrl, customModel], () => {
+  if (providerMode.value === 'custom') persistProviderSettings()
+})
+
 // 灵感参数与未完成任务只在进入页面时处理一次：刷新密钥/模型不能覆盖用户
 // 已经改过的提示词，也不能把同一份未完成任务重复挂起来。
 onMounted(async () => {
+  restoreProviderSettings()
   await loadData()
   applyInspirationFromRoute()
   resumeWorks()
@@ -1228,6 +1468,32 @@ onBeforeUnmount(() => {
 
 .toolbar-field__select--model {
   min-width: 13rem;
+}
+
+.provider-switch {
+  align-items: center;
+}
+
+.toolbar-input {
+  height: 1.8rem;
+  width: 9rem;
+  border: 0;
+  background: transparent;
+  font-size: 0.82rem;
+  color: rgb(30 41 59);
+  outline: none;
+}
+
+.toolbar-input--url {
+  width: 14rem;
+}
+
+.toolbar-input--model {
+  width: 11rem;
+}
+
+.toolbar-input::placeholder {
+  color: rgb(148 163 184);
 }
 
 .toolbar-link {
@@ -1522,6 +1788,13 @@ onBeforeUnmount(() => {
 
 .video-composer__prompt::placeholder {
   color: rgb(156 163 175);
+}
+
+.video-composer__prompt-meta {
+  display: flex;
+  justify-content: flex-end;
+  font-size: 0.7rem;
+  color: rgb(148 163 184);
 }
 
 .video-composer__controls {
@@ -1834,7 +2107,8 @@ onBeforeUnmount(() => {
 :global(.dark .mini-action),
 :global(.dark .secondary-button),
 :global(.dark .count-stepper),
-:global(.dark .text-input) {
+:global(.dark .text-input),
+:global(.dark .toolbar-input) {
   border-color: rgb(51 65 85);
   background: rgb(30 41 59);
   color: rgb(226 232 240);

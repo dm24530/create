@@ -437,6 +437,161 @@ describe('VideoStudioView inspiration handoff', () => {
   })
 })
 
+describe('VideoStudioView custom provider', () => {
+  beforeEach(() => {
+    resetMocks()
+    localStorage.clear()
+    vi.stubGlobal('fetch', vi.fn())
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      value: { hostname: 'localhost' },
+    })
+  })
+
+  it('posts to the user-supplied endpoint with the user-supplied key', async () => {
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = String(input)
+      if (url.endsWith('/models')) return jsonResponse({ data: [{ id: 'seedance-2-720p' }] })
+      if (url.endsWith('/contents/generations/tasks') && init?.method === 'POST') {
+        return jsonResponse({ id: 'task-c1' })
+      }
+      if (url.endsWith('/contents/generations/tasks/task-c1')) {
+        return jsonResponse({ status: 'succeeded', content: { video_url: 'https://cdn.example.com/c.mp4' } })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountStudio()
+    await flushPromises()
+    await flushPromises()
+
+    await wrapper.get('[data-testid="provider-custom"]').trigger('click')
+    await wrapper.get('[data-testid="custom-base-url"]').setValue('https://third.example.com/v1/')
+    await wrapper.get('[data-testid="custom-api-key"]').setValue('third-key')
+    await wrapper.get('[data-testid="custom-model"]').setValue('seedance-2-720p')
+    await wrapper.get('textarea').setValue('走自己的渠道生成这段镜头')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    await flushPromises()
+
+    const createCall = fetchMock.mock.calls.find(
+      (call) => String(call[0]) === 'https://third.example.com/v1/contents/generations/tasks'
+        && call[1]?.method === 'POST',
+    )
+    expect(createCall).toBeDefined()
+    expect((createCall?.[1]?.headers as Record<string, string>).Authorization).toBe('Bearer third-key')
+    expect(wrapper.get('video').attributes('src')).toBe('https://cdn.example.com/c.mp4')
+  })
+
+  it('pulls the model list from the custom endpoint with the custom key', async () => {
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/models')) {
+        return jsonResponse({ data: [{ id: 'seedance-2-720p' }, { id: 'gpt-4o' }] })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountStudio()
+    await flushPromises()
+    await flushPromises()
+
+    await wrapper.get('[data-testid="provider-custom"]').trigger('click')
+    await wrapper.get('[data-testid="custom-base-url"]').setValue('https://third.example.com/v1')
+    await wrapper.get('[data-testid="custom-api-key"]').setValue('third-key')
+    await wrapper.get('[data-testid="custom-models-load"]').trigger('click')
+    await flushPromises()
+
+    const options = wrapper.findAll('datalist option').map((option) => option.attributes('value'))
+    expect(options).toContain('seedance-2-720p')
+    expect(options).not.toContain('gpt-4o')
+    expect((wrapper.get('[data-testid="custom-model"]').element as HTMLInputElement).value)
+      .toBe('seedance-2-720p')
+  })
+
+  it('keeps the custom key out of localStorage', async () => {
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/models')) return jsonResponse({ data: [] })
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountStudio()
+    await flushPromises()
+
+    await wrapper.get('[data-testid="provider-custom"]').trigger('click')
+    await wrapper.get('[data-testid="custom-base-url"]').setValue('https://third.example.com/v1')
+    await wrapper.get('[data-testid="custom-api-key"]').setValue('third-secret')
+    await flushPromises()
+
+    expect(localStorage.getItem('sub2api:video-studio:provider')).not.toContain('third-secret')
+  })
+})
+
+describe('VideoStudioView reference limits', () => {
+  beforeEach(() => {
+    resetMocks()
+    localStorage.clear()
+    vi.stubGlobal('fetch', vi.fn())
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      value: { hostname: 'localhost' },
+    })
+  })
+
+  it('rejects a reference image that goes over the per-file size limit', async () => {
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/models')) return jsonResponse({ data: [] })
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountStudio()
+    await flushPromises()
+    await wrapper.get('[data-testid="video-reference-trigger"]').trigger('click')
+
+    const input = wrapper.get('input[type="file"]')
+    const oversized = new File(
+      [new Uint8Array(5 * 1024 * 1024 + 1)],
+      'huge.png',
+      { type: 'image/png' },
+    )
+    Object.defineProperty(input.element, 'files', { value: [oversized], configurable: true })
+    await input.trigger('change')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('单个文件不能超过 5MB')
+    expect(wrapper.findAll('.reference-chip').length).toBe(0)
+  })
+
+  it('accepts a reference video through the file picker up to 20MB', async () => {
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/models')) return jsonResponse({ data: [] })
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountStudio()
+    await flushPromises()
+    await wrapper.get('[data-testid="video-reference-trigger"]').trigger('click')
+    await wrapper.get('[data-testid="reference-kind-video"]').trigger('click')
+
+    expect(wrapper.get('input[type="file"]').attributes('accept')).toContain('video/mp4')
+
+    const small = new File([new Uint8Array(1024)], 'clip.mp4', { type: 'video/mp4' })
+    const input = wrapper.get('input[type="file"]')
+    Object.defineProperty(input.element, 'files', { value: [small], configurable: true })
+    await input.trigger('change')
+    // FileReader 的 load 回调落在宏任务里，等它跑完再断言。
+    await vi.waitFor(() => {
+      expect(wrapper.findAll('.reference-chip').length).toBe(1)
+    })
+    expect(wrapper.get('.reference-chip').text()).toContain('参考视频')
+  })
+})
+
 describe('VideoStudioView unfinished work resumption', () => {
   beforeEach(() => {
     resetMocks()

@@ -16,6 +16,8 @@ export interface VideoReferenceAsset {
   name: string
   url: string
   role?: 'first_frame' | 'last_frame' | 'reference_image'
+  // 本地选择/上传的素材才有字节数，用于前端限制单件与合计体积。
+  sizeBytes?: number
 }
 
 export interface VideoGenerationParams {
