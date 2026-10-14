@@ -90,9 +90,8 @@
                   class="template-card__poster-image"
                   @error="markPosterFailed(template.slug)"
                 />
-                <span class="template-card__play">
-                  <Icon name="play" size="md" />
-                </span>
+                <!-- 内置模板只有分镜图、没有可播放的视频，这里不能放播放键。 -->
+                <span v-if="template.storyboard" class="template-card__badge">分镜预览</span>
               </span>
               <span class="template-card__spec">{{ template.durationSeconds }}s · {{ template.aspectRatio }}</span>
             </button>
@@ -333,9 +332,8 @@
                     class="template-card__poster-image"
                     @error="markLibraryCoverFailed(item.id)"
                   />
-                  <span class="template-card__play">
-                    <Icon :name="item.type === 'video' ? 'play' : 'grid'" size="md" />
-                  </span>
+                  <!-- 作品库条目是提示词样本，没有可播放的成片，只标"分镜"或类型。 -->
+                  <span v-if="libraryCoverUrl(item)" class="template-card__badge">分镜预览</span>
                 </span>
                 <span class="template-card__spec">{{ librarySpec(item) }}</span>
               </button>
@@ -409,9 +407,7 @@
               alt=""
               class="detail__placeholder-image"
             />
-            <span class="template-card__play">
-              <Icon name="play" size="md" />
-            </span>
+            <span v-if="active.posterPreviewUrl" class="template-card__badge">分镜预览</span>
           </span>
         </div>
 
@@ -673,8 +669,9 @@ function openTemplate(template: VideoInspirationTemplate) {
     title: template.title,
     prompt: template.prompt,
     negativePrompt: '',
-    mediaType: 'none',
-    mediaUrl: '',
+    // 有分镜图就按图片展示（不是播放器）；没有就留色板。
+    mediaType: template.storyboard ? 'image' : 'none',
+    mediaUrl: templatePoster(template),
     posterUrl: '',
     sourceUrl: '',
     meta: [
@@ -1189,6 +1186,18 @@ onBeforeUnmount(() => {
   border-radius: 9999px;
   background: rgb(255 255 255 / 0.92);
   color: rgb(15 118 110);
+}
+
+/* 只有分镜图时用它替代播放键：明确告诉用户这是预览图，不是播放器。 */
+.template-card__badge {
+  position: absolute;
+  left: 0.5rem;
+  bottom: 0.5rem;
+  border-radius: 9999px;
+  background: rgb(15 23 42 / 0.72);
+  padding: 0.15rem 0.55rem;
+  font-size: 0.7rem;
+  color: rgb(241 245 249);
 }
 
 .template-card__spec {

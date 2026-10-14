@@ -135,6 +135,14 @@ describe('VideoInspirationView', () => {
     await poster.trigger('error')
     expect(wrapper.find('[data-testid="template-perfume-light-reveal"] img').exists()).toBe(false)
   })
+
+  // 内置模板没有成片：不能出现"看起来能播但点了没反应"的播放键。
+  it('labels built-in templates as storyboard previews without a play button', async () => {
+    const wrapper = mount(VideoInspirationView, { global: { stubs: globalStubs } })
+    const card = wrapper.get('[data-testid="template-perfume-light-reveal"]')
+    expect(card.text()).toContain('分镜预览')
+    expect(card.find('.template-card__play').exists()).toBe(false)
+  })
 })
 
 describe('VideoInspirationView online source', () => {
