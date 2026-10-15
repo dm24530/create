@@ -26,6 +26,9 @@ type saveImageStudioGalleryRequest struct {
 	Model        string `json:"model"`
 	Size         string `json:"size"`
 	Format       string `json:"format"`
+	// Saved 为真表示直接存进「我的作品」（长期有效、计入配额）；
+	// 不传时保持老行为（true），显式传 false 才是"只是生成页的临时内容"。
+	Saved *bool `json:"saved"`
 }
 
 func NewImageStudioGalleryHandler(gallery *service.ImageStudioGalleryService) *ImageStudioGalleryHandler {
@@ -47,6 +50,7 @@ func (h *ImageStudioGalleryHandler) Save(c *gin.Context) {
 	ctx := c.Request.Context()
 	dataURL := strings.TrimSpace(request.ImageDataURL)
 	imageURL := strings.TrimSpace(request.ImageURL)
+	saved := request.Saved == nil || *request.Saved
 
 	var entry *service.ImageStudioGalleryEntry
 	var err error
@@ -60,11 +64,11 @@ func (h *ImageStudioGalleryHandler) Save(c *gin.Context) {
 			return
 		}
 		entry, err = h.gallery.Save(
-			ctx, subject.UserID, request.Prompt, request.Model, request.Size, request.Format, contentType, data,
+			ctx, subject.UserID, request.Prompt, request.Model, request.Size, request.Format, contentType, data, saved,
 		)
 	case imageURL != "":
 		entry, err = h.gallery.SaveFromURL(
-			ctx, subject.UserID, request.Prompt, request.Model, request.Size, request.Format, imageURL,
+			ctx, subject.UserID, request.Prompt, request.Model, request.Size, request.Format, imageURL, saved,
 		)
 	default:
 		response.BadRequest(c, "image_data_url or image_url is required")
@@ -84,12 +88,41 @@ func (h *ImageStudioGalleryHandler) List(c *gin.Context) {
 		return
 	}
 	// 0 = 条数由后台配额决定（配额调大后不能还只给 100 条，否则更早的作品看不到也删不掉）。
-	items, err := h.gallery.List(c.Request.Context(), subject.UserID, 0)
+	items, err := h.gallery.List(c.Request.Context(), subject.UserID, 0, studioWorksScopeSaved(c))
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
 	response.Success(c, items)
+}
+
+// studioWorksScopeSaved 把 ?scope=saved|temp 翻译成列表过滤条件。
+// 不传（或传其它值）时不过滤：图片工作台要同屏展示临时内容和已保存的作品。
+func studioWorksScopeSaved(c *gin.Context) *bool {
+	switch strings.ToLower(strings.TrimSpace(c.Query("scope"))) {
+	case "saved":
+		saved := true
+		return &saved
+	case "temp":
+		saved := false
+		return &saved
+	default:
+		return nil
+	}
+}
+
+// Pin 把一条临时作品存进「我的作品」（长期有效、计入配额）。
+func (h *ImageStudioGalleryHandler) Pin(c *gin.Context) {
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not found in context")
+		return
+	}
+	if err := h.gallery.Pin(c.Request.Context(), subject.UserID, strings.TrimSpace(c.Param("id"))); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, gin.H{"saved": true})
 }
 
 // Delete 删除一条图片作品：记录和对象存储里的文件一起删。

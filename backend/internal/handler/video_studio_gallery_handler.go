@@ -26,6 +26,9 @@ type saveVideoStudioGalleryRequest struct {
 	Model           string `json:"model"`
 	Format          string `json:"format"`
 	DurationSeconds int    `json:"duration_seconds"`
+	// Saved 为真表示直接存进「我的作品」（长期有效、计入配额）；
+	// 不传时保持老行为（true）。
+	Saved *bool `json:"saved"`
 }
 
 func (h *VideoStudioGalleryHandler) Save(c *gin.Context) {
@@ -43,6 +46,7 @@ func (h *VideoStudioGalleryHandler) Save(c *gin.Context) {
 	ctx := c.Request.Context()
 	videoURL := strings.TrimSpace(request.VideoURL)
 	dataURL := strings.TrimSpace(request.VideoDataURL)
+	saved := request.Saved == nil || *request.Saved
 
 	var entry *service.VideoStudioGalleryEntry
 	var err error
@@ -56,11 +60,11 @@ func (h *VideoStudioGalleryHandler) Save(c *gin.Context) {
 			return
 		}
 		entry, err = h.gallery.Save(
-			ctx, subject.UserID, request.Prompt, request.Model, request.Format, request.DurationSeconds, contentType, data,
+			ctx, subject.UserID, request.Prompt, request.Model, request.Format, request.DurationSeconds, contentType, data, saved,
 		)
 	case videoURL != "":
 		entry, err = h.gallery.SaveFromURL(
-			ctx, subject.UserID, request.Prompt, request.Model, request.Format, request.DurationSeconds, videoURL,
+			ctx, subject.UserID, request.Prompt, request.Model, request.Format, request.DurationSeconds, videoURL, saved,
 		)
 	default:
 		response.BadRequest(c, "video_url or video_data_url is required")
@@ -80,12 +84,26 @@ func (h *VideoStudioGalleryHandler) List(c *gin.Context) {
 		return
 	}
 	// 0 = 条数由后台配额决定，和图片图库保持一致。
-	entries, err := h.gallery.List(c.Request.Context(), subject.UserID, 0)
+	entries, err := h.gallery.List(c.Request.Context(), subject.UserID, 0, studioWorksScopeSaved(c))
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
 	response.Success(c, entries)
+}
+
+// Pin 把一条临时视频存进「我的作品」（长期有效、计入配额）。
+func (h *VideoStudioGalleryHandler) Pin(c *gin.Context) {
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not found in context")
+		return
+	}
+	if err := h.gallery.Pin(c.Request.Context(), subject.UserID, strings.TrimSpace(c.Param("id"))); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, gin.H{"saved": true})
 }
 
 func (h *VideoStudioGalleryHandler) Delete(c *gin.Context) {

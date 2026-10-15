@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
@@ -14,11 +16,19 @@ import (
 // 两种作品共用一张表，用 kind 区分；配额计数刻意不带 kind 条件，
 // 所以「每人 100 个文件」是图片 + 视频合并计算的。
 const studioWorksColumns = `
-	id, user_id, kind, object_key, url, prompt, model, format, size, duration_seconds,
+	id, user_id, kind, object_key, url, prompt, model, format, size, duration_seconds, saved,
 	EXTRACT(EPOCH FROM created_at)::bigint AS created_at`
 
 type studioWorksDB struct {
 	db *sql.DB
+}
+
+// studioWorkExpiry 把"Unix 秒的过期时间"转成可空的库值：0 表示长期有效（NULL）。
+func studioWorkExpiry(expiresAt int64) any {
+	if expiresAt <= 0 {
+		return nil
+	}
+	return time.Unix(expiresAt, 0).UTC()
 }
 
 // insert 把一行作品写进表里，并在同一个事务内先核对配额。
@@ -41,10 +51,11 @@ func (s *studioWorksDB) insert(ctx context.Context, entry *studioWorkRow, quota 
 		return fmt.Errorf("lock studio works for user: %w", err)
 	}
 
-	if quota > 0 {
+	// 配额只约束"存到我的作品"的条目：没保存的临时内容到期会被清扫，不计入 100。
+	if quota > 0 && entry.Saved {
 		var used int64
 		if err := tx.QueryRowContext(ctx,
-			`SELECT COUNT(*) FROM studio_works WHERE user_id = $1`, entry.UserID,
+			`SELECT COUNT(*) FROM studio_works WHERE user_id = $1 AND saved = TRUE`, entry.UserID,
 		).Scan(&used); err != nil {
 			return fmt.Errorf("count studio works: %w", err)
 		}
@@ -52,13 +63,25 @@ func (s *studioWorksDB) insert(ctx context.Context, entry *studioWorkRow, quota 
 			return service.ErrStudioWorksQuotaExceeded
 		}
 	}
+	// 临时内容不占配额，但要有堆积上限，否则刷生成就能把桶撑爆。
+	if !entry.Saved {
+		var pending int64
+		if err := tx.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM studio_works WHERE user_id = $1 AND saved = FALSE`, entry.UserID,
+		).Scan(&pending); err != nil {
+			return fmt.Errorf("count temporary studio works: %w", err)
+		}
+		if pending >= service.StudioWorksTempLimit {
+			return service.ErrStudioWorksTempLimitExceeded
+		}
+	}
 
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO studio_works (
-			id, user_id, kind, object_key, url, prompt, model, format, size, duration_seconds
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+			id, user_id, kind, object_key, url, prompt, model, format, size, duration_seconds, saved, expires_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
 		entry.ID, entry.UserID, entry.Kind, entry.ObjectKey, entry.URL, entry.Prompt,
-		entry.Model, entry.Format, entry.Size, entry.DurationSeconds,
+		entry.Model, entry.Format, entry.Size, entry.DurationSeconds, entry.Saved, studioWorkExpiry(entry.ExpiresAt),
 	); err != nil {
 		return fmt.Errorf("insert studio work: %w", err)
 	}
@@ -75,16 +98,27 @@ func studioWorksLockKey(userID int64) int64 {
 	return studioWorksLockKeyNamespace*1_000_000 + userID
 }
 
-func (s *studioWorksDB) list(ctx context.Context, userID int64, kind string, limit int) ([]*studioWorkRow, error) {
+// list 取某个用户某一类作品。saved 为 nil 表示不过滤（图片工作台会同时展示临时与已保存）。
+func (s *studioWorksDB) list(
+	ctx context.Context, userID int64, kind string, saved *bool, limit int,
+) ([]*studioWorkRow, error) {
 	if s == nil || s.db == nil {
 		return nil, fmt.Errorf("studio works store is unavailable")
 	}
-	rows, err := s.db.QueryContext(ctx, `
+	query := `
 		SELECT`+studioWorksColumns+`
 		FROM studio_works
 		WHERE user_id = $1 AND kind = $2
-		ORDER BY created_at DESC
-		LIMIT $3`, userID, kind, limit)
+		  AND (saved = TRUE OR expires_at IS NULL OR expires_at > NOW())`
+	args := []any{userID, kind}
+	if saved != nil {
+		query += fmt.Sprintf(" AND saved = $%d", len(args)+1)
+		args = append(args, *saved)
+	}
+	query += fmt.Sprintf(" ORDER BY created_at DESC LIMIT $%d", len(args)+1)
+	args = append(args, limit)
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list studio works: %w", err)
 	}
@@ -95,7 +129,7 @@ func (s *studioWorksDB) list(ctx context.Context, userID int64, kind string, lim
 		entry := &studioWorkRow{}
 		if err := rows.Scan(
 			&entry.ID, &entry.UserID, &entry.Kind, &entry.ObjectKey, &entry.URL, &entry.Prompt,
-			&entry.Model, &entry.Format, &entry.Size, &entry.DurationSeconds, &entry.CreatedAt,
+			&entry.Model, &entry.Format, &entry.Size, &entry.DurationSeconds, &entry.Saved, &entry.CreatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan studio work: %w", err)
 		}
@@ -107,18 +141,111 @@ func (s *studioWorksDB) list(ctx context.Context, userID int64, kind string, lim
 	return entries, nil
 }
 
-// count 统计该用户全部作品（图片 + 视频），配额就按这个数判定。
+// count 统计配额用量：只算"存到我的作品"的条目（图片 + 视频合计），
+// 临时内容到期会被清扫，不占配额。
 func (s *studioWorksDB) count(ctx context.Context, userID int64) (int64, error) {
 	if s == nil || s.db == nil {
 		return 0, fmt.Errorf("studio works store is unavailable")
 	}
 	var total int64
 	if err := s.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM studio_works WHERE user_id = $1`, userID,
+		`SELECT COUNT(*) FROM studio_works WHERE user_id = $1 AND saved = TRUE`, userID,
 	).Scan(&total); err != nil {
 		return 0, fmt.Errorf("count studio works: %w", err)
 	}
 	return total, nil
+}
+
+// pin 把一条临时作品转成"存到我的作品"：先在同一事务里对用户加锁、核对配额，
+// 通过后清掉过期时间。已经是已保存状态时直接成功（幂等）。
+func (s *studioWorksDB) pin(ctx context.Context, userID int64, id string, quota int64) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("studio works store is unavailable")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin pin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock($1)`, studioWorksLockKey(userID)); err != nil {
+		return fmt.Errorf("lock studio works for user: %w", err)
+	}
+
+	var alreadySaved bool
+	err = tx.QueryRowContext(ctx,
+		`SELECT saved FROM studio_works WHERE user_id = $1 AND id = $2`, userID, id,
+	).Scan(&alreadySaved)
+	if errors.Is(err, sql.ErrNoRows) {
+		return service.ErrStudioWorkNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("load studio work: %w", err)
+	}
+	if alreadySaved {
+		return nil
+	}
+
+	if quota > 0 {
+		var used int64
+		if err := tx.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM studio_works WHERE user_id = $1 AND saved = TRUE`, userID,
+		).Scan(&used); err != nil {
+			return fmt.Errorf("count studio works: %w", err)
+		}
+		if used >= quota {
+			return service.ErrStudioWorksQuotaExceeded
+		}
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE studio_works SET saved = TRUE, expires_at = NULL WHERE user_id = $1 AND id = $2`,
+		userID, id,
+	); err != nil {
+		return fmt.Errorf("pin studio work: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit pin studio work: %w", err)
+	}
+	return nil
+}
+
+// sweepExpired 删掉一批到期未保存的记录，并返回它们的 object_key 供调用方删对象。
+func (s *studioWorksDB) sweepExpired(ctx context.Context, batch int) ([]string, error) {
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("studio works store is unavailable")
+	}
+	if batch <= 0 {
+		batch = 200
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		DELETE FROM studio_works
+		WHERE id IN (
+			SELECT id FROM studio_works
+			WHERE saved = FALSE AND expires_at IS NOT NULL AND expires_at <= NOW()
+			ORDER BY expires_at ASC
+			LIMIT $1
+		)
+		RETURNING object_key`, batch)
+	if err != nil {
+		return nil, fmt.Errorf("sweep expired studio works: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	keys := make([]string, 0, batch)
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			return nil, fmt.Errorf("scan swept object key: %w", err)
+		}
+		if strings.TrimSpace(key) != "" {
+			keys = append(keys, key)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate swept studio works: %w", err)
+	}
+	return keys, nil
 }
 
 func (s *studioWorksDB) objectKey(ctx context.Context, userID int64, id string) (string, error) {
@@ -169,6 +296,8 @@ type studioWorkRow struct {
 	Format          string
 	Size            string
 	DurationSeconds int
+	Saved           bool
+	ExpiresAt       int64
 	CreatedAt       int64
 }
 
@@ -198,13 +327,15 @@ func (s *imageStudioGalleryStore) Save(
 		Model:     entry.Model,
 		Format:    entry.Format,
 		Size:      entry.Size,
+		Saved:     entry.Saved,
+		ExpiresAt: entry.ExpiresAt,
 	}, quota)
 }
 
 func (s *imageStudioGalleryStore) List(
-	ctx context.Context, userID int64, limit int,
+	ctx context.Context, userID int64, limit int, saved *bool,
 ) ([]*service.ImageStudioGalleryEntry, error) {
-	rows, err := s.list(ctx, userID, "image", limit)
+	rows, err := s.list(ctx, userID, "image", saved, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -219,6 +350,8 @@ func (s *imageStudioGalleryStore) List(
 			Model:     row.Model,
 			Size:      row.Size,
 			Format:    row.Format,
+			Saved:     row.Saved,
+			ExpiresAt: row.ExpiresAt,
 			CreatedAt: row.CreatedAt,
 		})
 	}
@@ -235,6 +368,14 @@ func (s *imageStudioGalleryStore) ObjectKey(ctx context.Context, userID int64, i
 
 func (s *imageStudioGalleryStore) Delete(ctx context.Context, userID int64, id string) error {
 	return s.delete(ctx, userID, id)
+}
+
+func (s *imageStudioGalleryStore) Pin(ctx context.Context, userID int64, id string, quota int64) error {
+	return s.pin(ctx, userID, id, quota)
+}
+
+func (s *imageStudioGalleryStore) SweepExpired(ctx context.Context, batch int) ([]string, error) {
+	return s.sweepExpired(ctx, batch)
 }
 
 /* ------------------------------ 视频作品库 ------------------------------ */
@@ -263,13 +404,15 @@ func (s *videoStudioGalleryStore) Save(
 		Model:           entry.Model,
 		Format:          entry.Format,
 		DurationSeconds: entry.DurationSeconds,
+		Saved:           entry.Saved,
+		ExpiresAt:       entry.ExpiresAt,
 	}, quota)
 }
 
 func (s *videoStudioGalleryStore) List(
-	ctx context.Context, userID int64, limit int,
+	ctx context.Context, userID int64, limit int, saved *bool,
 ) ([]*service.VideoStudioGalleryEntry, error) {
-	rows, err := s.list(ctx, userID, "video", limit)
+	rows, err := s.list(ctx, userID, "video", saved, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -284,6 +427,8 @@ func (s *videoStudioGalleryStore) List(
 			Model:           row.Model,
 			Format:          row.Format,
 			DurationSeconds: row.DurationSeconds,
+			Saved:           row.Saved,
+			ExpiresAt:       row.ExpiresAt,
 			CreatedAt:       row.CreatedAt,
 		})
 	}
@@ -300,4 +445,12 @@ func (s *videoStudioGalleryStore) ObjectKey(ctx context.Context, userID int64, i
 
 func (s *videoStudioGalleryStore) Delete(ctx context.Context, userID int64, id string) error {
 	return s.delete(ctx, userID, id)
+}
+
+func (s *videoStudioGalleryStore) Pin(ctx context.Context, userID int64, id string, quota int64) error {
+	return s.pin(ctx, userID, id, quota)
+}
+
+func (s *videoStudioGalleryStore) SweepExpired(ctx context.Context, batch int) ([]string, error) {
+	return s.sweepExpired(ctx, batch)
 }

@@ -15,8 +15,11 @@ type galleryStoreStub struct {
 	entries    []*ImageStudioGalleryEntry
 	objectKeys map[string]string
 	deleted    []string
+	swept      []string
 	// saveErr 用来模拟存储层在事务里判定超额（并发场景）。
 	saveErr error
+	// pinErr 用来模拟"存进我的作品"时存储层判定超额。
+	pinErr error
 }
 
 func (s *galleryStoreStub) Save(_ context.Context, entry *ImageStudioGalleryEntry, _ int64) error {
@@ -31,7 +34,7 @@ func (s *galleryStoreStub) Save(_ context.Context, entry *ImageStudioGalleryEntr
 	return nil
 }
 
-func (s *galleryStoreStub) List(context.Context, int64, int) ([]*ImageStudioGalleryEntry, error) {
+func (s *galleryStoreStub) List(context.Context, int64, int, *bool) ([]*ImageStudioGalleryEntry, error) {
 	return s.entries, nil
 }
 
@@ -50,6 +53,18 @@ func (s *galleryStoreStub) ObjectKey(_ context.Context, _ int64, id string) (str
 func (s *galleryStoreStub) Delete(_ context.Context, _ int64, id string) error {
 	s.deleted = append(s.deleted, id)
 	return nil
+}
+
+func (s *galleryStoreStub) Pin(_ context.Context, _ int64, id string, _ int64) error {
+	if s.pinErr != nil {
+		return s.pinErr
+	}
+	s.deleted = append(s.deleted, "pin:"+id)
+	return nil
+}
+
+func (s *galleryStoreStub) SweepExpired(context.Context, int) ([]string, error) {
+	return s.swept, nil
 }
 
 type gallerySaverStub struct {
@@ -119,6 +134,7 @@ func TestImageStudioGallerySaveKeepsWorkPermanently(t *testing.T) {
 		"png",
 		"image/png",
 		smallPNG(t),
+		true,
 	)
 	require.NoError(t, err)
 	require.Equal(t, int64(42), entry.UserID)
@@ -144,6 +160,7 @@ func TestImageStudioGallerySaveFromURLStoresServerFetchedBytes(t *testing.T) {
 		"1024x1024",
 		"png",
 		"https://upstream.example.com/out.png",
+		true,
 	)
 	require.NoError(t, err)
 	require.Equal(t, "https://upstream.example.com/out.png", saver.fetchedURL)
@@ -167,6 +184,7 @@ func TestImageStudioGalleryDeleteRemovesObjectThenRecord(t *testing.T) {
 		"png",
 		"image/png",
 		smallPNG(t),
+		true,
 	)
 	require.NoError(t, err)
 
@@ -191,6 +209,7 @@ func TestImageStudioGalleryDeleteKeepsRecordWhenObjectDeleteFails(t *testing.T) 
 		"png",
 		"image/png",
 		smallPNG(t),
+		true,
 	)
 	require.NoError(t, err)
 
@@ -214,6 +233,7 @@ func TestImageStudioGalleryDeleteSucceedsWhenStorageIsNotConfigured(t *testing.T
 
 	entry, err := svc.Save(
 		context.Background(), 42, "a cat", "m", "1x1", "png", "image/png", smallPNG(t),
+		true,
 	)
 	require.NoError(t, err)
 
@@ -230,6 +250,7 @@ func TestImageStudioGalleryRollsBackUploadWhenStoreRejectsQuota(t *testing.T) {
 
 	_, err := svc.Save(
 		context.Background(), 42, "a cat", "m", "1x1", "png", "image/png", smallPNG(t),
+		true,
 	)
 	require.ErrorIs(t, err, ErrImageStudioGalleryQuotaExceeded)
 	require.Len(t, saver.deletedObject, 1, "被配额拒绝时要撤回刚上传的对象")
@@ -254,6 +275,7 @@ func TestImageStudioGalleryRejectsWhenUserLimitReached(t *testing.T) {
 		"png",
 		"image/png",
 		smallPNG(t),
+		true,
 	)
 	require.ErrorIs(t, err, ErrImageStudioGalleryQuotaExceeded)
 	require.Empty(t, saver.key)
@@ -277,6 +299,7 @@ func TestImageStudioGalleryHonoursConfiguredQuota(t *testing.T) {
 		"png",
 		"image/png",
 		smallPNG(t),
+		true,
 	)
 	require.ErrorIs(t, err, ErrImageStudioGalleryQuotaExceeded)
 
@@ -293,6 +316,44 @@ func TestStudioWorksListLimitFollowsConfiguredQuota(t *testing.T) {
 	require.Equal(t, 500, studioWorksListLimit(&gallerySaverStub{quota: 500}), "配额 500 就要能取到 500 条")
 	require.Equal(t, studioWorksListLimitMax, studioWorksListLimit(&gallerySaverStub{quota: 10000}),
 		"配额再大也不能一次吐一万条")
+}
+
+// 没勾"存到我的作品"的内容是临时档：带过期时间，且不占用 100 的配额。
+func TestImageStudioGalleryTemporaryContentGetsExpiryAndSkipsQuota(t *testing.T) {
+	entries := make([]*ImageStudioGalleryEntry, StudioWorksQuotaPerUser)
+	for i := range entries {
+		entries[i] = &ImageStudioGalleryEntry{Saved: true}
+	}
+	store := &galleryStoreStub{entries: entries}
+	svc := NewImageStudioGalleryService(store, &gallerySaverStub{retention: 7 * 24 * time.Hour})
+
+	_, savedErr := svc.Save(context.Background(), 42, "p", "m", "1x1", "png", "image/png", smallPNG(t), true)
+	require.ErrorIs(t, savedErr, ErrImageStudioGalleryQuotaExceeded, "已保存的条目受配额限制")
+
+	entry, err := svc.Save(context.Background(), 42, "p", "m", "1x1", "png", "image/png", smallPNG(t), false)
+	require.NoError(t, err, "临时内容不该被 100 的配额拦住")
+	require.False(t, entry.Saved)
+	require.Equal(t, int64((7*24*time.Hour)/time.Second), entry.ExpiresAt-entry.CreatedAt)
+}
+
+// 把临时内容存进我的作品时，配额满要翻译成图库自己的错误码。
+func TestImageStudioGalleryPinMapsQuotaError(t *testing.T) {
+	store := &galleryStoreStub{pinErr: ErrStudioWorksQuotaExceeded}
+	svc := NewImageStudioGalleryService(store, &gallerySaverStub{})
+
+	require.ErrorIs(t, svc.Pin(context.Background(), 42, "abc"), ErrImageStudioGalleryQuotaExceeded)
+}
+
+// 清扫到期内容时，记录删掉之后桶里的对象也要删。
+func TestImageStudioGallerySweepDeletesObjects(t *testing.T) {
+	store := &galleryStoreStub{swept: []string{"images/a.png", "videos/b.mp4"}}
+	saver := &gallerySaverStub{}
+	svc := NewImageStudioGalleryService(store, saver)
+
+	n, err := svc.SweepExpired(context.Background(), 10)
+	require.NoError(t, err)
+	require.Equal(t, 2, n)
+	require.Equal(t, []string{"images/a.png", "videos/b.mp4"}, saver.deletedObject)
 }
 
 func smallPNG(t *testing.T) []byte {

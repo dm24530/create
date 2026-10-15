@@ -59,15 +59,23 @@ type VideoStudioGalleryEntry struct {
 	Model           string `json:"model"`
 	Format          string `json:"format"`
 	DurationSeconds int    `json:"duration_seconds"`
-	CreatedAt       int64  `json:"created_at"`
-	ExpiresAt       int64  `json:"expires_at"`
+	// Saved 为真表示用户已把它存进「我的作品」：长期有效。
+	Saved     bool  `json:"saved"`
+	CreatedAt int64 `json:"created_at"`
+	// ExpiresAt 只在临时内容上非 0：到期后由后台清扫连对象一起删。
+	ExpiresAt int64 `json:"expires_at"`
 }
 
 type VideoStudioGalleryStore interface {
 	// Save 落库前会在同一事务里核对配额；超额返回 ErrStudioWorksQuotaExceeded。
 	Save(ctx context.Context, entry *VideoStudioGalleryEntry, quota int64) error
-	List(ctx context.Context, userID int64, limit int) ([]*VideoStudioGalleryEntry, error)
+	// List 的 saved 为 nil 时同时返回临时与已保存的条目。
+	List(ctx context.Context, userID int64, limit int, saved *bool) ([]*VideoStudioGalleryEntry, error)
 	Count(ctx context.Context, userID int64) (int64, error)
+	// Pin 把临时作品转成长期保存（计入配额）。
+	Pin(ctx context.Context, userID int64, id string, quota int64) error
+	// SweepExpired 删掉一批到期未保存的记录，返回它们的对象键。
+	SweepExpired(ctx context.Context, batch int) ([]string, error)
 	// ObjectKey 返回记录的 object_key；记录不存在时返回 ErrStudioWorkNotFound。
 	ObjectKey(ctx context.Context, userID int64, id string) (string, error)
 	Delete(ctx context.Context, userID int64, id string) error
@@ -96,6 +104,16 @@ func NewVideoStudioGalleryService(
 	return &VideoStudioGalleryService{store: store, storage: storage}
 }
 
+// tempRetention 是"没存进我的作品"的临时视频保留时长，与图片共用同一份保留天数配置。
+func (s *VideoStudioGalleryService) tempRetention() time.Duration {
+	if s != nil && s.storage != nil {
+		if d := s.storage.GalleryRetention(); d > 0 {
+			return d
+		}
+	}
+	return ImageStudioGalleryTTL
+}
+
 // Save 归档一段视频。contentType 必须是视频类型，大小不超过 maxVideoArchiveBytes。
 func (s *VideoStudioGalleryService) Save(
 	ctx context.Context,
@@ -106,6 +124,7 @@ func (s *VideoStudioGalleryService) Save(
 	durationSeconds int,
 	contentType string,
 	data []byte,
+	saved bool,
 ) (*VideoStudioGalleryEntry, error) {
 	if s == nil || s.store == nil || s.storage == nil || userID <= 0 || len(data) == 0 {
 		return nil, ErrVideoStudioGalleryUnavailable
@@ -122,7 +141,8 @@ func (s *VideoStudioGalleryService) Save(
 	if err != nil {
 		return nil, err
 	}
-	if count >= resolveStudioQuota(s.storage) {
+	// 配额只约束"存到我的作品"的条目：临时内容到期会被清扫，不占 100 的额度。
+	if saved && count >= resolveStudioQuota(s.storage) {
 		return nil, ErrVideoStudioGalleryQuotaExceeded
 	}
 
@@ -135,6 +155,10 @@ func (s *VideoStudioGalleryService) Save(
 	}
 
 	now := time.Now().UTC()
+	expiresAt := int64(0)
+	if !saved {
+		expiresAt = now.Add(s.tempRetention()).Unix()
+	}
 	entry := &VideoStudioGalleryEntry{
 		ID:              id,
 		UserID:          userID,
@@ -144,9 +168,9 @@ func (s *VideoStudioGalleryService) Save(
 		Model:           strings.TrimSpace(model),
 		Format:          strings.TrimSpace(format),
 		DurationSeconds: durationSeconds,
+		Saved:           saved,
 		CreatedAt:       now.Unix(),
-		// 作品记录永久保存，不再有过期时间；保留字段以兼容前端与老数据。
-		ExpiresAt: 0,
+		ExpiresAt:       expiresAt,
 	}
 	if err := s.store.Save(ctx, entry, resolveStudioQuota(s.storage)); err != nil {
 		if errors.Is(err, ErrStudioWorksQuotaExceeded) {
@@ -158,6 +182,15 @@ func (s *VideoStudioGalleryService) Save(
 				}
 			}
 			return nil, ErrVideoStudioGalleryQuotaExceeded
+		}
+		if errors.Is(err, ErrStudioWorksTempLimitExceeded) {
+			if entry.ObjectKey != "" {
+				if delErr := s.storage.DeleteObject(ctx, entry.ObjectKey); delErr != nil {
+					logger.L().Warn("studio_work.rollback_delete_failed",
+						zap.String("object_key", entry.ObjectKey), zap.Error(delErr))
+				}
+			}
+			return nil, ErrStudioWorksTempLimitExceeded
 		}
 		return nil, err
 	}
@@ -173,6 +206,7 @@ func (s *VideoStudioGalleryService) SaveFromURL(
 	format string,
 	durationSeconds int,
 	rawURL string,
+	saved bool,
 ) (*VideoStudioGalleryEntry, error) {
 	if s == nil || s.store == nil || s.storage == nil || userID <= 0 || strings.TrimSpace(rawURL) == "" {
 		return nil, ErrVideoStudioGalleryUnavailable
@@ -181,10 +215,13 @@ func (s *VideoStudioGalleryService) SaveFromURL(
 	if err != nil {
 		return nil, err
 	}
-	return s.Save(ctx, userID, prompt, model, format, durationSeconds, contentType, data)
+	return s.Save(ctx, userID, prompt, model, format, durationSeconds, contentType, data, saved)
 }
 
-func (s *VideoStudioGalleryService) List(ctx context.Context, userID int64, limit int) ([]*VideoStudioGalleryEntry, error) {
+// List 列出作品。saved 为 nil 时临时与已保存都返回。
+func (s *VideoStudioGalleryService) List(
+	ctx context.Context, userID int64, limit int, saved *bool,
+) ([]*VideoStudioGalleryEntry, error) {
 	if s == nil || s.store == nil || userID <= 0 {
 		return []*VideoStudioGalleryEntry{}, nil
 	}
@@ -193,7 +230,21 @@ func (s *VideoStudioGalleryService) List(ctx context.Context, userID int64, limi
 	if limit <= 0 || limit > maxItems {
 		limit = maxItems
 	}
-	return s.store.List(ctx, userID, limit)
+	return s.store.List(ctx, userID, limit, saved)
+}
+
+// Pin 把一条临时视频转成「我的作品」里的长期内容（计入配额）。
+func (s *VideoStudioGalleryService) Pin(ctx context.Context, userID int64, id string) error {
+	if s == nil || s.store == nil || userID <= 0 || strings.TrimSpace(id) == "" {
+		return ErrVideoStudioGalleryUnavailable
+	}
+	if err := s.store.Pin(ctx, userID, strings.TrimSpace(id), resolveStudioQuota(s.storage)); err != nil {
+		if errors.Is(err, ErrStudioWorksQuotaExceeded) {
+			return ErrVideoStudioGalleryQuotaExceeded
+		}
+		return err
+	}
+	return nil
 }
 
 // Delete 删除一条视频作品：先删对象存储里的文件，成功后再删记录。

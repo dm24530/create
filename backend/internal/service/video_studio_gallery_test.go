@@ -31,7 +31,7 @@ func (s *videoGalleryStoreStub) Save(_ context.Context, entry *VideoStudioGaller
 	return nil
 }
 
-func (s *videoGalleryStoreStub) List(context.Context, int64, int) ([]*VideoStudioGalleryEntry, error) {
+func (s *videoGalleryStoreStub) List(context.Context, int64, int, *bool) ([]*VideoStudioGalleryEntry, error) {
 	return s.saved, nil
 }
 
@@ -48,6 +48,15 @@ func (s *videoGalleryStoreStub) ObjectKey(_ context.Context, _ int64, id string)
 func (s *videoGalleryStoreStub) Delete(_ context.Context, _ int64, id string) error {
 	s.deleted = append(s.deleted, id)
 	return nil
+}
+
+func (s *videoGalleryStoreStub) Pin(_ context.Context, _ int64, id string, _ int64) error {
+	s.deleted = append(s.deleted, "pin:"+id)
+	return nil
+}
+
+func (s *videoGalleryStoreStub) SweepExpired(context.Context, int) ([]string, error) {
+	return nil, nil
 }
 
 type videoMediaSaverStub struct {
@@ -94,11 +103,11 @@ func TestVideoStudioGalleryArchivesOnlyVideos(t *testing.T) {
 	ctx := context.Background()
 
 	// 图片内容既没有视频声明，嗅探也不是视频，必须拒绝。
-	_, err := svc.Save(ctx, 1, "p", "m", "png", 5, "image/png", pngBytes)
+	_, err := svc.Save(ctx, 1, "p", "m", "png", 5, "image/png", pngBytes, true)
 	require.ErrorIs(t, err, ErrVideoStudioUnsupportedType)
 
 	// 声明的类型不实（假装 png）时按内容嗅探，仍然识别为视频并归档。
-	entry, err := svc.Save(ctx, 1, "镜头", "seedance-2-720p", "mp4", 8, "image/png", mp4Bytes())
+	entry, err := svc.Save(ctx, 1, "镜头", "seedance-2-720p", "mp4", 8, "image/png", mp4Bytes(), true)
 	require.NoError(t, err)
 	require.Equal(t, "video/mp4", saver.types[0])
 	require.Equal(t, "videos/", videoStoragePrefix)
@@ -116,7 +125,7 @@ func TestVideoStudioGalleryRejectsOversizedArchives(t *testing.T) {
 	tooBig := make([]byte, maxVideoArchiveBytes+1)
 	copy(tooBig, mp4Bytes())
 
-	_, err := svc.Save(context.Background(), 1, "p", "m", "mp4", 5, "video/mp4", tooBig)
+	_, err := svc.Save(context.Background(), 1, "p", "m", "mp4", 5, "video/mp4", tooBig, true)
 	require.ErrorIs(t, err, ErrVideoStudioArchiveTooLarge)
 }
 
@@ -126,7 +135,7 @@ func TestVideoStudioGalleryDeleteRemovesObjectThenRecord(t *testing.T) {
 	saver := &videoMediaSaverStub{}
 	svc := NewVideoStudioGalleryService(store, saver)
 
-	entry, err := svc.Save(context.Background(), 1, "镜头", "m", "mp4", 5, "video/mp4", mp4Bytes())
+	entry, err := svc.Save(context.Background(), 1, "镜头", "m", "mp4", 5, "video/mp4", mp4Bytes(), true)
 	require.NoError(t, err)
 	require.NoError(t, svc.Delete(context.Background(), 1, entry.ID))
 

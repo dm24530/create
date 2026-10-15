@@ -49,7 +49,10 @@ type ImageStudioGalleryEntry struct {
 	Model     string `json:"model"`
 	Size      string `json:"size"`
 	Format    string `json:"format"`
+	// Saved 为真表示用户已把它存进「我的作品」：长期有效。
+	Saved     bool  `json:"saved"`
 	CreatedAt int64  `json:"created_at"`
+	// ExpiresAt 只在临时内容上非 0：到期后由后台清扫连对象一起删。
 	ExpiresAt int64  `json:"expires_at"`
 }
 
@@ -57,8 +60,13 @@ type ImageStudioGalleryStore interface {
 	// Save 落库前会在同一事务里核对配额；超额返回 ErrStudioWorksQuotaExceeded。
 	// 计数与插入必须原子，否则并发提交能越过上限。
 	Save(ctx context.Context, entry *ImageStudioGalleryEntry, quota int64) error
-	List(ctx context.Context, userID int64, limit int) ([]*ImageStudioGalleryEntry, error)
+	// List 的 saved 为 nil 时同时返回临时与已保存的条目。
+	List(ctx context.Context, userID int64, limit int, saved *bool) ([]*ImageStudioGalleryEntry, error)
 	Count(ctx context.Context, userID int64) (int64, error)
+	// Pin 把临时作品转成长期保存（计入配额）。
+	Pin(ctx context.Context, userID int64, id string, quota int64) error
+	// SweepExpired 删掉一批到期未保存的记录，返回它们的对象键。
+	SweepExpired(ctx context.Context, batch int) ([]string, error)
 	// ObjectKey 返回记录的 object_key；记录不存在时返回 ErrStudioWorkNotFound。
 	ObjectKey(ctx context.Context, userID int64, id string) (string, error)
 	Delete(ctx context.Context, userID int64, id string) error
@@ -86,6 +94,27 @@ func NewImageStudioGalleryService(store ImageStudioGalleryStore, storage ImageSt
 	return &ImageStudioGalleryService{store: store, storage: storage}
 }
 
+// ProvideImageStudioGalleryService 是 wire 用的版本：构造服务并启动临时作品的过期清扫，
+// 和其它后台循环一样在依赖注入阶段触发。单元测试直接用 New...，不会起 goroutine。
+func ProvideImageStudioGalleryService(
+	store ImageStudioGalleryStore,
+	storage ImageStudioImageSaver,
+) *ImageStudioGalleryService {
+	svc := NewImageStudioGalleryService(store, storage)
+	svc.StartExpirySweeper(context.Background(), studioWorksSweepInterval)
+	return svc
+}
+
+// tempRetention 是"没存进我的作品"的临时内容保留时长，沿用后台的「图片工作台保留天数」。
+func (s *ImageStudioGalleryService) tempRetention() time.Duration {
+	if s != nil && s.storage != nil {
+		if d := s.storage.GalleryRetention(); d > 0 {
+			return d
+		}
+	}
+	return ImageStudioGalleryTTL
+}
+
 func (s *ImageStudioGalleryService) Save(
 	ctx context.Context,
 	userID int64,
@@ -95,6 +124,7 @@ func (s *ImageStudioGalleryService) Save(
 	format string,
 	contentType string,
 	data []byte,
+	saved bool,
 ) (*ImageStudioGalleryEntry, error) {
 	if s == nil || s.store == nil || s.storage == nil || userID <= 0 || len(data) == 0 {
 		return nil, ErrImageStudioGalleryUnavailable
@@ -109,7 +139,8 @@ func (s *ImageStudioGalleryService) Save(
 	if err != nil {
 		return nil, err
 	}
-	if count >= resolveStudioQuota(s.storage) {
+	// 配额只约束"存到我的作品"的条目：临时内容到期会被清扫，不占 100 的额度。
+	if saved && count >= resolveStudioQuota(s.storage) {
 		return nil, ErrImageStudioGalleryQuotaExceeded
 	}
 
@@ -121,6 +152,10 @@ func (s *ImageStudioGalleryService) Save(
 	}
 
 	now := time.Now().UTC()
+	expiresAt := int64(0)
+	if !saved {
+		expiresAt = now.Add(s.tempRetention()).Unix()
+	}
 	entry := &ImageStudioGalleryEntry{
 		ID:        id,
 		UserID:    userID,
@@ -131,9 +166,9 @@ func (s *ImageStudioGalleryService) Save(
 		Model:     strings.TrimSpace(model),
 		Size:      strings.TrimSpace(size),
 		Format:    strings.TrimSpace(format),
+		Saved:     saved,
 		CreatedAt: now.Unix(),
-		// 作品记录永久保存，不再有过期时间；保留字段以兼容前端与老数据。
-		ExpiresAt: 0,
+		ExpiresAt: expiresAt,
 	}
 	if err := s.store.Save(ctx, entry, resolveStudioQuota(s.storage)); err != nil {
 		if errors.Is(err, ErrStudioWorksQuotaExceeded) {
@@ -145,6 +180,15 @@ func (s *ImageStudioGalleryService) Save(
 				}
 			}
 			return nil, ErrImageStudioGalleryQuotaExceeded
+		}
+		if errors.Is(err, ErrStudioWorksTempLimitExceeded) {
+			if objectKey != "" {
+				if delErr := s.storage.DeleteObject(ctx, objectKey); delErr != nil {
+					logger.L().Warn("studio_work.rollback_delete_failed",
+						zap.String("object_key", objectKey), zap.Error(delErr))
+				}
+			}
+			return nil, ErrStudioWorksTempLimitExceeded
 		}
 		return nil, err
 	}
@@ -162,6 +206,7 @@ func (s *ImageStudioGalleryService) SaveFromURL(
 	size string,
 	format string,
 	rawURL string,
+	saved bool,
 ) (*ImageStudioGalleryEntry, error) {
 	if s == nil || s.store == nil || s.storage == nil || userID <= 0 || strings.TrimSpace(rawURL) == "" {
 		return nil, ErrImageStudioGalleryUnavailable
@@ -170,10 +215,13 @@ func (s *ImageStudioGalleryService) SaveFromURL(
 	if err != nil {
 		return nil, err
 	}
-	return s.Save(ctx, userID, prompt, model, size, format, contentType, data)
+	return s.Save(ctx, userID, prompt, model, size, format, contentType, data, saved)
 }
 
-func (s *ImageStudioGalleryService) List(ctx context.Context, userID int64, limit int) ([]*ImageStudioGalleryEntry, error) {
+// List 列出作品。saved 为 nil 时临时与已保存都返回（图片工作台需要同屏展示）。
+func (s *ImageStudioGalleryService) List(
+	ctx context.Context, userID int64, limit int, saved *bool,
+) ([]*ImageStudioGalleryEntry, error) {
 	if s == nil || s.store == nil || userID <= 0 {
 		return []*ImageStudioGalleryEntry{}, nil
 	}
@@ -182,7 +230,7 @@ func (s *ImageStudioGalleryService) List(ctx context.Context, userID int64, limi
 	if limit <= 0 || limit > maxItems {
 		limit = maxItems
 	}
-	entries, err := s.store.List(ctx, userID, limit)
+	entries, err := s.store.List(ctx, userID, limit, saved)
 	if err != nil {
 		return nil, err
 	}
@@ -217,4 +265,85 @@ func (s *ImageStudioGalleryService) Quota(ctx context.Context, userID int64) (St
 	}
 	quota.Used = used
 	return quota, nil
+}
+
+// Pin 把一条临时作品转成「我的作品」里的长期内容（计入配额）。
+func (s *ImageStudioGalleryService) Pin(ctx context.Context, userID int64, id string) error {
+	if s == nil || s.store == nil || userID <= 0 || strings.TrimSpace(id) == "" {
+		return ErrImageStudioGalleryUnavailable
+	}
+	if err := s.store.Pin(ctx, userID, strings.TrimSpace(id), resolveStudioQuota(s.storage)); err != nil {
+		if errors.Is(err, ErrStudioWorksQuotaExceeded) {
+			return ErrImageStudioGalleryQuotaExceeded
+		}
+		return err
+	}
+	return nil
+}
+
+// SweepExpired 清扫到期未保存的内容：先删记录（store 返回对象键），再删桶里的文件。
+// 图片和视频共用一张表，所以这一个方法就能把两类都清掉。
+func (s *ImageStudioGalleryService) SweepExpired(ctx context.Context, batch int) (int, error) {
+	if s == nil || s.store == nil {
+		return 0, nil
+	}
+	keys, err := s.store.SweepExpired(ctx, batch)
+	if err != nil {
+		return 0, err
+	}
+	for _, key := range keys {
+		if strings.TrimSpace(key) == "" || s.storage == nil {
+			continue
+		}
+		if err := s.storage.DeleteObject(ctx, key); err != nil && !isStorageNotConfigured(err) {
+			// 对象没删掉不影响记录已经清掉；留个日志便于人工兜底。
+			logger.L().Warn("studio_work.sweep_object_delete_failed",
+				zap.String("object_key", key), zap.Error(err))
+		}
+	}
+	return len(keys), nil
+}
+
+// studioWorksSweepInterval 是临时内容的清扫间隔。启动时先跑一遍，
+// 所以重启就能把停机期间到期的内容回收掉。
+const studioWorksSweepInterval = 30 * time.Minute
+
+// StartExpirySweeper 起后台循环，定期清掉到期未保存的作品（记录 + 对象）。
+// 只在 wire 的 provider 里调用；单元测试仍用 New... 构造，不会有 goroutine。
+func (s *ImageStudioGalleryService) StartExpirySweeper(ctx context.Context, interval time.Duration) {
+	if s == nil || s.store == nil || interval <= 0 {
+		return
+	}
+	go func() {
+		s.sweepExpiredOnce(ctx)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				s.sweepExpiredOnce(ctx)
+			}
+		}
+	}()
+}
+
+func (s *ImageStudioGalleryService) sweepExpiredOnce(ctx context.Context) {
+	const batch = 200
+	total := 0
+	for {
+		swept, err := s.SweepExpired(ctx, batch)
+		if err != nil {
+			logger.L().Warn("studio_work.sweep_failed", zap.Error(err))
+			return
+		}
+		total += swept
+		if swept < batch {
+			break
+		}
+	}
+	if total > 0 {
+		logger.L().Info("studio_work.swept_expired", zap.Int("count", total))
+	}
 }

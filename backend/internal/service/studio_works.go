@@ -19,6 +19,17 @@ var ErrStudioWorksQuotaExceeded = infraerrors.New(
 	"studio works quota reached",
 )
 
+// ErrStudioWorksTempLimitExceeded 是临时内容的堆积上限：临时作品不占配额，
+// 但如果完全不设上限，脚本刷生成就能把桶撑爆。超了让用户先保存或等过期。
+var ErrStudioWorksTempLimitExceeded = infraerrors.New(
+	http.StatusTooManyRequests,
+	"STUDIO_WORKS_TEMP_LIMIT_EXCEEDED",
+	"too many temporary works",
+)
+
+// StudioWorksTempLimit 是每个用户同时保留的临时作品上限（图片 + 视频合计）。
+const StudioWorksTempLimit = 500
+
 // studioWorkStore 是图片/视频两个 store 接口的公共子集：删除作品只用得上这两步。
 type studioWorkStore interface {
 	ObjectKey(ctx context.Context, userID int64, id string) (string, error)
