@@ -249,6 +249,15 @@ func TestImageStudioGalleryHonoursConfiguredQuota(t *testing.T) {
 	require.Equal(t, int64(2), quota.Used)
 }
 
+// 列表条数必须跟着配额走：否则配额放宽后，更早的作品既看不到也删不掉。
+func TestStudioWorksListLimitFollowsConfiguredQuota(t *testing.T) {
+	require.Equal(t, 100, studioWorksListLimit(nil), "没有配置时用默认值")
+	require.Equal(t, 100, studioWorksListLimit(&gallerySaverStub{}), "配额为 0 时用默认值")
+	require.Equal(t, 500, studioWorksListLimit(&gallerySaverStub{quota: 500}), "配额 500 就要能取到 500 条")
+	require.Equal(t, studioWorksListLimitMax, studioWorksListLimit(&gallerySaverStub{quota: 10000}),
+		"配额再大也不能一次吐一万条")
+}
+
 func smallPNG(t *testing.T) []byte {
 	t.Helper()
 	return []byte{

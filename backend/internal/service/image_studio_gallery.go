@@ -12,7 +12,6 @@ import (
 
 const (
 	ImageStudioGalleryTTL        = 7 * 24 * time.Hour
-	imageStudioMaxItems          = 100
 	// StudioWorksQuotaPerUser 是每个用户的作品总配额：图片与视频**共用**这一份，
 	// 不是各自 100。要改成按类型分别计数，只需让 store.Count 带上 kind 条件。
 	StudioWorksQuotaPerUser = 100
@@ -163,8 +162,10 @@ func (s *ImageStudioGalleryService) List(ctx context.Context, userID int64, limi
 	if s == nil || s.store == nil || userID <= 0 {
 		return []*ImageStudioGalleryEntry{}, nil
 	}
-	if limit <= 0 || limit > imageStudioMaxItems {
-		limit = imageStudioMaxItems
+	// limit <= 0 表示"用配额决定的默认条数"；上限同样跟着配额走。
+	maxItems := studioWorksListLimit(s.storage)
+	if limit <= 0 || limit > maxItems {
+		limit = maxItems
 	}
 	entries, err := s.store.List(ctx, userID, limit)
 	if err != nil {

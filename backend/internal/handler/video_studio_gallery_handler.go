@@ -9,8 +9,6 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-const maxVideoStudioGalleryItems = 100
-
 type VideoStudioGalleryHandler struct {
 	gallery *service.VideoStudioGalleryService
 }
@@ -81,7 +79,8 @@ func (h *VideoStudioGalleryHandler) List(c *gin.Context) {
 		response.Unauthorized(c, "User not found in context")
 		return
 	}
-	entries, err := h.gallery.List(c.Request.Context(), subject.UserID, maxVideoStudioGalleryItems)
+	// 0 = 条数由后台配额决定，和图片图库保持一致。
+	entries, err := h.gallery.List(c.Request.Context(), subject.UserID, 0)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return

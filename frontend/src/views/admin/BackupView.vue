@@ -751,6 +751,7 @@ async function loadImageStorageConfig() {
       ...config,
       prefix: config.prefix || 'images/',
       region: config.region || 'auto',
+      studio_works_quota: config.studio_works_quota || 100,
       secret_access_key: '',
     }
     imageStorageSecretConfigured.value = secret_configured

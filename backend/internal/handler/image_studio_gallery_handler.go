@@ -83,7 +83,8 @@ func (h *ImageStudioGalleryHandler) List(c *gin.Context) {
 		response.Unauthorized(c, "User not found in context")
 		return
 	}
-	items, err := h.gallery.List(c.Request.Context(), subject.UserID, 100)
+	// 0 = 条数由后台配额决定（配额调大后不能还只给 100 条，否则更早的作品看不到也删不掉）。
+	items, err := h.gallery.List(c.Request.Context(), subject.UserID, 0)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return

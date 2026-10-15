@@ -37,6 +37,25 @@ func resolveStudioQuota(reader studioQuotaReader) int64 {
 	return int64(StudioWorksQuotaPerUser)
 }
 
+// studioWorksListLimitMax 是列表一次最多返回多少条：配额可以配到 10000，
+// 但一次吐一万条对内存和前端都不友好，这里封顶。
+const studioWorksListLimitMax = 1000
+
+// studioWorksListLimit 让列表条数跟着配额走。
+//
+// 这一步是必须的：配额放宽到 500、列表却还写死 100 的话，用户只能看到最近 100 条，
+// 更早的作品既看不到也删不掉——配额满了就彻底卡死。
+func studioWorksListLimit(reader studioQuotaReader) int {
+	limit := resolveStudioQuota(reader)
+	if limit < 100 {
+		return 100
+	}
+	if limit > studioWorksListLimitMax {
+		return studioWorksListLimitMax
+	}
+	return int(limit)
+}
+
 // deleteStudioWorkByKey 负责「删除作品」的固定顺序：先删对象存储里的文件，
 // 成功后再删记录。反过来会留下删不掉也查不到的孤儿文件。
 //

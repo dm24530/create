@@ -18,8 +18,7 @@ const (
 	// videoStoragePrefix 让归档视频与图片共用同一套对象存储配置，只用前缀区分。
 	videoStoragePrefix = "videos/"
 	// maxVideoArchiveBytes 限制单条视频归档大小：服务器抓取与 base64 上传都按它兜底。
-	maxVideoArchiveBytes  int64 = 256 << 20
-	videoStudioMaxItems         = 100
+	maxVideoArchiveBytes int64 = 256 << 20
 )
 
 var (
@@ -175,8 +174,10 @@ func (s *VideoStudioGalleryService) List(ctx context.Context, userID int64, limi
 	if s == nil || s.store == nil || userID <= 0 {
 		return []*VideoStudioGalleryEntry{}, nil
 	}
-	if limit <= 0 || limit > videoStudioMaxItems {
-		limit = videoStudioMaxItems
+	// limit <= 0 表示"用配额决定的默认条数"；上限同样跟着配额走。
+	maxItems := studioWorksListLimit(s.storage)
+	if limit <= 0 || limit > maxItems {
+		limit = maxItems
 	}
 	return s.store.List(ctx, userID, limit)
 }
