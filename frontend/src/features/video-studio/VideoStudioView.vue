@@ -1308,6 +1308,8 @@ async function archiveTaskVideo(task: StudioTask, upstreamUrl: string) {
       model: task.model,
       format: 'mp4',
       duration_seconds: task.durationSeconds,
+      // 工作台的内容先进临时档（到期自动删）；用户到「我的作品」里点保存才转永久。
+      saved: false,
     }
     let entry: ArchivedVideoEntry
     if (/^https?:\/\//i.test(upstreamUrl)) {

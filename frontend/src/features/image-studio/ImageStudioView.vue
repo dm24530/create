@@ -8,7 +8,7 @@
             选择你自己的 API Key，直接生成或编辑图片。
           </p>
           <p v-if="studioQuota" class="mt-1 text-xs text-gray-400" data-testid="studio-quota">
-            我的作品：{{ studioQuota.used }} / {{ studioQuota.limit }}（图片与视频共用）
+            我的作品（永久）：{{ studioQuota.used }} / {{ studioQuota.limit }}（图片与视频共用）
           </p>
         </div>
 
@@ -77,8 +77,32 @@
               <div class="min-w-0">
                 <p class="truncate text-sm font-medium text-gray-800 dark:text-gray-100">{{ image.title }}</p>
                 <p class="truncate text-xs text-gray-400">{{ image.meta }}</p>
+                <p
+                  v-if="!image.pending && image.saved"
+                  class="text-xs text-emerald-600 dark:text-emerald-400"
+                  data-testid="image-saved-badge"
+                >
+                  已保存到我的作品
+                </p>
+                <p
+                  v-else-if="!image.pending && image.expiresAt"
+                  class="text-xs text-amber-600 dark:text-amber-400"
+                  data-testid="image-temp-badge"
+                >
+                  临时内容 · 还剩 {{ remainingDays(image) }} 天
+                </p>
               </div>
               <div v-if="!image.pending" class="flex shrink-0 gap-1">
+                <button
+                  v-if="!image.saved && galleryBackedIds.has(galleryIdFor(image))"
+                  type="button"
+                  class="mini-action"
+                  data-testid="image-pin"
+                  title="存到我的作品（长期保留）"
+                  @click="pinImage(image)"
+                >
+                  <Icon name="bookmark" size="sm" />
+                </button>
                 <button type="button" class="mini-action" title="下载图片" @click="downloadImage(image)">
                   <Icon name="download" size="sm" />
                 </button>
@@ -418,6 +442,10 @@ interface GeneratedImage {
   size?: string
   format?: string
   pending?: boolean
+  // 服务端状态：saved 为真表示已经存进「我的作品」（永久），
+  // 否则是生成页的临时内容，expiresAt 是过期时间（秒）。
+  saved?: boolean
+  expiresAt?: number
 }
 
 interface ReferenceItem {
@@ -719,6 +747,8 @@ function galleryEntryToImage(entry: ImageStudioGalleryEntry, index: number): Gen
       entry.size,
       entry.model,
     ].filter(Boolean).join(' · '),
+    saved: entry.saved !== false,
+    expiresAt: entry.expires_at || 0,
   }
 }
 
@@ -764,6 +794,8 @@ async function persistGeneratedImages(items: GeneratedImage[], prompt: string, m
       model,
       size: size.value,
       format: format.value,
+      // 生成页的内容先进临时档（到期自动删）；用户点「存到我的作品」才转永久。
+      saved: false,
     })
     return { item, entry }
   }))
@@ -774,6 +806,9 @@ async function persistGeneratedImages(items: GeneratedImage[], prompt: string, m
       locallySavedGalleryIds.add(String(result.value.entry.id))
       galleryBackedIds.value.add(String(result.value.entry.id))
       localToGalleryId.value.set(String(result.value.item.id), String(result.value.entry.id))
+      // 记住服务端状态，卡片上才能显示"还剩 N 天 / 已保存"。
+      result.value.item.saved = result.value.entry.saved !== false
+      result.value.item.expiresAt = result.value.entry.expires_at || 0
       const storedURL = String(result.value.entry.url || '')
       if (storedURL) result.value.item.src = storedURL
     }
@@ -792,11 +827,39 @@ async function persistGeneratedImages(items: GeneratedImage[], prompt: string, m
 }
 
 // 配额满了后端返回 429 + *_QUOTA_EXCEEDED，单独给一句能指导操作的提示。
+function isQuotaError(error: unknown): boolean {
+  const reason = typeof error === 'object' && error !== null && 'reason' in error
+    ? String((error as { reason?: unknown }).reason || '')
+    : ''
+  return reason.endsWith('_QUOTA_EXCEEDED')
+}
+
 function quotaReached(results: Array<{ status: string; reason?: unknown }>): boolean {
-  return results.some((result) => {
-    const reason = typeof result.reason === 'string' ? result.reason : ''
-    return reason.endsWith('_QUOTA_EXCEEDED')
-  })
+  return results.some((result) => isQuotaError({ reason: result.reason }))
+}
+
+// 临时内容的剩余天数：向上取整，最少显示 1 天。
+function remainingDays(image: GeneratedImage): number {
+  const expiresAt = Number(image.expiresAt || 0)
+  if (!expiresAt) return 0
+  return Math.max(1, Math.ceil((expiresAt * 1000 - Date.now()) / 86_400_000))
+}
+
+// 把临时内容存进「我的作品」：之后永久保留，并开始计入配额。
+async function pinImage(image: GeneratedImage) {
+  const id = galleryIdFor(image)
+  if (!id || !galleryBackedIds.value.has(id)) return
+  errorMessage.value = ''
+  try {
+    await imageStudioGalleryAPI.pin(id)
+    image.saved = true
+    image.expiresAt = 0
+    await loadStudioQuota()
+  } catch (error) {
+    errorMessage.value = isQuotaError(error)
+      ? `我的作品已满（${studioQuota.value?.limit || 100} 个），先删除一些再保存。`
+      : errorMessageFrom(error, '保存到我的作品失败')
+  }
 }
 
 async function loadStudioQuota() {

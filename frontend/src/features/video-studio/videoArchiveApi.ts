@@ -9,7 +9,10 @@ export interface ArchivedVideoEntry {
   model: string
   format: string
   duration_seconds: number
+  /** true = 已存进「我的作品」（永久）；false = 工作台的临时内容（到期自动删）。 */
+  saved: boolean
   created_at: number
+  /** 临时内容的过期时间（秒）；已保存的为 0。 */
   expires_at: number
 }
 
@@ -21,6 +24,8 @@ export interface ArchiveVideoRequest {
   model: string
   format: string
   duration_seconds: number
+  /** 不传时后端按"直接存进我的作品"处理；工作台应显式传 false。 */
+  saved?: boolean
 }
 
 export async function listArchivedVideos(): Promise<ArchivedVideoEntry[]> {
@@ -38,6 +43,11 @@ export async function archiveVideo(request: ArchiveVideoRequest): Promise<Archiv
 
 export async function deleteArchivedVideo(id: string): Promise<void> {
   await apiClient.delete(`/video-studio/gallery/${encodeURIComponent(id)}`)
+}
+
+// 把临时视频存进「我的作品」：之后永久保留，并开始计入配额。
+export async function pinArchivedVideo(id: string): Promise<void> {
+  await apiClient.post(`/video-studio/gallery/${encodeURIComponent(id)}/pin`)
 }
 
 export interface StudioWorksQuota {

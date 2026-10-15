@@ -72,8 +72,24 @@
                 <p class="work-card__prompt" :title="entry.prompt">{{ entry.prompt || '未填写提示词' }}</p>
                 <p class="work-card__meta">{{ archivedMeta(entry) }}</p>
                 <p class="work-card__time">{{ formatTime(entry.created_at * 1000) }}</p>
+                <p v-if="entry.saved" class="work-card__state work-card__state--saved" data-testid="archived-saved-badge">
+                  已保存到我的作品
+                </p>
+                <p v-else class="work-card__state work-card__state--temp" data-testid="archived-temp-badge">
+                  临时内容 · 还剩 {{ remainingDays(entry) }} 天
+                </p>
               </div>
               <div class="work-card__actions">
+                <button
+                  v-if="!entry.saved"
+                  type="button"
+                  class="mini-action"
+                  data-testid="archived-pin"
+                  title="存到我的作品（长期保留）"
+                  @click="pinArchived(entry)"
+                >
+                  <Icon name="bookmark" size="sm" />
+                </button>
                 <button type="button" class="mini-action" title="下载视频" @click="downloadArchived(entry)">
                   <Icon name="download" size="sm" />
                 </button>
@@ -263,7 +279,9 @@ import {
 import {
   deleteArchivedVideo,
   fetchStudioWorksQuota,
+  isStudioQuotaError,
   listArchivedVideos,
+  pinArchivedVideo,
   type ArchivedVideoEntry,
 } from './videoArchiveApi'
 import {
@@ -406,6 +424,28 @@ async function removeArchived(entry: ArchivedVideoEntry) {
   archived.value = archived.value.filter((item) => item.id !== entry.id)
   records.value = visibleLocalRecords()
   await loadStudioQuota()
+}
+
+// 临时内容的剩余天数：向上取整，最少显示 1 天。
+function remainingDays(entry: ArchivedVideoEntry): number {
+  const expiresAt = Number(entry.expires_at || 0)
+  if (!expiresAt) return 0
+  return Math.max(1, Math.ceil((expiresAt * 1000 - Date.now()) / 86_400_000))
+}
+
+// 存进「我的作品」：转永久、开始占配额。
+async function pinArchived(entry: ArchivedVideoEntry) {
+  errorMessage.value = ''
+  try {
+    await pinArchivedVideo(entry.id)
+    entry.saved = true
+    entry.expires_at = 0
+    await loadStudioQuota()
+  } catch (error) {
+    errorMessage.value = isStudioQuotaError(error)
+      ? `我的作品已满（${studioQuota.value?.limit || 100} 个），先删除一些再保存。`
+      : error instanceof Error ? error.message : '保存到我的作品失败'
+  }
 }
 
 async function refreshKeys() {
@@ -572,6 +612,19 @@ onBeforeUnmount(() => {
 .works__quota {
   color: rgb(148 163 184) !important;
   font-size: 0.75rem !important;
+}
+
+.work-card__state {
+  margin-top: 0.15rem;
+  font-size: 0.72rem;
+}
+
+.work-card__state--saved {
+  color: rgb(5 150 105);
+}
+
+.work-card__state--temp {
+  color: rgb(217 119 6);
 }
 
 .works__toolbar {

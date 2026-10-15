@@ -12,9 +12,10 @@ const { listKeys, getPublicSettings, copyToClipboard, push } = vi.hoisted(() => 
   push: vi.fn(),
 }))
 
-const { listArchivedVideos, deleteArchivedVideo, fetchOnlineInspirationFeed, fetchInspirationLibrary } = vi.hoisted(() => ({
+const { listArchivedVideos, deleteArchivedVideo, pinArchivedVideo, fetchOnlineInspirationFeed, fetchInspirationLibrary } = vi.hoisted(() => ({
   listArchivedVideos: vi.fn(),
   deleteArchivedVideo: vi.fn(),
+  pinArchivedVideo: vi.fn(),
   fetchOnlineInspirationFeed: vi.fn(),
   fetchInspirationLibrary: vi.fn(),
 }))
@@ -22,6 +23,7 @@ const { listArchivedVideos, deleteArchivedVideo, fetchOnlineInspirationFeed, fet
 vi.mock('../videoArchiveApi', () => ({
   listArchivedVideos,
   deleteArchivedVideo,
+  pinArchivedVideo,
   fetchStudioWorksQuota: vi.fn().mockResolvedValue({ used: 2, limit: 100 }),
   isStudioQuotaError: () => false,
   fetchOnlineInspirationFeed,
@@ -367,6 +369,35 @@ describe('VideoWorksView', () => {
     expect(wrapper.find('[data-testid="archived-arch-2"]').exists()).toBe(false)
     expect(confirmSpy).toHaveBeenCalled()
     confirmSpy.mockRestore()
+  })
+
+  // 临时内容默认带过期时间：卡片上要标"还剩 N 天"，并提供"存到我的作品"。
+  it('marks temporary archives and pins them into the permanent library', async () => {
+    listArchivedVideos.mockResolvedValue([
+      {
+        id: 'arch-temp',
+        url: 'https://cdn.example.com/temp.mp4',
+        prompt: '临时镜头',
+        model: 'seedance-2-720p',
+        format: 'mp4',
+        duration_seconds: 5,
+        saved: false,
+        created_at: Math.floor(Date.now() / 1000),
+        expires_at: Math.floor(Date.now() / 1000) + 7 * 86400,
+      },
+    ])
+    pinArchivedVideo.mockResolvedValue(undefined)
+
+    const wrapper = mount(VideoWorksView, { global: { stubs: globalStubs } })
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="archived-temp-badge"]').text()).toContain('还剩 7 天')
+    await wrapper.get('[data-testid="archived-pin"]').trigger('click')
+    await flushPromises()
+
+    expect(pinArchivedVideo).toHaveBeenCalledWith('arch-temp')
+    expect(wrapper.find('[data-testid="archived-saved-badge"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="archived-temp-badge"]').exists()).toBe(false)
   })
 })
 

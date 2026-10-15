@@ -17,7 +17,8 @@ import (
 // 所以「每人 100 个文件」是图片 + 视频合并计算的。
 const studioWorksColumns = `
 	id, user_id, kind, object_key, url, prompt, model, format, size, duration_seconds, saved,
-	EXTRACT(EPOCH FROM created_at)::bigint AS created_at`
+	EXTRACT(EPOCH FROM created_at)::bigint AS created_at,
+	COALESCE(EXTRACT(EPOCH FROM expires_at)::bigint, 0) AS expires_at`
 
 type studioWorksDB struct {
 	db *sql.DB
@@ -129,7 +130,8 @@ func (s *studioWorksDB) list(
 		entry := &studioWorkRow{}
 		if err := rows.Scan(
 			&entry.ID, &entry.UserID, &entry.Kind, &entry.ObjectKey, &entry.URL, &entry.Prompt,
-			&entry.Model, &entry.Format, &entry.Size, &entry.DurationSeconds, &entry.Saved, &entry.CreatedAt,
+			&entry.Model, &entry.Format, &entry.Size, &entry.DurationSeconds, &entry.Saved,
+			&entry.CreatedAt, &entry.ExpiresAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan studio work: %w", err)
 		}

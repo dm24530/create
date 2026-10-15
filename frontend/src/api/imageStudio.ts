@@ -7,7 +7,10 @@ export interface ImageStudioGalleryEntry {
   model: string
   size: string
   format: string
+  /** true = 已存进「我的作品」（永久）；false = 生成页的临时内容（到期自动删）。 */
+  saved: boolean
   created_at: number
+  /** 临时内容的过期时间（秒）；已保存的为 0。 */
   expires_at: number
 }
 
@@ -18,6 +21,8 @@ export interface SaveImageStudioGalleryRequest {
   model: string
   size: string
   format: string
+  /** 不传时后端按"直接存进我的作品"处理（老行为）；生成页应显式传 false。 */
+  saved?: boolean
 }
 
 export async function listImageStudioGallery(): Promise<ImageStudioGalleryEntry[]> {
@@ -40,6 +45,11 @@ export async function deleteImageStudioGallery(id: string): Promise<void> {
   await apiClient.delete(`/image-studio/gallery/${encodeURIComponent(id)}`)
 }
 
+// 把临时内容存进「我的作品」：之后永久保留，并开始计入配额。
+export async function pinImageStudioGallery(id: string): Promise<void> {
+  await apiClient.post(`/image-studio/gallery/${encodeURIComponent(id)}/pin`)
+}
+
 export interface StudioWorksQuota {
   used: number
   limit: number
@@ -55,6 +65,7 @@ export const imageStudioGalleryAPI = {
   list: listImageStudioGallery,
   save: saveImageStudioGallery,
   delete: deleteImageStudioGallery,
+  pin: pinImageStudioGallery,
   quota: fetchStudioWorksQuota,
 }
 
