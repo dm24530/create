@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -11,7 +12,9 @@ import (
 	"time"
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/google/uuid"
+	"go.uber.org/zap"
 )
 
 const (
@@ -61,7 +64,8 @@ type VideoStudioGalleryEntry struct {
 }
 
 type VideoStudioGalleryStore interface {
-	Save(ctx context.Context, entry *VideoStudioGalleryEntry) error
+	// Save 落库前会在同一事务里核对配额；超额返回 ErrStudioWorksQuotaExceeded。
+	Save(ctx context.Context, entry *VideoStudioGalleryEntry, quota int64) error
 	List(ctx context.Context, userID int64, limit int) ([]*VideoStudioGalleryEntry, error)
 	Count(ctx context.Context, userID int64) (int64, error)
 	// ObjectKey 返回记录的 object_key；记录不存在时返回 ErrStudioWorkNotFound。
@@ -144,7 +148,17 @@ func (s *VideoStudioGalleryService) Save(
 		// 作品记录永久保存，不再有过期时间；保留字段以兼容前端与老数据。
 		ExpiresAt: 0,
 	}
-	if err := s.store.Save(ctx, entry); err != nil {
+	if err := s.store.Save(ctx, entry, resolveStudioQuota(s.storage)); err != nil {
+		if errors.Is(err, ErrStudioWorksQuotaExceeded) {
+			// 并发下抢先失败：刚上传的对象要撤掉，不然就成了没人认领的孤儿。
+			if entry.ObjectKey != "" {
+				if delErr := s.storage.DeleteObject(ctx, entry.ObjectKey); delErr != nil {
+					logger.L().Warn("studio_work.rollback_delete_failed",
+						zap.String("object_key", entry.ObjectKey), zap.Error(delErr))
+				}
+			}
+			return nil, ErrVideoStudioGalleryQuotaExceeded
+		}
 		return nil, err
 	}
 	return entry, nil

@@ -83,7 +83,7 @@
                   <Icon name="download" size="sm" />
                 </button>
                 <button
-                  v-if="galleryBackedIds.has(String(image.id))"
+                  v-if="galleryBackedIds.has(galleryIdFor(image))"
                   type="button"
                   class="mini-action"
                   data-testid="gallery-image-delete"
@@ -548,6 +548,9 @@ let nextImageId = 1
 const locallySavedGalleryIds = new Set<string>()
 // 已经在服务端有记录的图片 id：只有这些能删（本地刚生成还没存进图库的删不了）。
 const galleryBackedIds = ref<Set<string>>(new Set())
+// 本会话刚保存进图库的图片，卡片上还是本地数字 id；映射到图库 id 才能立刻删掉，
+// 不用等刷新页面。
+const localToGalleryId = ref<Map<string, string>>(new Map())
 const studioQuota = ref<{ used: number; limit: number } | null>(null)
 let nextReferenceId = 1
 let modelRequestId = 0
@@ -770,6 +773,7 @@ async function persistGeneratedImages(items: GeneratedImage[], prompt: string, m
     if (result.status === 'fulfilled' && result.value?.entry?.id) {
       locallySavedGalleryIds.add(String(result.value.entry.id))
       galleryBackedIds.value.add(String(result.value.entry.id))
+      localToGalleryId.value.set(String(result.value.item.id), String(result.value.entry.id))
       const storedURL = String(result.value.entry.url || '')
       if (storedURL) result.value.item.src = storedURL
     }
@@ -804,8 +808,14 @@ async function loadStudioQuota() {
 }
 
 // 删除作品：后端先删对象存储里的文件、再删记录，成功后本地也把它移掉。
+// 刚保存进图库的图片卡片上还是本地 id，所以要先用映射换成服务端的作品 id。
+function galleryIdFor(image: GeneratedImage): string {
+  const local = String(image.id)
+  return localToGalleryId.value.get(local) || local
+}
+
 async function removeGalleryImage(image: GeneratedImage) {
-  const id = String(image.id)
+  const id = galleryIdFor(image)
   if (!id || !galleryBackedIds.value.has(id)) return
   const label = image.title || '这张图片'
   const confirmed = typeof window === 'undefined'
@@ -817,7 +827,8 @@ async function removeGalleryImage(image: GeneratedImage) {
     await imageStudioGalleryAPI.delete(id)
     galleryBackedIds.value.delete(id)
     locallySavedGalleryIds.delete(id)
-    images.value = images.value.filter((item) => String(item.id) !== id)
+    localToGalleryId.value.delete(String(image.id))
+    images.value = images.value.filter((item) => String(item.id) !== String(image.id))
     await loadStudioQuota()
   } catch (error) {
     errorMessage.value = errorMessageFrom(error, '删除失败')

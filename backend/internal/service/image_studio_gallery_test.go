@@ -4,6 +4,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -14,9 +15,14 @@ type galleryStoreStub struct {
 	entries    []*ImageStudioGalleryEntry
 	objectKeys map[string]string
 	deleted    []string
+	// saveErr 用来模拟存储层在事务里判定超额（并发场景）。
+	saveErr error
 }
 
-func (s *galleryStoreStub) Save(_ context.Context, entry *ImageStudioGalleryEntry) error {
+func (s *galleryStoreStub) Save(_ context.Context, entry *ImageStudioGalleryEntry, _ int64) error {
+	if s.saveErr != nil {
+		return s.saveErr
+	}
 	s.entries = append(s.entries, entry)
 	if s.objectKeys == nil {
 		s.objectKeys = map[string]string{}
@@ -169,10 +175,11 @@ func TestImageStudioGalleryDeleteRemovesObjectThenRecord(t *testing.T) {
 	require.Equal(t, []string{entry.ID}, store.deleted)
 }
 
-// 删对象失败时保留记录：否则那个文件就成了永远找不到的孤儿。
+// 存储"能用但这次调用失败"（网络/鉴权）时保留记录，用户重试即可；
+// 这跟"存储根本没配好"是两种处置，后者见下面那个用例。
 func TestImageStudioGalleryDeleteKeepsRecordWhenObjectDeleteFails(t *testing.T) {
 	store := &galleryStoreStub{}
-	saver := &gallerySaverStub{deleteErr: ErrImageStorageIncomplete}
+	saver := &gallerySaverStub{deleteErr: errors.New("S3 DeleteObject: connection reset by peer")}
 	svc := NewImageStudioGalleryService(store, saver)
 
 	entry, err := svc.Save(
@@ -187,7 +194,7 @@ func TestImageStudioGalleryDeleteKeepsRecordWhenObjectDeleteFails(t *testing.T) 
 	)
 	require.NoError(t, err)
 
-	require.ErrorIs(t, svc.Delete(context.Background(), 42, entry.ID), ErrImageStorageIncomplete)
+	require.Error(t, svc.Delete(context.Background(), 42, entry.ID))
 	require.Empty(t, store.deleted, "对象没删掉就不该删记录")
 }
 
@@ -197,6 +204,36 @@ func TestImageStudioGalleryDeleteUnknownWork(t *testing.T) {
 	svc := NewImageStudioGalleryService(store, &gallerySaverStub{})
 
 	require.ErrorIs(t, svc.Delete(context.Background(), 42, "nope"), ErrStudioWorkNotFound)
+}
+
+// 存储没配好（停用/凭证不全）时不能把用户卡死：记录照删，只是删不掉桶里的文件。
+func TestImageStudioGalleryDeleteSucceedsWhenStorageIsNotConfigured(t *testing.T) {
+	store := &galleryStoreStub{}
+	saver := &gallerySaverStub{deleteErr: ErrImageStorageDisabled}
+	svc := NewImageStudioGalleryService(store, saver)
+
+	entry, err := svc.Save(
+		context.Background(), 42, "a cat", "m", "1x1", "png", "image/png", smallPNG(t),
+	)
+	require.NoError(t, err)
+
+	require.NoError(t, svc.Delete(context.Background(), 42, entry.ID))
+	require.Equal(t, []string{entry.ID}, store.deleted, "存储没配好也要能删掉记录")
+}
+
+// 并发下由存储层抢先判定超额：要翻译成图片自己的配额错误，并把刚上传的对象撤掉，
+// 否则那个对象就成了没人认领的孤儿。
+func TestImageStudioGalleryRollsBackUploadWhenStoreRejectsQuota(t *testing.T) {
+	store := &galleryStoreStub{saveErr: ErrStudioWorksQuotaExceeded}
+	saver := &gallerySaverStub{}
+	svc := NewImageStudioGalleryService(store, saver)
+
+	_, err := svc.Save(
+		context.Background(), 42, "a cat", "m", "1x1", "png", "image/png", smallPNG(t),
+	)
+	require.ErrorIs(t, err, ErrImageStudioGalleryQuotaExceeded)
+	require.Len(t, saver.deletedObject, 1, "被配额拒绝时要撤回刚上传的对象")
+	require.Empty(t, store.entries)
 }
 
 func TestImageStudioGalleryRejectsWhenUserLimitReached(t *testing.T) {

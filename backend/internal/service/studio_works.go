@@ -2,7 +2,21 @@ package service
 
 import (
 	"context"
+	"errors"
+	"net/http"
 	"strings"
+
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"go.uber.org/zap"
+)
+
+// ErrStudioWorksQuotaExceeded 是存储层的通用"配额已满"信号：
+// store 不知道作品类型，由各工作台把它翻译成自己的错误码（图片/视频各一个）。
+var ErrStudioWorksQuotaExceeded = infraerrors.New(
+	http.StatusTooManyRequests,
+	"STUDIO_WORKS_QUOTA_EXCEEDED",
+	"studio works quota reached",
 )
 
 // studioWorkStore 是图片/视频两个 store 接口的公共子集：删除作品只用得上这两步。
@@ -59,8 +73,9 @@ func studioWorksListLimit(reader studioQuotaReader) int {
 // deleteStudioWorkByKey 负责「删除作品」的固定顺序：先删对象存储里的文件，
 // 成功后再删记录。反过来会留下删不掉也查不到的孤儿文件。
 //
-// 没配对象存储时 DeleteObject 会报错，这里直接把错误抛出去、记录保持不动，
-// 管理员补好配置后用户重试即可。
+// 唯一例外是"存储根本没配好"（被停用或凭证不全）：这时对象删不掉，
+// 但绝不能因此把用户卡住——记录照删，只是日志里留下孤儿对象的线索。
+// 存储配好但调用失败（网络/鉴权）仍然报错并保留记录，这样用户重试即可。
 func deleteStudioWorkByKey(
 	ctx context.Context,
 	store studioWorkStore,
@@ -74,8 +89,19 @@ func deleteStudioWorkByKey(
 	}
 	if trimmed := strings.TrimSpace(key); trimmed != "" && storage != nil {
 		if err := storage.DeleteObject(ctx, trimmed); err != nil {
-			return err
+			if !isStorageNotConfigured(err) {
+				return err
+			}
+			logger.L().Warn("studio_work.object_delete_skipped",
+				zap.String("object_key", trimmed),
+				zap.Error(err))
 		}
 	}
 	return store.Delete(ctx, userID, id)
+}
+
+// isStorageNotConfigured 区分"存储没配好"和"存储调用失败"：
+// 前者删不了对象（也不该拦着用户删记录），后者可以重试。
+func isStorageNotConfigured(err error) bool {
+	return errors.Is(err, ErrImageStorageDisabled) || errors.Is(err, ErrImageStorageIncomplete)
 }

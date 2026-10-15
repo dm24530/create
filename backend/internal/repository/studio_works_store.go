@@ -21,21 +21,58 @@ type studioWorksDB struct {
 	db *sql.DB
 }
 
-func (s *studioWorksDB) insert(ctx context.Context, entry *studioWorkRow) error {
+// insert 把一行作品写进表里，并在同一个事务内先核对配额。
+//
+// 之前是在服务层"先 Count 再 INSERT"，两步之间别的请求可以插进来，配额于是能被
+// 并发提交突破。这里改成：事务 + 按用户加咨询锁 → 计数 → 插入，同一用户的写入被
+// 串行化，配额就是硬上限。
+func (s *studioWorksDB) insert(ctx context.Context, entry *studioWorkRow, quota int64) error {
 	if s == nil || s.db == nil {
 		return fmt.Errorf("studio works store is unavailable")
 	}
-	_, err := s.db.ExecContext(ctx, `
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin studio work tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// 咨询锁跟着事务走，事务结束自动释放；键用用户 ID，互不相干。
+	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock($1)`, studioWorksLockKey(entry.UserID)); err != nil {
+		return fmt.Errorf("lock studio works for user: %w", err)
+	}
+
+	if quota > 0 {
+		var used int64
+		if err := tx.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM studio_works WHERE user_id = $1`, entry.UserID,
+		).Scan(&used); err != nil {
+			return fmt.Errorf("count studio works: %w", err)
+		}
+		if used >= quota {
+			return service.ErrStudioWorksQuotaExceeded
+		}
+	}
+
+	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO studio_works (
 			id, user_id, kind, object_key, url, prompt, model, format, size, duration_seconds
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
 		entry.ID, entry.UserID, entry.Kind, entry.ObjectKey, entry.URL, entry.Prompt,
 		entry.Model, entry.Format, entry.Size, entry.DurationSeconds,
-	)
-	if err != nil {
+	); err != nil {
 		return fmt.Errorf("insert studio work: %w", err)
 	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit studio work: %w", err)
+	}
 	return nil
+}
+
+// studioWorksLockKey 把用户 ID 映射成咨询锁的键空间，避免和其他模块的锁撞车。
+const studioWorksLockKeyNamespace int64 = 0x5731_4B53 // 'W1KS'
+
+func studioWorksLockKey(userID int64) int64 {
+	return studioWorksLockKeyNamespace*1_000_000 + userID
 }
 
 func (s *studioWorksDB) list(ctx context.Context, userID int64, kind string, limit int) ([]*studioWorkRow, error) {
@@ -145,7 +182,9 @@ func NewImageStudioGalleryStore(db *sql.DB) service.ImageStudioGalleryStore {
 	return &imageStudioGalleryStore{studioWorksDB: &studioWorksDB{db: db}}
 }
 
-func (s *imageStudioGalleryStore) Save(ctx context.Context, entry *service.ImageStudioGalleryEntry) error {
+func (s *imageStudioGalleryStore) Save(
+	ctx context.Context, entry *service.ImageStudioGalleryEntry, quota int64,
+) error {
 	if entry == nil {
 		return fmt.Errorf("studio work entry is nil")
 	}
@@ -159,7 +198,7 @@ func (s *imageStudioGalleryStore) Save(ctx context.Context, entry *service.Image
 		Model:     entry.Model,
 		Format:    entry.Format,
 		Size:      entry.Size,
-	})
+	}, quota)
 }
 
 func (s *imageStudioGalleryStore) List(
@@ -208,7 +247,9 @@ func NewVideoStudioGalleryStore(db *sql.DB) service.VideoStudioGalleryStore {
 	return &videoStudioGalleryStore{studioWorksDB: &studioWorksDB{db: db}}
 }
 
-func (s *videoStudioGalleryStore) Save(ctx context.Context, entry *service.VideoStudioGalleryEntry) error {
+func (s *videoStudioGalleryStore) Save(
+	ctx context.Context, entry *service.VideoStudioGalleryEntry, quota int64,
+) error {
 	if entry == nil {
 		return fmt.Errorf("studio work entry is nil")
 	}
@@ -222,7 +263,7 @@ func (s *videoStudioGalleryStore) Save(ctx context.Context, entry *service.Video
 		Model:           entry.Model,
 		Format:          entry.Format,
 		DurationSeconds: entry.DurationSeconds,
-	})
+	}, quota)
 }
 
 func (s *videoStudioGalleryStore) List(

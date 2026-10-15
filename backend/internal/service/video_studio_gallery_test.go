@@ -16,9 +16,13 @@ type videoGalleryStoreStub struct {
 	saved      []*VideoStudioGalleryEntry
 	objectKeys map[string]string
 	deleted    []string
+	saveErr    error
 }
 
-func (s *videoGalleryStoreStub) Save(_ context.Context, entry *VideoStudioGalleryEntry) error {
+func (s *videoGalleryStoreStub) Save(_ context.Context, entry *VideoStudioGalleryEntry, _ int64) error {
+	if s.saveErr != nil {
+		return s.saveErr
+	}
 	s.saved = append(s.saved, entry)
 	if s.objectKeys == nil {
 		s.objectKeys = map[string]string{}
