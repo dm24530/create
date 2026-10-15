@@ -1,6 +1,6 @@
-# Sub2API Docker Image
+# Create Docker Image
 
-Sub2API is an AI API Gateway Platform for distributing and managing AI product subscription API quotas.
+Create is an AI video and image generation platform for creating and managing AI video and image works.
 
 ## Quick Start
 

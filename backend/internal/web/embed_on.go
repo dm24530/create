@@ -348,7 +348,7 @@ func resolveRouteSeoDoc(path, siteName string) routeSeoDoc {
 	case normalized == "/model-plaza":
 		return routeSeoDoc{
 			Title:       name + " - AI 模型广场与价格对比",
-			Description: "对比 GPT、Claude、Gemini、DeepSeek 等模型的实时价格、上下文窗口与计费方式，OpenAI 兼容接口可直接接入。",
+			Description: "对比各类 AI 视频与图片生成模型的实时价格、计费方式与可用分组。",
 			Keywords:    "AI 视频模型价格,AI 图片模型价格,视频生成模型价格,图片生成模型价格,AI 模型价格对比",
 			Robots:      "index,follow",
 		}

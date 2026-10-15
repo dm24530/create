@@ -25,17 +25,17 @@ func init() {
 
 func TestInjectSiteTitle(t *testing.T) {
 	t.Run("replaces_title_with_site_name", func(t *testing.T) {
-		html := []byte(`<html><head><title>SuperAI - AI API Gateway</title></head><body></body></html>`)
+		html := []byte(`<html><head><title>Create - AI 视频与图片生成</title></head><body></body></html>`)
 		settingsJSON := []byte(`{"site_name":"MyCustomSite"}`)
 
 		result := injectSiteTitle(html, settingsJSON)
 
 		assert.Contains(t, string(result), "<title>MyCustomSite - AI 视频与图片生成</title>")
-		assert.NotContains(t, string(result), "SuperAI")
+		assert.NotContains(t, string(result), "Create")
 	})
 
 	t.Run("returns_unchanged_when_site_name_empty", func(t *testing.T) {
-		html := []byte(`<html><head><title>SuperAI - AI API Gateway</title></head><body></body></html>`)
+		html := []byte(`<html><head><title>Create - AI 视频与图片生成</title></head><body></body></html>`)
 		settingsJSON := []byte(`{"site_name":""}`)
 
 		result := injectSiteTitle(html, settingsJSON)
@@ -44,7 +44,7 @@ func TestInjectSiteTitle(t *testing.T) {
 	})
 
 	t.Run("returns_unchanged_when_site_name_missing", func(t *testing.T) {
-		html := []byte(`<html><head><title>SuperAI - AI API Gateway</title></head><body></body></html>`)
+		html := []byte(`<html><head><title>Create - AI 视频与图片生成</title></head><body></body></html>`)
 		settingsJSON := []byte(`{"other_field":"value"}`)
 
 		result := injectSiteTitle(html, settingsJSON)
@@ -53,7 +53,7 @@ func TestInjectSiteTitle(t *testing.T) {
 	})
 
 	t.Run("returns_unchanged_when_invalid_json", func(t *testing.T) {
-		html := []byte(`<html><head><title>SuperAI - AI API Gateway</title></head><body></body></html>`)
+		html := []byte(`<html><head><title>Create - AI 视频与图片生成</title></head><body></body></html>`)
 		settingsJSON := []byte(`{invalid json}`)
 
 		result := injectSiteTitle(html, settingsJSON)
@@ -83,7 +83,7 @@ func TestInjectSiteTitle(t *testing.T) {
 	})
 
 	t.Run("escapes_html_in_site_name", func(t *testing.T) {
-		html := []byte(`<html><head><title>Sub2API - AI API Gateway</title></head><body></body></html>`)
+		html := []byte(`<html><head><title>Create - AI 视频与图片生成</title></head><body></body></html>`)
 		settingsJSON := []byte(`{"site_name":"</title><script>alert(1)</script><title>"}`)
 
 		result := injectSiteTitle(html, settingsJSON)

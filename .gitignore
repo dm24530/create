@@ -96,12 +96,9 @@ build/
 release/
 
 # 后端嵌入的前端构建产物
-# Keep a placeholder file so `//go:embed all:dist` always has a match in CI/lint,
-# while still ignoring generated frontend build outputs.
+# dist 完全由 `pnpm run build` 生成，不入库。带 `-tags embed` 编译前必须先构建前端，
+# 否则 //go:embed all:dist 会因为没有可嵌入的文件而直接报错。
 backend/internal/web/dist/
-!backend/internal/web/dist/
-backend/internal/web/dist/*
-!backend/internal/web/dist/.keep
 
 # 后端运行时缓存数据
 backend/data/

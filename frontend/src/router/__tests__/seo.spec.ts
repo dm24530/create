@@ -6,7 +6,7 @@ vi.mock('@/i18n', () => ({
   i18n: {
     global: {
       t: (key: string) => key === 'home.seoDescription'
-        ? 'SuperAI 兼容 OpenAI、GPT、Claude、DeepSeek 的 API 中转站'
+        ? 'Create 是一个 AI 视频与图片生成平台'
         : key,
     },
   },
@@ -21,10 +21,10 @@ describe('resolveRouteSeo', () => {
         descriptionKey: 'home.seoDescription',
         seoKeywords: ['SuperAI', 'GPT', 'OpenAI', 'Claude', 'DeepSeek'],
       },
-    }, 'SuperAI - AI API Gateway', 'https://superai.sbs')
+    }, 'Create - AI 视频与图片生成', 'https://superai.sbs')
 
-    expect(seo.description).toContain('SuperAI')
-    expect(seo.description).toContain('OpenAI')
+    expect(seo.description).toContain('Create')
+    expect(seo.description).toContain('视频')
     expect(seo.keywords).toContain('GPT')
     expect(seo.canonical).toBe('https://superai.sbs/home')
     expect(seo.robots).toBe('index,follow')
@@ -37,7 +37,7 @@ describe('resolveRouteSeo', () => {
         requiresAuth: true,
         requiresAdmin: true,
       },
-    }, 'System Settings - SuperAI', 'https://superai.sbs')
+    }, 'System Settings - Create', 'https://superai.sbs')
 
     expect(seo.robots).toBe('noindex,nofollow')
   })
