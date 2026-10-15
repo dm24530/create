@@ -5,6 +5,9 @@
         <div>
           <h1>我的作品</h1>
           <p>这里保存这个浏览器里生成的视频任务，可随时重新载入或下载。</p>
+          <p v-if="studioQuota" class="works__quota" data-testid="works-quota">
+            存储额度：{{ studioQuota.used }} / {{ studioQuota.limit }}（图片与视频共用）
+          </p>
         </div>
         <div class="works__toolbar">
           <label class="toolbar-field">
@@ -259,6 +262,7 @@ import {
 } from './videoStudioApi'
 import {
   deleteArchivedVideo,
+  fetchStudioWorksQuota,
   listArchivedVideos,
   type ArchivedVideoEntry,
 } from './videoArchiveApi'
@@ -277,6 +281,7 @@ const selectedKeyId = ref('')
 const apiBaseUrl = ref('')
 const records = ref<VideoWorkRecord[]>([])
 const archived = ref<ArchivedVideoEntry[]>([])
+const studioQuota = ref<{ used: number; limit: number } | null>(null)
 const playable = ref<Record<string, string>>({})
 const activeRecord = ref<VideoWorkRecord | null>(null)
 const errorMessage = ref('')
@@ -366,6 +371,16 @@ async function loadArchivedVideos() {
     // 归档接口不可用（例如对象存储没配）时不影响本机记录展示。
     archived.value = []
   }
+  await loadStudioQuota()
+}
+
+// 配额是图片 + 视频合起来算的，这里只做展示，满了后端会在归档时拒绝。
+async function loadStudioQuota() {
+  try {
+    studioQuota.value = await fetchStudioWorksQuota()
+  } catch {
+    studioQuota.value = null
+  }
 }
 
 function archivedMeta(entry: ArchivedVideoEntry): string {
@@ -379,6 +394,9 @@ async function downloadArchived(entry: ArchivedVideoEntry) {
 }
 
 async function removeArchived(entry: ArchivedVideoEntry) {
+  const confirmed = typeof window === 'undefined'
+    || window.confirm('删除这段视频？对象存储里的文件会一起删除，无法恢复。')
+  if (!confirmed) return
   try {
     await deleteArchivedVideo(entry.id)
   } catch (error) {
@@ -387,6 +405,7 @@ async function removeArchived(entry: ArchivedVideoEntry) {
   }
   archived.value = archived.value.filter((item) => item.id !== entry.id)
   records.value = visibleLocalRecords()
+  await loadStudioQuota()
 }
 
 async function refreshKeys() {
@@ -548,6 +567,11 @@ onBeforeUnmount(() => {
   margin-top: 0.25rem;
   font-size: 0.875rem;
   color: rgb(107 114 128);
+}
+
+.works__quota {
+  color: rgb(148 163 184) !important;
+  font-size: 0.75rem !important;
 }
 
 .works__toolbar {

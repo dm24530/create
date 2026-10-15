@@ -22,6 +22,8 @@ const { listArchivedVideos, deleteArchivedVideo, fetchOnlineInspirationFeed, fet
 vi.mock('../videoArchiveApi', () => ({
   listArchivedVideos,
   deleteArchivedVideo,
+  fetchStudioWorksQuota: vi.fn().mockResolvedValue({ used: 2, limit: 100 }),
+  isStudioQuotaError: () => false,
   fetchOnlineInspirationFeed,
   fetchInspirationLibrary,
   inspirationMediaProxyUrl: (rawUrl: string) =>
@@ -356,11 +358,15 @@ describe('VideoWorksView', () => {
 
     const card = wrapper.get('[data-testid="archived-arch-2"]')
     const deleteButton = card.findAll('button').find((button) => button.attributes('title') === '删除归档')
+    // 删除要连带删对象存储里的文件，所以走一次确认框。
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
     await deleteButton!.trigger('click')
     await flushPromises()
 
     expect(deleteArchivedVideo).toHaveBeenCalledWith('arch-2')
     expect(wrapper.find('[data-testid="archived-arch-2"]').exists()).toBe(false)
+    expect(confirmSpy).toHaveBeenCalled()
+    confirmSpy.mockRestore()
   })
 })
 

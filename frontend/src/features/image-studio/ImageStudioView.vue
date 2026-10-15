@@ -7,6 +7,9 @@
           <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
             选择你自己的 API Key，直接生成或编辑图片。
           </p>
+          <p v-if="studioQuota" class="mt-1 text-xs text-gray-400" data-testid="studio-quota">
+            我的作品：{{ studioQuota.used }} / {{ studioQuota.limit }}（图片与视频共用）
+          </p>
         </div>
 
         <div class="flex flex-wrap items-center gap-2">
@@ -78,6 +81,16 @@
               <div v-if="!image.pending" class="flex shrink-0 gap-1">
                 <button type="button" class="mini-action" title="下载图片" @click="downloadImage(image)">
                   <Icon name="download" size="sm" />
+                </button>
+                <button
+                  v-if="galleryBackedIds.has(String(image.id))"
+                  type="button"
+                  class="mini-action"
+                  data-testid="gallery-image-delete"
+                  title="删除作品（同时删除存储里的文件）"
+                  @click="removeGalleryImage(image)"
+                >
+                  <Icon name="trash" size="sm" />
                 </button>
               </div>
             </div>
@@ -533,6 +546,9 @@ let nextImageId = 1
 // 本会话里已保存进图库的条目 id：这些图本地已有可显示的副本，
 // 图库列表里再渲染一次就会出现"生成一张却显示两张"的重复卡片。
 const locallySavedGalleryIds = new Set<string>()
+// 已经在服务端有记录的图片 id：只有这些能删（本地刚生成还没存进图库的删不了）。
+const galleryBackedIds = ref<Set<string>>(new Set())
+const studioQuota = ref<{ used: number; limit: number } | null>(null)
 let nextReferenceId = 1
 let modelRequestId = 0
 
@@ -653,12 +669,15 @@ async function loadData() {
       if (!errorMessage.value) errorMessage.value = errorMessageFrom(error, '加载设置失败')
     })
 
-  await Promise.allSettled([keysPromise, settingsPromise, loadGallery()])
+  await Promise.allSettled([keysPromise, settingsPromise, loadGallery(), loadStudioQuota()])
 }
 
 async function loadGallery() {
   try {
     const entries = await imageStudioGalleryAPI.list()
+    for (const entry of entries) {
+      if (entry?.id) galleryBackedIds.value.add(String(entry.id))
+    }
     const pending = images.value.filter((item) => item.pending)
     const localResults = images.value.filter((item) => !item.pending && typeof item.id === 'number')
     const seen = new Set<string>()
@@ -750,17 +769,58 @@ async function persistGeneratedImages(items: GeneratedImage[], prompt: string, m
   for (const result of results) {
     if (result.status === 'fulfilled' && result.value?.entry?.id) {
       locallySavedGalleryIds.add(String(result.value.entry.id))
+      galleryBackedIds.value.add(String(result.value.entry.id))
       const storedURL = String(result.value.entry.url || '')
       if (storedURL) result.value.item.src = storedURL
     }
   }
   if (succeeded > 0) {
     await loadGallery()
+    await loadStudioQuota()
   }
   if (failed > 0) {
-    errorMessage.value = succeeded > 0
-      ? '部分图片未能保存到图库，请检查对象存储配置。'
-      : '图片已生成，但保存到图库失败。请检查对象存储是否已启用并保存配置。'
+    errorMessage.value = quotaReached(results)
+      ? `作品已达上限（${studioQuota.value?.limit || 100} 个），请先在下方删除一些作品再保存。`
+      : succeeded > 0
+        ? '部分图片未能保存到图库，请检查对象存储配置。'
+        : '图片已生成，但保存到图库失败。请检查对象存储是否已启用并保存配置。'
+  }
+}
+
+// 配额满了后端返回 429 + *_QUOTA_EXCEEDED，单独给一句能指导操作的提示。
+function quotaReached(results: Array<{ status: string; reason?: unknown }>): boolean {
+  return results.some((result) => {
+    const reason = typeof result.reason === 'string' ? result.reason : ''
+    return reason.endsWith('_QUOTA_EXCEEDED')
+  })
+}
+
+async function loadStudioQuota() {
+  try {
+    studioQuota.value = await imageStudioGalleryAPI.quota()
+  } catch {
+    // 配额展示是锦上添花，读不到就不显示。
+  }
+}
+
+// 删除作品：后端先删对象存储里的文件、再删记录，成功后本地也把它移掉。
+async function removeGalleryImage(image: GeneratedImage) {
+  const id = String(image.id)
+  if (!id || !galleryBackedIds.value.has(id)) return
+  const label = image.title || '这张图片'
+  const confirmed = typeof window === 'undefined'
+    || window.confirm(`删除「${label}」？存储里的文件会一起删除，无法恢复。`)
+  if (!confirmed) return
+
+  errorMessage.value = ''
+  try {
+    await imageStudioGalleryAPI.delete(id)
+    galleryBackedIds.value.delete(id)
+    locallySavedGalleryIds.delete(id)
+    images.value = images.value.filter((item) => String(item.id) !== id)
+    await loadStudioQuota()
+  } catch (error) {
+    errorMessage.value = errorMessageFrom(error, '删除失败')
   }
 }
 

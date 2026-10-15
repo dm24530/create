@@ -40,6 +40,25 @@ export async function deleteArchivedVideo(id: string): Promise<void> {
   await apiClient.delete(`/video-studio/gallery/${encodeURIComponent(id)}`)
 }
 
+export interface StudioWorksQuota {
+  used: number
+  limit: number
+}
+
+// 作品配额是图片 + 视频合起来算的（与图片工作台同一份计数）。
+export async function fetchStudioWorksQuota(): Promise<StudioWorksQuota> {
+  const { data } = await apiClient.get<StudioWorksQuota>('/video-studio/gallery/quota')
+  return { used: Number(data?.used || 0), limit: Number(data?.limit || 0) }
+}
+
+// 判断一个错误是不是「作品库已满」：后端用 429 + *_QUOTA_EXCEEDED 表达。
+export function isStudioQuotaError(error: unknown): boolean {
+  const reason = typeof error === 'object' && error !== null && 'reason' in error
+    ? String((error as { reason?: unknown }).reason || '')
+    : ''
+  return reason.endsWith('_QUOTA_EXCEEDED')
+}
+
 // 远端素材（在线灵感、模板分镜图）统一走本站代理：
 // 页面只有一个来源域名，也顺带拿到服务端缓存。
 export function inspirationMediaProxyUrl(rawUrl: string): string {

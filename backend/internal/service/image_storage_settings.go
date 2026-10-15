@@ -131,18 +131,29 @@ func (s *ImageStorageSettingService) Resolver() ImageStorageResolver {
 // SaveImage stores an image using the currently effective image storage
 // configuration. It is used by user-facing gallery uploads.
 func (s *ImageStorageSettingService) SaveImage(ctx context.Context, key, contentType string, data []byte) (string, error) {
+	url, _, err := s.SaveImageWithKey(ctx, key, contentType, data)
+	return url, err
+}
+
+// SaveImageWithKey 与 SaveImage 一样写对象，但会额外返回最终的对象键。
+// 作品库需要它：键里带配置的 Key 前缀，删除时必须用同一个键才能删到文件。
+func (s *ImageStorageSettingService) SaveImageWithKey(
+	ctx context.Context, key, contentType string, data []byte,
+) (string, string, error) {
 	if reason := s.unusableReason(ctx); reason != nil {
-		return "", reason
+		return "", "", reason
 	}
 	uploader, enabled := s.resolve()
 	if !enabled || uploader == nil || uploader.storage == nil {
-		return "", ErrImageStorageIncomplete
+		return "", "", ErrImageStorageIncomplete
 	}
 	key = uploader.prefix + strings.TrimLeft(strings.TrimSpace(key), "/")
 	if storage, ok := uploader.storage.(ImageStorageWithExpiry); ok {
-		return storage.SaveWithExpiry(ctx, key, contentType, data, s.GalleryRetention())
+		url, err := storage.SaveWithExpiry(ctx, key, contentType, data, s.GalleryRetention())
+		return url, key, err
 	}
-	return uploader.storage.Save(ctx, key, contentType, data)
+	url, err := uploader.storage.Save(ctx, key, contentType, data)
+	return url, key, err
 }
 
 // Status 解析当前生效状态。ReuseBackupS3 打开时以备份凭证的实际取值为准，
@@ -274,6 +285,24 @@ func (s *ImageStorageSettingService) resolve() (*ImageResultUploader, bool) {
 		s.galleryRetention = time.Duration(cfg.GalleryRetentionDays) * 24 * time.Hour
 	}
 	return s.uploader, true
+}
+
+// DeleteObject 按完整 key 删除对象存储里的文件。用户删除作品时调用：
+// 先删文件再删记录，删文件失败就把错误抛出去，记录保留以便重试。
+func (s *ImageStorageSettingService) DeleteObject(ctx context.Context, key string) error {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return nil
+	}
+	uploader, enabled := s.resolve()
+	if !enabled || uploader == nil || uploader.storage == nil {
+		return ErrImageStorageIncomplete
+	}
+	deleter, ok := uploader.storage.(ImageStorageDeleter)
+	if !ok {
+		return ErrImageStorageIncomplete
+	}
+	return deleter.Delete(ctx, key)
 }
 
 func (s *ImageStorageSettingService) GalleryRetention() time.Duration {

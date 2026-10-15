@@ -103,6 +103,9 @@ func RegisterUserRoutes(
 		{
 			imageStudio.GET("/gallery", h.ImageStudioGallery.List)
 			imageStudio.POST("/gallery", h.ImageStudioGallery.Save)
+			imageStudio.DELETE("/gallery/:id", h.ImageStudioGallery.Delete)
+			// 作品配额是图片与视频合起来算的；两个工作台都能查，前端各调各的命名空间。
+			imageStudio.GET("/gallery/quota", h.ImageStudioGallery.Quota)
 		}
 
 		// 视频作品的持久化归档（与图片共用同一份对象存储配置，走 videos/ 前缀）。
@@ -111,6 +114,7 @@ func RegisterUserRoutes(
 			videoStudio.GET("/gallery", h.VideoStudioGallery.List)
 			videoStudio.POST("/gallery", h.VideoStudioGallery.Save)
 			videoStudio.DELETE("/gallery/:id", h.VideoStudioGallery.Delete)
+			videoStudio.GET("/gallery/quota", h.ImageStudioGallery.Quota)
 		}
 
 		// 在线灵感：由服务端拉取并缓存，媒体通过 /public/video-inspiration/media 代理。

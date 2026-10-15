@@ -17,6 +17,8 @@ vi.mock('../videoArchiveApi', () => ({
   archiveVideo,
   listArchivedVideos: vi.fn().mockResolvedValue([]),
   deleteArchivedVideo: vi.fn(),
+  fetchStudioWorksQuota: vi.fn().mockResolvedValue({ used: 0, limit: 100 }),
+  isStudioQuotaError: () => false,
   fetchOnlineInspirationsFromServer: vi.fn().mockResolvedValue([]),
   fetchOnlineInspirationFeed: vi.fn().mockResolvedValue({ items: [] }),
   inspirationMediaProxyUrl: (rawUrl: string) => `/proxied?u=${encodeURIComponent(rawUrl)}`,

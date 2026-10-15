@@ -513,6 +513,7 @@ import {
 } from './videoStudioApi'
 import {
   archiveVideo,
+  isStudioQuotaError,
   type ArchivedVideoEntry,
 } from './videoArchiveApi'
 import {
@@ -1331,9 +1332,11 @@ async function archiveTaskVideo(task: StudioTask, upstreamUrl: string) {
     const reason = typeof error === 'object' && error !== null && 'reason' in error
       ? String((error as { reason?: unknown }).reason || '')
       : ''
-    archiveHint.value = reason === 'IMAGE_STORAGE_DISABLED' || reason === 'IMAGE_STORAGE_INCOMPLETE'
-      ? '视频已生成，但未归档到对象存储：请在后台「设置 → 数据备份」开启并补齐「异步生图对象存储」。'
-      : `视频已生成，但归档失败：${errorMessageFrom(error, '未知原因')}`
+    archiveHint.value = isStudioQuotaError(error)
+      ? '视频已生成，但你的作品已达上限，请先到「我的作品」删除一些再归档。'
+      : reason === 'IMAGE_STORAGE_DISABLED' || reason === 'IMAGE_STORAGE_INCOMPLETE'
+        ? '视频已生成，但未归档到对象存储：请在后台「设置 → 数据备份」开启并补齐「异步生图对象存储」。'
+        : `视频已生成，但归档失败：${errorMessageFrom(error, '未知原因')}`
   }
 }
 

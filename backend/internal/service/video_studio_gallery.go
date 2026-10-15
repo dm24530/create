@@ -20,7 +20,6 @@ const (
 	// maxVideoArchiveBytes 限制单条视频归档大小：服务器抓取与 base64 上传都按它兜底。
 	maxVideoArchiveBytes  int64 = 256 << 20
 	videoStudioMaxItems         = 100
-	videoStudioMaxEntries       = 100
 )
 
 var (
@@ -51,6 +50,8 @@ var (
 type VideoStudioGalleryEntry struct {
 	ID              string `json:"id"`
 	UserID          int64  `json:"-"`
+	// ObjectKey 是对象存储里的完整键（含 videos/ 前缀），删除作品时用它删对象。
+	ObjectKey       string `json:"-"`
 	URL             string `json:"url"`
 	Prompt          string `json:"prompt"`
 	Model           string `json:"model"`
@@ -61,15 +62,19 @@ type VideoStudioGalleryEntry struct {
 }
 
 type VideoStudioGalleryStore interface {
-	Save(ctx context.Context, entry *VideoStudioGalleryEntry, ttl time.Duration) error
+	Save(ctx context.Context, entry *VideoStudioGalleryEntry) error
 	List(ctx context.Context, userID int64, limit int) ([]*VideoStudioGalleryEntry, error)
 	Count(ctx context.Context, userID int64) (int64, error)
+	// ObjectKey 返回记录的 object_key；记录不存在时返回 ErrStudioWorkNotFound。
+	ObjectKey(ctx context.Context, userID int64, id string) (string, error)
 	Delete(ctx context.Context, userID int64, id string) error
 }
 
 // VideoStudioMediaSaver 由对象存储设置服务实现（与图片共用同一份配置）。
 type VideoStudioMediaSaver interface {
 	SaveVideo(ctx context.Context, key, contentType string, data []byte) (string, error)
+	// DeleteObject 删除对象存储里的文件；未配置存储时返回错误，调用方据此保留记录。
+	DeleteObject(ctx context.Context, key string) error
 	FetchVideoURL(ctx context.Context, rawURL string) ([]byte, string, error)
 	GalleryRetention() time.Duration
 }
@@ -108,15 +113,11 @@ func (s *VideoStudioGalleryService) Save(
 		return nil, ErrVideoStudioUnsupportedType
 	}
 
-	retention := s.storage.GalleryRetention()
-	if retention <= 0 {
-		retention = ImageStudioGalleryTTL
-	}
 	count, err := s.store.Count(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
-	if count >= videoStudioMaxEntries {
+	if count >= StudioWorksQuotaPerUser {
 		return nil, ErrVideoStudioGalleryQuotaExceeded
 	}
 
@@ -132,15 +133,17 @@ func (s *VideoStudioGalleryService) Save(
 	entry := &VideoStudioGalleryEntry{
 		ID:              id,
 		UserID:          userID,
+		ObjectKey:       videoStoragePrefix + key,
 		URL:             url,
 		Prompt:          strings.TrimSpace(prompt),
 		Model:           strings.TrimSpace(model),
 		Format:          strings.TrimSpace(format),
 		DurationSeconds: durationSeconds,
 		CreatedAt:       now.Unix(),
-		ExpiresAt:       now.Add(retention).Unix(),
+		// 作品记录永久保存，不再有过期时间；保留字段以兼容前端与老数据。
+		ExpiresAt: 0,
 	}
-	if err := s.store.Save(ctx, entry, retention); err != nil {
+	if err := s.store.Save(ctx, entry); err != nil {
 		return nil, err
 	}
 	return entry, nil
@@ -176,13 +179,13 @@ func (s *VideoStudioGalleryService) List(ctx context.Context, userID int64, limi
 	return s.store.List(ctx, userID, limit)
 }
 
-// Delete 只删记录，不删对象存储里的文件：删对象需要额外权限与清理策略，
-// 而归档记录本身有保留期，超期后索引自然消失。
+// Delete 删除一条视频作品：先删对象存储里的文件，成功后再删记录。
+// 顺序是为了不留下删不掉也查不到的孤儿对象。
 func (s *VideoStudioGalleryService) Delete(ctx context.Context, userID int64, id string) error {
 	if s == nil || s.store == nil || userID <= 0 || strings.TrimSpace(id) == "" {
 		return ErrVideoStudioGalleryUnavailable
 	}
-	return s.store.Delete(ctx, userID, strings.TrimSpace(id))
+	return deleteStudioWorkByKey(ctx, s.store, s.storage, userID, strings.TrimSpace(id))
 }
 
 /* ------------------------------ 对象存储写入 ------------------------------ */

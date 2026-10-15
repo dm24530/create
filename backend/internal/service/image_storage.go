@@ -32,6 +32,12 @@ type ImageStorageWithExpiry interface {
 	SaveWithExpiry(ctx context.Context, key, contentType string, data []byte, expiry time.Duration) (url string, err error)
 }
 
+// ImageStorageDeleter 支持按 key 删除对象。用户删除作品时用它清理桶里的文件，
+// 没有实现这个接口的存储不影响写入，只是删作品时无法连带删文件。
+type ImageStorageDeleter interface {
+	Delete(ctx context.Context, key string) error
+}
+
 // ImageResultUploader 是 ImageStorage 的上层编排器（与具体厂商无关）：
 // 把上游生图响应里的每张图片（b64_json 解码 / url 下载）转存到对象存储，
 // 并把响应结果改写为只含短链接的紧凑 JSON，从而避免大 base64 落 Redis。

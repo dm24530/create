@@ -101,3 +101,18 @@ func (s *S3ImageStorage) HeadBucket(ctx context.Context) error {
 	}
 	return nil
 }
+
+// Delete 删除对象存储里的一个对象。S3 的 DeleteObject 本身是幂等的：
+// 对象不存在也返回成功，所以重复删除不会报错。
+func (s *S3ImageStorage) Delete(ctx context.Context, key string) error {
+	finish := servertiming.ObserveDependency(ctx, "s3")
+	defer finish()
+	_, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{
+		Bucket: &s.bucket,
+		Key:    &key,
+	})
+	if err != nil {
+		return fmt.Errorf("S3 DeleteObject: %w", err)
+	}
+	return nil
+}

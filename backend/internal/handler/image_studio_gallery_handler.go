@@ -91,6 +91,35 @@ func (h *ImageStudioGalleryHandler) List(c *gin.Context) {
 	response.Success(c, items)
 }
 
+// Delete 删除一条图片作品：记录和对象存储里的文件一起删。
+func (h *ImageStudioGalleryHandler) Delete(c *gin.Context) {
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not found in context")
+		return
+	}
+	if err := h.gallery.Delete(c.Request.Context(), subject.UserID, strings.TrimSpace(c.Param("id"))); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, gin.H{"deleted": true})
+}
+
+// Quota 返回作品库的配额使用情况（图片 + 视频合并计算），供前端展示「已用 N / 上限」。
+func (h *ImageStudioGalleryHandler) Quota(c *gin.Context) {
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not found in context")
+		return
+	}
+	quota, err := h.gallery.Quota(c.Request.Context(), subject.UserID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, quota)
+}
+
 func decodeImageStudioDataURL(raw string) ([]byte, string, error) {
 	raw = strings.TrimSpace(raw)
 	if !strings.HasPrefix(strings.ToLower(raw), "data:") {

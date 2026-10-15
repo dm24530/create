@@ -13,12 +13,17 @@ import (
 )
 
 type videoGalleryStoreStub struct {
-	saved   []*VideoStudioGalleryEntry
-	deleted []string
+	saved      []*VideoStudioGalleryEntry
+	objectKeys map[string]string
+	deleted    []string
 }
 
-func (s *videoGalleryStoreStub) Save(_ context.Context, entry *VideoStudioGalleryEntry, _ time.Duration) error {
+func (s *videoGalleryStoreStub) Save(_ context.Context, entry *VideoStudioGalleryEntry) error {
 	s.saved = append(s.saved, entry)
+	if s.objectKeys == nil {
+		s.objectKeys = map[string]string{}
+	}
+	s.objectKeys[entry.ID] = entry.ObjectKey
 	return nil
 }
 
@@ -28,14 +33,23 @@ func (s *videoGalleryStoreStub) List(context.Context, int64, int) ([]*VideoStudi
 
 func (s *videoGalleryStoreStub) Count(context.Context, int64) (int64, error) { return 0, nil }
 
+func (s *videoGalleryStoreStub) ObjectKey(_ context.Context, _ int64, id string) (string, error) {
+	key, ok := s.objectKeys[id]
+	if !ok {
+		return "", ErrStudioWorkNotFound
+	}
+	return key, nil
+}
+
 func (s *videoGalleryStoreStub) Delete(_ context.Context, _ int64, id string) error {
 	s.deleted = append(s.deleted, id)
 	return nil
 }
 
 type videoMediaSaverStub struct {
-	keys  []string
-	types []string
+	keys          []string
+	types         []string
+	deletedObject []string
 }
 
 func (s *videoMediaSaverStub) SaveVideo(_ context.Context, key, contentType string, _ []byte) (string, error) {
@@ -49,6 +63,11 @@ func (s *videoMediaSaverStub) FetchVideoURL(context.Context, string) ([]byte, st
 }
 
 func (s *videoMediaSaverStub) GalleryRetention() time.Duration { return 30 * 24 * time.Hour }
+
+func (s *videoMediaSaverStub) DeleteObject(_ context.Context, key string) error {
+	s.deletedObject = append(s.deletedObject, key)
+	return nil
+}
 
 // 真实的 mp4 文件头，让 http.DetectContentType 能识别出来。
 func mp4Bytes() []byte {
@@ -77,6 +96,9 @@ func TestVideoStudioGalleryArchivesOnlyVideos(t *testing.T) {
 	require.True(t, bytes.HasSuffix([]byte(entry.URL), []byte(".mp4")))
 	require.Equal(t, 8, entry.DurationSeconds)
 	require.Equal(t, "镜头", entry.Prompt)
+	require.Equal(t, int64(0), entry.ExpiresAt, "作品不再有过期时间")
+	require.True(t, bytes.HasPrefix([]byte(entry.ObjectKey), []byte(videoStoragePrefix)),
+		"object_key 必须带 videos/ 前缀，删除时才能定位对象")
 	require.Len(t, store.saved, 1)
 }
 
@@ -89,12 +111,18 @@ func TestVideoStudioGalleryRejectsOversizedArchives(t *testing.T) {
 	require.ErrorIs(t, err, ErrVideoStudioArchiveTooLarge)
 }
 
-func TestVideoStudioGalleryDeleteDelegatesToStore(t *testing.T) {
+// 删除视频作品要连带删掉对象存储里的文件。
+func TestVideoStudioGalleryDeleteRemovesObjectThenRecord(t *testing.T) {
 	store := &videoGalleryStoreStub{}
-	svc := NewVideoStudioGalleryService(store, &videoMediaSaverStub{})
+	saver := &videoMediaSaverStub{}
+	svc := NewVideoStudioGalleryService(store, saver)
 
-	require.NoError(t, svc.Delete(context.Background(), 7, "abc"))
-	require.Equal(t, []string{"abc"}, store.deleted)
+	entry, err := svc.Save(context.Background(), 1, "镜头", "m", "mp4", 5, "video/mp4", mp4Bytes())
+	require.NoError(t, err)
+	require.NoError(t, svc.Delete(context.Background(), 1, entry.ID))
+
+	require.Equal(t, []string{entry.ObjectKey}, saver.deletedObject)
+	require.Equal(t, []string{entry.ID}, store.deleted)
 }
 
 func TestDecodeVideoDataURLRejectsNonVideo(t *testing.T) {
