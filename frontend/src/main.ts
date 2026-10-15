@@ -46,7 +46,7 @@ async function bootstrap() {
 
   // Set document title immediately after config is loaded
   if (appStore.siteName && appStore.siteName !== 'Create') {
-    document.title = `${appStore.siteName} - AI API Gateway`
+    document.title = `${appStore.siteName} - AI 视频与图片生成`
   }
   updateFavicon(appStore.siteLogo)
 

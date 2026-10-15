@@ -12,7 +12,7 @@ export default {
       publicOnly: 'Public groups only',
       priceHint: 'Prices reflect the current public groups; final billing follows the request.'
     },
-    seoDescription: 'Create is an AI API gateway and aggregation service compatible with OpenAI, GPT, Claude, DeepSeek and other leading models.',
+    seoDescription: 'Create is an AI video and image generation platform with AI video generation, AI image generation, and works management.',
     viewOnGithub: 'View on GitHub',
     viewDocs: 'View Documentation',
     docs: 'Docs',

@@ -29,7 +29,7 @@ const (
 	seoBlockEnd   = "<!--seo:end-->"
 )
 
-const defaultSeoKeywords = "AI API 中转站,API 中转站,GPT API,OpenAI API,Claude API,DeepSeek API,AI API 聚合平台,OpenAI 兼容接口"
+const defaultSeoKeywords = "AI 视频生成,AI 图片生成,视频生成,图片生成,AI 视频与图片生成平台,AI 创作平台"
 
 type routeSeoDoc struct {
 	Title       string
@@ -299,7 +299,7 @@ func injectSiteTitle(html, settingsJSON []byte) []byte {
 		return html
 	}
 
-	newTitle := []byte("<title>" + htmlpkg.EscapeString(cfg.SiteName) + " - AI API Gateway</title>")
+	newTitle := []byte("<title>" + htmlpkg.EscapeString(cfg.SiteName) + " - AI 视频与图片生成</title>")
 	var buf bytes.Buffer
 	buf.Write(html[:titleStart])
 	buf.Write(newTitle)
@@ -340,8 +340,8 @@ func resolveRouteSeoDoc(path, siteName string) routeSeoDoc {
 	switch {
 	case normalized == "/" || normalized == "/home":
 		return routeSeoDoc{
-			Title:       name + " - GPT、OpenAI、Claude、DeepSeek API 中转站",
-			Description: "兼容 OpenAI 接口的 AI API 聚合平台，支持 GPT、Claude、Gemini、DeepSeek 等模型，提供模型价格对比与灵活计费。",
+			Title:       name + " - AI 视频与图片生成",
+			Description: name + " 是一个 AI 视频与图片生成平台，支持 AI 视频生成、AI 图片生成与作品管理。",
 			Keywords:    defaultSeoKeywords,
 			Robots:      "index,follow",
 		}
@@ -349,7 +349,7 @@ func resolveRouteSeoDoc(path, siteName string) routeSeoDoc {
 		return routeSeoDoc{
 			Title:       name + " - AI 模型广场与价格对比",
 			Description: "对比 GPT、Claude、Gemini、DeepSeek 等模型的实时价格、上下文窗口与计费方式，OpenAI 兼容接口可直接接入。",
-			Keywords:    "AI API 价格,GPT API 价格,Claude API 价格,DeepSeek API 价格,AI 模型价格对比",
+			Keywords:    "AI 视频模型价格,AI 图片模型价格,视频生成模型价格,图片生成模型价格,AI 模型价格对比",
 			Robots:      "index,follow",
 		}
 	case normalized == "/key-usage":
@@ -368,8 +368,8 @@ func resolveRouteSeoDoc(path, siteName string) routeSeoDoc {
 		}
 	}
 	return routeSeoDoc{
-		Title:       name + " - AI API Gateway",
-		Description: "兼容 OpenAI 接口的 AI API 聚合平台。",
+		Title:       name + " - AI 视频与图片生成",
+		Description: name + " 是一个 AI 视频与图片生成平台。",
 		Keywords:    defaultSeoKeywords,
 		Robots:      "noindex,nofollow",
 	}
@@ -471,10 +471,10 @@ func buildStructuredData(origin, canonical, siteName string) string {
 			{"@type": "WebSite", "name": name, "url": canonical},
 			{
 				"@type":       "Service",
-				"name":        name + " AI API 中转与聚合服务",
-				"serviceType": "OpenAI-compatible API gateway",
+				"name":        name + " AI 视频与图片生成服务",
+				"serviceType": "AI video and image generation platform",
 				"provider":    provider,
-				"description": "兼容 OpenAI 接口，可接入 GPT、Claude、Gemini、DeepSeek 等模型。",
+				"description": "支持 AI 视频生成、AI 图片生成与作品管理。",
 			},
 		},
 	}

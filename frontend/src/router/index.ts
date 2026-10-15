@@ -48,14 +48,12 @@ export const routes: RouteRecordRaw[] = [
       descriptionKey: 'home.seoDescription',
       seoKeywords: [
         'Create',
-        'AI API 中转站',
-        'API 中转站',
-        'GPT API',
-        'OpenAI API',
-        'Claude API',
-        'DeepSeek API',
-        'AI API 聚合平台',
-        'OpenAI 兼容接口'
+        'AI 视频生成',
+        'AI 图片生成',
+        '视频生成',
+        '图片生成',
+        'AI 视频与图片生成平台',
+        'AI 创作平台'
       ]
     }
   },
@@ -207,12 +205,12 @@ export const routes: RouteRecordRaw[] = [
       descriptionKey: 'modelPlaza.seoDescription',
       seoKeywords: [
         'Create 模型广场',
-        'AI API 价格',
-        'GPT API 价格',
-        'OpenAI API 中转',
-        'Claude API 中转',
-        'DeepSeek API 中转',
-        'API 中转站价格对比'
+        'AI 视频模型价格',
+        'AI 图片模型价格',
+        '视频生成模型价格',
+        '图片生成模型价格',
+        'AI 视频模型对比',
+        'AI 图片模型对比'
       ]
     }
   },

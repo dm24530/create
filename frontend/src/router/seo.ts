@@ -1,18 +1,16 @@
 import { i18n } from '@/i18n'
 import type { RouteLocationNormalizedLoaded } from 'vue-router'
 
-const DEFAULT_DESCRIPTION = 'Create 是兼容 OpenAI、GPT、Claude、DeepSeek 等模型的 AI API 中转与聚合平台。'
+const DEFAULT_DESCRIPTION = 'Create 是一个 AI 视频与图片生成平台，支持 AI 视频生成、AI 图片生成与作品管理。'
 
 const DEFAULT_KEYWORDS = [
   'Create',
-  'AI API 中转站',
-  'API 中转站',
-  'GPT API',
-  'OpenAI API',
-  'Claude API',
-  'DeepSeek API',
-  'AI API 聚合平台',
-  'OpenAI 兼容接口',
+  'AI 视频生成',
+  'AI 图片生成',
+  '视频生成',
+  '图片生成',
+  'AI 视频与图片生成平台',
+  'AI 创作平台',
 ]
 
 export interface DocumentSeo {
