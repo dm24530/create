@@ -57,6 +57,8 @@ type gallerySaverStub struct {
 	fetchedURL    string
 	deleteErr     error
 	deletedObject []string
+	// quota 为 0 时走内置默认值，用来验证后台配置的配额能被读到。
+	quota int
 }
 
 func (s *gallerySaverStub) SaveImageWithKey(
@@ -90,6 +92,10 @@ func (s *gallerySaverStub) DeleteObject(_ context.Context, key string) error {
 	}
 	s.deletedObject = append(s.deletedObject, key)
 	return nil
+}
+
+func (s *gallerySaverStub) StudioWorksQuota() int {
+	return s.quota
 }
 
 // 作品记录是永久的：不再写过期时间，但要记下 object_key，删除时才知道删哪个文件。
@@ -214,6 +220,33 @@ func TestImageStudioGalleryRejectsWhenUserLimitReached(t *testing.T) {
 	)
 	require.ErrorIs(t, err, ErrImageStudioGalleryQuotaExceeded)
 	require.Empty(t, saver.key)
+}
+
+// 配额上限来自后台配置，不是写死的 100。
+func TestImageStudioGalleryHonoursConfiguredQuota(t *testing.T) {
+	entries := make([]*ImageStudioGalleryEntry, 2)
+	for i := range entries {
+		entries[i] = &ImageStudioGalleryEntry{}
+	}
+	store := &galleryStoreStub{entries: entries}
+	svc := NewImageStudioGalleryService(store, &gallerySaverStub{quota: 2})
+
+	_, err := svc.Save(
+		context.Background(),
+		42,
+		"a cat",
+		"gpt-image-1",
+		"1024x1024",
+		"png",
+		"image/png",
+		smallPNG(t),
+	)
+	require.ErrorIs(t, err, ErrImageStudioGalleryQuotaExceeded)
+
+	quota, err := svc.Quota(context.Background(), 42)
+	require.NoError(t, err)
+	require.Equal(t, int64(2), quota.Limit, "上限要用后台配置的值")
+	require.Equal(t, int64(2), quota.Used)
 }
 
 func smallPNG(t *testing.T) []byte {

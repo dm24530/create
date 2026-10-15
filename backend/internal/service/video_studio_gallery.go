@@ -75,6 +75,8 @@ type VideoStudioMediaSaver interface {
 	SaveVideo(ctx context.Context, key, contentType string, data []byte) (string, error)
 	// DeleteObject 删除对象存储里的文件；未配置存储时返回错误，调用方据此保留记录。
 	DeleteObject(ctx context.Context, key string) error
+	// StudioWorksQuota 是后台配置的作品配额上限（图片 + 视频合计）。
+	StudioWorksQuota() int
 	FetchVideoURL(ctx context.Context, rawURL string) ([]byte, string, error)
 	GalleryRetention() time.Duration
 }
@@ -117,7 +119,7 @@ func (s *VideoStudioGalleryService) Save(
 	if err != nil {
 		return nil, err
 	}
-	if count >= StudioWorksQuotaPerUser {
+	if count >= resolveStudioQuota(s.storage) {
 		return nil, ErrVideoStudioGalleryQuotaExceeded
 	}
 

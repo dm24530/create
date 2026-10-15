@@ -143,6 +143,13 @@
             <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">{{ t('admin.backup.imageStorage.galleryRetentionDays') }}</label>
             <input v-model.number="imageStorageForm.gallery_retention_days" type="number" min="1" max="365" class="input w-full" />
           </div>
+          <div>
+            <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">{{ t('admin.backup.imageStorage.studioWorksQuota') }}</label>
+            <input v-model.number="imageStorageForm.studio_works_quota" type="number" min="1" max="10000" class="input w-full" data-testid="image-storage-quota" />
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.backup.imageStorage.studioWorksQuotaHint') }}
+            </p>
+          </div>
         </div>
 
         <div class="mt-4 flex flex-wrap gap-2">
@@ -496,6 +503,7 @@ const imageStorageForm = ref<ImageStorageConfig>({
   public_base_url: '',
   presign_expiry_hours: 24,
   gallery_retention_days: 7,
+  studio_works_quota: 100,
   max_download_bytes: 33554432,
   endpoint: '',
   region: 'auto',

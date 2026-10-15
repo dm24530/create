@@ -66,6 +66,8 @@ type ImageStudioImageSaver interface {
 	SaveImageWithKey(ctx context.Context, key, contentType string, data []byte) (string, string, error)
 	// DeleteObject 删除对象存储里的文件；未配置存储时返回错误，调用方据此保留记录。
 	DeleteObject(ctx context.Context, key string) error
+	// StudioWorksQuota 是后台配置的作品配额上限（图片 + 视频合计）。
+	StudioWorksQuota() int
 	GalleryRetention() time.Duration
 	// FetchImageURL 在服务端下载上游图片，避免浏览器跨域失败导致无法转存。
 	FetchImageURL(ctx context.Context, rawURL string) ([]byte, string, error)
@@ -103,7 +105,7 @@ func (s *ImageStudioGalleryService) Save(
 	if err != nil {
 		return nil, err
 	}
-	if count >= StudioWorksQuotaPerUser {
+	if count >= resolveStudioQuota(s.storage) {
 		return nil, ErrImageStudioGalleryQuotaExceeded
 	}
 
@@ -186,7 +188,10 @@ func (s *ImageStudioGalleryService) Delete(ctx context.Context, userID int64, id
 
 // Quota 返回该用户作品库的使用量。图片与视频共用同一份配额，所以这里统计的是总数。
 func (s *ImageStudioGalleryService) Quota(ctx context.Context, userID int64) (StudioWorksQuota, error) {
-	quota := StudioWorksQuota{Limit: StudioWorksQuotaPerUser}
+	quota := StudioWorksQuota{Limit: int64(StudioWorksQuotaPerUser)}
+	if s != nil {
+		quota.Limit = resolveStudioQuota(s.storage)
+	}
 	if s == nil || s.store == nil || userID <= 0 {
 		return quota, nil
 	}

@@ -22,6 +22,21 @@ type StudioWorksQuota struct {
 	Limit int64 `json:"limit"`
 }
 
+// studioQuotaReader 是读配额上限的最小接口，由对象存储设置服务实现。
+type studioQuotaReader interface {
+	StudioWorksQuota() int
+}
+
+// resolveStudioQuota 读后台配置的配额上限；读不到或配成非正数时回落内置默认值。
+func resolveStudioQuota(reader studioQuotaReader) int64 {
+	if reader != nil {
+		if limit := reader.StudioWorksQuota(); limit > 0 {
+			return int64(limit)
+		}
+	}
+	return int64(StudioWorksQuotaPerUser)
+}
+
 // deleteStudioWorkByKey 负责「删除作品」的固定顺序：先删对象存储里的文件，
 // 成功后再删记录。反过来会留下删不掉也查不到的孤儿文件。
 //

@@ -106,6 +106,8 @@ export interface ImageStorageConfig {
   public_base_url: string
   presign_expiry_hours: number
   gallery_retention_days: number
+  // 每个用户的作品配额（图片 + 视频合计），后台可改。
+  studio_works_quota: number
   max_download_bytes: number
   endpoint: string
   region: string

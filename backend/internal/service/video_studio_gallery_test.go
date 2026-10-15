@@ -50,6 +50,7 @@ type videoMediaSaverStub struct {
 	keys          []string
 	types         []string
 	deletedObject []string
+	quota         int
 }
 
 func (s *videoMediaSaverStub) SaveVideo(_ context.Context, key, contentType string, _ []byte) (string, error) {
@@ -67,6 +68,10 @@ func (s *videoMediaSaverStub) GalleryRetention() time.Duration { return 30 * 24 
 func (s *videoMediaSaverStub) DeleteObject(_ context.Context, key string) error {
 	s.deletedObject = append(s.deletedObject, key)
 	return nil
+}
+
+func (s *videoMediaSaverStub) StudioWorksQuota() int {
+	return s.quota
 }
 
 // 真实的 mp4 文件头，让 http.DetectContentType 能识别出来。

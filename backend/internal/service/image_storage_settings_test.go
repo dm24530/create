@@ -135,6 +135,31 @@ func TestImageStorageSettingsToggleTakesEffectWithoutRestart(t *testing.T) {
 	require.Len(t, *built, 1, "the S3 client is built only when the feature is on")
 }
 
+// 配额上限是后台可改的：改了要立刻对读上限的接口生效。
+// 曾经漏掉「存库配置 → 运行时配置」这一步映射，导致界面上改了但限额没变。
+func TestImageStorageSettingsStudioWorksQuotaIsConfigurable(t *testing.T) {
+	svc, repo, _ := newImageStorageFixture(t, config.ImageStorageConfig{})
+	ctx := context.Background()
+	seedBackupS3(t, repo, BackupS3Config{
+		Endpoint: "https://acct.r2.cloudflarestorage.com", Region: "auto",
+		Bucket: "backup-bucket", AccessKeyID: "ak", SecretAccessKey: "sk",
+		Prefix: "backups/",
+	})
+
+	require.Equal(t, StudioWorksQuotaPerUser, svc.StudioWorksQuota(), "没配置时用内置默认值")
+
+	_, err := svc.Update(ctx, ImageStorageSettings{
+		Enabled: true, ReuseBackupS3: true, StudioWorksQuota: 7,
+	})
+	require.NoError(t, err)
+	require.Equal(t, 7, svc.StudioWorksQuota(), "保存后必须立刻读到新上限")
+
+	// 留空/填 0 回到默认值，而不是变成 0 个（那会让所有人都存不了）。
+	_, err = svc.Update(ctx, ImageStorageSettings{Enabled: true, ReuseBackupS3: true})
+	require.NoError(t, err)
+	require.Equal(t, StudioWorksQuotaPerUser, svc.StudioWorksQuota())
+}
+
 func TestImageStorageSettingsReuseBackupCredentials(t *testing.T) {
 	svc, repo, built := newImageStorageFixture(t, config.ImageStorageConfig{})
 	ctx := context.Background()

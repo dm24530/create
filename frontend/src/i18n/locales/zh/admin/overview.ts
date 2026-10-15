@@ -115,6 +115,8 @@ export default {
         publicBaseUrlPlaceholder: '留空则返回预签名临时链接',
         presignExpiryHours: '预签名链接有效期（小时）',
         galleryRetentionDays: '图片工作台保留天数',
+        studioWorksQuota: '每个用户的作品配额（个）',
+        studioWorksQuotaHint: '图片与视频合计计算，达到上限后用户需要先删除旧作品才能继续保存。',
         saved: '异步生图对象存储配置已保存',
         secretHint: '留空表示沿用已保存的密钥；第一次配置必须填写，否则功能不会生效。',
         notReady: '已保存，但这个配置不会生效：开关是打开的，凭证还不完整，生成结果无法转存。',

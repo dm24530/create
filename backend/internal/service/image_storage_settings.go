@@ -70,6 +70,8 @@ type ImageStorageSettings struct {
 	PublicBaseURL        string `json:"public_base_url"`
 	PresignExpiry        int    `json:"presign_expiry_hours"`
 	GalleryRetentionDays int    `json:"gallery_retention_days"`
+	// StudioWorksQuota 是每个用户的作品配额（图片 + 视频合计），后台可改。
+	StudioWorksQuota     int    `json:"studio_works_quota"`
 	MaxDownloadBytes     int64  `json:"max_download_bytes"`
 
 	// 以下仅在 ReuseBackupS3 为假时使用
@@ -103,6 +105,7 @@ type ImageStorageSettingService struct {
 	uploader         *ImageResultUploader
 	enabled          bool
 	galleryRetention time.Duration
+	studioQuota      int
 }
 
 func NewImageStorageSettingService(
@@ -259,11 +262,16 @@ func (s *ImageStorageSettingService) resolve() (*ImageResultUploader, bool) {
 	s.resolved = true
 	s.uploader, s.enabled = nil, false
 	s.galleryRetention = ImageStudioGalleryTTL
+	s.studioQuota = StudioWorksQuotaPerUser
 
 	cfg, err := s.effectiveConfig(ctx)
 	if err != nil {
 		logger.L().Warn("image_storage.settings_load_failed; async image tasks stay disabled", zap.Error(err))
 		return nil, false
+	}
+	// 配额跟存储开关无关：即使存储没配好，后台设的上限也要能读到并展示给用户。
+	if cfg.StudioWorksQuota > 0 {
+		s.studioQuota = cfg.StudioWorksQuota
 	}
 	if !cfg.Enabled {
 		return nil, false
@@ -305,6 +313,21 @@ func (s *ImageStorageSettingService) DeleteObject(ctx context.Context, key strin
 	return deleter.Delete(ctx, key)
 }
 
+// StudioWorksQuota 返回后台配置的作品配额（图片 + 视频合计）。
+// 设置里没写或者解析失败时回落到内置默认值，保证永远是个正数。
+func (s *ImageStorageSettingService) StudioWorksQuota() int {
+	if s == nil {
+		return StudioWorksQuotaPerUser
+	}
+	_, _ = s.resolve()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.studioQuota > 0 {
+		return s.studioQuota
+	}
+	return StudioWorksQuotaPerUser
+}
+
 func (s *ImageStorageSettingService) GalleryRetention() time.Duration {
 	if s == nil {
 		return ImageStudioGalleryTTL
@@ -328,6 +351,7 @@ func (s *ImageStorageSettingService) Invalidate() {
 	s.uploader = nil
 	s.enabled = false
 	s.galleryRetention = ImageStudioGalleryTTL
+	s.studioQuota = StudioWorksQuotaPerUser
 	s.mu.Unlock()
 }
 
@@ -443,6 +467,7 @@ func (s *ImageStorageSettingService) toImageStorageConfig(ctx context.Context, i
 		PublicBaseURL:        in.PublicBaseURL,
 		PresignExpiry:        in.PresignExpiry,
 		GalleryRetentionDays: in.GalleryRetentionDays,
+		StudioWorksQuota:     in.StudioWorksQuota,
 		MaxDownloadByte:      in.MaxDownloadBytes,
 		Endpoint:             in.Endpoint,
 		Region:               in.Region,
@@ -511,6 +536,7 @@ func settingsFromConfig(cfg config.ImageStorageConfig) *ImageStorageSettings {
 		PublicBaseURL:        cfg.PublicBaseURL,
 		PresignExpiry:        cfg.PresignExpiry,
 		GalleryRetentionDays: cfg.GalleryRetentionDays,
+		StudioWorksQuota:     cfg.StudioWorksQuota,
 		MaxDownloadBytes:     cfg.MaxDownloadByte,
 		Endpoint:             cfg.Endpoint,
 		Region:               cfg.Region,
@@ -546,6 +572,13 @@ func normalizeImageStorageSettings(in *ImageStorageSettings) {
 	}
 	if in.GalleryRetentionDays > 365 {
 		in.GalleryRetentionDays = 365
+	}
+	// 作品配额：留空或填 0 表示用默认值；上限 10000，避免误填天文数字把库撑坏。
+	if in.StudioWorksQuota <= 0 {
+		in.StudioWorksQuota = StudioWorksQuotaPerUser
+	}
+	if in.StudioWorksQuota > 10000 {
+		in.StudioWorksQuota = 10000
 	}
 	if in.MaxDownloadBytes <= 0 {
 		in.MaxDownloadBytes = defaultImageMaxDownloadBytes
