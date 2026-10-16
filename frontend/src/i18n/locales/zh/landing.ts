@@ -106,10 +106,9 @@ export default {
       description: '视频与图片生成所需的模型，持续接入中',
       supported: '已支持',
       soon: '即将推出',
-      seedance: 'Seedance 视频',
       gpt: 'GPT 生图',
       gemini: 'Gemini 生图',
-      grok: 'Grok 视频',
+      grok: 'Grok 生图',
       more: '更多'
     },
     // CTA 区块

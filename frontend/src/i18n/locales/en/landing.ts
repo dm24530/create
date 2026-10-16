@@ -106,10 +106,9 @@ export default {
       description: 'Models for video and image generation, with more being added',
       supported: 'Supported',
       soon: 'Soon',
-      seedance: 'Seedance Video',
       gpt: 'GPT Image',
       gemini: 'Gemini Image',
-      grok: 'Grok Video',
+      grok: 'Grok Image',
       more: 'More'
     },
     // CTA section
