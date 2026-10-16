@@ -1,0 +1,135 @@
+# =============================================================================
+# Create — 独立部署编排（app + PostgreSQL + Redis）
+# =============================================================================
+# 与上游的 docker-compose.local.yml 无关：这里只保留 Create 上线需要的东西，
+# 镜像也指向 create 自己的仓库/本地构建产物。
+#
+# 用法（在 deploy/ 目录下，先准备好同目录的 .env）：
+#   A. 服务器直接拉镜像（CI 已构建 ghcr.io/diminglucky/create:main，仓库是私有的，
+#      需要先 docker login ghcr.io -u <用户名> -p <带 read:packages 的 PAT>）
+#        docker compose -f docker-compose.create.yml up -d
+#   B. 本地打包后上传（见 CREATE_DEPLOY.md）
+#        docker load -i create-image.tar
+#        IMAGE=create:local docker compose -f docker-compose.create.yml up -d
+#
+# .env 至少要有：
+#   POSTGRES_PASSWORD=<随机>
+#   JWT_SECRET=<openssl rand -hex 32>
+#   TOTP_ENCRYPTION_KEY=<openssl rand -hex 32>
+#   ADMIN_EMAIL=you@example.com
+#   ADMIN_PASSWORD=<首次登录取一个强密码>
+#   SERVER_PORT=8080            # 和别的站点同机时改成没被占用的端口
+# =============================================================================
+
+services:
+  create:
+    image: ${IMAGE:-ghcr.io/diminglucky/create:main}
+    container_name: ${CONTAINER_NAME:-create}
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    ulimits:
+      nofile:
+        soft: 100000
+        hard: 100000
+    ports:
+      - "${BIND_HOST:-0.0.0.0}:${SERVER_PORT:-8080}:8080"
+    volumes:
+      # 配置、日志、上传物都在这里，迁移服务器时整体拷走即可
+      - ./data:/app/data
+    environment:
+      # 首次启动自动初始化数据库并建管理员，不需要再走 setup wizard
+      - AUTO_SETUP=true
+      - SERVER_HOST=0.0.0.0
+      - SERVER_PORT=8080
+      - SERVER_MODE=release
+      - TZ=${TZ:-Asia/Shanghai}
+      - DATABASE_HOST=postgres
+      - DATABASE_PORT=5432
+      - DATABASE_USER=${POSTGRES_USER:-create}
+      - DATABASE_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      - DATABASE_DBNAME=${POSTGRES_DB:-create}
+      - DATABASE_SSLMODE=disable
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_DB=${REDIS_DB:-0}
+      # 这两个留空的话每次重启都会换密钥：JWT 会让所有人掉线，TOTP 会让已绑定的
+      # 双因素登录失效，所以必须固定下来。
+      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET is required}
+      - TOTP_ENCRYPTION_KEY=${TOTP_ENCRYPTION_KEY:?TOTP_ENCRYPTION_KEY is required}
+      - ADMIN_EMAIL=${ADMIN_EMAIL:-}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - create-network
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-T", "5", "-O", "/dev/null", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  postgres:
+    image: postgres:18-alpine
+    container_name: ${CONTAINER_NAME:-create}-postgres
+    restart: unless-stopped
+    ulimits:
+      nofile:
+        soft: 100000
+        hard: 100000
+    volumes:
+      - ./postgres_data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-create}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      - POSTGRES_DB=${POSTGRES_DB:-create}
+      - PGDATA=/var/lib/postgresql/data
+      - TZ=${TZ:-Asia/Shanghai}
+    networks:
+      - create-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-create} -d ${POSTGRES_DB:-create}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    # 不往宿主机暴露端口；需要连库调试时临时加 ports: ["127.0.0.1:5433:5432"]
+
+  redis:
+    image: redis:8-alpine
+    container_name: ${CONTAINER_NAME:-create}-redis
+    restart: unless-stopped
+    ulimits:
+      nofile:
+        soft: 100000
+        hard: 100000
+    volumes:
+      - ./redis_data:/data
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+      - --requirepass
+      - ${REDIS_PASSWORD:-}
+    environment:
+      - TZ=${TZ:-Asia/Shanghai}
+      - REDISCLI_AUTH=${REDIS_PASSWORD:-}
+    networks:
+      - create-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+networks:
+  create-network:
+    driver: bridge
