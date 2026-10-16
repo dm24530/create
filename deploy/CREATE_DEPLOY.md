@@ -145,9 +145,21 @@ BIND_HOST=127.0.0.1     # 只让反代访问，不对公网直接开端口
 **3. 数据库与缓存完全独立**
 
 本编排自带一套 PostgreSQL 与 Redis，容器名（`create` / `create-postgres` / `create-redis`）、
-网络（`create-network`）、数据目录（`./data` / `./postgres_data` / `./redis_data`）都与 API 站
+网络（`create-network`）、数据目录（`./create-data` / `./create-postgres-data` /
+`./create-redis-data`）都与 API 站
 分离，两者不共享任何实例。**不要**图省事把 `DATABASE_*` 指到 API 站那台库上：两个项目的
 迁移集不同，混在一起升级和回滚会互相牵连，备份也没法单独恢复。
+
+两层防呆：
+
+- 编排顶部写死了 `name: create`，无论从哪个目录执行，容器、网络、卷的归属都是同一套，
+  不会因为换目录而变成另一套资源。
+- 三个数据目录都带 `create-` 前缀，和 API 站的 `./data` / `./postgres_data` /
+  `./redis_data` 不重名。即便这份编排被误放进 API 站的部署目录执行，也只会新建
+  `create-*` 目录，不会挂到 API 站的数据目录上。
+
+两个数据库都不向宿主机暴露端口（只有应用容器通过内部网络连 `postgres:5432` /
+`redis:6379`），因此同机两套之间也不存在端口冲突。
 
 **4. 反向代理加一个站点**
 

@@ -27,6 +27,10 @@
 #   * 下面的 Postgres 参数默认值是按"同机还有一套库"估的小值，内存紧张可以再调小。
 # =============================================================================
 
+# 固定 compose 项目名：不管在哪个目录执行，容器/网络/卷的前缀都是 create，
+# 不会因为"在别的目录跑了一次"而变成另一套资源。
+name: create
+
 services:
   create:
     image: ${IMAGE:-ghcr.io/diminglucky/create:main}
@@ -42,7 +46,9 @@ services:
       - "${BIND_HOST:-0.0.0.0}:${SERVER_PORT:-9898}:9898"
     volumes:
       # 配置、日志、上传物都在这里，迁移服务器时整体拷走即可
-      - ./data:/app/data
+      # 目录名带 create 前缀：即使这份文件被误放到 API 站的部署目录里执行，
+      # 也不会挂到 API 站的数据目录上。
+      - ./create-data:/app/data:Z
     environment:
       # 首次启动自动初始化数据库并建管理员，不需要再走 setup wizard
       - AUTO_SETUP=true
@@ -89,7 +95,7 @@ services:
         soft: 100000
         hard: 100000
     volumes:
-      - ./postgres_data:/var/lib/postgresql/data
+      - ./create-postgres-data:/var/lib/postgresql/data:Z
     # 同机可能还有 API 站的 Postgres，这里默认给保守值；变量在 .env 里覆盖即可。
     command: >
       postgres
@@ -121,7 +127,7 @@ services:
         soft: 100000
         hard: 100000
     volumes:
-      - ./redis_data:/data
+      - ./create-redis-data:/data:Z
     command:
       - redis-server
       - --appendonly
