@@ -502,7 +502,10 @@ func validateMigrationExecutionMode(name, content string) (bool, error) {
 	nonTx := strings.HasSuffix(normalizedName, nonTransactionalMigrationSuffix)
 
 	if !nonTx {
-		if strings.Contains(upperContent, "CONCURRENTLY") {
+		// 只在真正的 SQL 里找关键字：注释里提到 CONCURRENTLY（例如说明为什么没用它、
+		// 或者历史遗留的说明）不该被当成并发语句。242_downstream_subsites.sql 就因为
+		// 注释里写了这个词，导致全新数据库启动时被这条校验拒之门外。
+		if strings.Contains(strings.ToUpper(stripSQLLineComment(content)), "CONCURRENTLY") {
 			return false, errors.New("CONCURRENTLY statements must be placed in *_notx.sql migrations")
 		}
 		return false, nil

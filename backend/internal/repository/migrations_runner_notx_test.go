@@ -49,6 +49,26 @@ DROP INDEX CONCURRENTLY IF EXISTS idx_b;
 		require.True(t, nonTx)
 		require.NoError(t, err)
 	})
+
+	t.Run("注释里提到CONCURRENTLY不算并发语句", func(t *testing.T) {
+		// 历史迁移会在注释里解释为什么没用并发建索引；这类说明不该让全新数据库
+		// 在启动时被校验拦下（242_downstream_subsites.sql 就是这个情况）。
+		nonTx, err := validateMigrationExecutionMode("001_add_idx.sql", `
+-- 使用 CREATE INDEX CONCURRENTLY 可避免长时间持锁，但初始建表阶段无并发压力，这里用普通建索引
+CREATE INDEX IF NOT EXISTS idx_a ON t(a);
+`)
+		require.False(t, nonTx)
+		require.NoError(t, err)
+	})
+
+	t.Run("注释里提到CONCURRENTLY也不能绕过notx校验", func(t *testing.T) {
+		nonTx, err := validateMigrationExecutionMode("001_add_idx_notx.sql", `
+-- 只是说明
+CREATE INDEX IF NOT EXISTS idx_a ON t(a);
+`)
+		require.False(t, nonTx)
+		require.Error(t, err)
+	})
 }
 
 func TestApplyMigrationsFS_NonTransactionalMigration(t *testing.T) {
