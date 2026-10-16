@@ -884,7 +884,7 @@ func (s *UserSubscriptionRepoSuite) TestTxContext_RollbackIsolation() {
 	}()
 
 	txCtx := dbent.NewTxContext(context.Background(), tx)
-	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	suffix := fmt.Sprintf("%d", uniqueNano())
 
 	userEnt, err := tx.Client().User.Create().
 		SetEmail("tx-user-" + suffix + "@example.com").

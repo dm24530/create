@@ -407,7 +407,7 @@ func TestGroupUsageSummaryUsesConfiguredDSTBoundaries(t *testing.T) {
 func createGroupUsageRollupTriggerTestSchema(t *testing.T, ctx context.Context, partitioned bool) string {
 	t.Helper()
 
-	schema := fmt.Sprintf("group_usage_rollup_trigger_%d", time.Now().UnixNano())
+	schema := fmt.Sprintf("group_usage_rollup_trigger_%d", uniqueNano())
 	quotedSchema := pq.QuoteIdentifier(schema)
 	_, err := integrationDB.ExecContext(ctx, "CREATE SCHEMA "+quotedSchema)
 	require.NoError(t, err)

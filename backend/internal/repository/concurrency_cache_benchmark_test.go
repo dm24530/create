@@ -28,7 +28,7 @@ func BenchmarkAccountConcurrency(b *testing.B) {
 	for _, size := range []int{10, 100, 1000} {
 		size := size
 		b.Run(fmt.Sprintf("zset/slots=%d", size), func(b *testing.B) {
-			accountID := time.Now().UnixNano()
+			accountID := uniqueNano()
 			key := accountSlotKey(accountID)
 
 			b.StopTimer()
@@ -62,7 +62,7 @@ func BenchmarkAccountConcurrency(b *testing.B) {
 		})
 
 		b.Run(fmt.Sprintf("scan/slots=%d", size), func(b *testing.B) {
-			accountID := time.Now().UnixNano()
+			accountID := uniqueNano()
 			pattern := fmt.Sprintf("%s%d:*", accountSlotKeyPrefix, accountID)
 			keys := make([]string, 0, size)
 

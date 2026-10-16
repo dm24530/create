@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	"testing"
-	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
@@ -14,7 +13,7 @@ import (
 
 func TestGetByKeyForAuthCarriesGroupForceOpenAIFast(t *testing.T) {
 	ctx := context.Background()
-	suffix := time.Now().UnixNano()
+	suffix := uniqueNano()
 	group := mustCreateGroup(t, integrationEntClient, &service.Group{
 		Name: fmt.Sprintf("fast-proj-group-%d", suffix), Platform: service.PlatformOpenAI,
 		RateMultiplier: 1, ForceOpenAIFast: true, FreeOpenAIFast: true,

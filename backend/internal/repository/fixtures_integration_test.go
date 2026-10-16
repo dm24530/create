@@ -113,6 +113,16 @@ func mustCreateGroup(t *testing.T, client *dbent.Client, g *service.Group) *serv
 	if !g.UpdatedAt.IsZero() {
 		create.SetUpdatedAt(g.UpdatedAt)
 	}
+	// 认证投影的对账测试要求夹具真的把这几个分组配置写进库；不写的话
+	// 读回来永远是零值，测试就只剩失败而没有诊断价值。
+	if g.ModelAllowlist.Enabled || len(g.ModelAllowlist.Models) > 0 {
+		create.SetModelAllowlist(service.DomainGroupModelAllowlist(g.ModelAllowlist))
+	}
+	if g.CodexModelsManifestConfig.Enabled ||
+		len(g.CodexModelsManifestConfig.AccountIDs) > 0 ||
+		g.CodexModelsManifestConfig.FallbackToScheduler {
+		create.SetCodexModelsManifestConfig(g.CodexModelsManifestConfig)
+	}
 
 	created, err := create.Save(ctx)
 	require.NoError(t, err, "create group")

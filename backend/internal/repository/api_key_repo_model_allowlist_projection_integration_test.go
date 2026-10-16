@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	"testing"
-	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
@@ -14,7 +13,7 @@ import (
 
 func TestGetByKeyForAuthCarriesGroupModelAllowlist(t *testing.T) {
 	ctx := context.Background()
-	suffix := time.Now().UnixNano()
+	suffix := uniqueNano()
 	group := mustCreateGroup(t, integrationEntClient, &service.Group{
 		Name: fmt.Sprintf("model-allowlist-proj-group-%d", suffix), Platform: service.PlatformOpenAI,
 		RateMultiplier: 1,

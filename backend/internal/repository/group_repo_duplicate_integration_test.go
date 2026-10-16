@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
@@ -17,7 +16,7 @@ func TestCreateGroupFromSourceRollsBackWhenOutboxInsertFails(t *testing.T) {
 	ctx := context.Background()
 	client := testEntClient(t)
 	repo := newGroupRepositoryWithSQL(client, integrationDB)
-	suffix := time.Now().UnixNano()
+	suffix := uniqueNano()
 	operationID := strings.Repeat("b", 64)
 
 	source, err := client.Group.Create().

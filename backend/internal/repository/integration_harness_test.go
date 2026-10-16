@@ -251,7 +251,7 @@ func testRedis(t *testing.T) *redisclient.Client {
 	prefix := fmt.Sprintf(
 		"it:%s:%d:%d:",
 		sanitizeRedisNamespace(t.Name()),
-		time.Now().UnixNano(),
+		uniqueNano(),
 		atomic.AddUint64(&redisNamespaceSeq, 1),
 	)
 

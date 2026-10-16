@@ -12,7 +12,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"testing"
-	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
@@ -20,7 +19,7 @@ import (
 
 func TestAuthCacheInvalidationTrigger_ProfitControlColumns(t *testing.T) {
 	ctx := context.Background()
-	suffix := time.Now().UnixNano()
+	suffix := uniqueNano()
 	group := mustCreateGroup(t, integrationEntClient, &service.Group{
 		Name: fmt.Sprintf("profit-trigger-group-%d", suffix), Platform: service.PlatformOpenAI, RateMultiplier: 1,
 	})

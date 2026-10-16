@@ -308,7 +308,7 @@ func TestConcurrentOllamaCloudUsageSaveAndDeleteSerializeGroupState(t *testing.T
 	defer cancel()
 	client := testEntClient(t)
 	repo := newAccountRepositoryWithSQL(client, integrationDB, nil)
-	suffix := time.Now().UnixNano()
+	suffix := uniqueNano()
 	apiKey := fmt.Sprintf("ollama-concurrent-%d", suffix)
 	create := func(platform string) *service.Account {
 		t.Helper()

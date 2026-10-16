@@ -48,7 +48,7 @@ func (s *UserProfileIdentityRepoSuite) mustCreateUser(label string) *dbent.User 
 	s.T().Helper()
 
 	user, err := s.client.User.Create().
-		SetEmail(fmt.Sprintf("%s-%d@example.com", label, time.Now().UnixNano())).
+		SetEmail(fmt.Sprintf("%s-%d@example.com", label, uniqueNano())).
 		SetPasswordHash("test-password-hash").
 		SetRole("user").
 		SetStatus("active").
@@ -61,7 +61,7 @@ func (s *UserProfileIdentityRepoSuite) mustCreatePendingAuthSession(key AuthIden
 	s.T().Helper()
 
 	session, err := s.client.PendingAuthSession.Create().
-		SetSessionToken(fmt.Sprintf("pending-%d", time.Now().UnixNano())).
+		SetSessionToken(fmt.Sprintf("pending-%d", uniqueNano())).
 		SetIntent("bind_current_user").
 		SetProviderType(key.ProviderType).
 		SetProviderKey(key.ProviderKey).

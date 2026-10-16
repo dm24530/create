@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	"testing"
-	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
@@ -16,7 +15,7 @@ func TestCreateWithAccountGroupsPersistsPausedCopyAtomically(t *testing.T) {
 	ctx := context.Background()
 	client := testEntClient(t)
 	repo := newAccountRepositoryWithSQL(client, integrationDB, nil)
-	suffix := time.Now().UnixNano()
+	suffix := uniqueNano()
 
 	group, err := client.Group.Create().
 		SetName(fmt.Sprintf("duplicate-atomic-%d", suffix)).
