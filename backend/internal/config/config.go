@@ -186,6 +186,11 @@ type UpdateConfig struct {
 	// 支持 http/https/socks5/socks5h 协议
 	// 例如: "http://127.0.0.1:7890", "socks5://127.0.0.1:1080"
 	ProxyURL string `mapstructure:"proxy_url"`
+	// Enabled 为 false 时完全不检查更新，后台不会再提示新版本。
+	// 独立产品线部署时建议关闭，避免指向上游的版本号产生误导。
+	Enabled bool `mapstructure:"enabled"`
+	// Repo 是检查更新所用的 GitHub 仓库（owner/name）。留空时使用内置默认值。
+	Repo string `mapstructure:"repo"`
 }
 
 type IdempotencyConfig struct {
@@ -273,8 +278,8 @@ type ImageStorageConfig struct {
 	PresignExpiry        int    `mapstructure:"presign_expiry_hours"` // public_base_url 为空时的 presigned 过期时长(小时)
 	GalleryRetentionDays int    `mapstructure:"gallery_retention_days"`
 	// StudioWorksQuota 是每个用户的作品配额（图片 + 视频合计），0 表示用内置默认值。
-	StudioWorksQuota     int    `mapstructure:"studio_works_quota"`
-	MaxDownloadByte      int64  `mapstructure:"max_download_bytes"` // 下载上游 url 图片的字节上限
+	StudioWorksQuota int   `mapstructure:"studio_works_quota"`
+	MaxDownloadByte  int64 `mapstructure:"max_download_bytes"` // 下载上游 url 图片的字节上限
 }
 
 // IsConfigured 检查对象存储必要字段是否已配置
@@ -2723,6 +2728,11 @@ func setEnvReachableDefaults() {
 	viper.SetDefault("gateway.session_idle_timeout_minutes", 0)
 	viper.SetDefault("gateway.user_message_queue.mode", "")
 	viper.SetDefault("update.proxy_url", "")
+	// create 是独立产品线：默认不去比对上游 releases，避免后台一直提示
+	// 上游的版本号（那是 API 产品线的版本）。需要时在 config.yaml 里
+	// 打开 update.enabled 并指定 update.repo。
+	viper.SetDefault("update.enabled", false)
+	viper.SetDefault("update.repo", "")
 
 	// sticky_escape_enabled is the one exception to the zero-value rule: its
 	// effective default is true, applied post-unmarshal via a viper.IsSet guard.

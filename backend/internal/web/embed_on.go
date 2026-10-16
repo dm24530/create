@@ -122,6 +122,11 @@ func (s *FrontendServer) Middleware() gin.HandlerFunc {
 			return
 		}
 
+		// sitemap.xml / robots.txt 需要按当前请求域名替换占位符
+		if tryServeOriginAwareStatic(c, s.distFS, cleanPath) {
+			return
+		}
+
 		// Serve static files normally (hashed assets get long-lived cache headers)
 		applyStaticAssetCacheHeaders(c.Writer.Header(), cleanPath)
 		s.fileServer.ServeHTTP(c.Writer, c.Request)
@@ -185,16 +190,20 @@ func (s *FrontendServer) serveIndexHTML(c *gin.Context) {
 
 	settings, err := s.settings.GetPublicSettingsForInjection(ctx)
 	if err != nil {
-		// Fallback: serve without injection
-		c.Data(http.StatusOK, "text/html; charset=utf-8", s.baseHTML)
+		// Fallback: serve without settings injection, but still fill the SEO block from the
+		// real request host so no other site's domain is ever advertised.
+		c.Data(http.StatusOK, "text/html; charset=utf-8",
+			applyRouteSeo(s.baseHTML, requestOrigin(c), c.Request.URL.Path, ""))
 		c.Abort()
 		return
 	}
 
 	settingsJSON, err := json.Marshal(settings)
 	if err != nil {
-		// Fallback: serve without injection
-		c.Data(http.StatusOK, "text/html; charset=utf-8", s.baseHTML)
+		// Fallback: serve without settings injection, but still fill the SEO block from the
+		// real request host so no other site's domain is ever advertised.
+		c.Data(http.StatusOK, "text/html; charset=utf-8",
+			applyRouteSeo(s.baseHTML, requestOrigin(c), c.Request.URL.Path, ""))
 		c.Abort()
 		return
 	}
@@ -398,6 +407,36 @@ func requestOrigin(c *gin.Context) string {
 	return scheme + "://" + strings.TrimRight(host, "/")
 }
 
+// siteOriginPlaceholder 是 sitemap.xml / robots.txt 里代表站点自身域名的占位符。
+// 这两个文件是构建产物的一部分，构建时并不知道最终部署域名；服务端在返回前按当前
+// 请求域名替换，于是同一个产物可以部署到任意域名，也不会把别的站点写进 canonical、
+// 站点地图或 robots 的 Sitemap 行。
+const siteOriginPlaceholder = "{{SITE_ORIGIN}}"
+
+// originAwareStaticFiles 列出需要在返回前替换占位符的静态文件及其 Content-Type。
+var originAwareStaticFiles = map[string]string{
+	"sitemap.xml": "application/xml; charset=utf-8",
+	"robots.txt":  "text/plain; charset=utf-8",
+}
+
+// tryServeOriginAwareStatic 处理 sitemap.xml / robots.txt：把占位符换成当前请求域名后返回。
+// 文件里没有占位符（例如运维自行替换过内容）时返回 false，交回常规静态文件流程。
+func tryServeOriginAwareStatic(c *gin.Context, distFS fs.FS, cleanPath string) bool {
+	contentType, isOriginAware := originAwareStaticFiles[cleanPath]
+	if !isOriginAware {
+		return false
+	}
+	raw, err := fs.ReadFile(distFS, cleanPath)
+	if err != nil || !bytes.Contains(raw, []byte(siteOriginPlaceholder)) {
+		return false
+	}
+	body := bytes.ReplaceAll(raw, []byte(siteOriginPlaceholder), []byte(requestOrigin(c)))
+	applyStaticAssetCacheHeaders(c.Writer.Header(), cleanPath)
+	c.Data(http.StatusOK, contentType, body)
+	c.Abort()
+	return true
+}
+
 // applyRouteSeo 用当前请求对应的 SEO 标签整体替换 index.html 里的标记区块。
 func applyRouteSeo(html []byte, origin, path, siteName string) []byte {
 	start := bytes.Index(html, []byte(seoBlockStart))
@@ -512,6 +551,10 @@ func ServeEmbeddedFrontend() gin.HandlerFunc {
 			_ = file.Close()
 			// Try local override first
 			if tryServeOverrideFile(c, overrideDir, cleanPath) {
+				return
+			}
+			// sitemap.xml / robots.txt 需要按当前请求域名替换占位符
+			if tryServeOriginAwareStatic(c, distFS, cleanPath) {
 				return
 			}
 			applyStaticAssetCacheHeaders(c.Writer.Header(), cleanPath)

@@ -152,9 +152,11 @@ services:
       - SECURITY_URL_ALLOWLIST_ALLOW_PRIVATE_HOSTS=${SECURITY_URL_ALLOWLIST_ALLOW_PRIVATE_HOSTS:-true}
       # Upstream hosts whitelist (comma-separated, only used when enabled=true)
       - SECURITY_URL_ALLOWLIST_UPSTREAM_HOSTS=${SECURITY_URL_ALLOWLIST_UPSTREAM_HOSTS:-}
-      # Block visitors by CDN country code. Default blocks China mainland/HK/MO/TW.
-      - SECURITY_REGION_BLOCK_ENABLED=${SECURITY_REGION_BLOCK_ENABLED:-true}
-      - SECURITY_REGION_BLOCK_HOSTS=${SECURITY_REGION_BLOCK_HOSTS:-superai.sbs}
+      # Block visitors by CDN country code. Off by default for this product line;
+      # when enabling it, set SECURITY_REGION_BLOCK_HOSTS to the page hosts it should
+      # apply to ("" or "*" means every host).
+      - SECURITY_REGION_BLOCK_ENABLED=${SECURITY_REGION_BLOCK_ENABLED:-false}
+      - SECURITY_REGION_BLOCK_HOSTS=${SECURITY_REGION_BLOCK_HOSTS:-*}
       - SECURITY_REGION_BLOCK_BLOCKED_COUNTRIES=${SECURITY_REGION_BLOCK_BLOCKED_COUNTRIES:-CN,HK,MO,TW}
       - SECURITY_REGION_BLOCK_SUPPORT_EMAIL=${SECURITY_REGION_BLOCK_SUPPORT_EMAIL:-}
 

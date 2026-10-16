@@ -5,6 +5,7 @@ package web
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/gin-gonic/gin"
@@ -202,6 +204,28 @@ func TestNonceHTMLPlaceholder(t *testing.T) {
 	t.Run("constant_value", func(t *testing.T) {
 		assert.Equal(t, "__CSP_NONCE_VALUE__", NonceHTMLPlaceholder)
 	})
+}
+
+func TestServeIndexHTMLFallbackStillUsesRequestHost(t *testing.T) {
+	// 设置读取失败时仍要按真实请求域名填充 SEO 区块，否则会把静态兜底里的
+	// 外站域名（canonical/og:url）原样吐给浏览器和爬虫。
+	provider := &mockSettingsProvider{err: errors.New("settings unavailable")}
+	server, err := NewFrontendServer(provider)
+	require.NoError(t, err)
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodGet, "/home", nil)
+	c.Request.Host = "create.example.com"
+	c.Set(middleware.CSPNonceKey, "test-nonce")
+
+	server.serveIndexHTML(c)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	body := recorder.Body.String()
+	assert.Contains(t, body, `<link rel="canonical" href="http://create.example.com/home" />`)
+	assert.Contains(t, body, `<meta property="og:url" content="http://create.example.com/home" />`)
+	assert.NotContains(t, body, "superai.sbs")
 }
 
 // mockSettingsProvider implements PublicSettingsProvider for testing
@@ -924,6 +948,54 @@ func TestHTMLCache(t *testing.T) {
 		assert.True(t, strings.HasSuffix(result.ETag, `"`))
 		// Should contain dash separator
 		assert.Contains(t, result.ETag[1:len(result.ETag)-1], "-")
+	})
+}
+
+func TestServeOriginAwareStaticReplacesSiteOrigin(t *testing.T) {
+	distFS := fstest.MapFS{
+		"sitemap.xml": &fstest.MapFile{Data: []byte(`<?xml version="1.0" encoding="UTF-8"?><urlset><url><loc>{{SITE_ORIGIN}}/home</loc></url></urlset>`)},
+		"robots.txt":  &fstest.MapFile{Data: []byte("User-agent: *\nAllow: /\nSitemap: {{SITE_ORIGIN}}/sitemap.xml\n")},
+		"plain.xml":   &fstest.MapFile{Data: []byte(`<urlset><url><loc>https://example.test/home</loc></url></urlset>`)},
+		"app.js":      &fstest.MapFile{Data: []byte("console.log(1)")},
+	}
+	newContext := func(host, forwardedProto string) (*gin.Context, *httptest.ResponseRecorder) {
+		recorder := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(recorder)
+		c.Request = httptest.NewRequest(http.MethodGet, "/", nil)
+		c.Request.Host = host
+		if forwardedProto != "" {
+			c.Request.Header.Set("X-Forwarded-Proto", forwardedProto)
+		}
+		return c, recorder
+	}
+
+	t.Run("sitemap uses the request origin", func(t *testing.T) {
+		c, recorder := newContext("create.example.com", "https")
+
+		require.True(t, tryServeOriginAwareStatic(c, distFS, "sitemap.xml"))
+
+		body := recorder.Body.String()
+		assert.Contains(t, body, "<loc>https://create.example.com/home</loc>")
+		assert.NotContains(t, body, siteOriginPlaceholder)
+		assert.Equal(t, "application/xml; charset=utf-8", recorder.Header().Get("Content-Type"))
+	})
+
+	t.Run("robots sitemap line follows the request origin", func(t *testing.T) {
+		c, recorder := newContext("create.example.com", "")
+
+		require.True(t, tryServeOriginAwareStatic(c, distFS, "robots.txt"))
+
+		// 没有 X-Forwarded-Proto 时按直连推断为 http
+		assert.Contains(t, recorder.Body.String(), "Sitemap: http://create.example.com/sitemap.xml")
+		assert.Equal(t, "text/plain; charset=utf-8", recorder.Header().Get("Content-Type"))
+	})
+
+	t.Run("leaves other files to the regular static handler", func(t *testing.T) {
+		c, recorder := newContext("create.example.com", "https")
+
+		assert.False(t, tryServeOriginAwareStatic(c, distFS, "app.js"))
+		assert.False(t, tryServeOriginAwareStatic(c, distFS, "plain.xml"))
+		assert.Empty(t, recorder.Body.String())
 	})
 }
 

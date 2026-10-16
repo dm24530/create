@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/stretchr/testify/require"
 )
 
@@ -49,6 +50,41 @@ func (s *updateServiceGitHubClientStub) FetchChecksumFile(context.Context, strin
 	panic("FetchChecksumFile should not be called when no update is available")
 }
 
+func TestUpdateServiceDisabledSkipsGitHubEntirely(t *testing.T) {
+	svc := NewUpdateService(
+		&updateServiceCacheStub{},
+		&updateServiceGitHubClientStub{release: &GitHubRelease{TagName: "v9.9.9"}},
+		"0.1.132",
+		"release",
+		config.UpdateConfig{}, // Enabled 默认 false：独立产品线不去比对上游版本
+	)
+
+	info, err := svc.CheckUpdate(context.Background(), true)
+	require.NoError(t, err)
+	require.False(t, info.HasUpdate, "关闭更新检查后不应提示任何新版本")
+	require.Equal(t, "0.1.132", info.LatestVersion, "不应把上游版本当作最新版本")
+	require.Empty(t, info.Warning)
+
+	require.ErrorIs(t, svc.PerformUpdate(context.Background()), ErrNoUpdateAvailable)
+	require.ErrorIs(t, svc.RollbackToVersion(context.Background(), "0.1.131"), ErrRollbackVersionNotAllowed)
+
+	versions, err := svc.ListRollbackVersions(context.Background())
+	require.NoError(t, err)
+	require.Empty(t, versions)
+}
+
+func TestUpdateServiceUsesConfiguredRepo(t *testing.T) {
+	svc := NewUpdateService(
+		&updateServiceCacheStub{},
+		&updateServiceGitHubClientStub{},
+		"0.1.132",
+		"release",
+		config.UpdateConfig{Enabled: true, Repo: " diminglucky/sub2api "},
+	)
+
+	require.Equal(t, "diminglucky/sub2api", svc.repo)
+}
+
 func TestUpdateServicePerformUpdateNoUpdateReturnsSentinel(t *testing.T) {
 	svc := NewUpdateService(
 		&updateServiceCacheStub{},
@@ -60,6 +96,7 @@ func TestUpdateServicePerformUpdateNoUpdateReturnsSentinel(t *testing.T) {
 		},
 		"0.1.132",
 		"release",
+		config.UpdateConfig{Enabled: true},
 	)
 
 	err := svc.PerformUpdate(context.Background())
@@ -75,6 +112,7 @@ func newRollbackTestService(current string, releases []*GitHubRelease) *UpdateSe
 		&updateServiceGitHubClientStub{recentReleases: releases},
 		current,
 		"release",
+		config.UpdateConfig{Enabled: true},
 	)
 }
 
@@ -137,6 +175,7 @@ func TestUpdateServiceListRollbackVersionsPropagatesFetchError(t *testing.T) {
 		&updateServiceGitHubClientStub{recentErr: errors.New("github unavailable")},
 		"0.1.147",
 		"release",
+		config.UpdateConfig{Enabled: true},
 	)
 
 	_, err := svc.ListRollbackVersions(context.Background())
