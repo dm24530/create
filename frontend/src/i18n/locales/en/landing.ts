@@ -26,8 +26,8 @@ export default {
     heroSubtitle: 'One Key, All AI Models',
     heroDescription: 'No need to manage multiple subscriptions. Access Claude, GPT, Gemini and more with a single API key',
     tags: {
-      subscriptionToApi: 'Subscription to API',
-      stickySession: 'Session Persistence',
+      subscriptionToApi: 'Text to Video',
+      stickySession: 'Reference Frame',
       realtimeBilling: 'Pay As You Go'
     },
     // Pain points section
@@ -58,12 +58,12 @@ export default {
       subtitle: 'Three simple steps to stress-free AI access'
     },
     features: {
-      unifiedGateway: 'One-Click Access',
-      unifiedGatewayDesc: 'Get a single API key to call all connected AI models. No separate applications needed.',
-      multiAccount: 'Always Reliable',
-      multiAccountDesc: 'Smart routing across multiple upstream accounts with automatic failover. Say goodbye to errors.',
+      unifiedGateway: 'One Studio',
+      unifiedGatewayDesc: 'Generate video and images in one studio, with prompts, reference assets and settings managed in a single place.',
+      multiAccount: 'Reliable Renders',
+      multiAccountDesc: 'Multiple upstream accounts are scheduled automatically, with retries on rate limits so long jobs rarely fail halfway.',
       balanceQuota: 'Pay What You Use',
-      balanceQuotaDesc: 'Usage-based billing with quota limits. Full visibility into team consumption.'
+      balanceQuotaDesc: 'Billed on actual generations, with quota limits and full visibility into team consumption.'
     },
     // Comparison section
     comparison: {
@@ -103,12 +103,13 @@ export default {
     },
     providers: {
       title: 'Supported AI Models',
-      description: 'One API, Multiple Choices',
+      description: 'Models for video and image generation, with more being added',
       supported: 'Supported',
       soon: 'Soon',
-      claude: 'Claude',
-      gemini: 'Gemini',
-      antigravity: 'Antigravity',
+      seedance: 'Seedance Video',
+      gpt: 'GPT Image',
+      gemini: 'Gemini Image',
+      grok: 'Grok Video',
       more: 'More'
     },
     // CTA section

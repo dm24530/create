@@ -26,8 +26,8 @@ export default {
     heroSubtitle: '一个密钥，畅用多个 AI 模型',
     heroDescription: '无需管理多个订阅账号，一站式接入 Claude、GPT、Gemini 等主流 AI 服务',
     tags: {
-      subscriptionToApi: '订阅转 API',
-      stickySession: '会话保持',
+      subscriptionToApi: '文生视频',
+      stickySession: '参考图续写',
       realtimeBilling: '按量计费'
     },
     // 用户痛点区块
@@ -58,12 +58,12 @@ export default {
       subtitle: '简单三步，开始省心使用 AI'
     },
     features: {
-      unifiedGateway: '一键接入',
-      unifiedGatewayDesc: '获取一个 API 密钥，即可调用所有已接入的 AI 模型，无需分别申请。',
-      multiAccount: '稳定可靠',
-      multiAccountDesc: '智能调度多个上游账号，自动切换和负载均衡，告别频繁报错。',
+      unifiedGateway: '一站式生成',
+      unifiedGatewayDesc: '视频和图片在同一个工作台完成，提示词、参考素材和参数一处管理，不用来回切换工具。',
+      multiAccount: '稳定出片',
+      multiAccountDesc: '多个上游账号自动调度，遇到限流自动切换重试，长任务不容易半途失败。',
       balanceQuota: '用多少付多少',
-      balanceQuotaDesc: '按实际使用量计费，支持设置配额上限，团队用量一目了然。'
+      balanceQuotaDesc: '按实际生成量计费，支持设置配额上限，团队用量一目了然。'
     },
     // 优势对比
     comparison: {
@@ -103,12 +103,13 @@ export default {
     },
     providers: {
       title: '已支持的 AI 模型',
-      description: '一个 API，多种选择',
+      description: '视频与图片生成所需的模型，持续接入中',
       supported: '已支持',
       soon: '即将推出',
-      claude: 'Claude',
-      gemini: 'Gemini',
-      antigravity: 'Antigravity',
+      seedance: 'Seedance 视频',
+      gpt: 'GPT 生图',
+      gemini: 'Gemini 生图',
+      grok: 'Grok 视频',
       more: '更多'
     },
     // CTA 区块
