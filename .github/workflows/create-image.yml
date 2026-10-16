@@ -1,12 +1,13 @@
 name: Create Image
 
-# create 是独立产品线，镜像单独构建、单独打标签；
-# 不要复用 SuperAI Image 工作流（它的 tag 写死 :main，会把 API 站的镜像覆盖掉）。
+# create 是独立项目，镜像单独构建、单独打标签。
+# 注意不要在这个仓库里保留 SuperAI Image 工作流：它会在 main 上构建并推
+# ghcr.io/<owner>/superai:main，把 API 站的镜像覆盖掉。
 
 on:
   push:
     branches:
-      - create
+      - main
   workflow_dispatch:
 
 permissions:
@@ -40,7 +41,7 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository_owner }}/create
           tags: |
-            type=raw,value=create
+            type=raw,value=main
             type=sha,prefix=sha-
 
       - name: Build and push image
