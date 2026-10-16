@@ -108,14 +108,34 @@ docker compose -f docker-compose.create.yml up -d create
 回滚就换 `IMAGE` 指向旧 tag（`sha-<commit>` 形式一直保留）。迁移只前进不回退，
 回滚代码前先把 `./postgres_data` 备份一份。
 
-## 五、上线后还要在服务器上配好的东西
+## 五、上线后初始化清单
 
-这些不在编排里，需要进后台设置：
+按顺序走一遍，每步都给出"怎么算通过"。
 
-- 作品库依赖对象存储（图片/视频落盘用），在「设置 → 备份」里配 S3/R2。
-- 生成能力依赖上游账号或 API Key，在「渠道/账号」里接。
-- 反向代理 / HTTPS：容器只监听 9898，外部域名、证书、`X-Forwarded-Proto` 交给
-  Caddy 或 Nginx；`/sitemap.xml`、`/robots.txt` 会按请求域名自动生成，不用改配置。
+1. **登录后台**：`http://<服务器IP>:9898/login`，用 `.env` 里的 `ADMIN_EMAIL` /
+   `ADMIN_PASSWORD`。通过 = 能进 `/admin/dashboard`。
+2. **站点信息**：「设置 → 站点」确认站点名、副标题、logo。默认已经按 Create 文案配好，
+   改完保存后刷新首页看是否生效。
+3. **上游账号 / 渠道**：「渠道」「账号」里接入生成用的上游（视频、生图各一条）。
+   通过 = 账号测试按钮返回成功，或在模型广场能看到模型。
+4. **对象存储**（作品库必需）：「设置 → 备份」里配 S3/R2（endpoint、bucket、AK/SK），
+   然后打开图片存储开关。通过 = 生成一张图，作品库能看到并打开原图；不配的话作品
+   只能存在临时目录，重启或过期就没了。
+5. **反向代理 / HTTPS**：Caddy 或 Nginx 加一个站点反代到 `127.0.0.1:9898`，透传
+   `X-Forwarded-Proto`。通过 = 用域名访问能打开、证书有效，`/sitemap.xml` 里的
+   `<loc>` 是你自己的域名（服务端会按请求域名生成，不用改代码）。
+6. **跑通一次真实生成**：视频工坊出一个短片、图片工坊出一张图，确认计费记录出现在
+   「用量」里。这是唯一能证明"整条链路通了"的检查。
+7. **备份**：`create-postgres-data`（数据库）和 `create-data`（配置/日志/本地文件）。
+   建议加一条定时任务把这两个目录打包到异地：
+
+   ```bash
+   tar czf /backup/create-$(date +%F).tar.gz -C /opt/create create-postgres-data create-data
+   ```
+
+8. **在线更新**：`update.enabled` 在 create 上默认关闭（不去比对上游版本，避免后台一直
+   提示别的产品线的版本号）。要启用就在 `.env` 里加 `UPDATE_ENABLED=true` 并配
+   `UPDATE_REPO=<owner>/<name>` 指向自己的 releases。
 
 ---
 
