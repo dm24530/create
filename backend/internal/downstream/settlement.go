@@ -142,14 +142,14 @@ func verifyExistingUsageSettlement(
 	margin float64,
 ) error {
 	var (
-		existingSubsite int64
-		existingUser    sql.NullInt64
-		existingRevenue float64
-		existingCost    float64
-		existingMargin  float64
-		existingMode    sql.NullString
+		existingSubsite  int64
+		existingUser     sql.NullInt64
+		existingRevenue  float64
+		existingCost     float64
+		existingMargin   float64
+		existingMode     sql.NullString
 		existingCurrency string
-		existingStatus  string
+		existingStatus   string
 	)
 	err := exec.QueryRowContext(ctx, `
 		SELECT subsite_id, user_id, gross_amount, cost_amount, margin_amount,

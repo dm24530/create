@@ -18,26 +18,6 @@ const OllamaCloudMaxTokensCapExtraKey = "ollama_max_tokens_cap"
 // （约 65535），max_tokens 超过该值会被上游直接 400 拒绝；该上限与模型无关，不做模型过滤。
 const ollamaCloudDefaultMaxTokensCap = 65535
 
-// clampOllamaCloudUpstreamMaxTokens 是 raw CC 出站（forwardAsRawChatCompletions 与
-// /v1/responses 降级 forwardResponsesViaRawChatCompletions 共用）的独立 token 钩子，
-// 与 reasoning 钩子解耦：只看本次请求实际选用的 CC 上游 base_url（GetOpenAIBaseURL，
-// 与 openAIChatCompletionsTargetURL 的取值一致）是否 ollama.com，不读 usage extra。
-// DeepSeek 系模型（用模型映射后的真实出站 model，body 中 model 已改写）任意平台均
-// clamp；非 DeepSeek 模型仅保留既有 openai 平台 Ollama 账号（force_chat_completions
-// 判定）的 clamp，不扩展到其它平台。
-func clampOllamaCloudUpstreamMaxTokens(account *Account, body []byte) []byte {
-	if account == nil || len(body) == 0 {
-		return body
-	}
-	if !isOllamaCloudBaseURL(account.GetOpenAIBaseURL()) {
-		return body
-	}
-	if !isDeepSeekModel(gjson.GetBytes(body, "model").String()) && !isOllamaCloudRawChatCompletionsAccount(account) {
-		return body
-	}
-	return clampOllamaCloudMaxTokens(account, body)
-}
-
 // ollamaCloudResponsesUpstreamBaseURL 返回原生 /v1/responses 本次实际选用的上游
 // base_url，取值与 buildUpstreamRequest 一致：adaptive 原生 CN 账号用 api_base_urls
 // 的 responses 地址，其余用 GetOpenAIBaseURL。

@@ -107,7 +107,7 @@ func (s *studioWorksDB) list(
 		return nil, fmt.Errorf("studio works store is unavailable")
 	}
 	query := `
-		SELECT`+studioWorksColumns+`
+		SELECT` + studioWorksColumns + `
 		FROM studio_works
 		WHERE user_id = $1 AND kind = $2
 		  AND (saved = TRUE OR expires_at IS NULL OR expires_at > NOW())`

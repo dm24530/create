@@ -28,12 +28,12 @@ type openAIRateLimitResetCreditDetailsPayload struct {
 }
 
 type openAIRateLimitResetCreditDetails struct {
-	AvailableCount       *int
-	AvailableCreditCount int
-	CreditListPresent    bool
+	AvailableCount          *int
+	AvailableCreditCount    int
+	CreditListPresent       bool
 	CreditListAuthoritative bool
-	Credits              []OpenAIRateLimitResetCreditDetail
-	AutoResetCandidates  []openAIAutoResetCreditCandidate
+	Credits                 []OpenAIRateLimitResetCreditDetail
+	AutoResetCandidates     []openAIAutoResetCreditCandidate
 }
 
 // openAIAutoResetCreditCandidate 仅在服务内部流转。上游卡 ID 不进入 API DTO、
@@ -116,12 +116,12 @@ func parseOpenAIRateLimitResetCreditDetails(body []byte) (openAIRateLimitResetCr
 		})
 	}
 	return openAIRateLimitResetCreditDetails{
-		AvailableCount:       availableCount,
-		AvailableCreditCount: availableCreditCount,
-		CreditListPresent:    creditListPresent,
+		AvailableCount:          availableCount,
+		AvailableCreditCount:    availableCreditCount,
+		CreditListPresent:       creditListPresent,
 		CreditListAuthoritative: creditListAuthoritative,
-		Credits:              credits,
-		AutoResetCandidates:  autoResetCandidates,
+		Credits:                 credits,
+		AutoResetCandidates:     autoResetCandidates,
 	}, nil
 }
 

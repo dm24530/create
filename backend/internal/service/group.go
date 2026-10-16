@@ -110,7 +110,7 @@ type Group struct {
 	MessagesDispatchModelConfig OpenAIMessagesDispatchModelConfig
 	ModelAllowlist              GroupModelAllowlist
 	// ModelsListConfig is a compatibility view retained for older admin/cache paths.
-	ModelsListConfig            GroupModelsListConfig
+	ModelsListConfig GroupModelsListConfig
 	// CodexModelsManifestConfig 开启后，普通模型列表与 Codex manifest 优先使用
 	// 固定账号列表拉取并合并，不经过调度器（仅 openai 平台）。
 	CodexModelsManifestConfig GroupCodexModelsManifestConfig

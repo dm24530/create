@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	ImageStudioGalleryTTL        = 7 * 24 * time.Hour
+	ImageStudioGalleryTTL = 7 * 24 * time.Hour
 	// StudioWorksQuotaPerUser 是每个用户的作品总配额：图片与视频**共用**这一份，
 	// 不是各自 100。要改成按类型分别计数，只需让 store.Count 带上 kind 条件。
 	StudioWorksQuotaPerUser = 100
@@ -40,8 +40,8 @@ var ErrImageStudioGalleryQuotaExceeded = infraerrors.New(
 )
 
 type ImageStudioGalleryEntry struct {
-	ID        string `json:"id"`
-	UserID    int64  `json:"-"`
+	ID     string `json:"id"`
+	UserID int64  `json:"-"`
 	// ObjectKey 是对象存储里的完整键，删除作品时用它删对象；不下发给前端。
 	ObjectKey string `json:"-"`
 	URL       string `json:"url"`
@@ -51,9 +51,9 @@ type ImageStudioGalleryEntry struct {
 	Format    string `json:"format"`
 	// Saved 为真表示用户已把它存进「我的作品」：长期有效。
 	Saved     bool  `json:"saved"`
-	CreatedAt int64  `json:"created_at"`
+	CreatedAt int64 `json:"created_at"`
 	// ExpiresAt 只在临时内容上非 0：到期后由后台清扫连对象一起删。
-	ExpiresAt int64  `json:"expires_at"`
+	ExpiresAt int64 `json:"expires_at"`
 }
 
 type ImageStudioGalleryStore interface {
@@ -157,8 +157,8 @@ func (s *ImageStudioGalleryService) Save(
 		expiresAt = now.Add(s.tempRetention()).Unix()
 	}
 	entry := &ImageStudioGalleryEntry{
-		ID:        id,
-		UserID:    userID,
+		ID:     id,
+		UserID: userID,
 		// 存"最终键"（可能带 images/ 之类的前缀），而不是本地拼的那个短键。
 		ObjectKey: objectKey,
 		URL:       url,

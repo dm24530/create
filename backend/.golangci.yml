@@ -139,6 +139,12 @@ linters:
       - path: '_test\.go$'
         linters: [ gosec ]
         text: 'G70[34]'
+      # calculateOpenAIRecordUsageCost 是保留历史签名的兼容包装，只被
+      # //go:build unit 的单测调用；默认不带 tag 的分析看不到这些用例，
+      # 因此定点豁免，避免为了过 lint 改动一批计费用例。
+      - path: 'internal/service/openai_gateway_usage\.go$'
+        linters: [ unused ]
+        text: 'calculateOpenAIRecordUsageCost'
 
 formatters:
   enable:

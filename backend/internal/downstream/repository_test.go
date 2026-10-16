@@ -278,8 +278,8 @@ func stripSQLLineComments(sqlText string) string {
 		if strings.HasPrefix(strings.TrimSpace(line), "--") {
 			continue
 		}
-		builder.WriteString(line)
-		builder.WriteByte('\n')
+		_, _ = builder.WriteString(line)
+		_ = builder.WriteByte('\n')
 	}
 	return builder.String()
 }

@@ -50,8 +50,8 @@ var (
 // VideoStudioGalleryEntry 是「我的作品」里的一条视频归档记录。
 // 记录存在 Redis（带保留期），文件本身存在对象存储，换浏览器也能看到。
 type VideoStudioGalleryEntry struct {
-	ID              string `json:"id"`
-	UserID          int64  `json:"-"`
+	ID     string `json:"id"`
+	UserID int64  `json:"-"`
 	// ObjectKey 是对象存储里的完整键（含 videos/ 前缀），删除作品时用它删对象。
 	ObjectKey       string `json:"-"`
 	URL             string `json:"url"`

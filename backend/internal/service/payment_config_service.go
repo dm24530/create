@@ -505,13 +505,6 @@ func (s *PaymentConfigService) UpdatePaymentConfig(ctx context.Context, req Upda
 	return s.settingRepo.SetMultiple(ctx, m)
 }
 
-func (cfg *PaymentConfig) balanceRechargeMultiplierForPaymentType(paymentType string) float64 {
-	if cfg == nil {
-		return defaultBalanceRechargeMultiplier
-	}
-	return normalizeBalanceRechargeMultiplier(cfg.BalanceRechargeMultiplier)
-}
-
 func (cfg *PaymentConfig) allowsBalanceRechargePaymentType(paymentType string) bool {
 	return strings.TrimSpace(paymentType) != ""
 }

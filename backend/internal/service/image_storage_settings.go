@@ -71,8 +71,8 @@ type ImageStorageSettings struct {
 	PresignExpiry        int    `json:"presign_expiry_hours"`
 	GalleryRetentionDays int    `json:"gallery_retention_days"`
 	// StudioWorksQuota 是每个用户的作品配额（图片 + 视频合计），后台可改。
-	StudioWorksQuota     int    `json:"studio_works_quota"`
-	MaxDownloadBytes     int64  `json:"max_download_bytes"`
+	StudioWorksQuota int   `json:"studio_works_quota"`
+	MaxDownloadBytes int64 `json:"max_download_bytes"`
 
 	// 以下仅在 ReuseBackupS3 为假时使用
 	Endpoint        string `json:"endpoint"`
