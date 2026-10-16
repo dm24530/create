@@ -19,6 +19,14 @@
 #   ADMIN_EMAIL=you@example.com
 #   ADMIN_PASSWORD=<首次登录取一个强密码>
 #   SERVER_PORT=8080            # 和别的站点同机时改成没被占用的端口
+#
+# 和 API 站（sub2api / superai）同机部署时另外注意：
+#   * 放到独立目录（如 /opt/create），用自己的 .env —— 不要和 API 站的 .env 共用，
+#     两边都有 SERVER_PORT / POSTGRES_PASSWORD 这类同名变量，混用会串。
+#   * SERVER_PORT 必须换（API 站通常占 8080）；走反向代理时把 BIND_HOST 设成 127.0.0.1。
+#   * 这套编排自带独立的 PostgreSQL 与 Redis 容器，容器名/网络都以 create 前缀隔离；
+#     也支持复用 API 站的 PG 实例，但**必须建独立数据库**，绝不能指向同一个 dbname。
+#   * 下面的 Postgres 参数默认值是按"同机还有一套库"估的小值，内存紧张可以再调小。
 # =============================================================================
 
 services:
@@ -84,6 +92,12 @@ services:
         hard: 100000
     volumes:
       - ./postgres_data:/var/lib/postgresql/data
+    # 同机可能还有 API 站的 Postgres，这里默认给保守值；变量在 .env 里覆盖即可。
+    command: >
+      postgres
+      -c max_connections=${POSTGRES_MAX_CONNECTIONS:-200}
+      -c shared_buffers=${POSTGRES_SHARED_BUFFERS:-256MB}
+      -c effective_cache_size=${POSTGRES_EFFECTIVE_CACHE_SIZE:-1GB}
     environment:
       - POSTGRES_USER=${POSTGRES_USER:-create}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}

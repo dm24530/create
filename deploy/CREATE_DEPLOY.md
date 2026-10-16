@@ -116,3 +116,75 @@ docker compose -f docker-compose.create.yml up -d create
 - 生成能力依赖上游账号或 API Key，在「渠道/账号」里接。
 - 反向代理 / HTTPS：容器只监听 8080，外部域名、证书、`X-Forwarded-Proto` 交给
   Caddy 或 Nginx；`/sitemap.xml`、`/robots.txt` 会按请求域名自动生成，不用改配置。
+
+---
+
+## 六、和已有的 API 站同机部署
+
+服务器上已经跑着 API 站（sub2api / superai）时，按下面这几条隔离，两套互不干扰。
+
+**1. 独立目录、独立 .env**
+
+```bash
+mkdir -p /opt/create && cd /opt/create
+# docker-compose.create.yml、.env 放这里；API 站仍在它自己的目录
+```
+
+两边的 `.env` 里都有 `SERVER_PORT`、`POSTGRES_PASSWORD` 这类同名变量，**不要共用或互相
+`source`**，否则会串。
+
+**2. 端口错开**
+
+API 站一般占宿主机 8080，给 create 换一个：
+
+```
+SERVER_PORT=8081
+BIND_HOST=127.0.0.1     # 只让反代访问，不对公网直接开端口
+```
+
+**3. 数据库相互独立（最重要）**
+
+- 默认做法：用本编排自带的 Postgres 容器。容器名（`create` / `create-postgres` /
+  `create-redis`）、网络（`create-network`）、数据目录（`./postgres_data`）都与 API 站分离。
+- 想省内存、复用 API 站那台 Postgres 也可以，但必须：
+
+  ```bash
+  # 在 API 站的 PG 里建独立库与用户
+  CREATE USER create_app WITH PASSWORD '<强密码>';   -- 别用 API 站的应用账号
+  CREATE DATABASE create OWNER create_app;
+  ```
+
+  然后删掉本编排里的 `postgres` 服务，把 `DATABASE_HOST/PORT/USER/PASSWORD/DBNAME`
+  指向那台实例。**绝不能把 dbname 指成 API 站那个库**：两个项目的迁移集不同，
+  混在一起会让升级和回滚互相牵连，备份也无法单独恢复。
+- 同理 Redis 也可以复用 API 站那台，但建议 `REDIS_DB` 用不同的序号（如 `1`）。
+
+**4. 反向代理加一个站点**
+
+给 create 准备一个域名（例如 `create.superai.sbs` 或独立域名），反代到
+`127.0.0.1:8081`，并透传 `X-Forwarded-Proto`（HTTPS 时填 `https`）。页面的 canonical、
+`sitemap.xml`、`robots.txt` 都会按请求域名自动生成，不需要改代码或配置。Cloudflare
+那边记得加对应的 DNS 记录，并确认回源端口和缓存规则不会拦到 `/api/`。
+
+**5. 资源与备份**
+
+- 编排里的 Postgres 默认压到 `max_connections=200 / shared_buffers=256MB`，比 API 站那套
+  收敛很多；VPS 内存紧张就把 `POSTGRES_SHARED_BUFFERS` 再调到 128MB，或者干脆复用
+  API 站的 PG 实例（见第 3 条）。
+- 备份要分开做：create 的库在 `/opt/create/postgres_data`，API 站在它自己的目录里，
+  别指望一次备份覆盖两边。
+
+**6. 内容不会自动继承**
+
+create 是全新的空库：API 站的渠道、账号、分组、用户都不会出现在这边。上线后需要在
+create 后台重新接入上游账号或 API Key，作品库还要单独配对象存储（R2/S3）。
+
+**7. 镜像仓库是私有的**
+
+`ghcr.io/diminglucky/create` 是私有包，服务器拉之前要登录一次：
+
+```bash
+echo "<PAT, 勾 read:packages>" | docker login ghcr.io -u diminglucky --password-stdin
+```
+
+如果服务器不方便登录，就用方式 B（本地 `docker save` → `scp` → `docker load`）。
