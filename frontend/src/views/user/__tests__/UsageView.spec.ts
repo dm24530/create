@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 
 import UsageView from '../UsageView.vue'
@@ -10,10 +10,8 @@ const {
   query,
   getStats,
   getDashboardModels,
-  getDashboardSnapshotV2,
   listMyErrorRequests,
   list,
-  getAvailable,
   showError,
   showWarning,
   showSuccess,
@@ -22,10 +20,8 @@ const {
   query: vi.fn(),
   getStats: vi.fn(),
   getDashboardModels: vi.fn(),
-  getDashboardSnapshotV2: vi.fn(),
   listMyErrorRequests: vi.fn(),
   list: vi.fn(),
-  getAvailable: vi.fn(),
   showError: vi.fn(),
   showWarning: vi.fn(),
   showSuccess: vi.fn(),
@@ -80,14 +76,10 @@ vi.mock('@/api', () => ({
     query,
     getStats,
     getDashboardModels,
-    getDashboardSnapshotV2,
     listMyErrorRequests,
   },
   keysAPI: {
     list,
-  },
-  userGroupsAPI: {
-    getAvailable,
   },
 }))
 
@@ -161,10 +153,6 @@ function mountUsageView() {
         UsageStatsCards: chartStub,
         UsageTable: { ...chartStub, props: ['columns'] },
         UserErrorRequestsTable: chartStub,
-        ModelDistributionChart: chartStub,
-        GroupDistributionChart: chartStub,
-        EndpointDistributionChart: chartStub,
-        TokenUsageTrend: chartStub,
       },
     },
   })
@@ -175,10 +163,8 @@ describe('user UsageView', () => {
     query.mockReset()
     getStats.mockReset()
     getDashboardModels.mockReset()
-    getDashboardSnapshotV2.mockReset()
     listMyErrorRequests.mockReset()
     list.mockReset()
-    getAvailable.mockReset()
     showError.mockReset()
     showWarning.mockReset()
     showSuccess.mockReset()
@@ -203,35 +189,22 @@ describe('user UsageView', () => {
       start_date: '2026-03-08',
       end_date: '2026-03-08',
     })
-    getDashboardSnapshotV2.mockResolvedValue({
-      generated_at: '2026-03-08T00:00:00Z',
-      start_date: '2026-03-08',
-      end_date: '2026-03-08',
-      granularity: 'hour',
-      trend: [],
-      groups: [],
-    })
     listMyErrorRequests.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 20, pages: 0 })
     list.mockResolvedValue({ items: [{ id: 1, name: 'demo-key' }], total: 1, page: 1, page_size: 100, pages: 1 })
-    getAvailable.mockResolvedValue([{ id: 1, name: 'default' }])
   })
 
-  it('loads logs, stats, model stats, and snapshot on first render', async () => {
+  it('loads logs, stats, and model stats without dashboard chart data', async () => {
     const wrapper = mountUsageView()
     await flushPromises()
 
     expect(wrapper.findComponent(UsageTable).props('columns').map((column: { key: string }) => column.key)).toContain('latency')
+    expect(wrapper.findComponent(DateRangePicker).exists()).toBe(true)
+    expect(wrapper.text()).not.toContain('Granularity')
     expect(query).toHaveBeenCalled()
     expect(getStats).toHaveBeenCalled()
     expect(getDashboardModels).toHaveBeenCalled()
-    expect(getDashboardSnapshotV2).toHaveBeenCalledWith(expect.objectContaining({
-      include_trend: true,
-      include_model_stats: false,
-      include_group_stats: true,
-    }))
     expect(list).toHaveBeenCalledTimes(1)
     expect(list).toHaveBeenCalledWith(1, 100)
-    expect(getAvailable).toHaveBeenCalled()
   })
 
   it('includes API keys after the first page in both record filters and queries by the selected key', async () => {
@@ -296,7 +269,6 @@ describe('user UsageView', () => {
       select.props('options').some((option: SelectOption) => option.label === 'All API Keys')
     )!
     expect(keySelect.props('options')).toEqual([{ value: null, label: 'All API Keys' }])
-    expect(getAvailable).toHaveBeenCalled()
     wrapper.unmount()
   })
 
@@ -321,54 +293,45 @@ describe('user UsageView', () => {
     wrapper.unmount()
   })
 
-  it('propagates and resets the native compaction filter across page requests', async () => {
+  it('propagates and resets the billing mode filter across page requests', async () => {
     const wrapper = mountUsageView()
     await flushPromises()
-
-    expect((wrapper.vm as any).compactionOptions).toEqual([
-      { value: null, label: 'All Requests' },
-      { value: true, label: 'Compaction Only' },
-    ])
 
     query.mockClear()
     getStats.mockClear()
     getDashboardModels.mockClear()
-    getDashboardSnapshotV2.mockClear()
 
-    ;(wrapper.vm as any).filters.native_compaction_v2 = true
+    ;(wrapper.vm as any).filters.billing_mode = 'token'
     ;(wrapper.vm as any).applyFilters()
     await flushPromises()
 
     expect(query).toHaveBeenCalledWith(
-      expect.objectContaining({ native_compaction_v2: true }),
+      expect.objectContaining({ billing_mode: 'token' }),
       expect.anything()
     )
-    expect(getStats).toHaveBeenCalledWith(expect.objectContaining({ native_compaction_v2: true }))
-    expect(getDashboardModels).toHaveBeenCalledWith(expect.objectContaining({ native_compaction_v2: true }))
-    expect(getDashboardSnapshotV2).toHaveBeenCalledWith(expect.objectContaining({ native_compaction_v2: true }))
+    expect(getStats).toHaveBeenCalledWith(expect.objectContaining({ billing_mode: 'token' }))
+    expect(getDashboardModels).toHaveBeenCalledWith(expect.objectContaining({ billing_mode: 'token' }))
 
     query.mockClear()
     getStats.mockClear()
     getDashboardModels.mockClear()
-    getDashboardSnapshotV2.mockClear()
 
     ;(wrapper.vm as any).resetFilters()
     await flushPromises()
 
-    expect((wrapper.vm as any).filters.native_compaction_v2).toBeNull()
+    expect((wrapper.vm as any).filters.billing_mode).toBeNull()
     expect(query).toHaveBeenCalledWith(
-      expect.objectContaining({ native_compaction_v2: null }),
+      expect.objectContaining({ billing_mode: null }),
       expect.anything()
     )
-    expect(getStats).toHaveBeenCalledWith(expect.objectContaining({ native_compaction_v2: null }))
-    expect(getDashboardModels).toHaveBeenCalledWith(expect.objectContaining({ native_compaction_v2: null }))
-    expect(getDashboardSnapshotV2).toHaveBeenCalledWith(expect.objectContaining({ native_compaction_v2: null }))
+    expect(getStats).toHaveBeenCalledWith(expect.objectContaining({ billing_mode: null }))
+    expect(getDashboardModels).toHaveBeenCalledWith(expect.objectContaining({ billing_mode: null }))
   })
 
   it('exports csv with current filters and without admin-only fields', async () => {
     const wrapper = mountUsageView()
     await flushPromises()
-    ;(wrapper.vm as any).filters.native_compaction_v2 = true
+    ;(wrapper.vm as any).filters.billing_mode = 'token'
 
     let exportedBlob: Blob | null = null
     let csvContent = ''
@@ -393,7 +356,7 @@ describe('user UsageView', () => {
       page_size: 100,
       sort_by: 'created_at',
       sort_order: 'desc',
-      native_compaction_v2: true,
+      billing_mode: 'token',
     }))
     expect(clickSpy).toHaveBeenCalled()
     expect(showSuccess).toHaveBeenCalled()
@@ -565,34 +528,17 @@ describe('user UsageView', () => {
   })
 })
 
-describe('UsageView subscription feature flag', () => {
-  afterEach(() => {
-    appStoreState.cachedPublicSettings = { allow_user_view_error_requests: true }
-  })
-
-  function billingTypeSelect(wrapper: ReturnType<typeof mountUsageView>) {
-    return wrapper.findAllComponents(Select).find((select) =>
-      select.props('options').some((option: SelectOption) => option.label === 'Subscription')
-    )
-  }
-
-  it('offers the balance / subscription billing-type filter by default', async () => {
+describe('UsageView billing filters', () => {
+  it('does not render the billing-type filter', async () => {
     const wrapper = mountUsageView()
     await flushPromises()
 
-    expect(billingTypeSelect(wrapper)).toBeDefined()
-    expect(wrapper.text()).toContain('Billing type')
-    wrapper.unmount()
-  })
-
-  it('hides the billing-type filter entirely when subscriptions are disabled', async () => {
-    appStoreState.cachedPublicSettings = { allow_user_view_error_requests: true, subscription_enabled: false }
-
-    const wrapper = mountUsageView()
-    await flushPromises()
-
-    expect(billingTypeSelect(wrapper)).toBeUndefined()
     expect(wrapper.text()).not.toContain('Billing type')
+    expect(
+      wrapper.findAllComponents(Select).some((select) =>
+        select.props('options').some((option: SelectOption) => option.label === 'Subscription')
+      )
+    ).toBe(false)
     wrapper.unmount()
   })
 })

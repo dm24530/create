@@ -3,77 +3,23 @@
     <div class="space-y-6">
       <UsageStatsCards :stats="usageStats" :show-account-cost="false" :strike-standard-cost="true" />
 
-      <div class="space-y-4">
-        <div class="card p-4">
-          <div class="flex flex-wrap items-center gap-4">
-            <div class="flex items-center gap-2">
-              <span class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('admin.dashboard.timeRange') }}:</span>
-              <DateRangePicker
-                v-model:start-date="startDate"
-                v-model:end-date="endDate"
-                @change="onDateRangeChange"
-              />
-            </div>
-            <div class="ml-auto flex items-center gap-2">
-              <span class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('admin.dashboard.granularity') }}:</span>
-              <div class="w-28">
-                <Select v-model="granularity" :options="granularityOptions" @change="loadChartData" />
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
-          <ModelDistributionChart
-            v-model:metric="modelDistributionMetric"
-            :model-stats="requestedModelStats"
-            :loading="modelStatsLoading"
-            :show-source-toggle="false"
-            :show-metric-toggle="true"
-            :enable-breakdown="false"
-            :show-account-cost="false"
-            :start-date="startDate"
-            :end-date="endDate"
-          />
-          <GroupDistributionChart
-            v-model:metric="groupDistributionMetric"
-            :group-stats="groupStats"
-            :loading="chartsLoading"
-            :show-metric-toggle="true"
-            :enable-breakdown="false"
-            :show-account-cost="false"
-            :start-date="startDate"
-            :end-date="endDate"
-          />
-        </div>
-
-        <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
-          <EndpointDistributionChart
-            v-model:source="endpointDistributionSource"
-            v-model:metric="endpointDistributionMetric"
-            :endpoint-stats="inboundEndpointStats"
-            :upstream-endpoint-stats="upstreamEndpointStats"
-            :endpoint-path-stats="endpointPathStats"
-            :loading="endpointStatsLoading"
-            :show-source-toggle="false"
-            :show-metric-toggle="true"
-            :enable-breakdown="false"
-            :title="t('usage.endpointDistribution')"
-            :start-date="startDate"
-            :end-date="endDate"
-          />
-          <TokenUsageTrend :trend-data="trendData" :loading="chartsLoading" />
-        </div>
-      </div>
-
       <div class="card p-6">
-        <div class="flex flex-wrap items-end justify-between gap-4">
-          <div v-if="activeTab === 'errors'" class="flex flex-1 flex-wrap items-end gap-4">
-            <div class="w-full sm:w-auto sm:min-w-[220px]">
+        <div class="flex flex-col gap-4 xl:flex-row xl:flex-nowrap xl:items-end">
+          <div class="min-w-0 shrink-0">
+            <label class="input-label">{{ t('admin.dashboard.timeRange') }}</label>
+            <DateRangePicker
+              v-model:start-date="startDate"
+              v-model:end-date="endDate"
+              @change="onDateRangeChange"
+            />
+          </div>
+
+          <div v-if="activeTab === 'errors'" class="grid min-w-0 flex-1 grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <div class="min-w-0">
               <label class="input-label">{{ t('usage.errors.keyName') }}</label>
               <Select v-model="errorFilter.api_key_id" :options="errorKeyOptions" @change="applyErrorFilters" />
             </div>
-            <div class="w-full sm:w-auto sm:min-w-[220px]">
+            <div class="min-w-0">
               <label class="input-label">{{ t('usage.errors.model') }}</label>
               <Select
                 v-model="errorFilter.model"
@@ -85,47 +31,31 @@
                 @change="applyErrorFilters"
               />
             </div>
-            <div class="w-full sm:w-auto sm:min-w-[200px]">
+            <div class="min-w-0">
               <label class="input-label">{{ t('usage.errors.category') }}</label>
               <Select v-model="errorFilter.category" :options="errorCategoryOptions" @change="applyErrorFilters" />
             </div>
-            <div class="w-full sm:w-auto sm:min-w-[180px]">
+            <div class="min-w-0">
               <label class="input-label">{{ t('usage.errors.status') }}</label>
               <Select v-model="errorFilter.status_code" :options="errorStatusOptions" @change="applyErrorFilters" />
             </div>
           </div>
-          <div v-else class="flex flex-1 flex-wrap items-end gap-4">
-            <div class="w-full sm:w-auto sm:min-w-[220px]">
+          <div v-else class="grid min-w-0 flex-1 grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <div class="min-w-0">
               <label class="input-label">{{ t('usage.apiKeyFilter') }}</label>
               <Select v-model="filters.api_key_id" :options="apiKeyOptions" @change="applyFilters" />
             </div>
-            <div class="w-full sm:w-auto sm:min-w-[220px]">
+            <div class="min-w-0">
               <label class="input-label">{{ t('usage.model') }}</label>
               <Select v-model="filters.model" :options="modelOptions" searchable @change="applyFilters" />
             </div>
-            <div class="w-full sm:w-auto sm:min-w-[200px]">
-              <label class="input-label">{{ t('admin.usage.group') }}</label>
-              <Select v-model="filters.group_id" :options="groupOptions" searchable @change="applyFilters" />
-            </div>
-            <div class="w-full sm:w-auto sm:min-w-[180px]">
-              <label class="input-label">{{ t('usage.type') }}</label>
-              <Select v-model="filters.request_type" :options="requestTypeOptions" @change="applyFilters" />
-            </div>
-            <div class="w-full sm:w-auto sm:min-w-[180px]">
-              <label class="input-label">{{ t('usage.compactionFilter') }}</label>
-              <Select v-model="filters.native_compaction_v2" :options="compactionOptions" @change="applyFilters" />
-            </div>
-            <div v-if="subscriptionFeatureEnabled" class="w-full sm:w-auto sm:min-w-[200px]">
-              <label class="input-label">{{ t('admin.usage.billingType') }}</label>
-              <Select v-model="filters.billing_type" :options="billingTypeOptions" @change="applyFilters" />
-            </div>
-            <div class="w-full sm:w-auto sm:min-w-[200px]">
+            <div class="min-w-0">
               <label class="input-label">{{ t('admin.usage.billingMode') }}</label>
               <Select v-model="filters.billing_mode" :options="billingModeOptions" @change="applyFilters" />
             </div>
           </div>
 
-          <div class="flex w-full flex-wrap items-center justify-end gap-3 sm:w-auto">
+          <div class="ml-auto flex w-full flex-wrap items-center justify-end gap-3 xl:w-auto xl:flex-nowrap xl:shrink-0">
             <button type="button" @click="refreshData" :disabled="activeTab === 'errors' ? errorLoading : loading" class="btn btn-secondary">
               {{ t('common.refresh') }}
             </button>
@@ -219,34 +149,25 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
-import { FeatureFlags, resolveFeatureFlag } from '@/utils/featureFlags'
-import { keysAPI, usageAPI, userGroupsAPI } from '@/api'
+import { keysAPI, usageAPI } from '@/api'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import Pagination from '@/components/common/Pagination.vue'
 import Select, { type SelectOption } from '@/components/common/Select.vue'
 import DateRangePicker from '@/components/common/DateRangePicker.vue'
 import UsageStatsCards from '@/components/admin/usage/UsageStatsCards.vue'
 import UsageTable from '@/components/admin/usage/UsageTable.vue'
-import ModelDistributionChart from '@/components/charts/ModelDistributionChart.vue'
-import GroupDistributionChart from '@/components/charts/GroupDistributionChart.vue'
-import EndpointDistributionChart from '@/components/charts/EndpointDistributionChart.vue'
-import TokenUsageTrend from '@/components/charts/TokenUsageTrend.vue'
 import Icon from '@/components/icons/Icon.vue'
 import UserErrorRequestsTable from '@/components/user/UserErrorRequestsTable.vue'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { formatReasoningEffort } from '@/utils/format'
 import { getBillingModeLabel, getDisplayBillingMode as resolveDisplayBillingMode } from '@/utils/billingMode'
-import { resolveUsageRequestType, requestTypeToLegacyStream } from '@/utils/usageRequestType'
+import { resolveUsageRequestType } from '@/utils/usageRequestType'
 import type {
   ApiKey,
-  EndpointStat,
-  Group,
-  GroupStat,
   ModelStat,
-  TrendDataPoint,
   UsageLog,
   UsageQueryParams,
   UsageStatsResponse,
@@ -258,22 +179,10 @@ import { COMMON_ERROR_STATUS_CODES } from '@/utils/errorBadges'
 const { t } = useI18n()
 const appStore = useAppStore()
 
-type DistributionMetric = 'tokens' | 'actual_cost'
-type EndpointSource = 'inbound' | 'upstream' | 'path'
-
 const usageStats = ref<UsageStatsResponse | null>(null)
 const usageLogs = ref<UsageLog[]>([])
-const trendData = ref<TrendDataPoint[]>([])
-const requestedModelStats = ref<ModelStat[]>([])
-const groupStats = ref<GroupStat[]>([])
-const inboundEndpointStats = ref<EndpointStat[]>([])
-const upstreamEndpointStats = ref<EndpointStat[]>([])
-const endpointPathStats = ref<EndpointStat[]>([])
 
 const loading = ref(false)
-const chartsLoading = ref(false)
-const modelStatsLoading = ref(false)
-const endpointStatsLoading = ref(false)
 const exporting = ref(false)
 const errorRows = ref<UserErrorRequest[]>([])
 const errorLoading = ref(false)
@@ -327,7 +236,6 @@ const applyErrorFilters = () => {
 }
 
 let abortController: AbortController | null = null
-let chartReqSeq = 0
 let statsReqSeq = 0
 let modelStatsReqSeq = 0
 
@@ -340,30 +248,16 @@ const getLast24HoursRangeDates = () => {
   return { start: formatLocalDate(start), end: formatLocalDate(end) }
 }
 
-const getGranularityForRange = (start: string, end: string): 'day' | 'hour' => {
-  const startTime = new Date(`${start}T00:00:00`).getTime()
-  const endTime = new Date(`${end}T00:00:00`).getTime()
-  return Math.ceil((endTime - startTime) / (1000 * 60 * 60 * 24)) <= 1 ? 'hour' : 'day'
-}
-
 const defaultRange = getLast24HoursRangeDates()
 const startDate = ref(defaultRange.start)
 const endDate = ref(defaultRange.end)
-const granularity = ref<'day' | 'hour'>(getGranularityForRange(startDate.value, endDate.value))
 
-const modelDistributionMetric = ref<DistributionMetric>('tokens')
-const groupDistributionMetric = ref<DistributionMetric>('tokens')
-const endpointDistributionMetric = ref<DistributionMetric>('tokens')
-const endpointDistributionSource = ref<EndpointSource>('inbound')
 const activeTab = ref<'usage' | 'errors'>('usage')
 const errorViewEnabled = computed(() => appStore.cachedPublicSettings?.allow_user_view_error_requests ?? false)
 
 const filters = ref<UsageQueryParams>({
   start_date: startDate.value,
   end_date: endDate.value,
-  request_type: undefined,
-  native_compaction_v2: null,
-  billing_type: null,
   billing_mode: null,
 })
 
@@ -377,28 +271,6 @@ const sortState = reactive({
   sort_order: 'desc' as 'asc' | 'desc',
 })
 
-const granularityOptions = computed<SelectOption[]>(() => [
-  { value: 'day', label: t('admin.dashboard.day') },
-  { value: 'hour', label: t('admin.dashboard.hour') },
-])
-const requestTypeOptions = computed<SelectOption[]>(() => [
-  { value: null, label: t('admin.usage.allTypes') },
-  { value: 'ws_v2', label: t('usage.ws') },
-  { value: 'live', label: t('usage.live') },
-  { value: 'stream', label: t('usage.stream') },
-  { value: 'sync', label: t('usage.sync') },
-])
-const compactionOptions = computed<SelectOption[]>(() => [
-  { value: null, label: t('usage.allCompactionTypes') },
-  { value: true, label: t('usage.compactionOnly') },
-])
-// 订阅功能关闭后只剩余额计费，「计费类型」筛选（余额/订阅）失去意义，整块隐藏。
-const subscriptionFeatureEnabled = computed(() => resolveFeatureFlag(appStore.cachedPublicSettings, FeatureFlags.subscription))
-const billingTypeOptions = computed<SelectOption[]>(() => [
-  { value: null, label: t('admin.usage.allBillingTypes') },
-  { value: 0, label: t('admin.usage.billingTypeBalance') },
-  { value: 1, label: t('admin.usage.billingTypeSubscription') },
-])
 const billingModeOptions = computed<SelectOption[]>(() => [
   { value: null, label: t('admin.usage.allBillingModes') },
   { value: 'token', label: t('admin.usage.billingModeToken') },
@@ -408,16 +280,11 @@ const billingModeOptions = computed<SelectOption[]>(() => [
 ])
 
 const apiKeys = ref<ApiKey[]>([])
-const groups = ref<Group[]>([])
 const modelOptionValues = ref<string[]>([])
 
 const apiKeyOptions = computed<SelectOption[]>(() => [
   { value: null, label: t('usage.allApiKeys') },
   ...apiKeys.value.map((key) => ({ value: key.id, label: key.name })),
-])
-const groupOptions = computed<SelectOption[]>(() => [
-  { value: null, label: t('admin.usage.allGroups') },
-  ...groups.value.map((group) => ({ value: group.id, label: group.name })),
 ])
 const modelOptions = computed<SelectOption[]>(() => [
   { value: null, label: t('admin.usage.allModels') },
@@ -425,13 +292,10 @@ const modelOptions = computed<SelectOption[]>(() => [
 ])
 
 const normalizedFilters = computed<UsageQueryParams>(() => {
-  const requestType = filters.value.request_type
-  const legacyStream = requestType ? requestTypeToLegacyStream(requestType) : filters.value.stream
   return {
     ...filters.value,
     start_date: startDate.value,
     end_date: endDate.value,
-    stream: legacyStream === null ? undefined : legacyStream,
   }
 })
 
@@ -467,66 +331,28 @@ const loadLogs = async () => {
 
 const loadStats = async () => {
   const seq = ++statsReqSeq
-  endpointStatsLoading.value = true
   try {
     const stats = await usageAPI.getStats(normalizedFilters.value)
     if (seq !== statsReqSeq) return
     usageStats.value = stats
-    inboundEndpointStats.value = stats.endpoints || []
-    upstreamEndpointStats.value = []
-    endpointPathStats.value = []
   } catch (error) {
     if (seq !== statsReqSeq) return
     console.error('Failed to load usage stats:', error)
-    inboundEndpointStats.value = []
-    upstreamEndpointStats.value = []
-    endpointPathStats.value = []
-  } finally {
-    if (seq === statsReqSeq) endpointStatsLoading.value = false
   }
 }
 
 const loadModelStats = async () => {
   const seq = ++modelStatsReqSeq
-  modelStatsLoading.value = true
   try {
     const response = await usageAPI.getDashboardModels({
       ...normalizedFilters.value,
       model_source: 'requested',
     })
     if (seq !== modelStatsReqSeq) return
-    requestedModelStats.value = response.models || []
     refreshModelOptions(response.models || [])
   } catch (error) {
     if (seq !== modelStatsReqSeq) return
     console.error('Failed to load model stats:', error)
-    requestedModelStats.value = []
-  } finally {
-    if (seq === modelStatsReqSeq) modelStatsLoading.value = false
-  }
-}
-
-const loadChartData = async () => {
-  const seq = ++chartReqSeq
-  chartsLoading.value = true
-  try {
-    const snapshot = await usageAPI.getDashboardSnapshotV2({
-      ...normalizedFilters.value,
-      granularity: granularity.value,
-      include_trend: true,
-      include_model_stats: false,
-      include_group_stats: true,
-    })
-    if (seq !== chartReqSeq) return
-    trendData.value = snapshot.trend || []
-    groupStats.value = snapshot.groups || []
-  } catch (error) {
-    if (seq !== chartReqSeq) return
-    console.error('Failed to load chart data:', error)
-    trendData.value = []
-    groupStats.value = []
-  } finally {
-    if (seq === chartReqSeq) chartsLoading.value = false
   }
 }
 
@@ -545,7 +371,6 @@ const applyFilters = () => {
   void loadLogs()
   void loadStats()
   void loadModelStats()
-  void loadChartData()
   resetErrorRows()
 }
 
@@ -553,7 +378,6 @@ const refreshData = () => {
   void loadLogs()
   void loadStats()
   void loadModelStats()
-  void loadChartData()
   if (activeTab.value === 'errors') void loadErrors()
 }
 
@@ -564,12 +388,8 @@ const resetFilters = () => {
   filters.value = {
     start_date: range.start,
     end_date: range.end,
-    request_type: undefined,
-    native_compaction_v2: null,
-    billing_type: null,
     billing_mode: null,
   }
-  granularity.value = getGranularityForRange(range.start, range.end)
   applyFilters()
   if (activeTab.value === 'errors') {
     errorFilter.value = { model: '', category: '', api_key_id: null, status_code: null }
@@ -582,7 +402,6 @@ const onDateRangeChange = (range: { startDate: string; endDate: string; preset: 
   endDate.value = range.endDate
   filters.value.start_date = range.startDate
   filters.value.end_date = range.endDate
-  granularity.value = getGranularityForRange(range.startDate, range.endDate)
   applyFilters()
 }
 
@@ -829,12 +648,7 @@ const loadApiKeys = async () => {
 
 const loadFilterOptions = async () => {
   try {
-    const [keys, availableGroups] = await Promise.all([
-      loadApiKeys(),
-      userGroupsAPI.getAvailable(),
-    ])
-    apiKeys.value = keys
-    groups.value = availableGroups
+    apiKeys.value = await loadApiKeys()
   } catch (error) {
     console.error('Failed to load usage filter options:', error)
   }
@@ -909,9 +723,5 @@ onMounted(() => {
 onUnmounted(() => {
   abortController?.abort()
   document.removeEventListener('click', handleColumnClickOutside)
-})
-
-watch(endpointDistributionSource, () => {
-  // Endpoint source switching is handled by the chart component using already loaded stats.
 })
 </script>
