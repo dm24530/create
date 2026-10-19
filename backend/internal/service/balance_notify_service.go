@@ -22,9 +22,6 @@ const (
 	quotaDimDaily  = "daily"
 	quotaDimWeekly = "weekly"
 	quotaDimTotal  = "total"
-
-	defaultSiteName     = "Create"
-	defaultSiteSubtitle = "Create AI Platform"
 )
 
 // quotaDimLabels maps dimension names to display labels.
@@ -350,10 +347,10 @@ func (s *BalanceNotifyService) getAdminNotifyEmails(ctx context.Context) []strin
 // getSiteName reads site name from settings with fallback.
 func (s *BalanceNotifyService) getSiteName(ctx context.Context) string {
 	name, err := s.settingRepo.GetValue(ctx, SettingKeySiteName)
-	if err != nil || name == "" {
+	if err != nil {
 		return defaultSiteName
 	}
-	return name
+	return normalizeSiteName(name)
 }
 
 // filterVerifiedEmails returns deduplicated, non-disabled, verified emails.

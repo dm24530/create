@@ -15,7 +15,7 @@ export default {
   refreshed: '已尝试同步 {attempted} 个上游，成功 {success} 个，失败 {failed} 个',
   sources: {
     title: '上游源管理',
-    description: '把你接入的上游逐条录入。Sub2API / NewAPI 只需要站点地址和凭据，系统会自动拉取标准倍率接口。',
+    description: '把你接入的上游逐条录入。Create / NewAPI 只需要站点地址和凭据，系统会自动拉取标准倍率接口。',
     add: '新增上游源',
     empty: '还没有配置任何上游源。',
     untitled: '未命名上游 #{index}',
@@ -38,7 +38,7 @@ export default {
     loginAuthHint: '账号密码登录模式会由你的服务器先登录上游，再使用拿到的 Token / Cookie 拉取分组倍率；不是读取你浏览器里已经登录的状态。',
     authModeHints: {
       none: '公开接口才选无鉴权；如果打开接口提示 Authorization required，请选择账号密码登录或 Bearer Token。',
-      login: '适合 sub2api / New API 后台账号：填写上游登录邮箱和密码，系统会自动登录获取 Token。',
+      login: '适合 Create / New API 后台账号：填写上游登录邮箱和密码，系统会自动登录获取 Token。',
       bearer: '适合你已经拿到上游 API Key / access_token 的情况，系统会自动拼成 Authorization: Bearer Token。',
       header: '适合上游要求自定义 Header 的情况，例如 X-API-Key。',
       cookie: "适合 NewAPI 的 Cookie 模式；请填写完整 JSON：{'{'}\"cookie\":\"session=...\",\"user_id\":\"123\"{'}'}。"
@@ -102,7 +102,7 @@ export default {
       baseUrlHint: '填写对方中转站首页域名，例如 https://pool.gptstore.club。',
       pricingUrl: '分组倍率接口地址',
       pricingUrlPlaceholder: '留空使用默认接口，或填写自定义接口地址',
-      pricingUrlHint: '可覆盖默认接口。NewAPI 默认尝试 /api/user/self/groups，并自动回退到 /api/v1/groups/available；Sub2API 默认使用 /api/v1/groups/available。',
+      pricingUrlHint: '可覆盖默认接口。NewAPI 默认尝试 /api/user/self/groups，并自动回退到 /api/v1/groups/available；Create 默认使用 /api/v1/groups/available。',
       pricingHint: '接口说明 / Path Hint',
       pricingHintHint: 'JSON Path 模式下必填，例如 data.reference_multiplier。',
       authMode: '鉴权方式',
@@ -112,7 +112,7 @@ export default {
       authUsernameHint: '登录模式下填写邮箱或用户名，用于先登录再拉取倍率。',
       authPassword: '登录密码',
     authToken: '鉴权内容',
-    authTokenHintCookie: "NewAPI Cookie 模式请填 JSON：{'{'}\"cookie\":\"session=...\",\"user_id\":\"123\"{'}'}。Sub2API 请优先用登录模式或 access_token。",
+    authTokenHintCookie: "NewAPI Cookie 模式请填 JSON：{'{'}\"cookie\":\"session=...\",\"user_id\":\"123\"{'}'}。Create 请优先用登录模式或 access_token。",
     authTokenHintBearer: '这里可填 access_token，系统会自动改成 Bearer 请求头。',
       accountIds: '绑定上游账号',
       accountIdsHint: '可选。选择实际账号后，监测页会额外用账号倍率、分组售价和上游参考倍率判断是否倒挂；不选择也不影响拉取和关注分组。',
@@ -178,7 +178,7 @@ export default {
   sourceKinds: {
     manual: '手动录入',
     newapi: 'NewAPI',
-    sub2api: 'Sub2API',
+    sub2api: 'Create',
     openaiCompatible: 'OpenAI 兼容',
     openai_compatible: 'OpenAI 兼容',
     custom: '自定义',

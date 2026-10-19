@@ -5,6 +5,82 @@ export default {
   },
   // Home Page
   home: {
+    landing: {
+      nav: {
+        image: 'Image',
+        video: 'Video',
+        inspiration: 'Video Inspiration',
+        works: 'My Works',
+        models: 'Models',
+        docs: 'Guide'
+      },
+      workspace: 'Open Studio',
+      eyebrow: 'Your AI creation space',
+      titleTop: 'Turn an idea',
+      titleAccent: 'into a frame, then a film.',
+      description: 'From a passing thought to a finished visual. Generate images and videos with AI, and let your imagination move.',
+      startImage: 'Start with an image',
+      createVideo: 'Create a video',
+      explore: 'Explore what is possible',
+      galleryTitle: 'Imagination should not stop at imagination.',
+      galleryLink: 'Open Image Studio',
+      gallery: {
+        items: {
+          flower: 'Microscopic Garden',
+          desert: 'End of the Road',
+          nature: 'Visitor from the Deep',
+          architecture: 'Geometry in Light',
+          rings: 'Beneath the Rings'
+        }
+      },
+      filmTitle: 'More than a frame.',
+      filmAccent: 'Let the story move.',
+      filmDescription: 'Describe the scene, motion, and camera, or start with a reference image. Use Seedance and Grok to turn a still into a short film with time, rhythm, and sound.',
+      filmPoints: {
+        text: 'Text to video',
+        frame: 'First and last frame',
+        multimodal: 'Multimodal references'
+      },
+      filmCta: 'Open Video Studio',
+      notebookTitle: 'A good shot starts with a good idea.',
+      notebookLink: 'Browse all templates',
+      notebookDescription: 'Start with a scene, a camera move, or a rhythm. Pick a template, then make the story yours.',
+      notebook: {
+        items: {
+          product: {
+            title: 'Product study in light',
+            meta: 'Product film / Storyboard'
+          },
+          landscape: {
+            title: 'A road through the wild',
+            meta: 'Cinematic / Camera move'
+          },
+          botanical: {
+            title: 'Petals in close-up',
+            meta: 'Nature / Detail study'
+          }
+        }
+      },
+      principlesTitle: 'From one frame to a complete story.',
+      principles: {
+        one: {
+          title: 'One library for images and video',
+          description: 'Generated work lands in a shared library. Keep temporary results for seven days or save the ones that matter.'
+        },
+        two: {
+          title: 'Scheduling and billing on one path',
+          description: 'Accounts fail over automatically, usage is billed as it happens, and images, video, and text share one credit system.'
+        },
+        three: {
+          title: 'Works with your tools',
+          description: 'The browser studios and OpenAI, Anthropic, Gemini, and Seedance APIs all use the same API keys.'
+        }
+      },
+      ctaTitle: 'Make the next idea real.',
+      ctaDescription: 'Sign in to open Image and Video Studio, then create with platform credits or your own upstream key.',
+      ctaButton: 'Start creating',
+      goWorkspace: 'Open Studio'
+    },
     publicModels: {
       eyebrow: 'Public Models',
       title: 'Available Models & Pricing',
@@ -200,8 +276,8 @@ export default {
 
   // Setup Wizard
   setup: {
-    title: 'Sub2API Setup',
-    description: 'Configure your Sub2API instance',
+    title: '{siteName} Setup',
+    description: 'Configure your {siteName} instance',
     database: {
       title: 'Database Configuration',
       description: 'Connect to your PostgreSQL database',

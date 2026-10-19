@@ -674,18 +674,60 @@ func (s *RedeemService) Delete(ctx context.Context, id int64) error {
 
 // GetStats 获取兑换码统计信息
 func (s *RedeemService) GetStats(ctx context.Context) (map[string]any, error) {
-	// TODO: 实现统计逻辑
-	// 统计未使用、已使用的兑换码数量
-	// 统计总面值等
-
-	stats := map[string]any{
-		"total_codes":  0,
-		"unused_codes": 0,
-		"used_codes":   0,
-		"total_value":  0.0,
+	const pageSize = 1000
+	allCodes := make([]RedeemCode, 0)
+	for page := 1; ; page++ {
+		codes, result, err := s.redeemRepo.ListWithFilters(
+			ctx,
+			pagination.PaginationParams{Page: page, PageSize: pageSize},
+			"",
+			"",
+			"",
+		)
+		if err != nil {
+			return nil, fmt.Errorf("list redeem codes for stats: %w", err)
+		}
+		allCodes = append(allCodes, codes...)
+		if len(codes) == 0 || result == nil || int64(len(allCodes)) >= result.Total {
+			break
+		}
 	}
+	return summarizeRedeemCodeStats(allCodes, time.Now()), nil
+}
 
-	return stats, nil
+// summarizeRedeemCodeStats is intentionally pure so the stat contract can be
+// tested without a database.
+func summarizeRedeemCodeStats(codes []RedeemCode, now time.Time) map[string]any {
+	totalValueDistributed := 0.0
+	active, used, expired := 0, 0, 0
+	byType := make(map[string]int)
+	for i := range codes {
+		code := &codes[i]
+		switch {
+		case code.IsUsed():
+			used++
+			if code.Type == RedeemTypeBalance && code.Value > 0 {
+				totalValueDistributed += code.Value
+			}
+		case code.IsExpiredAt(now):
+			expired++
+		case code.Status == StatusUnused:
+			active++
+		}
+		if strings.TrimSpace(code.Type) != "" {
+			byType[code.Type]++
+		}
+	}
+	return map[string]any{
+		"total_codes":             len(codes),
+		"active_codes":            active,
+		"used_codes":              used,
+		"expired_codes":           expired,
+		"unused_codes":            active,
+		"total_value_distributed": totalValueDistributed,
+		"total_value":             totalValueDistributed,
+		"by_type":                 byType,
+	}
 }
 
 // GetUserHistory 获取用户的兑换历史

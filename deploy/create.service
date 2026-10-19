@@ -1,33 +1,33 @@
 [Unit]
 Description=Create - AI Video & Image Generation Platform
-Documentation=https://github.com/Wei-Shaw/sub2api
+Documentation=https://github.com/diminglucky/create
 After=network.target postgresql.service redis.service
 Wants=postgresql.service redis.service
 
 [Service]
 Type=simple
-User=sub2api
-Group=sub2api
-WorkingDirectory=/opt/sub2api
-ExecStart=/opt/sub2api/sub2api
+User=create
+Group=create
+WorkingDirectory=/opt/create
+ExecStart=/opt/create/create
 Restart=always
 RestartSec=5
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=sub2api
+SyslogIdentifier=create
 
 # Security hardening
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
-ReadWritePaths=/opt/sub2api
+ReadWritePaths=/opt/create
 
 # Environment - Server configuration
 # Modify these values to change listen address and port
 Environment=GIN_MODE=release
 Environment=SERVER_HOST=0.0.0.0
-Environment=SERVER_PORT=8080
+Environment=SERVER_PORT=9898
 
 [Install]
 WantedBy=multi-user.target

@@ -34,7 +34,7 @@ export default {
     stepfun: 'StepFun',
     siliconflow: 'SiliconFlow',
     newapi: 'New API',
-    sub2api: 'Sub2API',
+    sub2api: 'Create',
     custom: 'Custom same-origin API',
     walletAuth: 'Wallet account authentication',
     authMode: 'Authentication method',

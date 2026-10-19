@@ -15,7 +15,7 @@ export default {
   refreshed: 'Tried syncing {attempted} upstreams: {success} succeeded, {failed} failed',
 sources: {
   title: 'Upstream Source Management',
-  description: 'Register each upstream here. Sub2API / NewAPI sources only need a site URL and credentials; the system fetches their standard rate endpoints automatically.',
+  description: 'Register each upstream here. Create / NewAPI sources only need a site URL and credentials; the system fetches their standard rate endpoints automatically.',
     add: 'Add Source',
     empty: 'No upstream sources configured yet.',
     untitled: 'Untitled Source #{index}',
@@ -38,7 +38,7 @@ sources: {
   loginAuthHint: 'Username/password mode lets your server sign in to the upstream first, then use the returned token or cookie to fetch group rates. It does not read the login state from your browser.',
   authModeHints: {
     none: 'Use no auth only for public endpoints. If the endpoint says Authorization is required, choose username/password or Bearer Token.',
-    login: 'Best for sub2api / New API admin accounts: enter the upstream login email and password, and the system will obtain the token automatically.',
+    login: 'Best for Create / New API admin accounts: enter the upstream login email and password, and the system will obtain the token automatically.',
     bearer: 'Use this when you already have an upstream API key or access_token. The system will send it as Authorization: Bearer Token.',
     header: 'Use this when the upstream requires a custom header, such as X-API-Key.',
     cookie: "Use this for NewAPI cookie mode. Fill JSON: {'{'}\"cookie\":\"session=...\",\"user_id\":\"123\"{'}'}."
@@ -102,7 +102,7 @@ sources: {
       baseUrlHint: 'Enter the upstream relay homepage domain, for example https://pool.gptstore.club.',
       pricingUrl: 'Group Rate Endpoint URL',
       pricingUrlPlaceholder: 'Leave empty for defaults, or enter a custom endpoint',
-      pricingUrlHint: 'Overrides the default endpoint. NewAPI tries /api/user/self/groups and falls back to /api/v1/groups/available; Sub2API uses /api/v1/groups/available by default.',
+      pricingUrlHint: 'Overrides the default endpoint. NewAPI tries /api/user/self/groups and falls back to /api/v1/groups/available; Create uses /api/v1/groups/available by default.',
       pricingHint: 'Endpoint Notes / Path Hint',
       pricingHintHint: 'Required for JSON Path mode, for example data.reference_multiplier.',
       authMode: 'Authentication Mode',
@@ -112,7 +112,7 @@ sources: {
       authUsernameHint: 'Used in login mode: the email or username for signing in before pulling multipliers.',
       authPassword: 'Login Password',
       authToken: 'Authentication Value',
-      authTokenHintCookie: "For NewAPI cookie mode, fill JSON: {'{'}\"cookie\":\"session=...\",\"user_id\":\"123\"{'}'}. For Sub2API, prefer login mode or access_token.",
+      authTokenHintCookie: "For NewAPI cookie mode, fill JSON: {'{'}\"cookie\":\"session=...\",\"user_id\":\"123\"{'}'}. For Create, prefer login mode or access_token.",
       authTokenHintBearer: 'Paste the access_token here; the system will send it as a Bearer header.',
       accountIds: 'Bound Accounts',
       accountIdsHint: 'Optional. Selected accounts add cost-risk analysis; they are not required to pull or monitor upstream groups.',
@@ -178,7 +178,7 @@ sources: {
   sourceKinds: {
     manual: 'Manual',
     newapi: 'NewAPI',
-    sub2api: 'Sub2API',
+    sub2api: 'Create',
     openaiCompatible: 'OpenAI Compatible',
     openai_compatible: 'OpenAI Compatible',
     custom: 'Custom',

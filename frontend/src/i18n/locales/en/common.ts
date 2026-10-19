@@ -230,6 +230,7 @@ export default {
   auth: {
     welcomeBack: 'Welcome Back',
     signInToAccount: 'Sign in to your account to continue',
+    backToHome: 'Back to home',
     signIn: 'Sign In',
     signingIn: 'Signing in...',
     passkeySignIn: 'Sign in with a passkey',

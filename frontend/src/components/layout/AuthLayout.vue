@@ -1,4 +1,67 @@
 <template>
+  <div v-if="variant === 'split'" class="auth-split-shell">
+    <aside class="auth-split-visual">
+      <img src="/landing/desert.jpg" alt="" class="auth-split-visual-image" />
+      <div class="auth-split-visual-shade"></div>
+      <div class="auth-split-visual-content">
+        <RouterLink to="/home" class="auth-split-brand">
+          <span class="auth-split-brand-mark">
+            <img v-if="siteLogo" :src="siteLogo" alt="" />
+            <span v-else>{{ siteName.slice(0, 1).toUpperCase() }}</span>
+          </span>
+          <span>{{ siteName }}</span>
+          <i></i>
+        </RouterLink>
+
+        <div class="auth-split-visual-copy">
+          <p class="auth-split-eyebrow"><span></span>{{ t('home.landing.eyebrow') }}</p>
+          <h1>
+            {{ t('home.landing.titleTop') }}<br />
+            <em>{{ t('home.landing.titleAccent') }}</em>
+          </h1>
+          <p>{{ t('home.landing.description') }}</p>
+        </div>
+
+        <div class="auth-split-meta">
+          <span>GPT IMAGE</span>
+          <span>SEEDANCE</span>
+          <span>GROK IMAGINE</span>
+        </div>
+      </div>
+    </aside>
+
+    <main class="auth-split-panel">
+      <div class="auth-split-panel-top">
+        <RouterLink to="/home" class="auth-split-back">
+          <Icon name="arrowLeft" size="sm" />
+          {{ t('auth.backToHome') }}
+        </RouterLink>
+        <LocaleSwitcher />
+      </div>
+
+      <div class="auth-split-panel-body">
+        <RouterLink to="/home" class="auth-split-mobile-brand">
+          <span class="auth-split-brand-mark">
+            <img v-if="siteLogo" :src="siteLogo" alt="" />
+            <span v-else>{{ siteName.slice(0, 1).toUpperCase() }}</span>
+          </span>
+          <span>{{ siteName }}</span>
+        </RouterLink>
+
+        <div class="auth-split-form">
+          <slot />
+        </div>
+        <div class="auth-split-footer">
+          <slot name="footer" />
+        </div>
+      </div>
+
+      <p class="auth-split-copyright">
+        &copy; {{ currentYear }} {{ siteName }}. {{ t('home.footer.allRightsReserved') }}
+      </p>
+    </main>
+  </div>
+
   <div class="relative flex min-h-screen items-center justify-center overflow-hidden p-3 sm:p-4">
     <!-- Background -->
     <div
@@ -56,7 +119,7 @@
 
       <!-- Copyright -->
       <div v-if="showCopyright" :class="copyrightClass">
-        &copy; {{ currentYear }} {{ siteName }}. All rights reserved.
+        &copy; {{ currentYear }} {{ siteName }}. {{ t('home.footer.allRightsReserved') }}
       </div>
     </div>
   </div>
@@ -64,22 +127,30 @@
 
 <script setup lang="ts">
 import { computed, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores'
 import { sanitizeUrl } from '@/utils/url'
+import { normalizeSiteName } from '@/constants/brand'
+import LocaleSwitcher from '@/components/common/LocaleSwitcher.vue'
+import Icon from '@/components/icons/Icon.vue'
+
+const { t } = useI18n()
 
 const props = withDefaults(defineProps<{
   showBrand?: boolean
   showCopyright?: boolean
   compact?: boolean
+  variant?: 'centered' | 'split'
 }>(), {
   showBrand: true,
   showCopyright: true,
-  compact: false
+  compact: false,
+  variant: 'centered'
 })
 
 const appStore = useAppStore()
 
-const siteName = computed(() => appStore.siteName || 'Create')
+const siteName = computed(() => normalizeSiteName(appStore.siteName))
 const siteLogo = computed(() => sanitizeUrl(appStore.siteLogo || '', { allowRelative: true, allowDataUrl: true }))
 const siteSubtitle = computed(() => appStore.cachedPublicSettings?.site_subtitle || 'Create AI Platform')
 const settingsLoaded = computed(() => appStore.publicSettingsLoaded)
@@ -110,6 +181,349 @@ onMounted(() => {
 <style scoped>
 .text-gradient {
   @apply bg-gradient-to-r from-primary-600 to-primary-500 bg-clip-text text-transparent;
+}
+
+.auth-split-shell {
+  --auth-bg: #09090b;
+  --auth-panel: #0d0d10;
+  --auth-line: #2c2c30;
+  --auth-muted: #a5a5ae;
+  --auth-accent: #ff693b;
+  display: grid;
+  grid-template-columns: minmax(0, 1.24fr) minmax(420px, 0.76fr);
+  min-height: 100svh;
+  overflow: hidden;
+  background: var(--auth-bg);
+  color: #f5f5f5;
+  font-family: Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+}
+
+.auth-split-shell *,
+.auth-split-shell *::before,
+.auth-split-shell *::after {
+  box-sizing: border-box;
+}
+
+.auth-split-visual {
+  position: relative;
+  min-height: 100svh;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.auth-split-visual-image {
+  position: absolute;
+  inset: 0;
+  z-index: -3;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 58%;
+  filter: sepia(0.18) saturate(1.14) contrast(1.05);
+  animation: auth-split-reveal 1.25s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.auth-split-visual-shade {
+  position: absolute;
+  inset: 0;
+  z-index: -2;
+  background:
+    radial-gradient(circle at 76% 42%, rgba(255, 105, 59, 0.22), transparent 38%),
+    linear-gradient(90deg, rgba(8, 8, 11, 0.88) 0%, rgba(8, 8, 11, 0.58) 44%, rgba(8, 8, 11, 0.04) 100%),
+    linear-gradient(0deg, #09090b 0%, transparent 34%);
+}
+
+.auth-split-visual-content {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  width: 100%;
+  height: 100%;
+  min-height: 100svh;
+  padding: 38px 7% 46px;
+}
+
+.auth-split-brand,
+.auth-split-mobile-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  width: fit-content;
+  color: #fff;
+  font-size: 21px;
+  font-weight: 650;
+  letter-spacing: -0.8px;
+}
+
+.auth-split-brand-mark {
+  display: grid;
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 9px;
+  background: #111114;
+  color: #ff8b62;
+  font-size: 17px;
+}
+
+.auth-split-brand-mark img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.auth-split-brand i {
+  align-self: flex-start;
+  width: 6px;
+  height: 6px;
+  margin-top: 3px;
+  border-radius: 50%;
+  background: var(--auth-accent);
+}
+
+.auth-split-visual-copy {
+  max-width: 700px;
+  margin: auto 0;
+}
+
+.auth-split-eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 24px;
+  color: #b6b6bd;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 2px;
+}
+
+.auth-split-eyebrow span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--auth-accent);
+}
+
+.auth-split-visual-copy h1 {
+  margin: 0 0 26px;
+  color: #fff;
+  font-size: clamp(52px, 5.4vw, 82px);
+  font-weight: 650;
+  letter-spacing: -3.5px;
+  line-height: 1.13;
+}
+
+.auth-split-visual-copy h1 em {
+  color: #ff7646;
+  font-style: normal;
+}
+
+.auth-split-visual-copy > p:last-child {
+  max-width: 520px;
+  margin: 0;
+  color: #d0d0d6;
+  font-size: 15px;
+  line-height: 1.85;
+}
+
+.auth-split-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  color: #aaaab1;
+  font-size: 9px;
+  letter-spacing: 1.5px;
+}
+
+.auth-split-meta span + span::before {
+  margin-right: 12px;
+  color: #62626b;
+  content: '·';
+}
+
+.auth-split-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 100svh;
+  padding: 32px clamp(28px, 5vw, 76px) 26px;
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--auth-panel);
+}
+
+.auth-split-panel-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.auth-split-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #9d9da6;
+  font-size: 11px;
+  transition: color 0.2s ease;
+}
+
+.auth-split-back:hover {
+  color: #fff;
+}
+
+.auth-split-panel-body {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  width: 100%;
+  max-width: 430px;
+  margin: auto;
+  padding: 34px 0;
+}
+
+.auth-split-mobile-brand {
+  display: none;
+  margin-bottom: 30px;
+}
+
+.auth-split-form :deep(.input-label) {
+  margin-bottom: 9px;
+  color: #c4c4cc;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.auth-split-form :deep(.input) {
+  height: 48px;
+  border: 1px solid var(--auth-line);
+  border-radius: 6px;
+  background: #09090b;
+  color: #f5f5f5;
+  font-size: 13px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.auth-split-form :deep(.input::placeholder) {
+  color: #66666f;
+}
+
+.auth-split-form :deep(.input:focus) {
+  border-color: var(--auth-accent);
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(255, 105, 59, 0.12);
+}
+
+.auth-split-form :deep(.input-error) {
+  border-color: #e05244;
+}
+
+.auth-split-form :deep(.btn) {
+  min-height: 48px;
+  border-radius: 5px;
+  font-size: 13px;
+}
+
+.auth-split-form :deep(.btn-primary) {
+  border: 1px solid transparent;
+  background: var(--auth-accent);
+  color: #1b100b;
+  box-shadow: none;
+}
+
+.auth-split-form :deep(.btn-primary:hover) {
+  background: #ff845b;
+}
+
+.auth-split-form :deep(.btn-secondary) {
+  border: 1px solid #343438;
+  background: #141416;
+  color: #f1f1f3;
+}
+
+.auth-split-form :deep(a.text-primary-600),
+.auth-split-form :deep(a.text-primary-400),
+.auth-split-footer :deep(a) {
+  color: #ff8a63;
+}
+
+.auth-split-form :deep(.auth-form-title) {
+  color: #f5f5f5;
+}
+
+.auth-split-form :deep(.auth-form-subtitle) {
+  color: #8f8f98;
+}
+
+.auth-split-footer {
+  margin-top: 26px;
+  color: #8f8f98;
+  font-size: 12px;
+  text-align: center;
+}
+
+.auth-split-copyright {
+  margin: auto 0 0;
+  color: #5e5e67;
+  font-size: 9px;
+  letter-spacing: 0.5px;
+  text-align: center;
+}
+
+@keyframes auth-split-reveal {
+  from {
+    opacity: 0;
+    transform: scale(1.035);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@media (max-width: 980px) {
+  .auth-split-shell {
+    grid-template-columns: minmax(0, 1fr) minmax(390px, 0.9fr);
+  }
+
+  .auth-split-visual-copy h1 {
+    font-size: clamp(42px, 6vw, 62px);
+    letter-spacing: -2.5px;
+  }
+}
+
+@media (max-width: 760px) {
+  .auth-split-shell {
+    display: block;
+    min-height: 100svh;
+  }
+
+  .auth-split-visual {
+    display: none;
+  }
+
+  .auth-split-panel {
+    min-height: 100svh;
+    padding: 24px 24px 22px;
+    border-left: 0;
+  }
+
+  .auth-split-panel-body {
+    max-width: 430px;
+  }
+
+  .auth-split-mobile-brand {
+    display: inline-flex;
+  }
+}
+
+@media (max-width: 420px) {
+  .auth-split-panel {
+    padding-right: 18px;
+    padding-left: 18px;
+  }
 }
 
 @media (max-height: 820px) {

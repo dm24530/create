@@ -1,5 +1,5 @@
 # =============================================================================
-# SuperAI GHCR Image Override
+# Create GHCR Image Override
 # =============================================================================
 # Use this together with docker-compose.local.yml when the image is built by
 # GitHub Actions and pushed to GitHub Container Registry.
@@ -12,5 +12,5 @@
 # =============================================================================
 
 services:
-  sub2api:
-    image: ghcr.io/diminglucky/superai:main
+  create:
+    image: ghcr.io/diminglucky/create:main

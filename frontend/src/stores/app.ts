@@ -7,6 +7,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { Toast, ToastType, PublicSettings } from '@/types'
 import { i18n } from '@/i18n'
+import { DEFAULT_SITE_NAME, normalizeSiteName } from '@/constants/brand'
 import {
   checkUpdates as checkUpdatesAPI,
   type VersionInfo,
@@ -26,7 +27,7 @@ export const useAppStore = defineStore('app', () => {
   // Public settings cache state
   const publicSettingsLoaded = ref<boolean>(false)
   const publicSettingsLoading = ref<boolean>(false)
-  const siteName = ref<string>('Create')
+  const siteName = ref<string>(DEFAULT_SITE_NAME)
   const siteLogo = ref<string>('')
   const siteVersion = ref<string>('')
   const contactInfo = ref<string>('')
@@ -289,13 +290,6 @@ export const useAppStore = defineStore('app', () => {
   /**
    * Apply settings to store state (internal helper to avoid code duplication)
    */
-  function normalizeSiteName(name?: string): string {
-    const trimmed = typeof name === 'string' ? name.trim() : ''
-    if (!trimmed) return 'Create'
-    if (['sub2api', 'sub2 api', 'sub2-api'].includes(trimmed.toLowerCase())) return 'Create'
-    return trimmed
-  }
-
   function applySettings(config: PublicSettings): void {
     if (typeof window !== 'undefined') {
       window.__APP_CONFIG__ = { ...config }

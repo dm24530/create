@@ -82,7 +82,7 @@ function resetMocks() {
   listKeys.mockResolvedValue({
     items: [{ id: 7, name: 'video-key', key: 'sk-video', status: 'active', group_id: 1 }],
   })
-  getPublicSettings.mockResolvedValue({ api_base_url: 'https://api.superai.sbs/v1' })
+  getPublicSettings.mockResolvedValue({ api_base_url: '/v1' })
   copyToClipboard.mockResolvedValue(true)
 }
 

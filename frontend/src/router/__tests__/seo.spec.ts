@@ -19,7 +19,7 @@ describe('resolveRouteSeo', () => {
       meta: {
         requiresAuth: false,
         descriptionKey: 'home.seoDescription',
-        seoKeywords: ['SuperAI', 'GPT', 'OpenAI', 'Claude', 'DeepSeek'],
+        seoKeywords: ['Create', 'GPT', 'OpenAI', 'Claude', 'DeepSeek'],
       },
     }, 'Create - AI 视频与图片生成', 'https://superai.sbs')
 

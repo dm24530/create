@@ -36,7 +36,7 @@ func NewRepository(db *sql.DB) *Repository {
 const subsiteColumns = `id, slug, domain, name, logo_url, theme_color, status, admin_user_id, created_at, updated_at`
 
 // GetSubsiteBySlug resolves a subsite from its slug (for example "draw" for
-// draw.superai.sbs). The slug is normalized before lookup so host-derived
+// draw.example.com). The slug is normalized before lookup so host-derived
 // values are matched case-insensitively.
 func (r *Repository) GetSubsiteBySlug(ctx context.Context, slug string) (*Subsite, error) {
 	normalized := NormalizeSlug(slug)

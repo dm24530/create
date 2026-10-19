@@ -6507,7 +6507,7 @@
                     v-model="form.site_name"
                     type="text"
                     class="input"
-                    :placeholder="t('admin.settings.site.siteNamePlaceholder')"
+                    :placeholder="DEFAULT_SITE_NAME"
                   />
                   <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
                     {{ t("admin.settings.site.siteNameHint") }}
@@ -8056,7 +8056,7 @@
                       v-model="form.payment_product_name_prefix"
                       type="text"
                       class="input"
-                      placeholder="Sub2API"
+                      :placeholder="DEFAULT_SITE_NAME"
                     />
                   </div>
                   <div>
@@ -8078,7 +8078,7 @@
                       class="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-600 dark:border-dark-600 dark:bg-dark-800 dark:text-gray-300"
                     >
                       {{
-                        (form.payment_product_name_prefix || "Sub2API") +
+                        (form.payment_product_name_prefix || DEFAULT_SITE_NAME) +
                         " 100 " +
                         (form.payment_product_name_suffix || "CNY")
                       }}
@@ -9145,6 +9145,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, watch } from "vue";
 import { listPlatformIds } from "@/constants/platformCatalog";
+import { DEFAULT_SITE_NAME, normalizeSiteName } from "@/constants/brand";
 import { useI18n } from "vue-i18n";
 import { adminAPI } from "@/api";
 import {
@@ -9248,14 +9249,14 @@ function localText(zh: string, en: string): string {
 
 const paymentGuideHref = computed(() =>
   locale.value.startsWith("zh")
-    ? "https://github.com/Wei-Shaw/sub2api/blob/main/docs/PAYMENT_CN.md"
-    : "https://github.com/Wei-Shaw/sub2api/blob/main/docs/PAYMENT.md",
+    ? "https://github.com/diminglucky/create/blob/main/docs/PAYMENT_CN.md"
+    : "https://github.com/diminglucky/create/blob/main/docs/PAYMENT.md",
 );
 
 const paymentMethodsHref = computed(() =>
   locale.value.startsWith("zh")
-    ? "https://github.com/Wei-Shaw/sub2api/blob/main/docs/PAYMENT_CN.md#支持的支付方式"
-    : "https://github.com/Wei-Shaw/sub2api/blob/main/docs/PAYMENT.md#supported-payment-methods",
+    ? "https://github.com/diminglucky/create/blob/main/docs/PAYMENT_CN.md#支持的支付方式"
+    : "https://github.com/diminglucky/create/blob/main/docs/PAYMENT.md#supported-payment-methods",
 );
 
 type SettingsTab =
@@ -10000,7 +10001,7 @@ const form = reactive<SettingsForm>({
   default_subscriptions: [],
   force_email_on_third_party_signup: false,
   default_user_rpm_limit: 0,
-  site_name: "Create",
+  site_name: DEFAULT_SITE_NAME,
   site_logo: "",
   site_subtitle: "AI 视频与图片生成平台",
   api_base_url: "",
@@ -11320,6 +11321,7 @@ async function loadSettings() {
         (form as Record<string, unknown>)[key] = value;
       }
     }
+    form.site_name = normalizeSiteName(settings.site_name);
     form.payment_recharge_card_products = Array.isArray(
       settings.payment_recharge_card_products,
     )

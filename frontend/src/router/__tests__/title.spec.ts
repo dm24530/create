@@ -44,8 +44,8 @@ describe('resolveRouteDocumentTitle', () => {
       }
     }
 
-    expect(resolveRouteDocumentTitle(route, 'SuperAI')).toBe('Custom Page - SuperAI')
-    expect(resolveRouteDocumentTitle(route, 'SuperAI', [
+    expect(resolveRouteDocumentTitle(route, 'Create')).toBe('Custom Page - Create')
+    expect(resolveRouteDocumentTitle(route, 'Create', [
       {
         id: 'scheduler',
         label: '账号调度器',
@@ -54,7 +54,7 @@ describe('resolveRouteDocumentTitle', () => {
         visibility: 'admin',
         sort_order: 0
       }
-    ])).toBe('账号调度器 - SuperAI')
+    ])).toBe('账号调度器 - Create')
   })
 })
 

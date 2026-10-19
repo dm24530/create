@@ -1,7 +1,7 @@
 # Create 部署说明
 
 `create` 是独立项目（仓库：`diminglucky/create`），有自己的镜像 `ghcr.io/diminglucky/create`
-和独立的数据库。**不要和 API 站（sub2api / superai）共用同一个数据库**：两者的迁移集不同，
+和独立的数据库。**不要和同机上的其他 API 部署共用同一个数据库**：两者的迁移集不同，
 虽然迁移按文件名记账、互不冲突，但混在一起会让回滚和备份变得很麻烦。
 
 服务组成：`create`（应用）+ `postgres` + `redis`，编排见 `docker-compose.create.yml`。
@@ -141,7 +141,7 @@ docker compose -f docker-compose.create.yml up -d create
 
 ## 六、和已有的 API 站同机部署
 
-服务器上已经跑着 API 站（sub2api / superai）时，按下面这几条隔离，两套互不干扰。
+服务器上已经跑着其他 API 部署时，按下面这几条隔离，两套互不干扰。
 
 **1. 独立目录、独立 .env**
 
@@ -183,7 +183,7 @@ BIND_HOST=127.0.0.1     # 只让反代访问，不对公网直接开端口
 
 **4. 反向代理加一个站点**
 
-给 create 准备一个域名（例如 `create.superai.sbs` 或独立域名），反代到
+给 create 准备一个域名（例如 `create.example.com` 或独立域名），反代到
 `127.0.0.1:9898`，并透传 `X-Forwarded-Proto`（HTTPS 时填 `https`）。页面的 canonical、
 `sitemap.xml`、`robots.txt` 都会按请求域名自动生成，不需要改代码或配置。Cloudflare
 那边记得加对应的 DNS 记录，并确认回源端口和缓存规则不会拦到 `/api/`。

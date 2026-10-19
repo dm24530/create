@@ -1,6 +1,6 @@
 // Package downstream implements the downstream subsite foundation for Sub2API.
 //
-// A subsite is a branded downstream site (for example draw.superai.sbs) that
+// A subsite is a branded downstream site (for example draw.example.com) that
 // shares the main site's users, balance, payment orders, API keys, models and
 // gateway. The main site remains the single control plane. Every
 // subsite-scoped row carries a subsite_id; a NULL subsite_id means main-site
@@ -48,7 +48,7 @@ const (
 )
 
 // Subsite is a downstream tenant serving a branded site on
-// "<slug>.superai.sbs". The V1 pilot tenant is draw.superai.sbs.
+// "<slug>.<configured-base-domain>".
 type Subsite struct {
 	ID          int64
 	Slug        string

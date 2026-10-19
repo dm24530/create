@@ -5,6 +5,82 @@ export default {
   },
   // Home Page
   home: {
+    landing: {
+      nav: {
+        image: '图片生成',
+        video: '视频生成',
+        inspiration: '视频灵感',
+        works: '作品库',
+        models: '模型',
+        docs: '使用指南'
+      },
+      workspace: '进入工作台',
+      eyebrow: '属于你的 AI 创作场',
+      titleTop: '让灵感，',
+      titleAccent: '成图，也成片。',
+      description: '从脑海中的一瞬，到眼前的惊艳。用 AI 生成图片与视频，让想象自由发生。',
+      startImage: '开始生图',
+      createVideo: '创作视频',
+      explore: '探索无限可能',
+      galleryTitle: '想象，不止于想象。',
+      galleryLink: '进入图片工作台',
+      gallery: {
+        items: {
+          flower: '微观花园',
+          desert: '公路尽头',
+          nature: '深海来客',
+          architecture: '几何边界',
+          rings: '星环之下'
+        }
+      },
+      filmTitle: '不止一帧。',
+      filmAccent: '让故事发生。',
+      filmDescription: '写下场景、动作与运镜，或带上一张参考图。用 Seedance 和 Grok 把静态画面变成有时间、节奏和声音的短片。',
+      filmPoints: {
+        text: '文字生成视频',
+        frame: '首尾帧衔接',
+        multimodal: '多模态参考'
+      },
+      filmCta: '进入视频工作台',
+      notebookTitle: '好镜头，从一个好灵感开始。',
+      notebookLink: '全部灵感模板',
+      notebookDescription: '从场景、镜头和节奏开始，挑选一个模板，再把它改成你自己的故事。',
+      notebook: {
+        items: {
+          product: {
+            title: '光影里的产品镜头',
+            meta: '产品广告 / 分镜模板'
+          },
+          landscape: {
+            title: '穿行荒原的公路',
+            meta: '电影感 / 运镜模板'
+          },
+          botanical: {
+            title: '花瓣与微距呼吸',
+            meta: '自然 / 细节模板'
+          }
+        }
+      },
+      principlesTitle: '从一张图，到一段完整叙事。',
+      principles: {
+        one: {
+          title: '图片与视频共用作品库',
+          description: '生成结果自动进入统一作品库，临时内容保留七日，重要作品可以长期保存。'
+        },
+        two: {
+          title: '调度与计费在同一条链路',
+          description: '账号池自动切换，按实际用量计费，图片、视频和文本使用同一套额度体系。'
+        },
+        three: {
+          title: '兼容你的创作工具',
+          description: '浏览器工作台和 OpenAI、Anthropic、Gemini、Seedance 协议共用同一组 API Key。'
+        }
+      },
+      ctaTitle: '把下一个想法，变成作品。',
+      ctaDescription: '登录后即可进入图片与视频工作台，使用平台额度或你自己的上游密钥开始创作。',
+      ctaButton: '免费开始创作',
+      goWorkspace: '进入工作台'
+    },
     publicModels: {
       eyebrow: '公开模型',
       title: '可用模型与价格',
@@ -200,8 +276,8 @@ export default {
 
   // Setup Wizard
   setup: {
-    title: 'Sub2API 安装向导',
-    description: '配置您的 Sub2API 实例',
+    title: '{siteName} 安装向导',
+    description: '配置您的 {siteName} 实例',
     database: {
       title: '数据库配置',
       description: '连接到您的 PostgreSQL 数据库',

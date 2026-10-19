@@ -73,7 +73,7 @@ func SetupRouter(
 	}))
 	r.Use(middleware2.RegionBlock(cfg.RegionBlockSettings))
 	r.Use(middleware2.ServerTiming(cfg.Server.EnableServerTiming))
-	r.Use(middleware2.DownstreamSubsite(downstreamRepo, "superai.sbs"))
+	r.Use(middleware2.DownstreamSubsite(downstreamRepo, cfg.Server.DownstreamBaseDomain))
 
 	// Serve embedded frontend with settings injection if available
 	if web.HasEmbeddedFrontend() {

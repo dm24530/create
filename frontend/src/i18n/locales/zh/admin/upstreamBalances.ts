@@ -34,7 +34,7 @@ export default {
     stepfun: '阶跃星辰',
     siliconflow: 'SiliconFlow',
     newapi: 'New API',
-    sub2api: 'Sub2API',
+    sub2api: 'Create',
     custom: '同源自定义接口',
     walletAuth: '钱包账号认证',
     authMode: '认证方式',

@@ -9,7 +9,7 @@
  *
  * Required environment variables (Worker -> Settings -> Variables and Secrets):
  *   R2_ENDPOINT           https://<account_id>.r2.cloudflarestorage.com
- *   R2_BUCKET             superai
+ *   R2_BUCKET             create
  *   R2_ACCESS_KEY_ID      R2 API token access key id (Object Read on the bucket)
  *   R2_SECRET_ACCESS_KEY  R2 API token secret (mark as "Secret")
  *

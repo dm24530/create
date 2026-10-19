@@ -13,7 +13,7 @@
 |---|---|---|
 | Linux 服务器 | 1 核 2G 起，建议 2 核 4G 以上 | 不行 |
 | Docker + Compose | 第 2 步装 | 不行 |
-| 域名 | 例如 `create.superai.sbs` | 可以先不配，用 `IP:9898` 访问，之后再补 |
+| 域名 | 例如 `create.example.com` | 可以先不配，用 `IP:9898` 访问，之后再补 |
 | GitHub PAT | 服务器直接从 GHCR 拉镜像时需要 | 用"本地打包"方式就不需要 |
 
 ---
@@ -124,7 +124,7 @@ ls -l docker-compose.create.yml
 本地 Windows 上，把仓库里的 `deploy/docker-compose.create.yml` 传上去：
 
 ```powershell
-scp C:\项目\code\sub2api\deploy\docker-compose.create.yml root@你的服务器IP:/opt/create/
+scp C:\项目\code\create\deploy\docker-compose.create.yml root@你的服务器IP:/opt/create/
 ```
 
 成功：服务器上 `ls -l /opt/create/docker-compose.create.yml` 能看到文件。

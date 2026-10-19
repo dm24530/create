@@ -26,7 +26,7 @@ type DownstreamSubsiteResolver interface {
 // that are not scoped to a subsite (apex domain, unrelated hosts, empty
 // configuration) pass through untouched.
 //
-// The V1 pilot subsite is draw.superai.sbs.
+// The base domain is deployment-specific and must be configured explicitly.
 func DownstreamSubsite(resolver DownstreamSubsiteResolver, baseDomain string) gin.HandlerFunc {
 	base := normalizeDownstreamBaseDomain(baseDomain)
 	if resolver == nil || base == "" {
@@ -79,7 +79,7 @@ func downstreamSlugForRequest(req *http.Request, baseDomain string) (string, boo
 		return "", false
 	}
 
-	// V1 only serves direct subdomains: draw.superai.sbs -> draw.
+	// Serve direct subdomains only: draw.example.com -> draw.
 	label := strings.TrimSuffix(host, suffix)
 	if label == "" || strings.Contains(label, ".") || label == "www" {
 		return "", false

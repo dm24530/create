@@ -696,17 +696,18 @@ type PricingConfig struct {
 type ServerConfig struct {
 	Host                     string    `mapstructure:"host"`
 	Port                     int       `mapstructure:"port"`
-	Mode                     string    `mapstructure:"mode"`                  // debug/release
-	EnableServerTiming       bool      `mapstructure:"enable_server_timing"`  // Admin UI Server-Timing response header
-	FrontendURL              string    `mapstructure:"frontend_url"`          // 前端基础 URL，用于生成邮件中的外部链接
-	APIOnlyHosts             []string  `mapstructure:"api_only_hosts"`        // 只允许 AI 网关传输端点的域名
-	ReadHeaderTimeout        int       `mapstructure:"read_header_timeout"`   // 读取请求头超时（秒）
-	MaxHeaderBytes           int       `mapstructure:"max_header_bytes"`      // 请求头最大字节数（HTTP/2 映射为 header-list 上限）
-	IdleTimeout              int       `mapstructure:"idle_timeout"`          // 空闲连接超时（秒）
-	TrustedProxies           []string  `mapstructure:"trusted_proxies"`       // 可信代理列表（CIDR/IP）
-	TrustedProxiesConfigured bool      `mapstructure:"-" json:"-" yaml:"-"`   // 是否显式配置了可信代理列表
-	MaxRequestBodySize       int64     `mapstructure:"max_request_body_size"` // 全局最大请求体限制
-	H2C                      H2CConfig `mapstructure:"h2c"`                   // HTTP/2 Cleartext 配置
+	Mode                     string    `mapstructure:"mode"`                   // debug/release
+	EnableServerTiming       bool      `mapstructure:"enable_server_timing"`   // Admin UI Server-Timing response header
+	FrontendURL              string    `mapstructure:"frontend_url"`           // 前端基础 URL，用于生成邮件中的外部链接
+	DownstreamBaseDomain     string    `mapstructure:"downstream_base_domain"` // 下游子站的基域；留空时禁用 Host 子站解析
+	APIOnlyHosts             []string  `mapstructure:"api_only_hosts"`         // 只允许 AI 网关传输端点的域名
+	ReadHeaderTimeout        int       `mapstructure:"read_header_timeout"`    // 读取请求头超时（秒）
+	MaxHeaderBytes           int       `mapstructure:"max_header_bytes"`       // 请求头最大字节数（HTTP/2 映射为 header-list 上限）
+	IdleTimeout              int       `mapstructure:"idle_timeout"`           // 空闲连接超时（秒）
+	TrustedProxies           []string  `mapstructure:"trusted_proxies"`        // 可信代理列表（CIDR/IP）
+	TrustedProxiesConfigured bool      `mapstructure:"-" json:"-" yaml:"-"`    // 是否显式配置了可信代理列表
+	MaxRequestBodySize       int64     `mapstructure:"max_request_body_size"`  // 全局最大请求体限制
+	H2C                      H2CConfig `mapstructure:"h2c"`                    // HTTP/2 Cleartext 配置
 }
 
 // H2CConfig HTTP/2 Cleartext 配置
@@ -2112,6 +2113,7 @@ func setDefaults() {
 	viper.SetDefault("server.mode", "release")
 	viper.SetDefault("server.enable_server_timing", false)
 	viper.SetDefault("server.frontend_url", "")
+	viper.SetDefault("server.downstream_base_domain", "")
 	viper.SetDefault("server.api_only_hosts", []string{})
 	viper.SetDefault("server.read_header_timeout", 10) // 10秒读取请求头
 	viper.SetDefault("server.max_header_bytes", 64*1024)
@@ -2182,9 +2184,9 @@ func setDefaults() {
 	viper.SetDefault("security.response_headers.force_remove", []string{})
 	viper.SetDefault("security.csp.enabled", true)
 	viper.SetDefault("security.csp.policy", DefaultCSPPolicy)
-	viper.SetDefault("security.region_block.enabled", true)
-	viper.SetDefault("security.region_block.hosts", []string{"superai.sbs"})
-	viper.SetDefault("security.region_block.blocked_countries", []string{"CN", "HK", "MO", "TW"})
+	viper.SetDefault("security.region_block.enabled", false)
+	viper.SetDefault("security.region_block.hosts", []string{})
+	viper.SetDefault("security.region_block.blocked_countries", []string{})
 	viper.SetDefault("security.region_block.header_names", []string{
 		"CF-IPCountry",
 		"CloudFront-Viewer-Country",

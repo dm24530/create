@@ -21,7 +21,7 @@
 # =============================================================================
 
 services:
-  sub2api:
+  create:
     environment:
       - DATABASE_HOST=${DATABASE_HOST:?DATABASE_HOST is required}
       - DATABASE_PORT=${DATABASE_PORT:-5432}

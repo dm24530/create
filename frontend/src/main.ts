@@ -1,5 +1,6 @@
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
+import { DEFAULT_SITE_NAME } from '@/constants/brand'
 import App from './App.vue'
 import router from './router'
 import i18n, { initI18n } from './i18n'
@@ -45,7 +46,7 @@ async function bootstrap() {
   appStore.initFromInjectedConfig()
 
   // Set document title immediately after config is loaded
-  if (appStore.siteName && appStore.siteName !== 'Create') {
+  if (appStore.siteName && appStore.siteName !== DEFAULT_SITE_NAME) {
     document.title = `${appStore.siteName} - AI 视频与图片生成`
   }
   updateFavicon(appStore.siteLogo)

@@ -10,8 +10,8 @@
         >
           <Icon name="cog" size="xl" class="text-white" />
         </div>
-        <h1 class="text-3xl font-bold text-gray-900 dark:text-white">{{ t('setup.title') }}</h1>
-        <p class="mt-2 text-gray-500 dark:text-dark-400">{{ t('setup.description') }}</p>
+        <h1 class="text-3xl font-bold text-gray-900 dark:text-white">{{ t('setup.title', { siteName }) }}</h1>
+        <p class="mt-2 text-gray-500 dark:text-dark-400">{{ t('setup.description', { siteName }) }}</p>
       </div>
 
       <!-- Progress Steps -->
@@ -131,7 +131,7 @@
                 v-model="formData.database.dbname"
                 type="text"
                 class="input"
-                placeholder="sub2api"
+                placeholder="create"
               />
             </div>
             <div>
@@ -506,8 +506,11 @@ import { buildGatewayUrl } from '@/api/client'
 import Select from '@/components/common/Select.vue'
 import Toggle from '@/components/common/Toggle.vue'
 import Icon from '@/components/icons/Icon.vue'
+import { useAppStore } from '@/stores/app'
 
 const { t } = useI18n()
+const appStore = useAppStore()
+const siteName = computed(() => appStore.siteName)
 
 const steps = computed(() => [
   { id: 'database', title: t('setup.database.title') },
@@ -545,7 +548,7 @@ const formData = reactive<InstallRequest>({
     port: 5432,
     user: 'postgres',
     password: '',
-    dbname: 'sub2api',
+    dbname: 'create',
     sslmode: 'disable'
   },
   redis: {

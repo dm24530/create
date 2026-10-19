@@ -1,7 +1,7 @@
 # =============================================================================
-# Sub2API Docker Compose - Standalone Configuration
+# Create Docker Compose - Standalone Configuration
 # =============================================================================
-# This configuration runs only the Sub2API application.
+# This configuration runs only the Create application.
 # PostgreSQL and Redis must be provided externally.
 #
 # Usage:
@@ -11,9 +11,9 @@
 # =============================================================================
 
 services:
-  sub2api:
-    image: weishaw/sub2api:latest
-    container_name: sub2api
+  create:
+    image: ghcr.io/diminglucky/create:main
+    container_name: create
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
@@ -24,7 +24,7 @@ services:
     ports:
       - "${BIND_HOST:-0.0.0.0}:${SERVER_PORT:-8080}:8080"
     volumes:
-      - sub2api_data:/app/data
+      - create_data:/app/data
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
@@ -50,9 +50,9 @@ services:
       # =======================================================================
       - DATABASE_HOST=${DATABASE_HOST:?DATABASE_HOST is required}
       - DATABASE_PORT=${DATABASE_PORT:-5432}
-      - DATABASE_USER=${DATABASE_USER:-sub2api}
+      - DATABASE_USER=${DATABASE_USER:-create}
       - DATABASE_PASSWORD=${DATABASE_PASSWORD:?DATABASE_PASSWORD is required}
-      - DATABASE_DBNAME=${DATABASE_DBNAME:-sub2api}
+      - DATABASE_DBNAME=${DATABASE_DBNAME:-create}
       - DATABASE_SSLMODE=${DATABASE_SSLMODE:-disable}
       - DATABASE_MAX_OPEN_CONNS=${DATABASE_MAX_OPEN_CONNS:-50}
       - DATABASE_MAX_IDLE_CONNS=${DATABASE_MAX_IDLE_CONNS:-10}
@@ -111,7 +111,7 @@ services:
       # Gateway Upstream, Scheduling & Image Configuration
       # =======================================================================
       # Gateway values come from Compose .env or the shell.
-      # Fallbacks mirror Sub2API backend defaults so omitted values preserve behavior.
+      # Fallbacks mirror Create backend defaults so omitted values preserve behavior.
       - GATEWAY_FORCE_CODEX_CLI=${GATEWAY_FORCE_CODEX_CLI:-false}
       - GATEWAY_OPENAI_COMPACT_MODEL=${GATEWAY_OPENAI_COMPACT_MODEL:-gpt-5.5}
       - SUB2API_IMAGES_MAIN_MODEL=${SUB2API_IMAGES_MAIN_MODEL:-gpt-5.6-luna}
@@ -160,5 +160,5 @@ services:
       start_period: 30s
 
 volumes:
-  sub2api_data:
+  create_data:
     driver: local

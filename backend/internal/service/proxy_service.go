@@ -3,6 +3,8 @@ package service
 import (
 	"context"
 	"fmt"
+	"net"
+	"strconv"
 	"time"
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
@@ -175,18 +177,20 @@ func (s *ProxyService) Delete(ctx context.Context, id int64) error {
 	return nil
 }
 
-// TestConnection 测试代理连接（需要实现具体测试逻辑）
+// TestConnection verifies that the proxy host accepts TCP connections.
+// Full HTTP/exit-IP validation is handled by AdminService.TestProxy.
 func (s *ProxyService) TestConnection(ctx context.Context, id int64) error {
 	proxy, err := s.proxyRepo.GetByID(ctx, id)
 	if err != nil {
 		return fmt.Errorf("get proxy: %w", err)
 	}
 
-	// TODO: 实现代理连接测试逻辑
-	// 可以尝试通过代理发送测试请求
-	_ = proxy
-
-	return nil
+	dialer := net.Dialer{Timeout: 10 * time.Second}
+	conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(proxy.Host, strconv.Itoa(proxy.Port)))
+	if err != nil {
+		return fmt.Errorf("proxy connection failed: %w", err)
+	}
+	return conn.Close()
 }
 
 // GetURL 获取代理URL

@@ -21,7 +21,7 @@
 #   SERVER_PORT=9898            # 对外端口；容器内也监听同一个端口
 #
 # 这是独立平台：目录、.env、容器名、网络、数据目录、PostgreSQL、Redis、端口
-# 全部自成一套，不和 API 站（sub2api / superai）共用任何东西。
+# 全部自成一套，不和同机上的其他 API 部署共用任何东西。
 #   * 放到独立目录（如 /opt/create），用自己的 .env。
 #   * 默认用 9898，不会和 API 站常用的 8080 冲突；走反向代理时把 BIND_HOST 设成 127.0.0.1。
 #   * 下面的 Postgres 参数默认值是按"同机还有一套库"估的小值，内存紧张可以再调小。
@@ -55,6 +55,7 @@ services:
       - SERVER_HOST=0.0.0.0
       - SERVER_PORT=9898
       - SERVER_MODE=release
+      - DOWNSTREAM_BASE_DOMAIN=${DOWNSTREAM_BASE_DOMAIN:-}
       - TZ=${TZ:-Asia/Shanghai}
       - DATABASE_HOST=postgres
       - DATABASE_PORT=5432
