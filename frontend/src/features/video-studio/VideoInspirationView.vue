@@ -4,7 +4,7 @@
       <header class="inspiration__header">
         <div>
           <h1>视频灵感库</h1>
-          <p>左边看作片效果，右边是完整提示词，一键复制或直接带入工作台。</p>
+          <p>像刷灵感一样浏览画面，点开查看大图与完整提示词，一键复制或直接带入工作台。</p>
         </div>
         <div class="inspiration__header-actions">
           <div class="segmented" role="tablist" aria-label="灵感来源">
@@ -12,12 +12,12 @@
               type="button"
               role="tab"
               class="segmented__item"
-              :class="{ 'segmented__item--active': source === 'curated' }"
-              :aria-selected="source === 'curated'"
-              data-testid="inspiration-source-curated"
-              @click="switchSource('curated')"
+              :class="{ 'segmented__item--active': source === 'library' }"
+              :aria-selected="source === 'library'"
+              data-testid="inspiration-source-library"
+              @click="switchSource('library')"
             >
-              镜头模板
+              作品库
             </button>
             <button
               type="button"
@@ -30,17 +30,17 @@
             >
               在线灵感
             </button>
-              <button
-                type="button"
-                role="tab"
-                class="segmented__item"
-                :class="{ 'segmented__item--active': source === 'library' }"
-                :aria-selected="source === 'library'"
-                data-testid="inspiration-source-library"
-                @click="switchSource('library')"
-              >
-                作品库
-              </button>
+            <button
+              type="button"
+              role="tab"
+              class="segmented__item"
+              :class="{ 'segmented__item--active': source === 'curated' }"
+              :aria-selected="source === 'curated'"
+              data-testid="inspiration-source-curated"
+              @click="switchSource('curated')"
+            >
+              镜头模板
+            </button>
           </div>
           <RouterLink class="toolbar-link" to="/video-studio">
             <Icon name="play" size="sm" />
@@ -74,44 +74,21 @@
         </div>
 
         <div class="inspiration__grid">
-          <article
+          <VideoInspirationTile
             v-for="template in filteredTemplates"
             :key="template.slug"
-            class="template-card"
-            :data-testid="`template-${template.slug}`"
-          >
-            <button type="button" class="template-card__poster" @click="openTemplate(template)">
-              <span class="template-card__frame" :style="posterStyle(template)">
-                <img
-                  v-if="templatePoster(template)"
-                  :src="templatePoster(template)"
-                  alt=""
-                  loading="lazy"
-                  class="template-card__poster-image"
-                  @error="markPosterFailed(template.slug)"
-                />
-                <!-- 内置模板只有分镜图、没有可播放的视频，这里不能放播放键。 -->
-                <span v-if="template.storyboard" class="template-card__badge">分镜预览</span>
-              </span>
-              <span class="template-card__spec">{{ template.durationSeconds }}s · {{ template.aspectRatio }}</span>
-            </button>
-            <div class="template-card__body">
-              <p class="template-card__category">{{ template.category }}</p>
-              <h2 class="template-card__title">{{ template.title }}</h2>
-              <p class="template-card__summary">{{ template.summary }}</p>
-              <p class="template-card__prompt">{{ template.prompt }}</p>
-            </div>
-            <div class="template-card__actions">
-              <button type="button" class="primary-button" @click="useTemplate(template)">
-                <Icon name="sparkles" size="sm" />
-                <span>带入工作台</span>
-              </button>
-              <button type="button" class="secondary-button" @click="copyPrompt(template.prompt)">
-                <Icon name="copy" size="sm" />
-                <span>复制提示词</span>
-              </button>
-            </div>
-          </article>
+            :test-id="`template-${template.slug}`"
+            :image-url="templatePoster(template)"
+            :media-style="posterStyle(template)"
+            :title="template.title"
+            :eyebrow="template.category"
+            :summary="template.summary"
+            :spec="`${template.durationSeconds}s · ${template.aspectRatio}`"
+            :badge="template.storyboard ? '分镜预览' : ''"
+            :action-label="`查看「${template.title}」的大图与提示词`"
+            @open="openTemplate(template)"
+            @image-error="markPosterFailed(template.slug)"
+          />
         </div>
       </template>
 
@@ -191,45 +168,21 @@
         </div>
 
         <div v-else class="inspiration__grid">
-          <article
+          <VideoInspirationTile
             v-for="item in onlineItems"
             :key="item.id"
-            class="template-card"
-            :data-testid="`online-${item.id}`"
-          >
-            <button type="button" class="template-card__poster" @click="openOnline(item)">
-              <span class="template-card__frame" :style="onlineFrameStyle(item)">
-                <img
-                  v-if="item.posterUrl"
-                  :src="item.posterUrl"
-                  alt=""
-                  loading="lazy"
-                  class="template-card__poster-image"
-                />
-                <span class="template-card__play">
-                  <Icon :name="item.mediaType === 'video' ? 'play' : 'grid'" size="md" />
-                </span>
-              </span>
-              <span class="template-card__spec">
-                {{ item.mediaType === 'video' ? '视频' : '图片' }} · {{ item.width }}×{{ item.height }}
-              </span>
-            </button>
-            <div class="template-card__body">
-              <p class="template-card__category">{{ item.model || '未知模型' }}</p>
-              <p class="template-card__prompt template-card__prompt--clamp">{{ item.prompt }}</p>
-              <p class="template-card__summary">@{{ item.author || '匿名' }} · {{ item.likes }} 赞</p>
-            </div>
-            <div class="template-card__actions">
-              <button type="button" class="primary-button" @click="useOnline(item)">
-                <Icon name="sparkles" size="sm" />
-                <span>带入工作台</span>
-              </button>
-              <button type="button" class="secondary-button" @click="copyPrompt(item.prompt)">
-                <Icon name="copy" size="sm" />
-                <span>复制提示词</span>
-              </button>
-            </div>
-          </article>
+            :test-id="`online-${item.id}`"
+            :image-url="item.posterUrl"
+            :media-style="onlineFrameStyle(item)"
+            :title="item.prompt"
+            :eyebrow="item.model || '未知模型'"
+            :summary="`@${item.author || '匿名'} · ${item.likes} 赞`"
+            :spec="`${item.mediaType === 'video' ? '视频' : '图片'} · ${item.width}×${item.height}`"
+            :badge="item.mediaType === 'video' ? '视频灵感' : '图片灵感'"
+            :type-icon="item.mediaType === 'video' ? 'play' : 'grid'"
+            :action-label="`查看在线${item.mediaType === 'video' ? '视频' : '图片'}灵感与提示词`"
+            @open="openOnline(item)"
+          />
         </div>
       </template>
 
@@ -300,6 +253,14 @@
           </div>
         </div>
 
+        <div v-if="onlineFallbackNotice" class="online-fallback" data-testid="online-fallback">
+          <Icon name="exclamationCircle" size="sm" />
+          <span>{{ onlineFallbackNotice }}</span>
+          <button type="button" class="online-fallback__close" aria-label="关闭提示" @click="onlineFallbackNotice = ''">
+            <Icon name="x" size="xs" />
+          </button>
+        </div>
+
         <div v-if="libraryError" class="online-error" data-testid="library-error">
           <Icon name="exclamationCircle" size="sm" />
           <span>{{ libraryError }}</span>
@@ -316,46 +277,21 @@
 
         <template v-else>
           <div class="inspiration__grid">
-            <article
+            <VideoInspirationTile
               v-for="item in libraryItems"
               :key="item.id"
-              class="template-card"
-              :data-testid="`library-${item.id}`"
-            >
-              <button type="button" class="template-card__poster" @click="openLibraryItem(item)">
-                <span class="template-card__frame" :style="libraryFrameStyle(item)">
-                  <img
-                    v-if="item.cover_url"
-                    :src="item.cover_url"
-                    alt=""
-                    loading="lazy"
-                    class="template-card__poster-image"
-                    @error="markLibraryCoverFailed(item.id)"
-                  />
-                  <!-- 作品库条目是提示词样本，没有可播放的成片，只标"分镜"或类型。 -->
-                  <span v-if="libraryCoverUrl(item)" class="template-card__badge">分镜预览</span>
-                </span>
-                <span class="template-card__spec">{{ librarySpec(item) }}</span>
-              </button>
-              <div class="template-card__body">
-                <p class="template-card__category">{{ item.model || item.category || '作品' }}</p>
-                <h2 class="template-card__title">{{ item.title }}</h2>
-                <p class="template-card__prompt">{{ item.prompt }}</p>
-                <p v-if="item.author" class="template-card__summary">
-                  @{{ item.author_handle || item.author }} · {{ item.likes }} 赞
-                </p>
-              </div>
-              <div class="template-card__actions">
-                <button type="button" class="primary-button" @click="useLibraryItem(item)">
-                  <Icon name="sparkles" size="sm" />
-                  <span>带入工作台</span>
-                </button>
-                <button type="button" class="secondary-button" @click="copyPrompt(item.prompt)">
-                  <Icon name="copy" size="sm" />
-                  <span>复制提示词</span>
-                </button>
-              </div>
-            </article>
+              :test-id="`library-${item.id}`"
+              :image-url="libraryCoverUrl(item)"
+              :media-style="libraryFrameStyle(item)"
+              :title="item.title"
+              :eyebrow="item.model || item.category || '作品'"
+              :summary="item.author ? `@${item.author_handle || item.author} · ${item.likes} 赞` : item.category"
+              :spec="librarySpec(item)"
+              :badge="libraryCoverUrl(item) ? '分镜预览' : ''"
+              :action-label="`查看「${item.title}」的大图与提示词`"
+              @open="openLibraryItem(item)"
+              @image-error="markLibraryCoverFailed(item.id)"
+            />
           </div>
 
           <div v-if="libraryHasMore" class="library-more">
@@ -377,7 +313,7 @@
     <BaseDialog
       :show="!!active"
       :title="active?.title || '镜头模板'"
-      width="extra-wide"
+      width="full"
       :close-on-click-outside="true"
       @close="active = null"
     >
@@ -407,7 +343,7 @@
               alt=""
               class="detail__placeholder-image"
             />
-            <span v-if="active.posterPreviewUrl" class="template-card__badge">分镜预览</span>
+            <span v-if="active.posterPreviewUrl" class="detail__badge">分镜预览</span>
           </span>
         </div>
 
@@ -492,7 +428,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 import AppLayout from '@/components/layout/AppLayout.vue'
@@ -500,6 +436,7 @@ import BaseDialog from '@/components/common/BaseDialog.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { useClipboard } from '@/composables/useClipboard'
 import ImageStudioSelect from '../image-studio/ImageStudioSelect.vue'
+import VideoInspirationTile from './VideoInspirationTile.vue'
 
 import {
   VIDEO_INSPIRATION_TEMPLATES,
@@ -538,7 +475,7 @@ const PENDING_PROMPT_STORAGE_KEY = 'sub2api:video-studio:pending-prompt'
 const router = useRouter()
 const { copyToClipboard } = useClipboard()
 
-const source = ref<'curated' | 'online' | 'library'>('curated')
+const source = ref<'curated' | 'online' | 'library'>('library')
 const activeCategory = ref('')
 const active = ref<ActiveInspiration | null>(null)
 // 分镜图取不到时记下来，退回色板底图，避免一直重试破图。
@@ -547,6 +484,7 @@ const failedPosters = ref<Record<string, boolean>>({})
 const onlineItems = ref<OnlineInspirationItem[]>([])
 const onlineLoading = ref(false)
 const onlineError = ref('')
+const onlineFallbackNotice = ref('')
 const onlineFetchedAt = ref(0)
 let onlineAbort: AbortController | null = null
 
@@ -720,12 +658,13 @@ async function loadOnline(refresh = false) {
   onlineAbort = controller
   onlineLoading.value = true
   onlineError.value = ''
+  onlineFallbackNotice.value = ''
   try {
     const feed = await fetchOnlineInspirationFeed({
       mediaType: onlineQuery.mediaType,
       sort: onlineQuery.sort,
       period: onlineQuery.period,
-      limit: 24,
+      limit: 48,
       refresh,
     })
     if (controller.signal.aborted) return
@@ -749,11 +688,13 @@ async function loadOnline(refresh = false) {
     }
   } catch (error) {
     if (controller.signal.aborted) return
-    // 拉取在服务端进行：失败通常是服务器出网不通（可配 update.proxy_url 代理）。
-    const message = error instanceof Error ? error.message : ''
-    onlineError.value = message
-      ? `拉取在线灵感失败：${message}。如果服务器在国内，请给 update.proxy_url 配一个代理后重试。`
-      : '拉取在线灵感失败：请检查服务器的出网与代理配置。'
+    console.error('Failed to load online inspiration:', error)
+    onlineFallbackNotice.value = '在线社区暂时不可达，已自动切换到作品库，稍后可以再试在线灵感。'
+    onlineError.value = ''
+    source.value = 'library'
+    if (!libraryItems.value.length && !libraryLoading.value) {
+      void loadLibrary()
+    }
   } finally {
     if (!controller.signal.aborted) onlineLoading.value = false
   }
@@ -773,8 +714,15 @@ function switchSource(next: 'curated' | 'online' | 'library') {
 /* ------------------------------ 作品库 ------------------------------ */
 
 function libraryFrameStyle(item: InspirationLibraryItem) {
-  const ratio = item.width > 0 && item.height > 0 ? `${item.width} / ${item.height}` : '16 / 9'
+  const ratio = item.width > 0 && item.height > 0
+    ? `${item.width} / ${item.height}`
+    : normalizeAspectRatio(item.aspect_ratio)
   return { aspectRatio: ratio, background: 'rgb(15 23 42)' }
+}
+
+function normalizeAspectRatio(value: string): string {
+  const match = value.trim().match(/^(\d+(?:\.\d+)?)\s*[:/]\s*(\d+(?:\.\d+)?)$/)
+  return match ? `${match[1]} / ${match[2]}` : '16 / 9'
 }
 
 function librarySpec(item: InspirationLibraryItem): string {
@@ -819,7 +767,7 @@ async function loadLibrary(options: { append?: boolean; refresh?: boolean } = {}
       category: libraryQuery.category,
       keyword: libraryQuery.keyword,
       page,
-      pageSize: 24,
+      pageSize: 60,
       refresh: options.refresh === true,
     })
     libraryItems.value = append ? [...libraryItems.value, ...result.items] : result.items
@@ -874,11 +822,6 @@ function openLibraryItem(item: InspirationLibraryItem) {
   }
 }
 
-function useLibraryItem(item: InspirationLibraryItem) {
-  active.value = null
-  handoffPrompt(item.prompt)
-}
-
 // 在线灵感没有本地参数，只把提示词交给工作台，避免长提示词塞进 URL。
 function handoffPrompt(prompt: string) {
   try {
@@ -892,11 +835,6 @@ function handoffPrompt(prompt: string) {
 function useTemplate(template: VideoInspirationTemplate) {
   active.value = null
   void router.push({ path: '/video-studio', query: { inspiration: template.slug } })
-}
-
-function useOnline(item: OnlineInspirationItem) {
-  active.value = null
-  handoffPrompt(item.prompt)
 }
 
 function useActive() {
@@ -917,6 +855,12 @@ async function copyPrompt(prompt: string) {
 // 离开页面时取消还在飞的请求，避免回来后把旧结果覆盖到新列表上。
 onBeforeUnmount(() => {
   onlineAbort?.abort()
+})
+
+onMounted(() => {
+  if (source.value === 'library' && !libraryItems.value.length && !libraryLoading.value) {
+    void loadLibrary()
+  }
 })
 </script>
 
@@ -975,7 +919,7 @@ onBeforeUnmount(() => {
 
 .segmented__item--active {
   background: rgb(255 255 255);
-  color: rgb(15 118 110);
+  color: rgb(173 74 41);
   box-shadow: 0 1px 2px rgb(15 23 42 / 0.08);
 }
 
@@ -994,8 +938,8 @@ onBeforeUnmount(() => {
 }
 
 .toolbar-link:hover {
-  border-color: rgb(45 212 191);
-  color: rgb(15 118 110);
+  border-color: rgb(232 121 78);
+  color: rgb(173 74 41);
 }
 
 .inspiration__filters {
@@ -1014,14 +958,14 @@ onBeforeUnmount(() => {
 }
 
 .filter-chip:hover {
-  border-color: rgb(45 212 191);
-  color: rgb(15 118 110);
+  border-color: rgb(232 121 78);
+  color: rgb(173 74 41);
 }
 
 .filter-chip--active {
-  border-color: rgb(13 148 136);
-  background: rgb(240 253 250);
-  color: rgb(15 118 110);
+  border-color: rgb(232 121 78);
+  background: rgb(255 244 238);
+  color: rgb(173 74 41);
 }
 
 .online-bar {
@@ -1035,6 +979,7 @@ onBeforeUnmount(() => {
 .online-bar__controls {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 0.5rem;
 }
 
@@ -1057,7 +1002,7 @@ onBeforeUnmount(() => {
 
 .inline-field {
   display: inline-flex;
-  height: 2.2rem;
+  height: 2.35rem;
   align-items: center;
   gap: 0.35rem;
   border: 1px solid rgb(226 232 240);
@@ -1068,10 +1013,34 @@ onBeforeUnmount(() => {
   color: rgb(107 114 128);
 }
 
+.inline-field > span {
+  white-space: nowrap;
+  font-size: 0.75rem;
+}
+
+.inline-field:focus-within {
+  border-color: rgb(232 121 78);
+}
+
+.inline-field :deep(.studio-select__trigger) {
+  height: 2.05rem;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+}
+
+.inline-field :deep(.studio-select__trigger:hover),
+.inline-field :deep(.studio-select--open .studio-select__trigger) {
+  border: 0;
+  box-shadow: none;
+}
+
 .inline-field .text-input {
-  height: 1.9rem;
+  height: 2.05rem;
   min-width: 11rem;
   border: 0;
+  background: transparent;
   padding: 0;
 }
 
@@ -1087,9 +1056,15 @@ onBeforeUnmount(() => {
 }
 
 :global(.dark .inline-field) {
-  border-color: rgb(51 65 85);
-  background: rgb(30 41 59);
-  color: rgb(148 163 184);
+  border-color: rgb(66 61 55);
+  background: rgb(35 33 30);
+  color: rgb(167 159 148);
+}
+
+:global(.dark .inline-field .text-input) {
+  border: 0;
+  background: transparent;
+  color: rgb(242 237 229);
 }
 
 .online-error {
@@ -1102,6 +1077,28 @@ onBeforeUnmount(() => {
   padding: 0.5rem 0.75rem;
   font-size: 0.82rem;
   color: rgb(185 28 28);
+}
+
+.online-fallback {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  border: 1px solid rgb(253 230 138);
+  border-radius: 0.55rem;
+  background: rgb(254 252 232);
+  padding: 0.55rem 0.75rem;
+  font-size: 0.82rem;
+  color: rgb(146 64 14);
+}
+
+.online-fallback__close {
+  margin-left: auto;
+  border-radius: 0.35rem;
+  padding: 0.2rem;
+}
+
+.online-fallback__close:hover {
+  background: rgb(254 240 138 / 0.55);
 }
 
 .online-empty {
@@ -1134,126 +1131,8 @@ onBeforeUnmount(() => {
 }
 
 .inspiration__grid {
-  display: grid;
-  grid-template-columns: repeat(1, minmax(0, 1fr));
-  gap: 1rem;
-}
-
-.template-card {
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  border: 1px solid rgb(226 232 240);
-  border-radius: 0.75rem;
-  background: rgb(255 255 255);
-}
-
-.template-card__poster {
-  position: relative;
-  display: flex;
-  height: 10rem;
-  width: 100%;
-  align-items: center;
-  justify-content: center;
-  background: rgb(15 23 42);
-  padding: 1rem;
-}
-
-.template-card__frame {
-  position: relative;
-  display: flex;
-  height: 100%;
-  max-width: 100%;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-  border-radius: 0.5rem;
-}
-
-.template-card__poster-image {
-  height: 100%;
-  width: 100%;
-  object-fit: cover;
-}
-
-.template-card__play {
-  position: absolute;
-  display: inline-flex;
-  height: 2.5rem;
-  width: 2.5rem;
-  align-items: center;
-  justify-content: center;
-  border-radius: 9999px;
-  background: rgb(255 255 255 / 0.92);
-  color: rgb(15 118 110);
-}
-
-/* 只有分镜图时用它替代播放键：明确告诉用户这是预览图，不是播放器。 */
-.template-card__badge {
-  position: absolute;
-  left: 0.5rem;
-  bottom: 0.5rem;
-  border-radius: 9999px;
-  background: rgb(15 23 42 / 0.72);
-  padding: 0.15rem 0.55rem;
-  font-size: 0.7rem;
-  color: rgb(241 245 249);
-}
-
-.template-card__spec {
-  position: absolute;
-  right: 1.4rem;
-  bottom: 1.4rem;
-  border-radius: 9999px;
-  background: rgb(15 23 42 / 0.72);
-  padding: 0.15rem 0.55rem;
-  font-size: 0.7rem;
-  color: rgb(241 245 249);
-}
-
-.template-card__body {
-  flex: 1;
-  padding: 0.85rem 0.95rem 0.5rem;
-}
-
-.template-card__category {
-  font-size: 0.72rem;
-  color: rgb(13 148 136);
-}
-
-.template-card__title {
-  margin-top: 0.15rem;
-  font-size: 1rem;
-  font-weight: 600;
-  color: rgb(17 24 39);
-}
-
-.template-card__summary {
-  margin-top: 0.2rem;
-  font-size: 0.78rem;
-  color: rgb(107 114 128);
-}
-
-.template-card__prompt {
-  display: -webkit-box;
-  overflow: hidden;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
-  margin-top: 0.5rem;
-  font-size: 0.78rem;
-  line-height: 1.5;
-  color: rgb(100 116 139);
-}
-
-.template-card__prompt--clamp {
-  margin-top: 0.2rem;
-  color: rgb(71 85 105);
-}
-
-.template-card__actions {
-  display: flex;
-  gap: 0.5rem;
-  padding: 0.75rem 0.95rem 0.95rem;
+  column-count: 1;
+  column-gap: 1rem;
 }
 
 .primary-button,
@@ -1269,12 +1148,12 @@ onBeforeUnmount(() => {
 }
 
 .primary-button {
-  background: rgb(13 148 136);
-  color: rgb(255 255 255);
+  background: rgb(232 121 78);
+  color: rgb(28 18 13);
 }
 
 .primary-button:hover {
-  background: rgb(15 118 110);
+  background: rgb(240 152 115);
 }
 
 .primary-button:disabled {
@@ -1288,8 +1167,8 @@ onBeforeUnmount(() => {
 }
 
 .secondary-button:hover {
-  border-color: rgb(45 212 191);
-  color: rgb(15 118 110);
+  border-color: rgb(232 121 78);
+  color: rgb(173 74 41);
 }
 
 .is-spinning {
@@ -1299,22 +1178,27 @@ onBeforeUnmount(() => {
 /* 详情：左边看成片，右边读提示词 —— 与图片工作台的详情弹窗一致。 */
 .detail {
   display: grid;
-  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
-  gap: 1rem;
+  min-height: min(38rem, 68vh);
+  grid-template-columns: minmax(0, 1.48fr) minmax(18rem, 0.72fr);
+  align-items: stretch;
+  gap: 1.25rem;
 }
 
 .detail__media {
+  position: relative;
   display: flex;
+  min-height: 28rem;
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  border-radius: 0.5rem;
-  background: rgb(15 23 42);
+  border-radius: 0.75rem;
+  background: rgb(10 10 10);
 }
 
 .detail__video,
 .detail__image {
-  max-height: 70vh;
+  height: 100%;
+  max-height: 72vh;
   width: 100%;
   object-fit: contain;
   background: rgb(0 0 0);
@@ -1323,7 +1207,8 @@ onBeforeUnmount(() => {
 .detail__placeholder {
   position: relative;
   display: flex;
-  height: 18rem;
+  height: 100%;
+  min-height: 28rem;
   width: 100%;
   align-items: center;
   justify-content: center;
@@ -1339,11 +1224,27 @@ onBeforeUnmount(() => {
   opacity: 0.85;
 }
 
+.detail__badge {
+  position: absolute;
+  bottom: 0.75rem;
+  left: 0.75rem;
+  border-radius: 9999px;
+  background: rgb(12 12 12 / 0.72);
+  padding: 0.2rem 0.6rem;
+  font-size: 0.7rem;
+  color: rgb(245 245 245);
+  backdrop-filter: blur(8px);
+}
+
 .detail__panel {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: 0.4rem;
+  gap: 0.55rem;
+  border: 1px solid rgb(226 232 240);
+  border-radius: 0.75rem;
+  background: rgb(255 255 255);
+  padding: 1rem;
 }
 
 .detail__section-head {
@@ -1351,8 +1252,8 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   gap: 0.5rem;
-  margin-top: 0.4rem;
-  font-size: 0.8rem;
+  margin-top: 0.15rem;
+  font-size: 0.82rem;
   font-weight: 600;
   color: rgb(30 41 59);
 }
@@ -1365,20 +1266,20 @@ onBeforeUnmount(() => {
   padding: 0.15rem 0.4rem;
   font-size: 0.74rem;
   font-weight: 400;
-  color: rgb(13 148 136);
+  color: rgb(173 74 41);
 }
 
 .detail__copy:hover {
-  background: rgb(240 253 250);
+  background: rgb(255 244 238);
 }
 
 .detail__prompt {
   overflow-wrap: anywhere;
-  border-radius: 0.5rem;
-  background: rgb(248 250 252);
-  padding: 0.7rem 0.85rem;
-  font-size: 0.82rem;
-  line-height: 1.65;
+  border-radius: 0.65rem;
+  background: rgb(248 247 244);
+  padding: 0.9rem 1rem;
+  font-size: 0.86rem;
+  line-height: 1.75;
   color: rgb(51 65 85);
   white-space: pre-wrap;
 }
@@ -1437,7 +1338,7 @@ onBeforeUnmount(() => {
 }
 
 .detail__source:hover {
-  color: rgb(15 118 110);
+  color: rgb(173 74 41);
 }
 
 .detail__footer .primary-button,
@@ -1448,59 +1349,78 @@ onBeforeUnmount(() => {
 
 @media (min-width: 640px) {
   .inspiration__grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-count: 2;
   }
 }
 
-@media (min-width: 1280px) {
+@media (min-width: 1100px) {
   .inspiration__grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    column-count: 3;
+  }
+}
+
+@media (min-width: 1700px) {
+  .inspiration__grid {
+    column-count: 4;
   }
 }
 
 @media (max-width: 768px) {
   .detail {
     grid-template-columns: minmax(0, 1fr);
+    min-height: 0;
+  }
+
+  .detail__media,
+  .detail__placeholder {
+    min-height: 18rem;
   }
 }
 
 :global(.dark .inspiration__header h1),
-:global(.dark .template-card__title),
 :global(.dark .detail__section-head) {
-  color: rgb(255 255 255);
+  color: rgb(242 237 229);
 }
 
-:global(.dark .template-card),
 :global(.dark .online-empty) {
-  border-color: rgb(51 65 85);
-  background: rgb(30 41 59);
+  border-color: rgb(66 61 55);
+  background: rgb(35 33 30);
 }
 
 :global(.dark .filter-chip),
 :global(.dark .secondary-button),
 :global(.dark .toolbar-link) {
-  border-color: rgb(51 65 85);
-  background: rgb(30 41 59);
-  color: rgb(226 232 240);
+  border-color: rgb(66 61 55);
+  background: rgb(35 33 30);
+  color: rgb(227 219 208);
 }
 
 :global(.dark .segmented) {
-  background: rgb(30 41 59);
+  background: rgb(35 33 30);
 }
 
 :global(.dark .segmented__item--active) {
-  background: rgb(15 23 42);
-  color: rgb(94 234 212);
+  background: rgb(44 41 37);
+  color: rgb(245 161 127);
 }
 
 :global(.dark .detail__prompt) {
-  background: rgb(30 41 59);
-  color: rgb(226 232 240);
+  background: rgb(44 41 37);
+  color: rgb(227 219 208);
+}
+
+:global(.dark .detail__panel) {
+  border-color: rgb(66 61 55);
+  background: rgb(35 33 30);
 }
 
 :global(.dark .detail__meta dd),
 :global(.dark .detail__hint),
 :global(.dark .detail__requirements) {
-  color: rgb(203 213 225);
+  color: rgb(201 193 182);
+}
+
+:global(.dark .detail__copy:hover) {
+  background: rgb(232 121 78 / 0.12);
 }
 </style>

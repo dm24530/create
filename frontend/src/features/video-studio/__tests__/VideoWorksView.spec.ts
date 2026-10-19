@@ -93,6 +93,7 @@ describe('VideoInspirationView', () => {
 
   it('renders every template and filters by category', async () => {
     const wrapper = mount(VideoInspirationView, { global: { stubs: globalStubs } })
+    await wrapper.get('[data-testid="inspiration-source-curated"]').trigger('click')
     const allCards = wrapper.findAll('article')
     expect(allCards.length).toBeGreaterThan(5)
 
@@ -105,8 +106,10 @@ describe('VideoInspirationView', () => {
 
   it('sends the template slug to the studio when brought into the workbench', async () => {
     const wrapper = mount(VideoInspirationView, { global: { stubs: globalStubs } })
+    await wrapper.get('[data-testid="inspiration-source-curated"]').trigger('click')
     const card = wrapper.get('[data-testid="template-perfume-light-reveal"]')
-    const useButton = card.findAll('button').find((button) => button.text().includes('带入工作台'))
+    await card.get('button').trigger('click')
+    const useButton = wrapper.findAll('button').find((button) => button.text().includes('带入工作台'))
     await useButton!.trigger('click')
 
     expect(push).toHaveBeenCalledWith({
@@ -117,6 +120,7 @@ describe('VideoInspirationView', () => {
 
   it('closes the template detail when clicking outside, like the X button', async () => {
     const wrapper = mount(VideoInspirationView, { global: { stubs: globalStubs } })
+    await wrapper.get('[data-testid="inspiration-source-curated"]').trigger('click')
     await wrapper.get('[data-testid="template-perfume-light-reveal"]').get('button').trigger('click')
     // 弹窗标题用 h3，卡片标题用 h2：用它判断弹窗开/关，避免和卡片里的提示词混淆。
     expect(wrapper.findAll('h3').length).toBe(1)
@@ -125,9 +129,25 @@ describe('VideoInspirationView', () => {
     expect(wrapper.findAll('h3').length).toBe(0)
   })
 
+  it('opens the image as a large preview with the prompt beside it', async () => {
+    const wrapper = mount(VideoInspirationView, { global: { stubs: globalStubs } })
+    await wrapper.get('[data-testid="inspiration-source-curated"]').trigger('click')
+    const card = wrapper.get('[data-testid="template-perfume-light-reveal"]')
+    await card.get('button').trigger('click')
+
+    expect(wrapper.get('.detail').exists()).toBe(true)
+    expect(wrapper.get('.detail__image').attributes('src')).toBe(
+      '/api/v1/public/video-inspiration/media?u=' +
+        encodeURIComponent('https://gen.nbility.ai/media/video-storyboards/perfume-light-reveal.webp'),
+    )
+    expect(wrapper.get('.detail__panel').text()).toContain('提示词')
+    expect(wrapper.get('.detail__panel').text()).toContain('透明方形香水瓶')
+  })
+
   // 模板库从自建灵感站接过来，卡片示例图（分镜图）经本站代理加载。
   it('loads the template storyboard through the media proxy', async () => {
     const wrapper = mount(VideoInspirationView, { global: { stubs: globalStubs } })
+    await wrapper.get('[data-testid="inspiration-source-curated"]').trigger('click')
     const poster = wrapper.get('[data-testid="template-perfume-light-reveal"] img')
     expect(poster.attributes('src')).toBe(
       '/api/v1/public/video-inspiration/media?u=' +
@@ -143,9 +163,10 @@ describe('VideoInspirationView', () => {
   // 内置模板没有成片：不能出现"看起来能播但点了没反应"的播放键。
   it('labels built-in templates as storyboard previews without a play button', async () => {
     const wrapper = mount(VideoInspirationView, { global: { stubs: globalStubs } })
+    await wrapper.get('[data-testid="inspiration-source-curated"]').trigger('click')
     const card = wrapper.get('[data-testid="template-perfume-light-reveal"]')
     expect(card.text()).toContain('分镜预览')
-    expect(card.find('.template-card__play').exists()).toBe(false)
+    expect(card.find('.inspiration-tile__type').exists()).toBe(false)
   })
 })
 
@@ -194,7 +215,7 @@ describe('VideoInspirationView online source', () => {
       mediaType: 'video',
       sort: 'newest',
       period: 'week',
-      limit: 24,
+      limit: 48,
       refresh: false,
     })
 
@@ -214,16 +235,28 @@ describe('VideoInspirationView online source', () => {
     )
   })
 
-  it('explains an unreachable source instead of showing an empty page', async () => {
+  it('falls back to the library when the online source is unreachable', async () => {
     fetchOnlineInspirationFeed.mockRejectedValue(new Error('online inspiration source is unreachable'))
+    fetchInspirationLibrary.mockResolvedValue({
+      items: [],
+      page: 1,
+      page_size: 60,
+      has_more: false,
+      total: 0,
+      models: [],
+      categories: [],
+      fetched_at: 1760400000,
+      stale: false,
+    })
 
     const wrapper = mount(VideoInspirationView, { global: { stubs: globalStubs } })
     await wrapper.get('[data-testid="inspiration-source-online"]').trigger('click')
     await flushPromises()
 
-    const error = wrapper.get('[data-testid="online-error"]').text()
-    expect(error).toContain('拉取在线灵感失败')
-    expect(error).toContain('update.proxy_url')
+    expect(wrapper.find('[data-testid="online-error"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="online-fallback"]').text()).toContain('已自动切换到作品库')
+    expect(wrapper.get('[data-testid="inspiration-source-library"]').attributes('aria-selected')).toBe('true')
+    expect(fetchInspirationLibrary).toHaveBeenCalled()
   })
 
   it('hands an online prompt to the studio without a long query string', async () => {
@@ -233,8 +266,8 @@ describe('VideoInspirationView online source', () => {
     await wrapper.get('[data-testid="inspiration-source-online"]').trigger('click')
     await flushPromises()
 
+    await wrapper.get('[data-testid="online-60183831"]').get('button').trigger('click')
     const useButton = wrapper
-      .get('[data-testid="online-60183831"]')
       .findAll('button')
       .find((button) => button.text().includes('带入工作台'))
     await useButton!.trigger('click')
@@ -458,6 +491,20 @@ describe('VideoInspirationView library source', () => {
     expect(card.get('img').attributes('src')).toBe('/api/v1/public/video-inspiration/media?u=storyboard.webp')
   })
 
+  it('uses the library aspect ratio so mixed cards keep the masonry layout', async () => {
+    fetchInspirationLibrary.mockResolvedValue({
+      ...libraryPage,
+      items: [{ ...libraryPage.items[0], id: 'prompt-vertical', aspect_ratio: '9:16' }],
+    })
+
+    const wrapper = mount(VideoInspirationView, { global: { stubs: globalStubs } })
+    await wrapper.get('[data-testid="inspiration-source-library"]').trigger('click')
+    await flushPromises()
+
+    const media = wrapper.get('[data-testid="library-prompt-vertical"] .inspiration-tile__media')
+    expect(media.attributes('style')).toContain('aspect-ratio: 9 / 16')
+  })
+
   it('reloads with the keyword and keeps pagination state', async () => {
     const wrapper = mount(VideoInspirationView, { global: { stubs: globalStubs } })
     await wrapper.get('[data-testid="inspiration-source-library"]').trigger('click')
@@ -481,8 +528,8 @@ describe('VideoInspirationView library source', () => {
     await wrapper.get('[data-testid="inspiration-source-library"]').trigger('click')
     await flushPromises()
 
+    await wrapper.get('[data-testid="library-prompt-1"]').get('button').trigger('click')
     const useButton = wrapper
-      .get('[data-testid="library-prompt-1"]')
       .findAll('button')
       .find((button) => button.text().includes('带入工作台'))
     await useButton!.trigger('click')
