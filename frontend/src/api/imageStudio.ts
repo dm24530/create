@@ -50,6 +50,14 @@ export async function pinImageStudioGallery(id: string): Promise<void> {
   await apiClient.post(`/image-studio/gallery/${encodeURIComponent(id)}/pin`)
 }
 
+export async function downloadImageStudioGallery(id: string): Promise<Blob> {
+  const { data } = await apiClient.get<Blob>(
+    `/image-studio/gallery/${encodeURIComponent(id)}/download`,
+    { responseType: 'blob', timeout: 2 * 60 * 1000 },
+  )
+  return data
+}
+
 export interface StudioWorksQuota {
   used: number
   limit: number
@@ -66,6 +74,7 @@ export const imageStudioGalleryAPI = {
   save: saveImageStudioGallery,
   delete: deleteImageStudioGallery,
   pin: pinImageStudioGallery,
+  download: downloadImageStudioGallery,
   quota: fetchStudioWorksQuota,
 }
 

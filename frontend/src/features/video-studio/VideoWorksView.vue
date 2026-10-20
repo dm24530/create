@@ -503,13 +503,19 @@ async function pinImageWork(entry: ImageStudioGalleryEntry) {
   }
 }
 
-function downloadImageWork(entry: ImageStudioGalleryEntry) {
-  const link = document.createElement('a')
-  link.href = entry.url
-  link.download = `image-${entry.created_at}.${entry.format || 'png'}`
-  link.target = '_blank'
-  link.rel = 'noopener'
-  link.click()
+async function downloadImageWork(entry: ImageStudioGalleryEntry) {
+  const filename = `image-${entry.created_at}.${entry.format || 'png'}`
+  try {
+    const blob = await imageStudioGalleryAPI.download(entry.id)
+    const objectUrl = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = objectUrl
+    link.download = filename
+    link.click()
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000)
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : '下载图片失败'
+  }
 }
 
 async function removeImageWork(entry: ImageStudioGalleryEntry) {

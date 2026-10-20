@@ -314,6 +314,7 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   min-height: 100svh;
+  overflow-y: auto;
   padding: 32px clamp(28px, 5vw, 76px) 26px;
   border-left: 1px solid rgba(238, 229, 216, 0.1);
   background: var(--auth-panel);

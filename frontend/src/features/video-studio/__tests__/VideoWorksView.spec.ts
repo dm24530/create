@@ -20,10 +20,11 @@ const { listArchivedVideos, deleteArchivedVideo, pinArchivedVideo, fetchOnlineIn
   fetchInspirationLibrary: vi.fn(),
 }))
 
-const { listImages, pinImage, deleteImage } = vi.hoisted(() => ({
+const { listImages, pinImage, deleteImage, downloadImage } = vi.hoisted(() => ({
   listImages: vi.fn(),
   pinImage: vi.fn(),
   deleteImage: vi.fn(),
+  downloadImage: vi.fn(),
 }))
 
 vi.mock('../videoArchiveApi', () => ({
@@ -46,6 +47,7 @@ vi.mock('@/api', () => ({
     list: listImages,
     pin: pinImage,
     delete: deleteImage,
+    download: downloadImage,
   },
 }))
 
@@ -332,6 +334,8 @@ describe('VideoWorksView', () => {
     pinImage.mockResolvedValue(undefined)
     deleteImage.mockReset()
     deleteImage.mockResolvedValue(undefined)
+    downloadImage.mockReset()
+    downloadImage.mockResolvedValue(new Blob(['image'], { type: 'image/png' }))
     deleteArchivedVideo.mockReset()
     deleteArchivedVideo.mockResolvedValue(undefined)
     listKeys.mockResolvedValue({

@@ -1502,11 +1502,31 @@ function removeReference(id: number) {
   references.value = references.value.filter((item) => item.id !== id)
 }
 
-function downloadImage(image: GeneratedImage) {
+async function downloadImage(image: GeneratedImage) {
+  const filename = `${image.title}.${image.format || 'png'}`
+  const id = galleryIdFor(image)
+  if (id && galleryBackedIds.value.has(id)) {
+    try {
+      const blob = await imageStudioGalleryAPI.download(id)
+      saveBlob(blob, filename)
+      return
+    } catch {
+      // Fall through to the direct URL path below.
+    }
+  }
   const link = document.createElement('a')
   link.href = image.src
-  link.download = `${image.title}.png`
+  link.download = filename
   link.click()
+}
+
+function saveBlob(blob: Blob, filename: string) {
+  const objectUrl = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = objectUrl
+  link.download = filename
+  link.click()
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000)
 }
 
 function copyPreviewPrompt() {

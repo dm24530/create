@@ -240,6 +240,38 @@ func (s *ImageStudioGalleryService) List(
 	return entries, nil
 }
 
+// Get returns one owned gallery entry. The list is already bounded by the
+// per-user quota, so filtering here keeps the store contract small.
+func (s *ImageStudioGalleryService) Get(ctx context.Context, userID int64, id string) (*ImageStudioGalleryEntry, error) {
+	items, err := s.List(ctx, userID, 0, nil)
+	if err != nil {
+		return nil, err
+	}
+	for _, item := range items {
+		if item != nil && item.ID == id {
+			return item, nil
+		}
+	}
+	return nil, ErrStudioWorkNotFound
+}
+
+// ReadImage fetches the stored object through the server so browser downloads
+// are not blocked by the object store's missing CORS headers.
+func (s *ImageStudioGalleryService) ReadImage(ctx context.Context, userID int64, id string) (*ImageStudioGalleryEntry, []byte, string, error) {
+	if s == nil || s.store == nil || s.storage == nil || userID <= 0 {
+		return nil, nil, "", ErrImageStudioGalleryUnavailable
+	}
+	entry, err := s.Get(ctx, userID, id)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	data, contentType, err := s.storage.FetchImageURL(ctx, entry.URL)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	return entry, data, contentType, nil
+}
+
 // Delete 删除一条作品：先删对象存储里的文件，成功后再删记录。
 //
 // 顺序是刻意的：反过来的话，删对象失败就会留下一个再也找不到的孤儿文件。

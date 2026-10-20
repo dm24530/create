@@ -169,6 +169,24 @@ func TestImageStudioGallerySaveFromURLStoresServerFetchedBytes(t *testing.T) {
 	require.Len(t, saver.data, len(smallPNG(t)))
 }
 
+func TestImageStudioGalleryReadImageFetchesOwnedEntry(t *testing.T) {
+	store := &galleryStoreStub{entries: []*ImageStudioGalleryEntry{
+		{ID: "work-1", URL: "https://cdn.example.com/work-1.png"},
+	}}
+	saver := &gallerySaverStub{
+		fetchData: []byte("png-bytes"),
+		fetchType: "image/png",
+	}
+	svc := NewImageStudioGalleryService(store, saver)
+
+	entry, data, contentType, err := svc.ReadImage(context.Background(), 7, "work-1")
+	require.NoError(t, err)
+	require.Equal(t, "work-1", entry.ID)
+	require.Equal(t, []byte("png-bytes"), data)
+	require.Equal(t, "image/png", contentType)
+	require.Equal(t, "https://cdn.example.com/work-1.png", saver.fetchedURL)
+}
+
 // 删除作品：先把对象存储里的文件删掉，再删记录。
 func TestImageStudioGalleryDeleteRemovesObjectThenRecord(t *testing.T) {
 	store := &galleryStoreStub{}

@@ -96,6 +96,43 @@ func (h *ImageStudioGalleryHandler) List(c *gin.Context) {
 	response.Success(c, items)
 }
 
+// Download streams one owned image as an attachment. Fetching through the
+// server avoids the browser's cross-origin download restriction.
+func (h *ImageStudioGalleryHandler) Download(c *gin.Context) {
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not found in context")
+		return
+	}
+	entry, data, contentType, err := h.gallery.ReadImage(
+		c.Request.Context(),
+		subject.UserID,
+		strings.TrimSpace(c.Param("id")),
+	)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	ext := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(entry.Format)), ".")
+	ext = strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			return r
+		}
+		return -1
+	}, ext)
+	if len(ext) > 8 {
+		ext = ext[:8]
+	}
+	if ext == "" {
+		ext = "png"
+	}
+	if strings.TrimSpace(contentType) == "" {
+		contentType = "application/octet-stream"
+	}
+	c.Header("Content-Disposition", `attachment; filename="image-`+entry.ID+`.`+ext+`"`)
+	c.Data(http.StatusOK, contentType, data)
+}
+
 // studioWorksScopeSaved 把 ?scope=saved|temp 翻译成列表过滤条件。
 // 不传（或传其它值）时不过滤：图片工作台要同屏展示临时内容和已保存的作品。
 func studioWorksScopeSaved(c *gin.Context) *bool {
