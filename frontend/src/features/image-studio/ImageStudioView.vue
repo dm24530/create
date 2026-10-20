@@ -1,14 +1,11 @@
 <template>
   <AppLayout>
-    <div class="mx-auto flex min-h-[calc(100vh-8rem)] w-full max-w-[120rem] flex-col gap-4">
-      <header class="flex flex-wrap items-end justify-between gap-3">
+    <div class="mx-auto flex h-[calc(100vh-8rem-1px)] min-h-0 w-full max-w-[120rem] flex-col gap-4 overflow-hidden">
+      <header class="flex shrink-0 flex-wrap items-end justify-between gap-3">
         <div>
           <h1 class="text-2xl font-bold text-gray-900 dark:text-white">AI 图片生成</h1>
           <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
-            选择你自己的 API Key，直接生成或编辑图片。
-          </p>
-          <p v-if="studioQuota" class="mt-1 text-xs text-gray-400" data-testid="studio-quota">
-            我的作品（永久）：{{ studioQuota.used }} / {{ studioQuota.limit }}（图片与视频共用）
+            选择模型，描述画面，直接生成或编辑图片。
           </p>
         </div>
 
@@ -50,7 +47,24 @@
         </div>
       </header>
 
-      <section class="min-h-[24rem] flex-1 overflow-auto rounded-xl border border-gray-200 bg-white p-4 dark:border-dark-700 dark:bg-dark-900">
+      <div
+        v-if="inspirationHint"
+        class="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200"
+        data-testid="inspiration-hint"
+      >
+        <Icon name="sparkles" size="sm" class="mt-0.5 shrink-0" />
+        <span class="min-w-0 flex-1">{{ inspirationHint }}</span>
+        <button
+          type="button"
+          class="shrink-0 rounded p-0.5 text-amber-700 hover:bg-amber-100 dark:text-amber-300 dark:hover:bg-amber-900/40"
+          aria-label="关闭提示"
+          @click="inspirationHint = ''"
+        >
+          <Icon name="x" size="xs" />
+        </button>
+      </div>
+
+      <section class="min-h-0 flex-1 overflow-y-auto rounded-xl border border-gray-200 bg-white p-4 dark:border-dark-700 dark:bg-dark-900">
         <div v-if="!images.length" class="flex min-h-[22rem] flex-col items-center justify-center text-center text-gray-500 dark:text-gray-400">
           <div class="flex h-16 w-16 items-center justify-center rounded-2xl border border-gray-200 bg-gray-50 dark:border-dark-700 dark:bg-dark-800">
             <Icon name="sparkles" size="xl" />
@@ -75,7 +89,6 @@
             </button>
             <div class="flex items-center justify-between gap-2 px-3 py-2">
               <div class="min-w-0">
-                <p class="truncate text-sm font-medium text-gray-800 dark:text-gray-100">{{ image.title }}</p>
                 <p class="truncate text-xs text-gray-400">{{ image.meta }}</p>
                 <p
                   v-if="!image.pending && image.saved"
@@ -122,7 +135,7 @@
         </div>
       </section>
 
-      <form class="sticky bottom-3 rounded-2xl border border-gray-200 bg-white p-4 shadow-xl dark:border-dark-700 dark:bg-dark-900" @submit.prevent="generate">
+      <form class="shrink-0 rounded-2xl border border-gray-200 bg-white p-4 shadow-xl dark:border-dark-700 dark:bg-dark-900" @submit.prevent="generate">
         <div v-if="errorMessage" class="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300">
           {{ errorMessage }}
         </div>
@@ -137,13 +150,28 @@
           </div>
         </div>
 
-        <textarea
-          v-model="prompt"
-          rows="2"
-          class="w-full resize-none border-0 bg-transparent text-sm text-gray-900 outline-none placeholder:text-gray-400 dark:text-white"
-          placeholder="描述你想生成的图片，支持上传参考图..."
-          @paste="onPaste"
-        />
+        <div class="composer-prompt-wrap">
+          <textarea
+            ref="promptTextareaRef"
+            v-model="prompt"
+            rows="2"
+            class="composer-prompt w-full resize-none border-0 bg-transparent text-sm text-gray-900 outline-none placeholder:text-gray-400 dark:text-white"
+            placeholder="描述你想生成的图片，支持上传参考图..."
+            @paste="onPaste"
+          />
+          <button
+            v-show="promptToggleVisible"
+            type="button"
+            class="composer-prompt-toggle"
+            data-testid="image-prompt-toggle"
+            :aria-label="promptCompact ? '放大提示词输入框' : '缩小提示词输入框'"
+            :title="promptCompact ? '放大提示词输入框' : '缩小提示词输入框'"
+            :aria-expanded="!promptCompact"
+            @click="togglePromptCompact"
+          >
+            <Icon :name="promptCompact ? 'expand' : 'collapse'" size="sm" />
+          </button>
+        </div>
 
         <p
           v-if="sizeIssue"
@@ -254,7 +282,13 @@
               <span>复制</span>
             </button>
           </div>
-          <p class="image-detail-dialog__prompt">{{ previewImage.prompt || '暂无提示词' }}</p>
+          <textarea
+            v-model="previewPromptDraft"
+            class="image-detail-dialog__prompt-input"
+            data-testid="edit-image-prompt"
+            rows="10"
+            placeholder="修改提示词后重新生成..."
+          />
           <dl class="image-detail-dialog__info">
             <div v-if="previewImage.size">
               <dt>尺寸</dt>
@@ -274,6 +308,35 @@
 
       <template #footer>
         <div class="image-detail-dialog__footer">
+          <span
+            v-if="previewImage?.saved"
+            class="image-detail-dialog__saved"
+            data-testid="preview-saved-state"
+          >
+            <Icon name="checkCircle" size="sm" />
+            <span>已保存到我的作品</span>
+          </span>
+          <button
+            v-else-if="previewImage"
+            type="button"
+            class="image-detail-dialog__save"
+            data-testid="save-preview-to-gallery"
+            :disabled="savingPreviewImage"
+            @click="savePreviewToGallery"
+          >
+            <Icon name="bookmark" size="sm" />
+            <span>{{ savingPreviewImage ? '保存中' : '保存到我的作品' }}</span>
+          </button>
+          <button
+            type="button"
+            class="image-detail-dialog__regenerate"
+            data-testid="regenerate-image-prompt"
+            :disabled="!canRegeneratePreview"
+            @click="regenerateFromPreview"
+          >
+            <Icon name="sparkles" size="sm" />
+            <span>重新生成</span>
+          </button>
           <button type="button" class="image-detail-dialog__download" @click="previewImage && downloadImage(previewImage)">
             <Icon name="download" size="sm" />
             <span>下载图片</span>
@@ -434,13 +497,15 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onActivated, onMounted, reactive, ref, watch } from 'vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import ImageStudioSelect from './ImageStudioSelect.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { useClipboard } from '@/composables/useClipboard'
-import { authAPI, imageStudioGalleryAPI, keysAPI, type ImageStudioGalleryEntry } from '@/api'
+import { rootRemToPx, useAutoGrowTextarea } from '@/composables/useAutoGrowTextarea'
+import { ensureCreatorKey } from '@/composables/useCreatorKey'
+import { authAPI, imageStudioGalleryAPI, type ImageStudioGalleryEntry } from '@/api'
 import type { ApiKey } from '@/types'
 import { resolvePlaygroundApiEndpoint } from '@/utils/apiEndpoint'
 
@@ -453,6 +518,8 @@ interface GeneratedImage {
   model?: string
   size?: string
   format?: string
+  quality?: string
+  background?: string
   pending?: boolean
   // 服务端状态：saved 为真表示已经存进「我的作品」（永久），
   // 否则是生成页的临时内容，expiresAt 是过期时间（秒）。
@@ -489,6 +556,24 @@ const loadingModels = ref(false)
 const refreshing = ref(false)
 const modelLoadError = ref('')
 const prompt = ref('一只趴在桌上的橙色小猫，柔和窗边自然光，电影感，极简背景')
+const promptCompact = ref(false)
+const {
+  textareaRef: promptTextareaRef,
+  resize: resizePromptTextarea,
+  contentHeight: promptContentHeight,
+} = useAutoGrowTextarea(prompt, {
+  maxHeight: () => promptCompact.value
+    ? rootRemToPx(3.5)
+    : Math.min(rootRemToPx(13.75), Math.max(rootRemToPx(8), window.innerHeight * 0.3)),
+})
+const promptToggleVisible = computed(() => promptCompact.value || promptContentHeight.value > 56)
+watch(promptCompact, () => {
+  void nextTick(resizePromptTextarea)
+})
+function togglePromptCompact() {
+  promptCompact.value = !promptCompact.value
+}
+const inspirationHint = ref('')
 const appliedSize = reactive<SizeSettings>({
   mode: 'ratio',
   aspectBase: 1024,
@@ -511,10 +596,13 @@ const errorMessage = ref('')
 const images = ref<GeneratedImage[]>([])
 const references = ref<ReferenceItem[]>([])
 const previewImage = ref<GeneratedImage | null>(null)
+const previewPromptDraft = ref('')
+const savingPreviewImage = ref(false)
 const fileInput = ref<HTMLInputElement | null>(null)
 const { copyToClipboard } = useClipboard()
 
 const PENDING_STORAGE_KEY = 'sub2api:image-studio:pending'
+const PENDING_PROMPT_STORAGE_KEY = 'sub2api:image-studio:pending-prompt'
 
 const size = computed(() => formatSize(appliedSize))
 const draftSizeValue = computed(() => formatSize(draftSize))
@@ -583,6 +671,12 @@ const imageCapableKeys = computed(() => activeKeys.value.filter(
 const apiKeyOptions = computed(() => imageCapableKeys.value.map((key) => ({ value: String(key.id), label: key.name })))
 const selectedKey = computed(() => imageCapableKeys.value.find((key) => String(key.id) === selectedKeyId.value) || null)
 const canGenerate = computed(() => Boolean(apiBaseUrl.value && selectedKey.value?.key && imageModel.value.trim() && prompt.value.trim()) && !sizeIssue.value)
+const canRegeneratePreview = computed(() => Boolean(
+  previewImage.value &&
+  previewPromptDraft.value.trim() &&
+  selectedKey.value?.key &&
+  !generating.value,
+))
 const hasReferences = computed(() => references.value.length > 0)
 
 let nextImageId = 1
@@ -757,20 +851,13 @@ function parseSize(value: string) {
 async function loadData() {
   errorMessage.value = ''
   restorePendingImages()
-  const keysPromise = keysAPI.list(1, 100, { status: 'active' })
-    .then((keyResponse) => {
-      keys.value = keyResponse.items || []
-      if (
-        !selectedKeyId.value ||
-        !imageCapableKeys.value.some((key) => String(key.id) === selectedKeyId.value)
-      ) {
-        selectedKeyId.value = imageCapableKeys.value.length
-          ? String(imageCapableKeys.value[0].id)
-          : ''
-      }
+  const keysPromise = ensureCreatorKey('image')
+    .then((result) => {
+      keys.value = result.keys
+      selectedKeyId.value = String(result.key.id)
     })
     .catch((error) => {
-      errorMessage.value = errorMessageFrom(error, '加载密钥失败')
+      errorMessage.value = errorMessageFrom(error, '图片创作服务暂不可用')
     })
   const settingsPromise = authAPI.getPublicSettings()
     .then((settings) => {
@@ -848,6 +935,19 @@ function restorePendingImages() {
     if (restored.length) images.value = restored
   } catch {
     // Ignore malformed browser storage and continue with an empty gallery.
+  }
+}
+
+function applyInspirationFromRoute() {
+  try {
+    const pending = sessionStorage.getItem(PENDING_PROMPT_STORAGE_KEY)
+    if (pending && pending.trim()) {
+      prompt.value = pending.trim()
+      inspirationHint.value = '已带入图片灵感提示词，选好模型和尺寸就可以生成。'
+      sessionStorage.removeItem(PENDING_PROMPT_STORAGE_KEY)
+    }
+  } catch {
+    // 浏览器存储不可用时按没有待带入提示词处理。
   }
 }
 
@@ -939,6 +1039,51 @@ async function pinImage(image: GeneratedImage) {
     errorMessage.value = isQuotaError(error)
       ? `我的作品已满（${studioQuota.value?.limit || 100} 个），先删除一些再保存。`
       : errorMessageFrom(error, '保存到我的作品失败')
+  }
+}
+
+async function savePreviewToGallery() {
+  const image = previewImage.value
+  if (!image || image.saved || savingPreviewImage.value) return
+  savingPreviewImage.value = true
+  errorMessage.value = ''
+  try {
+    const id = galleryIdFor(image)
+    if (id && galleryBackedIds.value.has(id)) {
+      await imageStudioGalleryAPI.pin(id)
+      image.saved = true
+      image.expiresAt = 0
+      await loadStudioQuota()
+      return
+    }
+
+    const promptText = previewPromptDraft.value.trim() || image.prompt || ''
+    const source = image.src.startsWith('data:')
+      ? { image_data_url: image.src }
+      : { image_url: image.src }
+    const entry = await imageStudioGalleryAPI.save({
+      ...source,
+      prompt: promptText,
+      model: image.model || imageModel.value,
+      size: image.size || size.value,
+      format: image.format || format.value,
+      saved: true,
+    })
+    locallySavedGalleryIds.add(String(entry.id))
+    galleryBackedIds.value.add(String(entry.id))
+    localToGalleryId.value.set(String(image.id), String(entry.id))
+    image.saved = entry.saved !== false
+    image.expiresAt = entry.expires_at || 0
+    image.prompt = promptText
+    if (entry.url) image.src = entry.url
+    await loadGallery()
+    await loadStudioQuota()
+  } catch (error) {
+    errorMessage.value = isQuotaError(error)
+      ? `我的作品已满（${studioQuota.value?.limit || 100} 个），先删除一些再保存。`
+      : errorMessageFrom(error, '保存到我的作品失败')
+  } finally {
+    savingPreviewImage.value = false
   }
 }
 
@@ -1225,6 +1370,8 @@ async function generate() {
         model: imageModel.value,
         size: size.value,
         format: format.value,
+        quality: quality.value,
+        background: background.value,
         meta: `${format.value.toUpperCase()} · ${size.value} · ${imageModel.value}`,
       }
     }))).filter((item): item is GeneratedImage => item !== null)
@@ -1356,16 +1503,59 @@ function downloadImage(image: GeneratedImage) {
 }
 
 function copyPreviewPrompt() {
-  const text = previewImage.value?.prompt
+  const text = previewPromptDraft.value.trim()
   if (!text) return
   void copyToClipboard(text, '提示词已复制')
 }
+
+function applyPreviewSettings(image: GeneratedImage) {
+  if (image.model && imageModels.value.includes(image.model)) {
+    imageModel.value = image.model
+  }
+  if (image.format && formatOptions.some((option) => option.value === image.format)) {
+    format.value = image.format
+  }
+  if (image.quality && qualityOptions.some((option) => option.value === image.quality)) {
+    quality.value = image.quality
+  }
+  if (image.background && backgroundOptions.some((option) => option.value === image.background)) {
+    background.value = image.background
+  }
+  if (image.size === 'auto') {
+    appliedSize.mode = 'auto'
+    return
+  }
+  const dimensions = image.size ? parseSize(image.size) : null
+  if (dimensions) {
+    appliedSize.mode = 'custom'
+    appliedSize.width = dimensions.width
+    appliedSize.height = dimensions.height
+  }
+}
+
+async function regenerateFromPreview() {
+  const image = previewImage.value
+  const text = previewPromptDraft.value.trim()
+  if (!image || !text || !canRegeneratePreview.value) return
+  applyPreviewSettings(image)
+  prompt.value = text
+  previewImage.value = null
+  await generate()
+}
+
+watch(previewImage, (image) => {
+  previewPromptDraft.value = image?.prompt || ''
+})
 
 watch([selectedKeyId, apiBaseUrl], () => {
   void loadModels()
 })
 
-onMounted(loadData)
+onMounted(() => {
+  applyInspirationFromRoute()
+  void loadData()
+})
+onActivated(applyInspirationFromRoute)
 </script>
 
 <style scoped>
@@ -1407,15 +1597,75 @@ onMounted(loadData)
 }
 
 .toolbar-field--select {
-  min-height: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-height: 2.4rem;
+  border: 1px solid rgb(226 232 240);
+  border-radius: 0.6rem;
+  background: rgb(255 255 255);
+  padding: 0 0.55rem;
+}
+
+.toolbar-field--select > span {
+  font-size: 0.75rem;
+}
+
+.toolbar-field--select:focus-within {
+  border-color: rgb(232 121 78);
+}
+
+.toolbar-field--select :deep(.studio-select__trigger) {
+  height: 2.1rem;
   border: 0;
-  border-radius: 0;
   background: transparent;
+  box-shadow: none;
   padding: 0;
+}
+
+.toolbar-field--select :deep(.studio-select__trigger:hover),
+.toolbar-field--select :deep(.studio-select--open .studio-select__trigger) {
+  border: 0;
+  box-shadow: none;
 }
 
 .toolbar-field .toolbar-image-select--model {
   min-width: 10rem;
+}
+
+.composer-prompt-wrap {
+  position: relative;
+}
+
+.composer-prompt {
+  display: block;
+  min-height: 3.5rem;
+  max-height: clamp(8rem, 30vh, 13.75rem);
+  overflow-y: hidden;
+  padding-right: 2.5rem;
+  line-height: 1.65;
+  transition: height 0.16s ease;
+}
+
+.composer-prompt-toggle {
+  position: absolute;
+  top: 0.25rem;
+  right: 0.25rem;
+  display: inline-flex;
+  height: 1.75rem;
+  width: 1.75rem;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 0.4rem;
+  background: transparent;
+  color: rgb(148 163 184);
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.composer-prompt-toggle:hover {
+  background: rgb(241 245 249);
+  color: rgb(173 74 41);
 }
 
 .composer-size-trigger {
@@ -1889,15 +2139,25 @@ onMounted(loadData)
   font-size: 0.78rem;
 }
 
-.image-detail-dialog__prompt {
+.image-detail-dialog__prompt-input {
   flex: 1;
+  min-height: 14rem;
   margin: 0.8rem 0 1rem;
-  overflow: auto;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+  resize: vertical;
+  border: 1px solid rgb(226 232 240);
+  border-radius: 0.5rem;
+  background: white;
+  padding: 0.7rem 0.8rem;
   color: rgb(15 23 42);
+  font-family: inherit;
   font-size: 0.86rem;
   line-height: 1.65;
+  outline: none;
+}
+
+.image-detail-dialog__prompt-input:focus {
+  border-color: rgb(232 121 78);
+  box-shadow: 0 0 0 3px rgb(232 121 78 / 0.12);
 }
 
 .image-detail-dialog__info {
@@ -1931,7 +2191,29 @@ onMounted(loadData)
 
 .image-detail-dialog__footer {
   display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
   justify-content: flex-end;
+}
+
+.image-detail-dialog__regenerate {
+  display: inline-flex;
+  min-height: 2.4rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  border: 1px solid rgb(232 121 78);
+  border-radius: 0.6rem;
+  background: rgb(232 121 78);
+  padding: 0 1rem;
+  color: white;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.image-detail-dialog__regenerate:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
 }
 
 .image-detail-dialog__download {
@@ -1946,6 +2228,36 @@ onMounted(loadData)
   padding: 0 0.9rem;
   color: rgb(51 65 85);
   font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.image-detail-dialog__save {
+  display: inline-flex;
+  min-height: 2.4rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  border: 1px solid rgb(226 232 240);
+  border-radius: 0.6rem;
+  background: white;
+  padding: 0 0.9rem;
+  color: rgb(51 65 85);
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.image-detail-dialog__save:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.image-detail-dialog__saved {
+  display: inline-flex;
+  min-height: 2.4rem;
+  align-items: center;
+  gap: 0.35rem;
+  color: rgb(5 150 105);
+  font-size: 0.8rem;
   font-weight: 600;
 }
 
@@ -2053,6 +2365,12 @@ onMounted(loadData)
   background: rgb(24 24 27 / 0.9);
 }
 
+:global(.dark .toolbar-field--select) {
+  border-color: rgb(66 61 55);
+  background: rgb(35 33 30);
+  padding: 0 0.55rem;
+}
+
 :global(.dark .toolbar-field select),
 :global(.dark .toolbar-field input),
 :global(.dark .composer-field select),
@@ -2078,6 +2396,17 @@ onMounted(loadData)
 
 :global(.dark .composer-size-trigger strong) {
   color: rgb(241 245 249);
+}
+
+:global(.dark .composer-prompt-toggle) {
+  border: 0;
+  background: transparent;
+  color: rgb(167 159 148);
+}
+
+:global(.dark .composer-prompt-toggle:hover) {
+  background: rgb(44 41 37);
+  color: rgb(245 161 127);
 }
 
 :global(.dark .count-stepper) {
@@ -2151,8 +2480,13 @@ onMounted(loadData)
 }
 
 :global(.dark .image-detail-dialog__section-head),
-:global(.dark .image-detail-dialog__prompt),
 :global(.dark .image-detail-dialog__info dd) {
+  color: rgb(244 244 245);
+}
+
+:global(.dark .image-detail-dialog__prompt-input) {
+  border-color: rgb(63 63 70);
+  background: rgb(15 23 42);
   color: rgb(244 244 245);
 }
 
@@ -2160,7 +2494,8 @@ onMounted(loadData)
   border-color: rgb(63 63 70);
 }
 
-:global(.dark .image-detail-dialog__download) {
+:global(.dark .image-detail-dialog__download),
+:global(.dark .image-detail-dialog__save) {
   border-color: rgb(63 63 70);
   background: rgb(24 24 27);
   color: rgb(226 232 240);

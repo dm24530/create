@@ -25,13 +25,14 @@ function initIOSViewportZoomFix() {
 
 function initThemeClass() {
   const savedTheme = localStorage.getItem('theme')
-  const shouldUseDark =
-    savedTheme === 'dark' ||
-    (!savedTheme && window.matchMedia('(prefers-color-scheme: dark)').matches)
+  const shouldUseDark = savedTheme !== 'light'
   document.documentElement.classList.toggle('dark', shouldUseDark)
 }
 
 async function bootstrap() {
+  if ('scrollRestoration' in history) {
+    history.scrollRestoration = 'manual'
+  }
   // Apply theme class globally before app mount to keep all routes consistent.
   initThemeClass()
   initIOSViewportZoomFix()

@@ -60,6 +60,8 @@ const icons = {
   arrowUp: 'M5 10l7-7m0 0l7 7m-7-7v18',
   arrowDown: 'M19 14l-7 7m0 0l-7-7m7 7V3',
   arrowsUpDown: 'M3 7.5L7.5 3m0 0L12 7.5M7.5 3v13.5m13.5 0L16.5 21m0 0L12 16.5m4.5 4.5V7.5',
+  expand: 'M3.75 9V3.75H9M15 3.75h5.25V9M20.25 15v5.25H15M9 20.25H3.75V15',
+  collapse: 'M9 3.75V9H3.75M20.25 9H15V3.75M15 20.25V15h5.25M3.75 15H9v5.25',
   chevronUp: 'M5 15l7-7 7 7',
   externalLink: 'M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14',
 

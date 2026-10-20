@@ -119,7 +119,7 @@ describe('HomeView compact mode', () => {
   it('links authenticated users to their dashboard', () => {
     authStore.isAuthenticated = true
 
-    expect(compactDestination(mountHome({ compact_home_enabled: true }))).toBe('/dashboard')
+    expect(compactDestination(mountHome({ compact_home_enabled: true }))).toBe('/image-studio')
   })
 
   it('links administrators to the admin dashboard', () => {

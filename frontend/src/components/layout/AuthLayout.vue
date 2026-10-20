@@ -5,12 +5,7 @@
       <div class="auth-split-visual-shade"></div>
       <div class="auth-split-visual-content">
         <RouterLink to="/home" class="auth-split-brand">
-          <span class="auth-split-brand-mark">
-            <img v-if="siteLogo" :src="siteLogo" alt="" />
-            <span v-else>{{ siteName.slice(0, 1).toUpperCase() }}</span>
-          </span>
           <span>{{ siteName }}</span>
-          <i></i>
         </RouterLink>
 
         <div class="auth-split-visual-copy">
@@ -41,10 +36,6 @@
 
       <div class="auth-split-panel-body">
         <RouterLink to="/home" class="auth-split-mobile-brand">
-          <span class="auth-split-brand-mark">
-            <img v-if="siteLogo" :src="siteLogo" alt="" />
-            <span v-else>{{ siteName.slice(0, 1).toUpperCase() }}</span>
-          </span>
           <span>{{ siteName }}</span>
         </RouterLink>
 
@@ -62,7 +53,7 @@
     </main>
   </div>
 
-  <div class="relative flex min-h-screen items-center justify-center overflow-hidden p-3 sm:p-4">
+  <div v-else class="relative flex min-h-screen items-center justify-center overflow-hidden p-3 sm:p-4">
     <!-- Background -->
     <div
       class="absolute inset-0 bg-gradient-to-br from-gray-50 via-primary-50/30 to-gray-100 dark:from-dark-950 dark:via-dark-900 dark:to-dark-950"
@@ -184,17 +175,21 @@ onMounted(() => {
 }
 
 .auth-split-shell {
-  --auth-bg: #09090b;
-  --auth-panel: #0d0d10;
-  --auth-line: #2c2c30;
-  --auth-muted: #a5a5ae;
-  --auth-accent: #ff693b;
+  --auth-bg: #1d1c19;
+  --auth-panel: #211f1c;
+  --auth-panel-deep: #171614;
+  --auth-line: #3a3630;
+  --auth-muted: #aaa39a;
+  --auth-text: #f2ede5;
+  --auth-text-soft: #d8d1c7;
+  --auth-accent: #e8794e;
+  --auth-accent-soft: #f09873;
   display: grid;
   grid-template-columns: minmax(0, 1.24fr) minmax(420px, 0.76fr);
   min-height: 100svh;
   overflow: hidden;
   background: var(--auth-bg);
-  color: #f5f5f5;
+  color: var(--auth-text);
   font-family: Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif;
 }
 
@@ -219,7 +214,7 @@ onMounted(() => {
   height: 100%;
   object-fit: cover;
   object-position: center 58%;
-  filter: sepia(0.18) saturate(1.14) contrast(1.05);
+  filter: sepia(0.1) saturate(0.94) contrast(1.03) brightness(0.96);
   animation: auth-split-reveal 1.25s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
@@ -228,9 +223,9 @@ onMounted(() => {
   inset: 0;
   z-index: -2;
   background:
-    radial-gradient(circle at 76% 42%, rgba(255, 105, 59, 0.22), transparent 38%),
-    linear-gradient(90deg, rgba(8, 8, 11, 0.88) 0%, rgba(8, 8, 11, 0.58) 44%, rgba(8, 8, 11, 0.04) 100%),
-    linear-gradient(0deg, #09090b 0%, transparent 34%);
+    radial-gradient(circle at 76% 42%, rgba(232, 121, 78, 0.14), transparent 40%),
+    linear-gradient(90deg, rgba(29, 28, 25, 0.86) 0%, rgba(29, 28, 25, 0.54) 44%, rgba(29, 28, 25, 0.04) 100%),
+    linear-gradient(0deg, var(--auth-bg) 0%, transparent 34%);
 }
 
 .auth-split-visual-content {
@@ -247,41 +242,11 @@ onMounted(() => {
 .auth-split-mobile-brand {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
   width: fit-content;
-  color: #fff;
+  color: var(--auth-text);
   font-size: 21px;
   font-weight: 650;
-  letter-spacing: -0.8px;
-}
-
-.auth-split-brand-mark {
-  display: grid;
-  flex: 0 0 auto;
-  width: 34px;
-  height: 34px;
-  place-items: center;
-  overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 9px;
-  background: #111114;
-  color: #ff8b62;
-  font-size: 17px;
-}
-
-.auth-split-brand-mark img {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-}
-
-.auth-split-brand i {
-  align-self: flex-start;
-  width: 6px;
-  height: 6px;
-  margin-top: 3px;
-  border-radius: 50%;
-  background: var(--auth-accent);
+  letter-spacing: 0;
 }
 
 .auth-split-visual-copy {
@@ -294,7 +259,7 @@ onMounted(() => {
   align-items: center;
   gap: 10px;
   margin: 0 0 24px;
-  color: #b6b6bd;
+  color: var(--auth-text-soft);
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 2px;
@@ -309,22 +274,22 @@ onMounted(() => {
 
 .auth-split-visual-copy h1 {
   margin: 0 0 26px;
-  color: #fff;
+  color: var(--auth-text);
   font-size: clamp(52px, 5.4vw, 82px);
   font-weight: 650;
-  letter-spacing: -3.5px;
+  letter-spacing: 0;
   line-height: 1.13;
 }
 
 .auth-split-visual-copy h1 em {
-  color: #ff7646;
+  color: var(--auth-accent-soft);
   font-style: normal;
 }
 
 .auth-split-visual-copy > p:last-child {
   max-width: 520px;
   margin: 0;
-  color: #d0d0d6;
+  color: var(--auth-text-soft);
   font-size: 15px;
   line-height: 1.85;
 }
@@ -333,14 +298,14 @@ onMounted(() => {
   display: flex;
   flex-wrap: wrap;
   gap: 12px;
-  color: #aaaab1;
+  color: var(--auth-muted);
   font-size: 9px;
   letter-spacing: 1.5px;
 }
 
 .auth-split-meta span + span::before {
   margin-right: 12px;
-  color: #62626b;
+  color: #6f6961;
   content: '·';
 }
 
@@ -350,7 +315,7 @@ onMounted(() => {
   flex-direction: column;
   min-height: 100svh;
   padding: 32px clamp(28px, 5vw, 76px) 26px;
-  border-left: 1px solid rgba(255, 255, 255, 0.08);
+  border-left: 1px solid rgba(238, 229, 216, 0.1);
   background: var(--auth-panel);
 }
 
@@ -365,13 +330,13 @@ onMounted(() => {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  color: #9d9da6;
+  color: var(--auth-muted);
   font-size: 11px;
   transition: color 0.2s ease;
 }
 
 .auth-split-back:hover {
-  color: #fff;
+  color: var(--auth-text);
 }
 
 .auth-split-panel-body {
@@ -391,7 +356,7 @@ onMounted(() => {
 
 .auth-split-form :deep(.input-label) {
   margin-bottom: 9px;
-  color: #c4c4cc;
+  color: var(--auth-text-soft);
   font-size: 12px;
   font-weight: 500;
 }
@@ -400,20 +365,20 @@ onMounted(() => {
   height: 48px;
   border: 1px solid var(--auth-line);
   border-radius: 6px;
-  background: #09090b;
-  color: #f5f5f5;
+  background: var(--auth-panel-deep);
+  color: var(--auth-text);
   font-size: 13px;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
 .auth-split-form :deep(.input::placeholder) {
-  color: #66666f;
+  color: #777168;
 }
 
 .auth-split-form :deep(.input:focus) {
   border-color: var(--auth-accent);
   outline: none;
-  box-shadow: 0 0 0 3px rgba(255, 105, 59, 0.12);
+  box-shadow: 0 0 0 3px rgba(232, 121, 78, 0.14);
 }
 
 .auth-split-form :deep(.input-error) {
@@ -429,44 +394,44 @@ onMounted(() => {
 .auth-split-form :deep(.btn-primary) {
   border: 1px solid transparent;
   background: var(--auth-accent);
-  color: #1b100b;
+  color: #1c120d;
   box-shadow: none;
 }
 
 .auth-split-form :deep(.btn-primary:hover) {
-  background: #ff845b;
+  background: var(--auth-accent-soft);
 }
 
 .auth-split-form :deep(.btn-secondary) {
-  border: 1px solid #343438;
-  background: #141416;
-  color: #f1f1f3;
+  border: 1px solid #403b34;
+  background: #1d1b18;
+  color: var(--auth-text);
 }
 
 .auth-split-form :deep(a.text-primary-600),
 .auth-split-form :deep(a.text-primary-400),
 .auth-split-footer :deep(a) {
-  color: #ff8a63;
+  color: var(--auth-accent-soft);
 }
 
 .auth-split-form :deep(.auth-form-title) {
-  color: #f5f5f5;
+  color: var(--auth-text);
 }
 
 .auth-split-form :deep(.auth-form-subtitle) {
-  color: #8f8f98;
+  color: #938c83;
 }
 
 .auth-split-footer {
   margin-top: 26px;
-  color: #8f8f98;
+  color: #938c83;
   font-size: 12px;
   text-align: center;
 }
 
 .auth-split-copyright {
   margin: auto 0 0;
-  color: #5e5e67;
+  color: #756f66;
   font-size: 9px;
   letter-spacing: 0.5px;
   text-align: center;
@@ -490,7 +455,7 @@ onMounted(() => {
 
   .auth-split-visual-copy h1 {
     font-size: clamp(42px, 6vw, 62px);
-    letter-spacing: -2.5px;
+    letter-spacing: 0;
   }
 }
 

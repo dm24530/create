@@ -24,7 +24,8 @@ var allowedInspirationMediaHosts = map[string]struct{}{
 	"image.civitai.com": {},
 	"civitai.com":       {},
 	// 自家灵感站的分镜图：走同一个代理，页面里就只有一个来源域名。
-	"gen.nbility.ai": {},
+	"gen.nbility.ai":     {},
+	"cdn-gen.nbility.ai": {},
 }
 
 type OnlineInspirationItem struct {

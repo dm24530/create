@@ -1325,9 +1325,16 @@ func (h *GatewayHandler) compositeAvailableModels(ctx context.Context, groupID *
 			models = append(models, model)
 		}
 	}
-	// A route can expose a public ID that no account model mapping contains.
+	// A route can expose a public ID that no account model mapping contains,
+	// but it must not advertise a target platform with no schedulable account.
 	// On lookup failure, retain the existing account-derived catalog only.
-	if routeModels, err := h.gatewayService.GetCompositeRouteModels(ctx, groupID, endpoint, includeSystemOne); err == nil {
+	if routeModels, err := h.gatewayService.GetCompositeRouteModelsForPlatforms(
+		ctx,
+		groupID,
+		endpoint,
+		includeSystemOne,
+		schedulablePlatforms,
+	); err == nil {
 		for _, model := range routeModels {
 			if _, ok := seen[model]; !ok {
 				seen[model] = struct{}{}

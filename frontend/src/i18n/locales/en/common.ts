@@ -164,11 +164,14 @@ export default {
   // Navigation
   nav: {
     dashboard: 'Dashboard',
+    creationSection: 'Create',
+    accountSection: 'Account',
     announcements: 'Announcements',
     apiKeys: 'API Keys',
     batchImage: 'Batch Images',
     imageStudio: 'Image Studio',
     videoStudio: 'Video Studio',
+    imageInspiration: 'Image Inspiration',
     videoInspiration: 'Video Inspiration',
     videoWorks: 'My Video Works',
     playground: 'Playground',
@@ -210,6 +213,7 @@ export default {
     recharge: 'Recharge',
     subscribe: 'Subscription',
     docs: 'Docs',
+    apiDocs: 'API Docs',
     myOrders: 'My Orders',
     orderManagement: 'Orders',
     paymentDashboard: 'Payment Dashboard',

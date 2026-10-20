@@ -85,4 +85,14 @@ describe('AppSidebar image studio entry', () => {
   it('adds Image Studio to the user navigation', () => {
     expect(componentSource).toMatch(/path: '\/image-studio'[^\n]*label: t\('nav\.imageStudio'\)/)
   })
+
+  it('adds the image inspiration library to the creative navigation', () => {
+    expect(componentSource).toMatch(/path: '\/image-inspiration'[^\n]*label: t\('nav\.imageInspiration'\)/)
+  })
+})
+
+describe('AppSidebar API key entry', () => {
+  it('keeps API keys reachable from the regular user account section', () => {
+    expect(componentSource).toMatch(/function buildAccountNavItems\(\)[\s\S]*?path: '\/keys'[^\n]*label: t\('nav\.apiKeys'\)/)
+  })
 })

@@ -24,6 +24,29 @@ func (r *CompositeRouteResolver) SetModelOwnershipResolver(resolver CompositeMod
 
 // ListExactPublicModels returns enabled, concrete route IDs suitable for a model catalog.
 func (r *CompositeRouteResolver) ListExactPublicModels(ctx context.Context, groupID int64, endpoint string, includeSystemOne bool) ([]string, error) {
+	return r.listExactPublicModels(ctx, groupID, endpoint, includeSystemOne, nil)
+}
+
+// ListExactPublicModelsForPlatforms returns enabled exact route IDs whose target
+// platform currently has a schedulable account. A nil platform set keeps the
+// legacy behavior of listing every concrete route.
+func (r *CompositeRouteResolver) ListExactPublicModelsForPlatforms(
+	ctx context.Context,
+	groupID int64,
+	endpoint string,
+	includeSystemOne bool,
+	platforms map[string]struct{},
+) ([]string, error) {
+	return r.listExactPublicModels(ctx, groupID, endpoint, includeSystemOne, platforms)
+}
+
+func (r *CompositeRouteResolver) listExactPublicModels(
+	ctx context.Context,
+	groupID int64,
+	endpoint string,
+	includeSystemOne bool,
+	platforms map[string]struct{},
+) ([]string, error) {
 	if r == nil || r.repo == nil || groupID <= 0 {
 		return nil, nil
 	}
@@ -35,6 +58,11 @@ func (r *CompositeRouteResolver) ListExactPublicModels(ctx context.Context, grou
 	for _, route := range routes {
 		if route.Enabled && route.MatchType == CompositeRouteMatchExact &&
 			(endpoint == "" || normalizeCompositeRouteEndpoint(route.Endpoint) == CompositeRouteEndpointAny || normalizeCompositeRouteEndpoint(route.Endpoint) == endpoint) {
+			if platforms != nil {
+				if _, ok := platforms[strings.TrimSpace(route.TargetPlatform)]; !ok {
+					continue
+				}
+			}
 			if model := strings.TrimSpace(route.PublicModel); model != "" {
 				models = append(models, model)
 			}

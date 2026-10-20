@@ -666,8 +666,8 @@ onBeforeUnmount(() => {
 }
 
 .toolbar-link:hover {
-  border-color: rgb(45 212 191);
-  color: rgb(15 118 110);
+  border-color: rgb(232 121 78);
+  color: rgb(173 74 41);
 }
 
 .toolbar-link--danger:hover {
@@ -857,8 +857,8 @@ onBeforeUnmount(() => {
 }
 
 .mini-action:hover {
-  border-color: rgb(45 212 191);
-  color: rgb(15 118 110);
+  border-color: rgb(232 121 78);
+  color: rgb(173 74 41);
 }
 
 .mini-action:disabled {
@@ -878,12 +878,12 @@ onBeforeUnmount(() => {
 }
 
 .primary-button {
-  background: rgb(13 148 136);
-  color: rgb(255 255 255);
+  background: rgb(232 121 78);
+  color: rgb(28 18 13);
 }
 
 .primary-button:hover {
-  background: rgb(15 118 110);
+  background: rgb(240 152 115);
 }
 
 .primary-button:disabled {
@@ -950,30 +950,44 @@ onBeforeUnmount(() => {
 }
 
 :global(.dark .works__header h1) {
-  color: rgb(255 255 255);
+  color: rgb(242 237 229);
 }
 
 :global(.dark .toolbar-field),
 :global(.dark .toolbar-link),
 :global(.dark .mini-action),
 :global(.dark .secondary-button) {
-  border-color: rgb(51 65 85);
-  background: rgb(30 41 59);
-  color: rgb(226 232 240);
+  border-color: rgb(66 61 55);
+  background: rgb(35 33 30);
+  color: rgb(227 219 208);
 }
 
 :global(.dark .works__stage) {
-  border-color: rgb(51 65 85);
-  background: rgb(15 23 42);
+  border-color: rgb(66 61 55);
+  background: rgb(29 28 25);
 }
 
 :global(.dark .work-card) {
-  border-color: rgb(51 65 85);
-  background: rgb(30 41 59);
+  border-color: rgb(66 61 55);
+  background: rgb(35 33 30);
 }
 
 :global(.dark .work-card__prompt),
 :global(.dark .work-detail__prompt) {
-  color: rgb(241 245 249);
+  color: rgb(242 237 229);
+}
+
+:global(.dark .works__empty-icon) {
+  border-color: rgb(66 61 55);
+  background: rgb(35 33 30);
+  color: rgb(167 159 148);
+}
+
+:global(.dark .work-card__media) {
+  background: rgb(20 19 18);
+}
+
+:global(.dark .works__empty-title) {
+  color: rgb(227 219 208);
 }
 </style>

@@ -1,435 +1,879 @@
 <template>
   <AppLayout>
-    <div class="space-y-6">
-      <section class="rounded-xl border border-gray-200 bg-white p-6 dark:border-dark-700 dark:bg-dark-900">
-        <div class="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
-          <div class="max-w-3xl">
-            <p class="text-sm font-semibold text-primary-600 dark:text-primary-400">Create 使用手册</p>
-            <h2 class="mt-2 text-2xl font-bold text-gray-900 dark:text-white">{{ pageTitle }}</h2>
-            <p class="mt-3 text-sm leading-6 text-gray-500 dark:text-gray-400">{{ pageDescription }}</p>
-          </div>
-          <router-link
-            v-if="selectedGuide"
-            to="/manual"
-            class="inline-flex items-center text-sm font-semibold text-primary-600 hover:text-primary-500 dark:text-primary-400"
-          >
-            返回手册首页
+    <div class="manual">
+      <header class="manual-hero">
+        <div class="manual-hero__copy">
+          <p class="manual-eyebrow">IMAGE & VIDEO STUDIO</p>
+          <h1>图片与视频创作手册</h1>
+          <p>
+            从这里开始使用图片工作台、视频工作台和灵感库。手册覆盖提示词、参考素材、
+            尺寸与时长、作品保存，以及通过 API 接入图片和视频生成的方法。
+          </p>
+        </div>
+        <div class="manual-hero__actions">
+          <router-link to="/image-studio" class="manual-action manual-action--primary">
+            <Icon name="grid" size="sm" />
+            打开图片工作台
+          </router-link>
+          <router-link to="/video-studio" class="manual-action">
+            <Icon name="play" size="sm" />
+            打开视频工作台
+          </router-link>
+          <router-link to="/docs/api" class="manual-action">
+            <Icon name="book" size="sm" />
+            接口文档
           </router-link>
         </div>
+      </header>
+
+      <section class="manual-quick">
+        <router-link v-for="item in quickLinks" :key="item.to" :to="item.to" class="manual-quick__item">
+          <span>{{ item.step }}</span>
+          <strong>{{ item.title }}</strong>
+          <p>{{ item.description }}</p>
+        </router-link>
       </section>
 
-      <template v-if="!selectedGuide">
-        <section class="grid gap-4 lg:grid-cols-4">
-          <div
-            v-for="item in quickLinks"
-            :key="item.title"
-            class="rounded-xl border border-gray-200 bg-white p-5 dark:border-dark-700 dark:bg-dark-900"
-          >
-            <div class="text-sm font-semibold text-gray-500 dark:text-gray-400">{{ item.step }}</div>
-            <h3 class="mt-2 text-lg font-bold text-gray-900 dark:text-white">{{ item.title }}</h3>
-            <p class="mt-2 text-sm leading-6 text-gray-500 dark:text-gray-400">{{ item.desc }}</p>
-          </div>
-        </section>
+      <div class="manual-layout">
+        <aside class="manual-sidebar">
+          <p>目录</p>
+          <nav aria-label="创作手册目录">
+            <a v-for="item in sections" :key="item.id" :href="`#${item.id}`">{{ item.label }}</a>
+          </nav>
+        </aside>
 
-        <section class="rounded-xl border border-gray-200 bg-white p-6 dark:border-dark-700 dark:bg-dark-900">
-          <div class="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-            <div>
-              <h2 class="text-xl font-bold text-gray-900 dark:text-white">选择你的客户端</h2>
-              <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">每个平台单独一页，按对应步骤填写接口地址、密钥和模型名。</p>
-            </div>
-          </div>
-          <div class="mt-6 grid gap-4 lg:grid-cols-2">
-            <router-link
-              v-for="guide in platformGuides"
-              :key="guide.slug"
-              :to="`/manual/${guide.slug}`"
-              class="group rounded-xl border border-gray-200 bg-gray-50 p-5 transition hover:border-primary-300 hover:bg-primary-50 dark:border-dark-700 dark:bg-dark-800/60 dark:hover:border-primary-700 dark:hover:bg-primary-950/20"
-            >
-              <div class="flex items-start justify-between gap-4">
+        <main class="manual-main">
+          <section id="prepare" class="manual-section">
+            <p class="manual-section__eyebrow">Preparation</p>
+            <h2>开始前准备</h2>
+            <ol class="manual-steps">
+              <li>
+                <span>1</span>
                 <div>
-                  <p class="text-xs font-semibold uppercase text-primary-600 dark:text-primary-400">{{ guide.type }}</p>
-                  <h3 class="mt-2 text-lg font-bold text-gray-900 dark:text-white">{{ guide.name }}</h3>
+                  <strong>创建创作密钥</strong>
+                  <p>
+                    进入
+                    <router-link to="/keys">创作密钥</router-link>
+                    页面创建密钥。图片和视频工作台会使用这把密钥调用模型，生成费用从账户余额中扣除。
+                  </p>
                 </div>
-                <span class="text-sm font-semibold text-primary-600 group-hover:text-primary-500 dark:text-primary-400">查看配置</span>
-              </div>
-              <p class="mt-3 text-sm leading-6 text-gray-500 dark:text-gray-400">{{ guide.summary }}</p>
-              <div class="mt-4 flex flex-wrap gap-2">
-                <span
-                  v-for="tag in guide.tags"
-                  :key="tag"
-                  class="rounded-md bg-white px-2.5 py-1 text-xs font-medium text-gray-600 ring-1 ring-gray-200 dark:bg-dark-900 dark:text-gray-300 dark:ring-dark-700"
-                >
-                  {{ tag }}
-                </span>
-              </div>
-            </router-link>
-          </div>
-        </section>
-
-        <section class="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
-          <div class="rounded-xl border border-gray-200 bg-white p-6 dark:border-dark-700 dark:bg-dark-900">
-            <h2 class="text-xl font-bold text-gray-900 dark:text-white">通用配置</h2>
-            <ConfigTable :rows="configRows" />
-          </div>
-
-          <div class="rounded-xl border border-gray-200 bg-white p-6 dark:border-dark-700 dark:bg-dark-900">
-            <h2 class="text-xl font-bold text-gray-900 dark:text-white">常见问题</h2>
-            <div class="mt-5 space-y-4">
-              <div v-for="faq in faqs" :key="faq.q">
-                <h3 class="text-sm font-bold text-gray-900 dark:text-white">{{ faq.q }}</h3>
-                <p class="mt-1 text-sm leading-6 text-gray-500 dark:text-gray-400">{{ faq.a }}</p>
-              </div>
-            </div>
-          </div>
-        </section>
-      </template>
-
-      <template v-else>
-        <section class="grid gap-4 lg:grid-cols-[0.8fr_1.2fr]">
-          <div class="rounded-xl border border-gray-200 bg-white p-6 dark:border-dark-700 dark:bg-dark-900">
-            <h2 class="text-xl font-bold text-gray-900 dark:text-white">本页要填写什么</h2>
-            <ConfigTable :rows="selectedGuide.configRows" />
-            <div class="mt-6 rounded-lg bg-gray-50 p-4 dark:bg-dark-800">
-              <h3 class="text-sm font-bold text-gray-900 dark:text-white">配置前准备</h3>
-              <ul class="mt-3 space-y-2 text-sm leading-6 text-gray-500 dark:text-gray-400">
-                <li v-for="item in selectedGuide.prerequisites" :key="item">{{ item }}</li>
-              </ul>
-            </div>
-          </div>
-
-          <div class="rounded-xl border border-gray-200 bg-white p-6 dark:border-dark-700 dark:bg-dark-900">
-            <h2 class="text-xl font-bold text-gray-900 dark:text-white">{{ selectedGuide.name }} 配置步骤</h2>
-            <div class="mt-6 space-y-6">
-              <div v-for="step in selectedGuide.steps" :key="step.title" class="flex gap-4">
-                <div class="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-primary-600 text-sm font-bold text-white">
-                  {{ step.no }}
+              </li>
+              <li>
+                <span>2</span>
+                <div>
+                  <strong>确认图片或视频能力</strong>
+                  <p>
+                    API 密钥所属通道决定可用模型。若工作台没有模型，先检查该密钥的通道是否开放图片或视频生成能力。
+                  </p>
                 </div>
-                <div class="min-w-0 flex-1">
-                  <h3 class="text-base font-bold text-gray-900 dark:text-white">{{ step.title }}</h3>
-                  <p class="mt-1 text-sm leading-6 text-gray-500 dark:text-gray-400">{{ step.desc }}</p>
+              </li>
+              <li>
+                <span>3</span>
+                <div>
+                  <strong>确认余额与作品配额</strong>
+                  <p>
+                    图片和视频按实际模型与参数计费。保存到“我的作品”的内容会占用图片与视频共用的作品配额，
+                    临时结果则有保留期限。
+                  </p>
                 </div>
+              </li>
+            </ol>
+          </section>
+
+          <section id="image" class="manual-section">
+            <p class="manual-section__eyebrow">Image Studio</p>
+            <h2>使用图片工作台</h2>
+            <ol class="manual-steps">
+              <li>
+                <span>1</span>
+                <div>
+                  <strong>选择 API 密钥和图片模型</strong>
+                  <p>右上角选择支持图片生成的密钥与模型。模型列表会按当前密钥通道过滤。</p>
+                </div>
+              </li>
+              <li>
+                <span>2</span>
+                <div>
+                  <strong>输入提示词</strong>
+                  <p>
+                    描述主体、场景、构图、光线和风格。需要保持商品或角色一致时，把约束写在提示词中，
+                    并配合参考图使用。
+                  </p>
+                </div>
+              </li>
+              <li>
+                <span>3</span>
+                <div>
+                  <strong>调整生成参数</strong>
+                  <p>设置尺寸、质量、格式、背景和数量。当前一次最多生成 4 张，最终可用尺寸以页面校验结果为准。</p>
+                </div>
+              </li>
+              <li>
+                <span>4</span>
+                <div>
+                  <strong>生成、预览并保存</strong>
+                  <p>
+                    生成完成后点击图片预览。临时结果可下载或存到“我的作品”；已保存的作品会长期保留并计入配额。
+                  </p>
+                </div>
+              </li>
+            </ol>
+            <div class="manual-table-wrap">
+              <table class="manual-table">
+                <thead>
+                  <tr>
+                    <th>参数</th>
+                    <th>建议</th>
+                    <th>注意</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>提示词</td>
+                    <td>先写主体，再写环境、镜头、光线和风格。</td>
+                    <td>一次只解决一个主要视觉目标，效果更稳定。</td>
+                  </tr>
+                  <tr>
+                    <td>参考图</td>
+                    <td>用于保持商品外观、角色身份或画面风格。</td>
+                    <td>参考图越清晰，主体一致性通常越稳定。</td>
+                  </tr>
+                  <tr>
+                    <td>尺寸</td>
+                    <td>根据发布渠道选择横图、竖图或方图。</td>
+                    <td>当前模型不支持的尺寸会在生成前提示。</td>
+                  </tr>
+                  <tr>
+                    <td>质量 / 格式 / 背景</td>
+                    <td>正式物料优先高质量；需要透明背景时选择对应选项。</td>
+                    <td>最终能力取决于当前模型，无法生效时换模型测试。</td>
+                  </tr>
+                  <tr>
+                    <td>数量</td>
+                    <td>先用 1 张验证提示词，再批量生成。</td>
+                    <td>数量越多，成本和等待时间越高。</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="manual-callout">
+              <strong>图片编辑</strong>
+              <span>
+                上传参考图后，工作台会自动使用图片编辑接口。提示词只描述需要改变的内容，
+                并明确哪些主体、文字、构图和风格必须保持不变。
+              </span>
+            </div>
+          </section>
+
+          <section id="video" class="manual-section">
+            <p class="manual-section__eyebrow">Video Studio</p>
+            <h2>使用视频工作台</h2>
+            <ol class="manual-steps">
+              <li>
+                <span>1</span>
+                <div>
+                  <strong>选择视频模型</strong>
+                  <p>
+                    支持 Seedance、Grok Video 以及通道开放的其他视频模型。模型名称决定创建任务使用的协议和能力。
+                  </p>
+                </div>
+              </li>
+              <li>
+                <span>2</span>
+                <div>
+                  <strong>写清镜头动作</strong>
+                  <p>
+                    建议按“主体 + 动作 + 场景 + 运镜 + 光线 + 结尾状态”描述。视频提示词越具体，
+                    动作漂移和场景变化的概率通常越低。
+                  </p>
+                </div>
+              </li>
+              <li>
+                <span>3</span>
+                <div>
+                  <strong>添加参考素材</strong>
+                  <p>
+                    可以添加参考图、参考视频和参考音频。参考图还可指定首帧、尾帧或普通参考图；
+                    不同模型支持的素材数量和组合方式不同。
+                  </p>
+                </div>
+              </li>
+              <li>
+                <span>4</span>
+                <div>
+                  <strong>设置时长、画幅和画质</strong>
+                  <p>
+                    时长、分辨率与画幅会直接影响生成成本和可用性。先用较低成本参数验证动作，
+                    确认后再生成高质量版本。
+                  </p>
+                </div>
+              </li>
+              <li>
+                <span>5</span>
+                <div>
+                  <strong>提交并等待任务</strong>
+                  <p>
+                    视频是异步任务。工作台会持续轮询状态；成功后可预览、下载或保存到“我的作品”。
+                    任务失败时保留提示词和参数，换模型或减少参考素材后重试。
+                  </p>
+                </div>
+              </li>
+            </ol>
+            <div class="manual-table-wrap">
+              <table class="manual-table">
+                <thead>
+                  <tr>
+                    <th>参数</th>
+                    <th>说明</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>提示词</td>
+                    <td>描述连续动作，不要写成多段互不相关的镜头；一个任务尽量只做一个镜头。</td>
+                  </tr>
+                  <tr>
+                    <td>参考图</td>
+                    <td>支持首帧、尾帧或参考图时，优先上传主体清晰、构图完整的图片。</td>
+                  </tr>
+                  <tr>
+                    <td>参考视频</td>
+                    <td>用于参考运动、镜头节奏或风格。不要同时上传互相冲突的运镜参考。</td>
+                  </tr>
+                  <tr>
+                    <td>参考音频</td>
+                    <td>用于节奏或氛围参考。最终是否生成音频取决于模型和“生成音频”开关。</td>
+                  </tr>
+                  <tr>
+                    <td>时长 / 画质 / 画幅</td>
+                    <td>先用低时长与低画质试动作，再生成正式版本；比例按发布渠道选择。</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section id="inspiration" class="manual-section">
+            <p class="manual-section__eyebrow">Inspiration</p>
+            <h2>从灵感库开始</h2>
+            <p>
+              打开
+              <router-link to="/image-inspiration">图片灵感库</router-link>
+              寻找构图、配色和材质参考，或打开
+              <router-link to="/video-inspiration">视频灵感库</router-link>
+              浏览镜头结构。点击图片可以查看大图和完整提示词，再复制提示词或直接带入对应工作台。
+              正式生成前仍要按自己的主体和素材调整提示词。
+            </p>
+            <div class="manual-grid">
+              <div>
+                <strong>图片灵感</strong>
+                <p>按模型和分类浏览图片作品，查看构图、配色、尺寸与完整提示词。</p>
+              </div>
+              <div>
+                <strong>视频灵感</strong>
+                <p>浏览视频提示词和镜头模板，快速带入视频工作台。</p>
+              </div>
+              <div>
+                <strong>在线灵感</strong>
+                <p>查看社区热门图片与视频；外部源暂不可用时会显示明确提示。</p>
               </div>
             </div>
-          </div>
-        </section>
+          </section>
 
-        <section class="rounded-xl border border-gray-200 bg-white p-6 dark:border-dark-700 dark:bg-dark-900">
-          <h2 class="text-xl font-bold text-gray-900 dark:text-white">配置后测试</h2>
-          <div class="mt-5 grid gap-4 lg:grid-cols-3">
-            <div v-for="check in selectedGuide.checks" :key="check.title" class="rounded-lg bg-gray-50 p-4 dark:bg-dark-800">
-              <h3 class="text-sm font-bold text-gray-900 dark:text-white">{{ check.title }}</h3>
-              <p class="mt-2 text-sm leading-6 text-gray-500 dark:text-gray-400">{{ check.desc }}</p>
+          <section id="works" class="manual-section">
+            <p class="manual-section__eyebrow">Works</p>
+            <h2>保存与管理作品</h2>
+            <p>
+              临时生成结果会出现在工作台和“我的作品”中，但可能按保留期限自动清理。
+              需要长期使用时，请点击保存或置顶到“我的作品”。图片与视频共用作品配额，达到上限后需要先删除旧作品。
+            </p>
+            <router-link to="/video-works" class="manual-inline-link">打开我的作品</router-link>
+          </section>
+
+          <section id="api" class="manual-section">
+            <p class="manual-section__eyebrow">API</p>
+            <h2>通过 API 生成图片和视频</h2>
+            <p>
+              图片使用 OpenAI Images 兼容接口；视频根据模型族使用 Grok Video 或 Seedance 异步任务接口。
+              下面的示例使用你的当前 Base URL，完整参数和错误说明见
+              <router-link to="/docs/api">接口文档</router-link>。
+            </p>
+            <DocCodeBlock title="Generate an image" language="bash" :code="snippets.image" />
+            <DocCodeBlock title="Grok video" language="bash" :code="snippets.grokVideo" />
+            <DocCodeBlock title="Seedance video" language="bash" :code="snippets.seedanceVideo" />
+            <DocCodeBlock title="Poll and download" language="bash" :code="snippets.videoPoll" />
+          </section>
+
+          <section id="troubleshooting" class="manual-section">
+            <p class="manual-section__eyebrow">Troubleshooting</p>
+            <h2>常见问题</h2>
+            <div class="manual-faq">
+              <div v-for="item in faqs" :key="item.title">
+                <strong>{{ item.title }}</strong>
+                <p>{{ item.answer }}</p>
+              </div>
             </div>
-          </div>
-        </section>
-
-        <section class="rounded-xl border border-gray-200 bg-white p-6 dark:border-dark-700 dark:bg-dark-900">
-          <h2 class="text-xl font-bold text-gray-900 dark:text-white">常见错误处理</h2>
-          <div class="mt-5 grid gap-4 lg:grid-cols-2">
-            <div v-for="item in selectedGuide.troubleshooting" :key="item.title" class="rounded-lg bg-gray-50 p-4 dark:bg-dark-800">
-              <h3 class="text-sm font-bold text-gray-900 dark:text-white">{{ item.title }}</h3>
-              <p class="mt-2 text-sm leading-6 text-gray-500 dark:text-gray-400">{{ item.desc }}</p>
-            </div>
-          </div>
-        </section>
-
-        <section class="rounded-xl border border-gray-200 bg-white p-6 dark:border-dark-700 dark:bg-dark-900">
-          <h2 class="text-xl font-bold text-gray-900 dark:text-white">还可以查看</h2>
-          <div class="mt-4 flex flex-wrap gap-3">
-            <router-link
-              v-for="guide in otherGuides"
-              :key="guide.slug"
-              :to="`/manual/${guide.slug}`"
-              class="rounded-lg border border-gray-200 px-4 py-2 text-sm font-semibold text-gray-700 hover:border-primary-300 hover:text-primary-600 dark:border-dark-700 dark:text-gray-300 dark:hover:border-primary-700 dark:hover:text-primary-400"
-            >
-              {{ guide.name }}
-            </router-link>
-          </div>
-        </section>
-      </template>
+          </section>
+        </main>
+      </div>
     </div>
   </AppLayout>
 </template>
 
 <script setup lang="ts">
-import { computed, defineComponent, h, type PropType } from 'vue'
-import { useRoute } from 'vue-router'
+import { computed } from 'vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
+import DocCodeBlock from '@/components/docs/DocCodeBlock.vue'
+import Icon from '@/components/icons/Icon.vue'
 import { useAppStore } from '@/stores/app'
-import { resolvePublicApiEndpoint } from '@/utils/apiEndpoint'
+import { resolveDocumentedApiBaseUrl } from '@/utils/apiEndpoint'
 
-interface ConfigRow {
-  label: string
-  value: string
-}
-
-interface ManualStep {
-  no: number
-  title: string
-  desc: string
-}
-
-interface ManualGuide {
-  slug: string
-  name: string
-  type: string
-  summary: string
-  tags: string[]
-  prerequisites: string[]
-  configRows: ConfigRow[]
-  steps: ManualStep[]
-  checks: Array<{ title: string; desc: string }>
-  troubleshooting: Array<{ title: string; desc: string }>
-}
-
-const route = useRoute()
 const appStore = useAppStore()
-const apiBaseUrl = computed(() => resolvePublicApiEndpoint(appStore.cachedPublicSettings?.api_base_url || appStore.apiBaseUrl))
-const baseUrl = computed(() => apiBaseUrl.value.replace(/\/v1\/?$/, ''))
-
-const configRows = computed<ConfigRow[]>(() => [
-  { label: '接口类型', value: 'OpenAI Compatible / OpenAI 兼容' },
-  { label: 'Base URL', value: apiBaseUrl.value },
-  { label: 'API Key', value: '粘贴你在 API 密钥页面创建的 sk- 开头密钥' },
-  { label: 'Model', value: '填写模型页面显示的完整模型名，例如 gpt5.5' },
-])
+const apiBaseUrl = computed(() => resolveDocumentedApiBaseUrl(
+  appStore.cachedPublicSettings?.api_base_url || appStore.apiBaseUrl,
+  typeof window === 'undefined' ? '' : window.location.origin,
+))
 
 const quickLinks = [
-  { step: '第一步', title: '创建 API 密钥', desc: '进入 API 密钥页面创建密钥，复制后保存到你的客户端。' },
-  { step: '第二步', title: '确认可用模型', desc: '进入模型页面查看当前账号可调用的模型和价格。' },
-  { step: '第三步', title: '选择平台教程', desc: '按你使用的工具进入对应页面，不同客户端的入口名称不一样。' },
-  { step: '第四步', title: '查看用量', desc: '请求后在使用记录中查看 Token、费用、耗时和调用明细。' },
+  { step: '图片', title: '图片工作台', description: '文生图、参考图编辑、尺寸与作品保存。', to: '/image-studio' },
+  { step: '视频', title: '视频工作台', description: '图生视频、文生视频、多模态参考和异步任务。', to: '/video-studio' },
+  { step: '灵感', title: '图片灵感库', description: '浏览图片作品与完整提示词，一键带入图片工作台。', to: '/image-inspiration' },
+  { step: '灵感', title: '视频灵感库', description: '浏览持续更新的镜头提示词，一键带入工作台。', to: '/video-inspiration' },
+  { step: '接口', title: '接口文档', description: '查看图片与视频 API 的完整请求和错误说明。', to: '/docs/api' },
 ]
 
-const commonChecks = [
-  { title: '发送一次简单对话', desc: '输入“你好，请用一句话回复我”之类的短问题，确认客户端能正常返回内容。' },
-  { title: '核对使用记录', desc: '回到 Create 的使用记录页，查看是否出现刚才的模型、费用、耗时和请求时间。' },
-  { title: '核对余额变化', desc: '如果请求成功但没有记录，刷新页面后再看；如果余额不足，先到充值页补充余额。' },
+const sections = [
+  { id: 'prepare', label: '开始前准备' },
+  { id: 'image', label: '图片工作台' },
+  { id: 'video', label: '视频工作台' },
+  { id: 'inspiration', label: '灵感库' },
+  { id: 'works', label: '保存与管理' },
+  { id: 'api', label: 'API 接入' },
+  { id: 'troubleshooting', label: '常见问题' },
 ]
 
-const commonTroubleshooting = computed(() => [
-  { title: '401 / Unauthorized', desc: '优先检查 API Key 是否复制完整、是否包含多余空格、密钥是否被禁用或删除。重新创建密钥后再粘贴一次最稳。' },
-  { title: '模型不存在', desc: '到“模型”页面复制完整模型名，大小写、横线、点号都必须一致。不要凭记忆手打模型名。' },
-  { title: '连接失败', desc: `确认 Base URL 是 ${apiBaseUrl.value}，并且客户端没有自动再拼一次 /v1。如果你部署在公网域名，请填写公网域名对应的 /v1 地址。` },
-  { title: '有返回但用量异常', desc: '到使用记录里查看模型、Token 和 User-Agent；如果客户端重试多次，可能会产生多条调用记录。' },
-])
-
-const defaultPrerequisites = computed(() => [
-  '先进入“API 密钥”页面创建一个可用密钥，复制 sk- 开头的完整内容。',
-  '进入“模型”页面确认你账号可用的模型名称，并复制完整模型名。',
-  `确认接口地址为 ${apiBaseUrl.value}。大多数 OpenAI 兼容客户端都填写这个地址。`,
-  '如果账号余额不足，请先到“充值”页面补充余额，否则配置正确也可能调用失败。',
-])
-
-const platformGuides = computed<ManualGuide[]>(() => {
-  const currentApiBaseUrl = apiBaseUrl.value
-  const currentBaseUrl = baseUrl.value
-  const currentConfigRows = configRows.value
-  const currentDefaultPrerequisites = defaultPrerequisites.value
-  const currentCommonTroubleshooting = commonTroubleshooting.value
-
-  return [
+const faqs = [
   {
-    slug: 'chatbox',
-    name: 'ChatBox',
-    type: '桌面客户端',
-    summary: '适合桌面聊天使用，在自定义 OpenAI API 设置里填写 Create 的接口地址和密钥。',
-    tags: ['Base URL', 'API Key', '模型名'],
-    prerequisites: currentDefaultPrerequisites,
-    configRows: currentConfigRows,
-    steps: [
-      { no: 1, title: '打开 ChatBox 设置', desc: '进入 ChatBox 后打开设置页，找到“模型提供方”“AI 服务”“API 设置”或类似入口。不同版本名称可能略有差异。' },
-      { no: 2, title: '选择 OpenAI 兼容模式', desc: '提供方选择 OpenAI API、自定义 OpenAI、OpenAI Compatible 或类似选项。不要选择只支持官方登录的模式。' },
-      { no: 3, title: '填写接口地址', desc: `Base URL / API Host 填写 ${currentApiBaseUrl}。注意必须包含 /v1；如果客户端已经固定拼接 /v1，则只填写 ${currentBaseUrl}。` },
-      { no: 4, title: '填写 API Key', desc: 'API Key 粘贴 Create 里创建的 sk- 开头密钥。复制后检查前后没有空格，也不要把密钥名称当成密钥。' },
-      { no: 5, title: '添加模型名称', desc: '模型填写“模型”页面显示的完整名称，例如 gpt5.5。如果 ChatBox 支持自定义模型列表，就手动添加该模型。' },
-      { no: 6, title: '保存并新建对话', desc: '保存配置后新建一个会话，选择刚配置的模型，发送短问题测试。测试成功后再开始长文本或文件任务。' },
-    ],
-    checks: commonChecks,
-    troubleshooting: currentCommonTroubleshooting,
+    title: '提示没有可用模型',
+    answer: '先确认 API 密钥所属通道是否开放了图片或视频生成能力。图片和视频使用不同的模型列表，文本模型不能直接用于生成图片或视频。',
   },
   {
-    slug: 'cherry-studio',
-    name: 'Cherry Studio',
-    type: '桌面客户端',
-    summary: '适合多模型管理，在供应商设置里新增 OpenAI 兼容服务商并绑定模型。',
-    tags: ['供应商', '模型列表', 'OpenAI 兼容'],
-    prerequisites: currentDefaultPrerequisites,
-    configRows: currentConfigRows,
-    steps: [
-      { no: 1, title: '进入模型服务设置', desc: '打开 Cherry Studio 设置，进入“模型服务”“供应商”或 Provider 管理页面。' },
-      { no: 2, title: '新增自定义供应商', desc: '新增一个供应商，名称建议写 Create，类型选择 OpenAI Compatible / OpenAI 兼容。' },
-      { no: 3, title: '填写 API 地址', desc: `API 地址、API Host 或 Base URL 填写 ${currentApiBaseUrl}。如果界面分成 Host 和 Path，Host 填 ${currentBaseUrl}，Path 填 /v1。` },
-      { no: 4, title: '填写密钥', desc: 'API Key 填写 Create 生成的 sk- 密钥。保存前确认密钥没有换行、空格或中文引号。' },
-      { no: 5, title: '添加模型列表', desc: '在该供应商下手动添加模型名称。模型名必须和 Create 模型页一致，否则聊天页会提示模型不可用。' },
-      { no: 6, title: '设置默认模型并测试', desc: '回到聊天页面选择 Create 供应商和对应模型，发送一条短消息。成功后可以把该模型设为默认模型。' },
-    ],
-    checks: commonChecks,
-    troubleshooting: [
-      ...currentCommonTroubleshooting,
-      { title: '供应商保存了但聊天页看不到', desc: '检查是否已经在供应商下添加模型，并确认模型被启用。有些版本需要重启 Cherry Studio 或切换会话后才刷新模型列表。' },
-    ],
+    title: '图片尺寸不可用',
+    answer: '不同模型支持的尺寸范围不同。按页面提示调整尺寸；如果仍然不可用，换一个图片模型测试。',
   },
   {
-    slug: 'opencat',
-    name: 'OpenCat',
-    type: '移动/桌面客户端',
-    summary: '适合移动端或轻量聊天使用，在自定义服务里配置 OpenAI 兼容接口。',
-    tags: ['自定义服务', '移动端', '聊天测试'],
-    prerequisites: currentDefaultPrerequisites,
-    configRows: currentConfigRows,
-    steps: [
-      { no: 1, title: '打开 API 设置', desc: '进入 OpenCat 设置，找到 API、服务商、Provider、自定义 Endpoint 或 OpenAI 配置入口。' },
-      { no: 2, title: '新增 OpenAI 兼容服务', desc: '服务类型选择 OpenAI 或 OpenAI-compatible，自定义名称建议填写 Create，方便后续识别。' },
-      { no: 3, title: '填写 Endpoint', desc: `Endpoint / Base URL 填写 ${currentApiBaseUrl}。如果客户端只接受服务器地址，则填写 ${currentBaseUrl}，再确认路径或接口版本是 /v1。` },
-      { no: 4, title: '填写 API Key', desc: 'API Key 填写 Create 的 sk- 密钥。移动端复制时尤其注意不要带入空格、换行或自动纠错字符。' },
-      { no: 5, title: '设置默认模型', desc: '默认模型填写模型页完整名称。如果支持模型列表，建议只添加你最常用的几个模型。' },
-      { no: 6, title: '保存后测试网络', desc: '在移动网络和 Wi-Fi 下各测试一次。如果只有移动网络失败，多半是本地地址或内网地址无法访问。' },
-    ],
-    checks: commonChecks,
-    troubleshooting: [
-      ...currentCommonTroubleshooting,
-      { title: '手机端无法连接 localhost', desc: 'localhost 只代表手机本机，不代表你的电脑或服务器。手机端必须填写公网域名，或填写同一局域网可访问的电脑 IP。' },
-    ],
+    title: '视频一直处于生成中',
+    answer: '视频任务通常比图片慢。保持页面打开等待轮询；如果长时间失败，减少参考素材、缩短时长或降低画质后重试。',
   },
   {
-    slug: 'cursor',
-    name: 'Cursor',
-    type: '代码编辑器',
-    summary: '适合编码场景，在 OpenAI API Key 和 Override Base URL 中接入 Create。',
-    tags: ['编辑器', 'Override URL', '代码辅助'],
-    prerequisites: currentDefaultPrerequisites,
-    configRows: currentConfigRows,
-    steps: [
-      { no: 1, title: '打开 Cursor 设置', desc: '进入 Cursor Settings，找到 Models、Provider、OpenAI API Key 或自定义模型配置区域。' },
-      { no: 2, title: '启用自定义 OpenAI 配置', desc: '打开自定义 API Key、Override OpenAI Base URL、OpenAI Compatible Provider 或类似选项。' },
-      { no: 3, title: '填写密钥和地址', desc: `OpenAI API Key 填写 sk- 密钥，Override Base URL 填写 ${currentApiBaseUrl}。如果 Cursor 自动附加 /v1，则改填 ${currentBaseUrl}。` },
-      { no: 4, title: '添加模型名称', desc: '在模型配置中添加 Create 模型页显示的模型名。建议先用一个便宜或常用模型测试，再添加更多模型。' },
-      { no: 5, title: '选择模型范围', desc: '如果 Cursor 区分 Chat、Composer、Agent、Inline Edit，分别确认这些入口使用的是同一个 Create 模型。' },
-      { no: 6, title: '用代码任务测试', desc: '打开 Chat 或 Composer，让它解释当前文件的一小段代码。成功后再执行更长的生成或重构任务。' },
-    ],
-    checks: commonChecks,
-    troubleshooting: [
-      ...currentCommonTroubleshooting,
-      { title: '编辑器仍走官方模型', desc: '检查当前会话选择的模型是否是你新增的 Create 模型。有些编辑器保存 Key 后，还需要在聊天窗口手动切换模型。' },
-    ],
+    title: '参考素材没有生效',
+    answer: '检查当前模型是否支持该类型参考素材，以及素材数量、格式和大小是否在限制内。不同模型的参考图角色和组合能力不同。',
   },
   {
-    slug: 'cc-switch',
-    name: 'CC Switch',
-    type: 'CLI 配置工具',
-    summary: '适合 Claude Code、Gemini CLI、Codex 等命令行工具；可以从 API 密钥页一键导入，也可以手动配置。',
-    tags: ['一键导入', 'Claude Code', 'Gemini CLI'],
-    prerequisites: [
-      '先在电脑上安装并启动 CC Switch，确认 ccswitch:// 协议可以被系统识别。',
-      '进入 Create 的“API 密钥”页面创建密钥，并确认密钥所属分组支持你要使用的模型平台。',
-      '如果页面上看不到“导入到 CC Switch”按钮，可能是管理员隐藏了该按钮，此时使用手动配置方式。',
-      `手动配置时接口地址通常使用 ${currentApiBaseUrl}；部分平台映射可能会由导入功能自动设置 endpoint。`,
-    ],
-    configRows: [
-      { label: '推荐方式', value: 'API 密钥页点击“导入到 CC Switch”' },
-      { label: '协议', value: 'ccswitch://v1/import' },
-      { label: 'Base URL', value: currentApiBaseUrl },
-      { label: 'API Key', value: '选择要导入的 Create API 密钥' },
-      { label: '客户端类型', value: 'Claude Code 或 Gemini CLI' },
-    ],
-    steps: [
-      { no: 1, title: '打开 API 密钥页面', desc: '进入 Create 左侧“API 密钥”，找到你准备给命令行工具使用的密钥。建议单独创建一个密钥，方便后续统计和禁用。' },
-      { no: 2, title: '点击导入到 CC Switch', desc: '在密钥操作区点击“导入到 CC Switch”。系统会根据密钥分组平台生成 ccswitch:// 导入链接。' },
-      { no: 3, title: '选择客户端类型', desc: '弹窗里选择要导入的客户端类型，例如 Claude Code 或 Gemini CLI。不同类型会影响 CC Switch 里生成的 app 和 endpoint。' },
-      { no: 4, title: '允许浏览器打开 CC Switch', desc: '浏览器弹出确认时允许打开 CC Switch。成功后 CC Switch 会新增一个 Create Provider。' },
-      { no: 5, title: '在 CC Switch 中启用 Provider', desc: '打开 CC Switch，确认新 Provider 的名称、endpoint 和 API Key 已写入，然后把它设为当前使用项。' },
-      { no: 6, title: '在命令行工具中测试', desc: '打开 Claude Code、Gemini CLI 或对应工具，发送一个简单请求。成功后回到 Create 使用记录查看是否产生调用。' },
-      { no: 7, title: '导入失败时手动配置', desc: `如果提示未安装或协议未注册，就在 CC Switch 里手动新增 Provider：名称写 Create，endpoint 填 ${currentApiBaseUrl}，API Key 粘贴 sk- 密钥。` },
-    ],
-    checks: [
-      { title: '确认 CC Switch Provider', desc: 'CC Switch 中应该能看到 Create Provider，并且 endpoint、API Key 不为空。' },
-      { title: '确认 CLI 当前使用项', desc: '命令行工具调用前，确认 CC Switch 当前启用的是刚导入的 Create Provider。' },
-      { title: '回看 Create 使用记录', desc: 'CLI 测试后回到使用记录，User-Agent 或模型信息能帮助判断是否走了 Create。' },
-    ],
-    troubleshooting: [
-      { title: '提示 CC-Switch 未安装', desc: '说明系统没有识别 ccswitch:// 协议。先安装并启动 CC Switch，或者在 CC Switch 中手动新增 Provider。' },
-      { title: '导入后 CLI 仍不可用', desc: '检查 CC Switch 当前选中的 Provider 是否是 Create。有些 CLI 已经启动时不会立即读取新配置，重开终端再试。' },
-      { title: 'Claude Code / Gemini CLI 类型选错', desc: '回到 API 密钥页重新导入一次，并选择正确客户端类型。错误类型可能导致 app 或 endpoint 不匹配。' },
-      { title: 'OpenAI 平台模型不匹配', desc: '项目内导入逻辑会给 OpenAI 平台设置默认 Codex 模型。若你要用其它模型，请在 CC Switch 里手动修改模型名。' },
-    ],
+    title: '生成成功但作品不见了',
+    answer: '临时作品有保留期限。需要长期保留时，请在生成完成后保存到“我的作品”，并检查图片与视频共用的作品配额。',
   },
   {
-    slug: 'code-sdk',
-    name: '代码 SDK',
-    type: '开发接入',
-    summary: '适合 Node.js、Python 等程序调用，按 OpenAI SDK 的 baseURL/base_url 写法接入。',
-    tags: ['Node.js', 'Python', 'API 调用'],
-    prerequisites: [
-      ...currentDefaultPrerequisites,
-      '建议把 API Key 放到环境变量中，不要直接提交到 Git 仓库。',
-      '先用最小请求测试连通性，再接入你的正式业务逻辑。',
-    ],
-    configRows: [
-      ...currentConfigRows,
-      { label: 'Node.js', value: `new OpenAI({ apiKey: 'sk-...', baseURL: '${currentApiBaseUrl}' })` },
-      { label: 'Python', value: `OpenAI(api_key='sk-...', base_url='${currentApiBaseUrl}')` },
-    ],
-    steps: [
-      { no: 1, title: '安装 OpenAI SDK', desc: 'Node.js 使用 openai 包，Python 使用 openai 包。确认 SDK 版本支持自定义 baseURL/base_url。' },
-      { no: 2, title: '设置环境变量', desc: '把 Create API Key 放到环境变量，例如 CREATE_API_KEY。不要写进前端代码、公开仓库或日志。' },
-      { no: 3, title: '设置 baseURL/base_url', desc: `SDK 初始化时把 baseURL/base_url 设置为 ${currentApiBaseUrl}。如果你有反向代理或公网域名，请使用最终用户能访问的域名。` },
-      { no: 4, title: '填写模型名', desc: 'chat.completions.create、responses.create 或 embeddings.create 中的 model 填写模型页完整名称。' },
-      { no: 5, title: '先跑最小请求', desc: '先发送一个短 prompt，只打印返回文本和错误码。确认成功后再接入流式输出、工具调用或长上下文。' },
-      { no: 6, title: '记录错误码', desc: '接入业务时保留 status、message、request id 等信息，方便在 Create 使用记录和后端日志中排查。' },
-    ],
-    checks: commonChecks,
-    troubleshooting: [
-      ...currentCommonTroubleshooting,
-      { title: '浏览器前端直连失败', desc: '不要把 Create API Key 暴露在浏览器前端。正式产品应由你的后端调用 Create，再把结果返回给前端。' },
-      { title: '流式输出中断', desc: '先用非流式请求测试。如果非流式正常，检查你的代理、网关或运行环境是否支持长连接和 SSE。' },
-    ],
+    title: 'API 返回 401 或 403',
+    answer: '401 通常是密钥无效或已禁用；403 通常是通道权限、IP 限制或客户端限制。确认使用创作密钥，而不是登录密码。',
   },
-  ]
-})
+]
 
-const faqs = computed(() => [
-  { q: '请求提示 Unauthorized 怎么办？', a: '通常是 API Key 填错、复制不完整或密钥已删除。请重新创建密钥并替换客户端配置。' },
-  { q: '模型不存在怎么办？', a: '请到模型页面复制完整模型名，注意大小写和符号必须一致。' },
-  { q: 'Base URL 应该填哪里？', a: `大多数客户端填 ${apiBaseUrl.value}。如果客户端单独要求 Host 和 Path，请确保路径最终包含 /v1。` },
-  { q: '为什么使用记录为空？', a: '只有真实发起过 API 请求后才会产生记录。刚创建密钥但还没调用时，使用记录为空是正常的。' },
-])
+const snippets = computed(() => {
+  const base = apiBaseUrl.value
+  return {
+    image: `curl "${base}/images/generations" \\
+  -H "Authorization: Bearer $CREATE_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "model": "your-image-model",
+    "prompt": "白色陶瓷杯放在木质桌面，清晨窗边柔光，商业摄影",
+    "size": "1024x1024",
+    "quality": "high",
+    "n": 1,
+    "response_format": "b64_json"
+  }'`,
+    grokVideo: `curl "${base}/videos/generations" \\
+  -H "Authorization: Bearer $CREATE_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "model": "your-grok-video-model",
+    "prompt": "镜头缓慢推近一杯热咖啡，窗边自然光，电影感",
+    "duration": 8,
+    "resolution": "720p",
+    "aspect_ratio": "16:9",
+    "image": [
+      { "url": "https://example.com/reference.png" }
+    ]
+  }'`,
+    seedanceVideo: `curl "${base}/contents/generations/tasks" \\
+  -H "Authorization: Bearer $CREATE_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "model": "your-seedance-model",
+    "content": [
+      { "type": "text", "text": "人物从门口走进庭院，镜头缓慢跟随" },
+      {
+        "type": "image_url",
+        "role": "first_frame",
+        "image_url": { "url": "https://example.com/first-frame.png" }
+      }
+    ],
+    "duration": 8,
+    "resolution": "720p",
+    "ratio": "16:9",
+    "generate_audio": false
+  }'`,
+    videoPoll: `# Grok
+curl "${base}/videos/REQUEST_ID" \\
+  -H "Authorization: Bearer $CREATE_API_KEY"
 
-const selectedGuide = computed(() => {
-  const slug = typeof route.params.platform === 'string' ? route.params.platform : ''
-  return platformGuides.value.find((guide) => guide.slug === slug)
-})
+curl "${base}/videos/REQUEST_ID/content" \\
+  -H "Authorization: Bearer $CREATE_API_KEY" \\
+  --output result.mp4
 
-const otherGuides = computed(() => platformGuides.value.filter((guide) => guide.slug !== selectedGuide.value?.slug))
-
-const pageTitle = computed(() => selectedGuide.value ? `${selectedGuide.value.name} 配置方法` : '从创建 API 密钥到开始调用')
-const pageDescription = computed(() =>
-  selectedGuide.value
-    ? selectedGuide.value.summary
-    : '选择你正在使用的平台，按对应页面完成 OpenAI 兼容接口配置。'
-)
-
-const ConfigTable = defineComponent({
-  props: {
-    rows: {
-      type: Array as PropType<ConfigRow[]>,
-      required: true,
-    },
-  },
-  setup(props) {
-    return () =>
-      h('div', { class: 'mt-5 overflow-hidden rounded-lg border border-gray-200 dark:border-dark-700' }, [
-        h('div', { class: 'grid grid-cols-[140px_minmax(0,1fr)] border-b border-gray-200 bg-gray-50 text-sm dark:border-dark-700 dark:bg-dark-800' }, [
-          h('div', { class: 'px-4 py-3 font-semibold text-gray-700 dark:text-gray-200' }, '配置项'),
-          h('div', { class: 'px-4 py-3 font-semibold text-gray-700 dark:text-gray-200' }, '填写内容'),
-        ]),
-        ...props.rows.map((row) =>
-          h('div', { class: 'grid grid-cols-[140px_minmax(0,1fr)] border-b border-gray-200 text-sm last:border-b-0 dark:border-dark-700' }, [
-            h('div', { class: 'px-4 py-3 font-medium text-gray-600 dark:text-gray-300' }, row.label),
-            h('div', { class: 'break-all px-4 py-3 font-mono text-gray-900 dark:text-white' }, row.value),
-          ])
-        ),
-      ])
-  },
+# Seedance
+curl "${base}/contents/generations/tasks/REQUEST_ID" \\
+  -H "Authorization: Bearer $CREATE_API_KEY"`,
+  }
 })
 </script>
+
+<style scoped>
+.manual {
+  display: flex;
+  width: 100%;
+  max-width: 90rem;
+  margin: 0 auto;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.manual-hero {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1.5rem;
+  border-bottom: 1px solid rgb(226 232 240);
+  padding: 0.25rem 0 1.5rem;
+}
+
+.manual-hero__copy {
+  max-width: 53rem;
+}
+
+.manual-eyebrow,
+.manual-section__eyebrow {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: rgb(173 74 41);
+}
+
+.manual-hero h1 {
+  margin-top: 0.45rem;
+  font-size: 2.1rem;
+  font-weight: 750;
+  color: rgb(15 23 42);
+}
+
+.manual-hero__copy > p:last-child {
+  margin-top: 0.7rem;
+  font-size: 0.92rem;
+  line-height: 1.8;
+  color: rgb(100 116 139);
+}
+
+.manual-hero__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.manual-action {
+  display: inline-flex;
+  height: 2.35rem;
+  align-items: center;
+  gap: 0.35rem;
+  border: 1px solid rgb(226 232 240);
+  border-radius: 0.5rem;
+  background: rgb(255 255 255);
+  padding: 0 0.75rem;
+  font-size: 0.78rem;
+  color: rgb(71 85 105);
+}
+
+.manual-action:hover {
+  border-color: rgb(232 121 78);
+  color: rgb(173 74 41);
+}
+
+.manual-action--primary {
+  border-color: rgb(232 121 78);
+  background: rgb(232 121 78);
+  color: rgb(28 18 13);
+}
+
+.manual-quick {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.manual-quick__item {
+  border-left: 2px solid rgb(232 121 78);
+  padding: 0.35rem 0 0.35rem 0.8rem;
+}
+
+.manual-quick__item span {
+  font-size: 0.68rem;
+  color: rgb(148 163 184);
+}
+
+.manual-quick__item strong {
+  display: block;
+  margin-top: 0.2rem;
+  font-size: 0.9rem;
+  color: rgb(15 23 42);
+}
+
+.manual-quick__item p {
+  margin-top: 0.2rem;
+  font-size: 0.76rem;
+  line-height: 1.55;
+  color: rgb(100 116 139);
+}
+
+.manual-layout {
+  display: grid;
+  grid-template-columns: 12.5rem minmax(0, 1fr);
+  align-items: start;
+  gap: 3rem;
+}
+
+.manual-sidebar {
+  position: sticky;
+  top: 5.25rem;
+}
+
+.manual-sidebar > p {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: rgb(148 163 184);
+}
+
+.manual-sidebar nav {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  margin-top: 0.6rem;
+}
+
+.manual-sidebar a {
+  border-radius: 0.35rem;
+  padding: 0.32rem 0.5rem;
+  font-size: 0.8rem;
+  color: rgb(71 85 105);
+}
+
+.manual-sidebar a:hover {
+  background: rgb(248 250 252);
+  color: rgb(173 74 41);
+}
+
+.manual-main {
+  min-width: 0;
+}
+
+.manual-section {
+  border-bottom: 1px solid rgb(226 232 240);
+  padding: 1.4rem 0 2.2rem;
+  scroll-margin-top: 5.25rem;
+}
+
+.manual-section:first-child {
+  padding-top: 0.2rem;
+}
+
+.manual-section h2 {
+  margin-top: 0.3rem;
+  font-size: 1.35rem;
+  font-weight: 720;
+  color: rgb(15 23 42);
+}
+
+.manual-section > p {
+  margin-top: 0.65rem;
+  font-size: 0.88rem;
+  line-height: 1.8;
+  color: rgb(71 85 105);
+}
+
+.manual-section a {
+  color: rgb(173 74 41);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.manual-section code {
+  border-radius: 0.25rem;
+  background: rgb(241 245 249);
+  padding: 0.08rem 0.3rem;
+  font-size: 0.82em;
+}
+
+.manual-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.manual-steps li {
+  display: grid;
+  grid-template-columns: 1.8rem minmax(0, 1fr);
+  gap: 0.7rem;
+}
+
+.manual-steps li > span {
+  display: inline-flex;
+  height: 1.8rem;
+  width: 1.8rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  background: rgb(232 121 78);
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: rgb(28 18 13);
+}
+
+.manual-steps strong {
+  font-size: 0.88rem;
+  color: rgb(15 23 42);
+}
+
+.manual-steps p {
+  margin-top: 0.18rem;
+  font-size: 0.8rem;
+  line-height: 1.7;
+  color: rgb(71 85 105);
+}
+
+.manual-table-wrap {
+  overflow-x: auto;
+  margin-top: 1rem;
+  border: 1px solid rgb(226 232 240);
+  border-radius: 0.55rem;
+}
+
+.manual-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.78rem;
+}
+
+.manual-table th,
+.manual-table td {
+  border-bottom: 1px solid rgb(226 232 240);
+  padding: 0.58rem 0.7rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+.manual-table th {
+  background: rgb(248 250 252);
+  font-weight: 650;
+  color: rgb(51 65 85);
+}
+
+.manual-table td {
+  line-height: 1.65;
+  color: rgb(71 85 105);
+}
+
+.manual-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.manual-callout {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  margin-top: 1rem;
+  border: 1px solid rgb(253 230 138);
+  border-radius: 0.55rem;
+  background: rgb(254 252 232);
+  padding: 0.7rem 0.85rem;
+  font-size: 0.8rem;
+  line-height: 1.65;
+  color: rgb(146 64 14);
+}
+
+.manual-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.manual-grid > div {
+  border-left: 2px solid rgb(232 121 78);
+  padding-left: 0.75rem;
+}
+
+.manual-grid strong {
+  font-size: 0.85rem;
+  color: rgb(15 23 42);
+}
+
+.manual-grid p {
+  margin-top: 0.2rem;
+  font-size: 0.77rem;
+  line-height: 1.6;
+  color: rgb(100 116 139);
+}
+
+.manual-inline-link {
+  display: inline-flex;
+  margin-top: 0.8rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.manual-faq {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.manual-faq strong {
+  font-size: 0.85rem;
+  color: rgb(15 23 42);
+}
+
+.manual-faq p {
+  margin-top: 0.25rem;
+  font-size: 0.8rem;
+  line-height: 1.7;
+  color: rgb(71 85 105);
+}
+
+.manual-section :deep(.doc-code) {
+  margin-top: 0.9rem;
+}
+
+:global(.dark .manual-hero),
+:global(.dark .manual-section) {
+  border-color: rgb(66 61 55);
+}
+
+:global(.dark .manual-hero h1),
+:global(.dark .manual-section h2),
+:global(.dark .manual-quick__item strong),
+:global(.dark .manual-steps strong),
+:global(.dark .manual-grid strong),
+:global(.dark .manual-faq strong) {
+  color: rgb(242 237 229);
+}
+
+:global(.dark .manual-hero__copy > p:last-child),
+:global(.dark .manual-section > p),
+:global(.dark .manual-steps p),
+:global(.dark .manual-faq p) {
+  color: rgb(167 159 148);
+}
+
+:global(.dark .manual-action) {
+  border-color: rgb(66 61 55);
+  background: rgb(35 33 30);
+  color: rgb(227 219 208);
+}
+
+:global(.dark .manual-action--primary) {
+  border-color: rgb(232 121 78);
+  background: rgb(232 121 78);
+  color: rgb(28 18 13);
+}
+
+:global(.dark .manual-sidebar a) {
+  color: rgb(201 193 182);
+}
+
+:global(.dark .manual-sidebar a:hover) {
+  background: rgb(44 41 37);
+  color: rgb(245 161 127);
+}
+
+:global(.dark .manual-section code) {
+  background: rgb(44 41 37);
+  color: rgb(227 219 208);
+}
+
+:global(.dark .manual-table-wrap) {
+  border-color: rgb(66 61 55);
+}
+
+:global(.dark .manual-table th),
+:global(.dark .manual-table td) {
+  border-color: rgb(66 61 55);
+}
+
+:global(.dark .manual-table th) {
+  background: rgb(44 41 37);
+  color: rgb(227 219 208);
+}
+
+:global(.dark .manual-table td) {
+  color: rgb(201 193 182);
+}
+
+:global(.dark .manual-callout) {
+  border-color: rgb(146 64 14 / 0.55);
+  background: rgb(120 53 15 / 0.18);
+  color: rgb(253 230 138);
+}
+
+@media (max-width: 1100px) {
+  .manual-quick {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 900px) {
+  .manual-layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1.25rem;
+  }
+
+  .manual-sidebar {
+    position: static;
+  }
+
+  .manual-sidebar nav {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .manual-sidebar a {
+    border: 1px solid rgb(226 232 240);
+  }
+
+  .manual-grid,
+  .manual-faq {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 639px) {
+  .manual-hero h1 {
+    font-size: 1.75rem;
+  }
+
+  .manual-quick {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+</style>

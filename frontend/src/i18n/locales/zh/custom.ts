@@ -85,7 +85,7 @@ export default {
 },
 manual: {
   title: '使用手册',
-  description: '按平台查看接入方式、常见问题与示例配置。'
+  description: '图片与视频工作台的使用方法、参数说明、作品保存和 API 接入。'
 },
 videoStudio: {
   title: '视频工作台',
@@ -94,6 +94,10 @@ videoStudio: {
 videoInspiration: {
   title: '视频灵感库',
   description: '浏览完整提示词与镜头模板，一键带入视频工作台。'
+},
+imageInspiration: {
+  title: '图片灵感库',
+  description: '浏览图片作品与完整提示词，一键带入图片工作台。'
 },
 videoWorks: {
   title: '我的作品',

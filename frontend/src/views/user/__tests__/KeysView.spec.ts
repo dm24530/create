@@ -240,7 +240,10 @@ const mountView = async () => {
         Icon: IconStub,
         UseKeyModal: true,
         BulkEditKeysModal: true,
-        EndpointPopover: true,
+        EndpointPopover: {
+          props: ['apiBaseUrl', 'customEndpoints'],
+          template: '<div data-testid="endpoint-popover">{{ apiBaseUrl }}</div>',
+        },
         GroupBadge: true,
         GroupOptionItem: true,
         Teleport: true,
@@ -295,6 +298,12 @@ describe('user KeysView column settings', () => {
     getAvailableGroups.mockResolvedValue([])
     getUserGroupRates.mockResolvedValue({})
     isCurrentStep.mockReturnValue(false)
+  })
+
+  it('shows the official API endpoint when public settings omit it', async () => {
+    const wrapper = await mountView()
+    expect(wrapper.get('[data-testid="endpoint-popover"]').text()).toBe('https://create.superai.sbs/v1')
+    wrapper.unmount()
   })
 
   it.each([
@@ -560,11 +569,10 @@ describe('user KeysView column settings', () => {
     )
   })
 
-  describe('create provider selection', () => {
+  describe('creative channel selection', () => {
     const platforms = ['anthropic', 'openai', 'kimi', 'zhipu', 'deepseek', 'minimax', 'gemini', 'grok', 'antigravity', 'composite', 'opencode_go', 'typesafe']
     const availableGroups = platforms.map((platform, index) => ({
       id: index + 1,
-      // Deliberately ambiguous names: classification must follow the platform.
       name: `Shared group ${index + 1}`,
       platform,
       rate_multiplier: 1,
@@ -572,7 +580,6 @@ describe('user KeysView column settings', () => {
     }))
     const groupSelect = (wrapper: VueWrapper) => wrapper.findComponent('[data-tour="key-form-group"]')
     const optionIds = (wrapper: VueWrapper) => groupSelect(wrapper).props('options').map((option: { value: number }) => option.value)
-    const chooseProvider = (wrapper: VueWrapper, value: string) => wrapper.get(`input[name="key-provider"][value="${value}"]`).setValue()
     const openCreate = async () => {
       const wrapper = await mountView()
       await wrapper.get('[data-tour="keys-create-btn"]').trigger('click')
@@ -583,74 +590,57 @@ describe('user KeysView column settings', () => {
       getAvailableGroups.mockResolvedValue(availableGroups)
     })
 
-    it('classifies all configured platforms and retains the complete table filter', async () => {
+    it('keeps the creation form free of provider and channel controls', async () => {
       const wrapper = await openCreate()
-      expect(wrapper.findAll('input[name="key-provider"]')).toHaveLength(4)
-      expect(optionIds(wrapper)).toEqual([1])
-      await chooseProvider(wrapper, 'openai')
-      expect(optionIds(wrapper)).toEqual([2])
-      await chooseProvider(wrapper, 'domestic')
-      expect(optionIds(wrapper)).toEqual([3, 4, 5, 6])
-      await chooseProvider(wrapper, 'other')
-      expect(optionIds(wrapper)).toEqual([7, 8, 9, 10, 11, 12])
-      expect(wrapper.findAllComponents({ name: 'Select' })[0].props('options')).toHaveLength(14)
+      expect(wrapper.find('input[name="key-provider"]').exists()).toBe(false)
+      expect(groupSelect(wrapper).exists()).toBe(false)
+      expect(wrapper.find('[data-tour="key-form-name"]').exists()).toBe(true)
     })
 
-    it('clears the previous group on provider change and submits only the newly selected group', async () => {
+    it('prefers the composite channel and creates the key in one step', async () => {
       const wrapper = await openCreate()
       await wrapper.get('[data-tour="key-form-name"]').setValue('My key')
-      await groupSelect(wrapper).vm.$emit('update:modelValue', 1)
-      await chooseProvider(wrapper, 'domestic')
-      expect(groupSelect(wrapper).props('modelValue')).toBeNull()
-      await wrapper.get('#key-form').trigger('submit')
-      expect(keysAPI.create).not.toHaveBeenCalled()
-      expect(showError).toHaveBeenCalledWith('keys.groupRequired')
-
-      await groupSelect(wrapper).vm.$emit('update:modelValue', 5)
-      vi.mocked(keysAPI.create).mockResolvedValue({ ...createApiKey(), group_id: 5 })
+      vi.mocked(keysAPI.create).mockResolvedValue({ ...createApiKey(), group_id: 10 })
       await wrapper.get('#key-form').trigger('submit')
       await flushPromises()
       expect(keysAPI.create).toHaveBeenCalledOnce()
-      expect(vi.mocked(keysAPI.create).mock.calls[0].slice(0, 2)).toEqual(['My key', 5])
+      expect(vi.mocked(keysAPI.create).mock.calls[0].slice(0, 2)).toEqual(['My key', 10])
     })
 
-    it('defaults to a provider with available groups and disables empty categories', async () => {
-      getAvailableGroups.mockResolvedValue([availableGroups[5]])
-      const wrapper = await openCreate()
-      expect(wrapper.get<HTMLInputElement>('input[value="domestic"]').element.checked).toBe(true)
-      expect(wrapper.get<HTMLInputElement>('input[value="anthropic"]').element.disabled).toBe(true)
-      expect(optionIds(wrapper)).toEqual([6])
-    })
-
-    it('shows the empty state when no groups are available', async () => {
-      getAvailableGroups.mockResolvedValue([])
-      const wrapper = await openCreate()
-      expect(wrapper.get('[data-tour="key-form-provider"]').text()).toContain('common.noGroupsAvailable')
-      expect(optionIds(wrapper)).toEqual([])
-      expect(wrapper.findAll<HTMLInputElement>('input[name="key-provider"]').every((input) => input.element.disabled)).toBe(true)
-    })
-
-    it('selects an available provider when groups arrive after opening', async () => {
+    it('selects the first channel when groups arrive after the dialog opens', async () => {
       let resolveGroups!: (value: typeof availableGroups) => void
       getAvailableGroups.mockReturnValue(new Promise((resolve) => { resolveGroups = resolve }))
       const wrapper = await openCreate()
-      resolveGroups([availableGroups[1]])
+      resolveGroups([availableGroups[5]])
       await flushPromises()
-      expect(wrapper.get<HTMLInputElement>('input[value="openai"]').element.checked).toBe(true)
-      expect(optionIds(wrapper)).toEqual([2])
+      await wrapper.get('[data-tour="key-form-name"]').setValue('Late channel key')
+      vi.mocked(keysAPI.create).mockResolvedValue({ ...createApiKey(), group_id: 6 })
+      await wrapper.get('#key-form').trigger('submit')
+      await flushPromises()
+      expect(vi.mocked(keysAPI.create).mock.calls[0].slice(0, 2)).toEqual(['Late channel key', 6])
     })
 
-    it('resets provider and group when reopening create, and preserves edit options', async () => {
+    it('keeps advanced settings collapsed by default', async () => {
       const wrapper = await openCreate()
-      await chooseProvider(wrapper, 'domestic')
-      await groupSelect(wrapper).vm.$emit('update:modelValue', 5)
-      await wrapper.get('[data-test="close-dialog"]').trigger('click')
-      await wrapper.get('[data-tour="keys-create-btn"]').trigger('click')
-      expect(optionIds(wrapper)).toEqual([1])
-      expect(groupSelect(wrapper).props('modelValue')).toBeNull()
+      expect(wrapper.get('#key-form').text()).not.toContain('keys.quotaLimit')
+      await getButtonByText(wrapper, 'keys.advancedSettings').trigger('click')
+      expect(wrapper.get('#key-form').text()).toContain('keys.quotaLimit')
+    })
+
+    it('shows the empty state when no creative channels are available', async () => {
+      getAvailableGroups.mockResolvedValue([])
+      const wrapper = await openCreate()
+      expect(wrapper.get('#key-form').text()).toContain('keys.noCreativeServices')
+      expect(getButtonByText(wrapper, 'common.create').attributes('disabled')).toBeDefined()
+      expect(keysAPI.create).not.toHaveBeenCalled()
+    })
+
+    it('preserves the full channel list in edit mode', async () => {
+      const wrapper = await openCreate()
       await wrapper.get('[data-test="close-dialog"]').trigger('click')
       await getButtonByText(wrapper, 'common.edit').trigger('click')
       expect(wrapper.find('[data-tour="key-form-provider"]').exists()).toBe(false)
+      expect(groupSelect(wrapper).exists()).toBe(true)
       expect(optionIds(wrapper)).toHaveLength(12)
     })
   })

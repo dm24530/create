@@ -358,6 +358,5 @@ export interface OnlineInspirationItem {
   width: number
   height: number
   likes: number
-  sourceUrl: string
 }
 

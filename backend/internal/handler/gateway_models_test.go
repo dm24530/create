@@ -115,12 +115,13 @@ func TestGatewayCompositeRouteModelsAppearInBothCatalogs(t *testing.T) {
 		}}},
 	}}
 	routes := &gatewayModelsRouteRepoStub{routes: []service.CompositeModelRoute{
-		{PublicModel: "route-only", MatchType: service.CompositeRouteMatchExact, Enabled: true},
-		{PublicModel: "route-only", MatchType: service.CompositeRouteMatchExact, Enabled: true},
-		{PublicModel: "mapped-model", MatchType: service.CompositeRouteMatchExact, Enabled: true},
-		{PublicModel: "image-only", MatchType: service.CompositeRouteMatchExact, Endpoint: service.CompositeRouteEndpointImages, Enabled: true},
-		{PublicModel: "prefix-", MatchType: service.CompositeRouteMatchPrefix, Enabled: true},
-		{PublicModel: "disabled", MatchType: service.CompositeRouteMatchExact, Enabled: false},
+		{PublicModel: "route-only", MatchType: service.CompositeRouteMatchExact, TargetPlatform: service.PlatformOpenAI, Enabled: true},
+		{PublicModel: "route-only", MatchType: service.CompositeRouteMatchExact, TargetPlatform: service.PlatformOpenAI, Enabled: true},
+		{PublicModel: "mapped-model", MatchType: service.CompositeRouteMatchExact, TargetPlatform: service.PlatformOpenAI, Enabled: true},
+		{PublicModel: "image-only", MatchType: service.CompositeRouteMatchExact, TargetPlatform: service.PlatformOpenAI, Endpoint: service.CompositeRouteEndpointImages, Enabled: true},
+		{PublicModel: "grok-only", MatchType: service.CompositeRouteMatchExact, TargetPlatform: service.PlatformGrok, Enabled: true},
+		{PublicModel: "prefix-", MatchType: service.CompositeRouteMatchPrefix, TargetPlatform: service.PlatformOpenAI, Enabled: true},
+		{PublicModel: "disabled", MatchType: service.CompositeRouteMatchExact, TargetPlatform: service.PlatformOpenAI, Enabled: false},
 	}}
 	for _, tc := range []struct {
 		name      string
@@ -1657,7 +1658,24 @@ func TestGatewayModels_CompositeExactRoutesRespectTypeSafeIsolation(t *testing.T
 		{PublicModel: "responses-alias", TargetPlatform: service.PlatformOpenAI, MatchType: service.CompositeRouteMatchExact, Endpoint: service.CompositeRouteEndpointResponses, Enabled: true},
 		{PublicModel: "image-alias", TargetPlatform: service.PlatformOpenAI, MatchType: service.CompositeRouteMatchExact, Endpoint: service.CompositeRouteEndpointImages, Enabled: true},
 	}}
-	h := newGatewayModelsHandlerForTest(&gatewayModelsAccountRepoStub{}, routes)
+	accounts := &gatewayModelsAccountRepoStub{byGroup: map[int64][]service.Account{
+		groupID: {
+			{
+				ID: 1, Platform: service.PlatformOpenAI,
+				Credentials: map[string]any{"model_mapping": map[string]any{"responses-alias": "responses-alias"}},
+			},
+			{
+				ID: 2, Platform: service.PlatformTypeSafe,
+				Credentials: map[string]any{"model_mapping": map[string]any{
+					"systemone-any-alias":       "systemone-any-alias",
+					"systemone-responses-alias": "systemone-responses-alias",
+					"systemone-legacy-alias":    "systemone-legacy-alias",
+					"jev-latest":                "jev-latest",
+				}},
+			},
+		},
+	}}
+	h := newGatewayModelsHandlerForTest(accounts, routes)
 	wantModels := make([]string, 0, len(routes.routes))
 	for _, route := range routes.routes {
 		wantModels = append(wantModels, route.PublicModel)
@@ -1709,6 +1727,9 @@ func TestGatewayModels_CompositeCodexFiltersEffectiveResponsesRoutes(t *testing.
 		{
 			name:  "colliding exact routes",
 			model: "shared-alias",
+			accounts: []service.Account{{ID: 1, Platform: service.PlatformOpenAI, Credentials: map[string]any{
+				"model_mapping": map[string]any{"responses-control": "responses-control"},
+			}}},
 			routes: []service.CompositeModelRoute{
 				{PublicModel: "shared-alias", TargetPlatform: service.PlatformOpenAI, MatchType: service.CompositeRouteMatchExact, Endpoint: service.CompositeRouteEndpointAny, Priority: 1, Enabled: true},
 				{PublicModel: "shared-alias", TargetPlatform: service.PlatformTypeSafe, MatchType: service.CompositeRouteMatchExact, Endpoint: service.CompositeRouteEndpointResponses, Priority: 100, Enabled: true},

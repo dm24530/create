@@ -126,8 +126,8 @@ onBeforeUnmount(() => document.removeEventListener('click', handleClickOutside))
 
 .studio-select__trigger:hover,
 .studio-select--open .studio-select__trigger {
-  border-color: rgb(45 212 191);
-  box-shadow: 0 6px 16px rgb(20 184 166 / 0.14);
+  border-color: rgb(232 121 78);
+  box-shadow: 0 6px 16px rgb(232 121 78 / 0.14);
 }
 
 .studio-select__trigger:disabled {
@@ -177,12 +177,12 @@ onBeforeUnmount(() => document.removeEventListener('click', handleClickOutside))
 }
 
 .studio-select__option:hover {
-  background: rgb(240 253 250);
+  background: rgb(255 244 238);
 }
 
 .studio-select__option--selected {
-  background: rgb(204 251 241);
-  color: rgb(15 118 110);
+  background: rgb(255 227 214);
+  color: rgb(173 74 41);
 }
 
 .studio-select__option--disabled {
@@ -210,23 +210,23 @@ onBeforeUnmount(() => document.removeEventListener('click', handleClickOutside))
 }
 
 :global(.dark .studio-select__trigger) {
-  border-color: rgb(51 65 85);
-  background: rgb(30 41 59);
-  color: rgb(241 245 249);
+  border-color: rgb(66 61 55);
+  background: rgb(35 33 30);
+  color: rgb(242 237 229);
 }
 
 :global(.dark .studio-select__menu) {
-  border-color: rgb(51 65 85);
-  background: rgb(30 41 59 / 0.98);
+  border-color: rgb(66 61 55);
+  background: rgb(35 33 30 / 0.98);
 }
 
 :global(.dark .studio-select__option) {
-  border-bottom-color: rgb(51 65 85);
-  color: rgb(226 232 240);
+  border-bottom-color: rgb(66 61 55);
+  color: rgb(227 219 208);
 }
 
 :global(.dark .studio-select__option--selected) {
-  background: rgb(19 78 74 / 0.75);
-  color: rgb(94 234 212);
+  background: rgb(232 121 78 / 0.14);
+  color: rgb(245 161 127);
 }
 </style>

@@ -99,7 +99,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, nextTick, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAuthStore, useAppStore } from '@/stores'
 import LocaleSwitcher from '@/components/common/LocaleSwitcher.vue'
@@ -140,7 +140,7 @@ const showModelPlazaEntry = computed(
   () => modelPlazaEnabled.value && (isAuthenticated.value || !modelPlazaRequiresAuth.value),
 )
 const isAdmin = computed(() => authStore.isAdmin)
-const dashboardPath = computed(() => isAdmin.value ? '/admin/dashboard' : '/dashboard')
+const dashboardPath = computed(() => isAdmin.value ? '/admin/dashboard' : '/image-studio')
 const currentYear = computed(() => new Date().getFullYear())
 
 function toggleTheme() {
@@ -160,11 +160,14 @@ function initTheme() {
   }
 }
 
-onMounted(() => {
+onMounted(async () => {
   initTheme()
   authStore.checkAuth()
   if (!appStore.publicSettingsLoaded) {
     appStore.fetchPublicSettings()
   }
+  await nextTick()
+  document.documentElement.scrollTop = 0
+  document.body.scrollTop = 0
 })
 </script>

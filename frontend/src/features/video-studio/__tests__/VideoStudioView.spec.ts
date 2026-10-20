@@ -1,8 +1,10 @@
 import { flushPromises, mount } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import VideoStudioView from '../VideoStudioView.vue'
 import { saveVideoWork } from '../videoWorks'
+import { useAppStore } from '@/stores/app'
 
 const { listKeys, getPublicSettings, copyToClipboard, routeQuery } = vi.hoisted(() => ({
   listKeys: vi.fn(),
@@ -31,6 +33,13 @@ vi.mock('@/api', () => ({
 
 vi.mock('@/composables/useClipboard', () => ({
   useClipboard: () => ({ copyToClipboard }),
+}))
+
+vi.mock('@/composables/useCreatorKey', () => ({
+  ensureCreatorKey: async () => {
+    const result = await listKeys()
+    return { keys: result.items, key: result.items[0] }
+  },
 }))
 
 vi.mock('vue-router', () => ({
@@ -86,6 +95,10 @@ function resetMocks() {
   copyToClipboard.mockResolvedValue(true)
 }
 
+beforeEach(() => {
+  setActivePinia(createPinia())
+})
+
 describe('VideoStudioView model loading', () => {
   beforeEach(() => {
     resetMocks()
@@ -123,6 +136,36 @@ describe('VideoStudioView model loading', () => {
     expect(modelSelect.text()).toContain('grok-imagine-video')
     expect(modelSelect.text()).not.toContain('gpt-image-1')
     expect(modelSelect.text()).not.toContain('gpt-5')
+  })
+
+  it('accepts a composite key without per-resolution video pricing', async () => {
+    listKeys.mockResolvedValue({
+      items: [{
+        id: 8,
+        name: '创作密钥',
+        key: 'sk-composite',
+        status: 'active',
+        group_id: 3,
+        group: { platform: 'composite', video_price_480p: null },
+      }],
+    })
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/models')) {
+        return jsonResponse({ data: [{ id: 'grok-imagine-video' }] })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountStudio()
+    await flushPromises()
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="video-model-select"]').text()).toContain('grok-imagine-video')
+    expect(fetchMock).toHaveBeenCalledWith('/v1/models', {
+      headers: { Authorization: 'Bearer sk-composite' },
+    })
   })
 })
 
@@ -511,6 +554,32 @@ describe('VideoStudioView custom provider', () => {
     expect(options).not.toContain('gpt-4o')
     expect((wrapper.get('[data-testid="custom-model"]').element as HTMLInputElement).value)
       .toBe('seedance-2-720p')
+  })
+
+  it('shows an empty model list as a top-right toast', async () => {
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/models')) return jsonResponse({ data: [] })
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountStudio()
+    await flushPromises()
+
+    await wrapper.get('[data-testid="provider-custom"]').trigger('click')
+    await wrapper.get('[data-testid="custom-base-url"]').setValue('https://third.example.com/v1')
+    await wrapper.get('[data-testid="custom-api-key"]').setValue('third-key')
+    await wrapper.get('[data-testid="custom-models-load"]').trigger('click')
+    await flushPromises()
+
+    expect(useAppStore().toasts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'warning',
+          message: '没有读到模型，可以直接手写模型名。',
+        }),
+      ]),
+    )
   })
 
   it('keeps the custom key out of localStorage', async () => {

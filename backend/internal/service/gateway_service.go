@@ -1543,6 +1543,27 @@ func (s *GatewayService) GetCompositeRouteModels(ctx context.Context, groupID *i
 	return s.compositeResolver.ListExactPublicModels(ctx, *groupID, endpoint, includeSystemOne)
 }
 
+// GetCompositeRouteModelsForPlatforms returns public IDs from enabled exact
+// composite routes whose target platform is currently schedulable in the group.
+func (s *GatewayService) GetCompositeRouteModelsForPlatforms(
+	ctx context.Context,
+	groupID *int64,
+	endpoint string,
+	includeSystemOne bool,
+	platforms map[string]struct{},
+) ([]string, error) {
+	if s == nil || s.compositeResolver == nil || groupID == nil {
+		return nil, nil
+	}
+	return s.compositeResolver.ListExactPublicModelsForPlatforms(
+		ctx,
+		*groupID,
+		endpoint,
+		includeSystemOne,
+		platforms,
+	)
+}
+
 func (s *GatewayService) FilterCompositeCodexModels(ctx context.Context, groupID int64, models []string) ([]string, error) {
 	if s == nil || s.compositeResolver == nil {
 		return models, nil

@@ -36,10 +36,28 @@
     </nav>
 
     <main>
-      <section class="landing-hero">
-        <img class="landing-hero-art" src="/landing/hero-cassini.jpg" alt="" fetchpriority="high" />
+      <section
+        ref="heroRef"
+        class="landing-hero"
+        @pointermove="handleHeroPointer"
+        @pointerleave="resetHeroPointer"
+      >
+        <div class="landing-hero-media" :style="heroMediaStyle">
+          <img
+            v-for="(slide, index) in heroSlides"
+            :key="slide.id"
+            :src="slide.image"
+            :srcset="slide.srcset"
+            sizes="100vw"
+            class="landing-hero-art"
+            :class="{ 'is-active': index === activeHeroSlide }"
+            alt=""
+            :fetchpriority="index === 0 ? 'high' : 'auto'"
+          />
+        </div>
+        <div class="landing-hero-light" :style="heroLightStyle" />
         <div class="landing-hero-shade" />
-        <div class="landing-hero-content">
+        <div class="landing-hero-content" :style="heroContentStyle">
           <p class="landing-eyebrow"><span class="landing-live-dot" />{{ t('home.landing.eyebrow') }}</p>
           <h1>
             {{ t('home.landing.titleTop') }}<br />
@@ -68,7 +86,22 @@
         </div>
         <div class="landing-hero-bottom">
           <span>{{ t('home.landing.explore') }} ↓</span>
-          <span class="landing-hero-count">01 / 03</span>
+          <div class="landing-hero-controls">
+            <button
+              v-for="(slide, index) in heroSlides"
+              :key="`dot-${slide.id}`"
+              type="button"
+              class="landing-hero-dot"
+              :class="{ 'is-active': index === activeHeroSlide }"
+              :aria-label="slide.label"
+              :aria-pressed="index === activeHeroSlide"
+              @click="selectHeroSlide(index)"
+            />
+            <span class="landing-hero-count">
+              {{ String(activeHeroSlide + 1).padStart(2, '0') }} /
+              {{ String(heroSlides.length).padStart(2, '0') }}
+            </span>
+          </div>
         </div>
       </section>
 
@@ -106,7 +139,7 @@
 
       <section class="landing-motion-section">
         <div class="landing-motion-art">
-          <img src="/landing/desert.jpg" :alt="t('home.landing.filmTitle')" loading="lazy" />
+          <img src="/landing/motion-cinema.jpg" :alt="t('home.landing.filmTitle')" loading="lazy" />
           <span class="landing-image-label">CINEMATIC / 02</span>
           <span class="landing-frame-corner landing-frame-corner-tl" />
           <span class="landing-frame-corner landing-frame-corner-br" />
@@ -205,7 +238,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import LocaleSwitcher from '@/components/common/LocaleSwitcher.vue'
 import Icon from '@/components/icons/Icon.vue'
@@ -222,6 +255,109 @@ const props = defineProps<{
 const { t } = useI18n()
 const mobileOpen = ref(false)
 
+const HERO_ROTATION_MS = 6500
+const heroRef = ref<HTMLElement | null>(null)
+const activeHeroSlide = ref(0)
+const heroPointer = ref({ x: 0.5, y: 0.5, active: false })
+const reducedMotion = ref(false)
+
+const heroSlides = computed(() => [
+  {
+    id: 'stars',
+    image: '/landing/hero-stars-8k.webp',
+    srcset: '/landing/hero-stars-4k.webp 3840w, /landing/hero-stars-8k.webp 7680w',
+    label: t('home.landing.slides.stars'),
+  },
+  {
+    id: 'nebula',
+    image: '/landing/hero-nebula-8k.webp',
+    srcset: '/landing/hero-nebula-4k.webp 3840w, /landing/hero-nebula-8k.webp 7680w',
+    label: t('home.landing.slides.nebula'),
+  },
+  {
+    id: 'desert',
+    image: '/landing/hero-desert-8k.webp',
+    srcset: '/landing/hero-desert-4k.webp 3840w, /landing/hero-desert-8k.webp 7680w',
+    label: t('home.landing.slides.desert'),
+  },
+])
+
+const heroMediaStyle = computed(() => ({
+  transform: `translate3d(${(0.5 - heroPointer.value.x) * 18}px, ${(0.5 - heroPointer.value.y) * 12}px, 0) scale(1.04)`,
+}))
+
+const heroContentStyle = computed(() => ({
+  transform: `translate3d(${(heroPointer.value.x - 0.5) * 7}px, ${(heroPointer.value.y - 0.5) * 4}px, 0)`,
+}))
+
+const heroLightStyle = computed(() => ({
+  opacity: heroPointer.value.active ? '1' : '0.55',
+  background: `radial-gradient(520px circle at ${heroPointer.value.x * 100}% ${heroPointer.value.y * 100}%, rgba(232, 121, 78, 0.18), transparent 62%)`,
+}))
+
+let heroRotationTimer: ReturnType<typeof setInterval> | null = null
+let heroPointerFrame = 0
+let motionQuery: MediaQueryList | null = null
+
+function stopHeroRotation() {
+  if (!heroRotationTimer) return
+  clearInterval(heroRotationTimer)
+  heroRotationTimer = null
+}
+
+function startHeroRotation() {
+  stopHeroRotation()
+  if (reducedMotion.value || heroSlides.value.length < 2) return
+  heroRotationTimer = setInterval(() => {
+    if (document.visibilityState === 'hidden') return
+    activeHeroSlide.value = (activeHeroSlide.value + 1) % heroSlides.value.length
+  }, HERO_ROTATION_MS)
+}
+
+function selectHeroSlide(index: number) {
+  activeHeroSlide.value = index
+  startHeroRotation()
+}
+
+function handleHeroPointer(event: PointerEvent) {
+  if (reducedMotion.value || !heroRef.value || heroPointerFrame) return
+  const clientX = event.clientX
+  const clientY = event.clientY
+  heroPointerFrame = requestAnimationFrame(() => {
+    heroPointerFrame = 0
+    const rect = heroRef.value?.getBoundingClientRect()
+    if (!rect) return
+    heroPointer.value = {
+      x: Math.min(1, Math.max(0, (clientX - rect.left) / rect.width)),
+      y: Math.min(1, Math.max(0, (clientY - rect.top) / rect.height)),
+      active: true,
+    }
+  })
+}
+
+function resetHeroPointer() {
+  heroPointer.value = { x: 0.5, y: 0.5, active: false }
+}
+
+function handleMotionPreferenceChange(event: MediaQueryListEvent) {
+  reducedMotion.value = event.matches
+  if (event.matches) resetHeroPointer()
+  startHeroRotation()
+}
+
+onMounted(() => {
+  motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)')
+  reducedMotion.value = motionQuery.matches
+  motionQuery.addEventListener?.('change', handleMotionPreferenceChange)
+  startHeroRotation()
+})
+
+onBeforeUnmount(() => {
+  stopHeroRotation()
+  motionQuery?.removeEventListener?.('change', handleMotionPreferenceChange)
+  if (heroPointerFrame) cancelAnimationFrame(heroPointerFrame)
+})
+
 const currentYear = computed(() => new Date().getFullYear())
 const imageTarget = computed(() => (props.isAuthenticated ? '/image-studio' : '/login'))
 const videoTarget = computed(() => (props.isAuthenticated ? '/video-studio' : '/login'))
@@ -236,9 +372,9 @@ const galleryItems = computed(() => [
     to: imageTarget.value,
   },
   {
-    title: t('home.landing.gallery.items.desert'),
-    meta: 'CINEMATIC / 02',
-    image: '/landing/desert.jpg',
+    title: t('home.landing.gallery.items.aurora'),
+    meta: 'AURORA / 02',
+    image: '/landing/gallery-aurora.jpg',
     className: 'landing-art-2',
     to: videoTarget.value,
   },
@@ -257,9 +393,9 @@ const galleryItems = computed(() => [
     to: imageTarget.value,
   },
   {
-    title: t('home.landing.gallery.items.rings'),
-    meta: 'COSMIC / 05',
-    image: '/landing/rings.jpg',
+    title: t('home.landing.gallery.items.city'),
+    meta: 'NEON / 05',
+    image: '/landing/gallery-city.jpg',
     className: 'landing-art-5',
     to: videoTarget.value,
   },
@@ -276,21 +412,21 @@ const recipeItems = computed(() => [
     title: t('home.landing.notebook.items.product.title'),
     meta: t('home.landing.notebook.items.product.meta'),
     spec: '05s / 16:9',
-    image: '/landing/rings.jpg',
+    image: '/landing/recipe-still-life.jpg',
     to: videoTarget.value,
   },
   {
-    title: t('home.landing.notebook.items.landscape.title'),
-    meta: t('home.landing.notebook.items.landscape.meta'),
-    spec: '08s / 21:9',
-    image: '/landing/desert.jpg',
+    title: t('home.landing.notebook.items.facade.title'),
+    meta: t('home.landing.notebook.items.facade.meta'),
+    spec: '06s / 21:9',
+    image: '/landing/recipe-facade.jpg',
     to: videoTarget.value,
   },
   {
     title: t('home.landing.notebook.items.botanical.title'),
     meta: t('home.landing.notebook.items.botanical.meta'),
     spec: '04s / 9:16',
-    image: '/landing/flower.jpg',
+    image: '/landing/recipe-botanical.jpg',
     to: videoTarget.value,
   },
 ])
@@ -313,15 +449,20 @@ const principles = computed(() => [
 
 <style scoped>
 .landing-shell {
-  --landing-bg: #09090b;
-  --landing-panel: #141416;
-  --landing-line: #2c2c30;
-  --landing-muted: #a5a5ae;
-  --landing-accent: #ff693b;
+  --landing-bg: #1d1c19;
+  --landing-bg-deep: #141312;
+  --landing-panel: #23211e;
+  --landing-panel-soft: #292723;
+  --landing-line: rgba(238, 229, 216, 0.15);
+  --landing-muted: #aaa39a;
+  --landing-text: #f2ede5;
+  --landing-text-soft: #d8d1c7;
+  --landing-accent: #e8794e;
+  --landing-accent-soft: #f09873;
   min-height: 100vh;
   overflow: clip;
   background: var(--landing-bg);
-  color: #f5f5f5;
+  color: var(--landing-text);
   font-family: Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif;
 }
 
@@ -337,7 +478,7 @@ const principles = computed(() => [
 }
 
 .landing-shell ::selection {
-  color: #09090b;
+  color: var(--landing-bg-deep);
   background: var(--landing-accent);
 }
 
@@ -349,18 +490,19 @@ const principles = computed(() => [
   justify-content: space-between;
   height: 86px;
   padding: 0 4.5%;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-  background: #09090b;
+  border-bottom: 1px solid rgba(238, 229, 216, 0.1);
+  background: rgba(29, 28, 25, 0.9);
+  backdrop-filter: blur(18px);
 }
 
 .landing-brand {
   display: inline-flex;
   align-items: center;
   min-width: 0;
-  color: #fff;
+  color: var(--landing-text);
   font-size: 21px;
   font-weight: 650;
-  letter-spacing: -0.8px;
+  letter-spacing: 0;
 }
 
 .landing-brand-name {
@@ -373,7 +515,7 @@ const principles = computed(() => [
   display: flex;
   align-items: center;
   gap: 30px;
-  color: #c0c0c6;
+  color: var(--landing-text-soft);
   font-size: 13px;
 }
 
@@ -382,7 +524,7 @@ const principles = computed(() => [
 }
 
 .landing-desktop-nav a:hover {
-  color: #fff;
+  color: var(--landing-text);
 }
 
 .landing-nav-actions {
@@ -400,7 +542,7 @@ const principles = computed(() => [
   padding: 0 15px;
   border-radius: 7px;
   background: var(--landing-accent);
-  color: #1b100b !important;
+  color: #1c120d !important;
   font-size: 12px;
   font-weight: 650;
   white-space: nowrap;
@@ -408,7 +550,7 @@ const principles = computed(() => [
 }
 
 .landing-workspace:hover {
-  background: #ff845b;
+  background: var(--landing-accent-soft);
 }
 
 .landing-menu-toggle {
@@ -419,7 +561,7 @@ const principles = computed(() => [
   border: 1px solid var(--landing-line);
   border-radius: 7px;
   background: transparent;
-  color: #fff;
+  color: var(--landing-text);
 }
 
 .landing-mobile-nav {
@@ -437,20 +579,46 @@ const principles = computed(() => [
   align-items: center;
   height: min(800px, calc(100svh - 86px));
   min-height: 680px;
+  overflow: hidden;
   isolation: isolate;
-  background: #08080b;
+  background: var(--landing-bg-deep);
+}
+
+.landing-hero-media {
+  position: absolute;
+  inset: -2%;
+  z-index: -4;
+  transition: transform 0.55s cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform;
 }
 
 .landing-hero-art {
   position: absolute;
   inset: 0;
-  z-index: -3;
   width: 100%;
   height: 100%;
   object-fit: cover;
   object-position: center 52%;
-  filter: sepia(0.18) saturate(1.14) contrast(1.05);
-  animation: landing-hero-reveal 1.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+  opacity: 0;
+  filter: sepia(0.1) saturate(0.92) contrast(1.03) brightness(0.96);
+  transform: scale(1.02);
+  transition:
+    opacity 1.15s ease,
+    transform 7s cubic-bezier(0.2, 0.65, 0.3, 1);
+  will-change: opacity, transform;
+}
+
+.landing-hero-art.is-active {
+  opacity: 1;
+  transform: scale(1.075);
+}
+
+.landing-hero-light {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  transition: opacity 0.4s ease;
 }
 
 .landing-hero-shade {
@@ -458,14 +626,16 @@ const principles = computed(() => [
   inset: 0;
   z-index: -2;
   background:
-    radial-gradient(circle at 76% 42%, rgba(255, 105, 59, 0.18), transparent 34%),
-    linear-gradient(90deg, rgba(8, 8, 11, 0.96) 0%, rgba(8, 8, 11, 0.82) 34%, rgba(8, 8, 11, 0.28) 63%, transparent 100%),
-    linear-gradient(0deg, #09090b 0%, transparent 28%);
+    radial-gradient(circle at 76% 42%, rgba(232, 121, 78, 0.12), transparent 36%),
+    linear-gradient(90deg, rgba(29, 28, 25, 0.92) 0%, rgba(29, 28, 25, 0.72) 34%, rgba(29, 28, 25, 0.18) 66%, transparent 100%),
+    linear-gradient(0deg, var(--landing-bg) 0%, rgba(29, 28, 25, 0.44) 22%, transparent 44%);
 }
 
 .landing-hero-content {
   width: 100%;
   padding: 30px 4.5% 90px;
+  transition: transform 0.55s cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform;
 }
 
 .landing-eyebrow {
@@ -473,7 +643,7 @@ const principles = computed(() => [
   align-items: center;
   gap: 10px;
   margin: 0 0 24px;
-  color: #b6b6bd;
+  color: var(--landing-text-soft);
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 2px;
@@ -490,21 +660,21 @@ const principles = computed(() => [
 .landing-hero h1 {
   max-width: 820px;
   margin: 0 0 28px;
-  color: #fff;
+  color: var(--landing-text);
   font-size: clamp(54px, 6.1vw, 94px);
   font-weight: 650;
-  letter-spacing: -4px;
+  letter-spacing: 0;
   line-height: 1.12;
 }
 
 .landing-hero h1 span {
-  color: #ff7646;
+  color: var(--landing-accent-soft);
 }
 
 .landing-hero-description {
   max-width: 560px;
   margin: 0 0 30px;
-  color: #d0d0d6;
+  color: var(--landing-text-soft);
   font-size: 16px;
   line-height: 1.85;
 }
@@ -535,23 +705,23 @@ const principles = computed(() => [
 
 .landing-button-primary {
   background: var(--landing-accent);
-  color: #110b08 !important;
+  color: #1c120d !important;
 }
 
 .landing-button-primary:hover {
-  background: #ff845b;
+  background: var(--landing-accent-soft);
 }
 
 .landing-button-glass {
-  border-color: rgba(190, 178, 171, 0.48);
-  background: rgba(20, 20, 22, 0.58);
-  color: #fff !important;
+  border-color: rgba(231, 220, 204, 0.3);
+  background: rgba(27, 25, 22, 0.64);
+  color: var(--landing-text) !important;
   backdrop-filter: blur(12px);
 }
 
 .landing-button-light {
-  background: #f1f0ed;
-  color: #111 !important;
+  background: #eee8de;
+  color: #1b1916 !important;
 }
 
 .landing-hero-models {
@@ -559,14 +729,14 @@ const principles = computed(() => [
   flex-wrap: wrap;
   gap: 12px;
   margin-top: 24px;
-  color: #aaaab1;
+  color: var(--landing-muted);
   font-size: 10px;
   letter-spacing: 1.5px;
 }
 
 .landing-hero-models span + span::before {
   margin-right: 12px;
-  color: #62626b;
+  color: #6f6961;
   content: '·';
 }
 
@@ -578,16 +748,41 @@ const principles = computed(() => [
   display: flex;
   justify-content: space-between;
   gap: 15px;
-  color: #9999a1;
+  color: #aaa39a;
   font-size: 10px;
   letter-spacing: 1px;
 }
 
+.landing-hero-controls {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.landing-hero-dot {
+  width: 22px;
+  height: 2px;
+  padding: 0;
+  border: 0;
+  background: rgba(238, 229, 216, 0.28);
+  cursor: pointer;
+  transition: width 0.3s ease, background 0.3s ease;
+}
+
+.landing-hero-dot:hover {
+  background: rgba(238, 229, 216, 0.58);
+}
+
+.landing-hero-dot.is-active {
+  width: 34px;
+  background: var(--landing-accent);
+}
+
 .landing-hero-count {
   padding: 8px 11px;
-  border: 1px solid rgba(255, 255, 255, 0.16);
+  border: 1px solid rgba(238, 229, 216, 0.18);
   border-radius: 3px;
-  background: rgba(10, 10, 12, 0.5);
+  background: rgba(29, 28, 25, 0.58);
   backdrop-filter: blur(10px);
 }
 
@@ -607,10 +802,10 @@ const principles = computed(() => [
 
 .landing-section h2 {
   margin: 0;
-  color: #f5f5f5;
+  color: var(--landing-text);
   font-size: clamp(28px, 3.1vw, 46px);
   font-weight: 550;
-  letter-spacing: -1.5px;
+  letter-spacing: 0;
   line-height: 1.28;
 }
 
@@ -619,7 +814,7 @@ const principles = computed(() => [
   align-items: center;
   gap: 16px;
   padding: 6px 0;
-  color: #dedee3;
+  color: var(--landing-text-soft);
   font-size: 13px;
   white-space: nowrap;
   transition: color 0.2s ease;
@@ -655,7 +850,8 @@ const principles = computed(() => [
   overflow: hidden;
   aspect-ratio: 3 / 4;
   border-radius: 5px;
-  background: #18181b;
+  background: var(--landing-panel);
+  transition: box-shadow 0.35s ease;
 }
 
 .landing-art-1 .landing-art-image,
@@ -667,13 +863,31 @@ const principles = computed(() => [
   width: 100%;
   height: 100%;
   object-fit: cover;
-  filter: saturate(0.82) contrast(1.05);
+  filter: saturate(0.84) contrast(1.04) brightness(0.96);
   transition: transform 0.65s cubic-bezier(0.2, 0.65, 0.3, 1), filter 0.3s ease;
 }
 
 .landing-art-piece:hover .landing-art-image img {
   filter: saturate(1.05) contrast(1.08);
   transform: scale(1.05);
+}
+
+.landing-art-piece:hover .landing-art-image {
+  box-shadow: 0 18px 46px rgba(0, 0, 0, 0.32);
+}
+
+.landing-art-image::after {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, transparent 52%, rgba(20, 19, 18, 0.38));
+  content: '';
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s ease;
+}
+
+.landing-art-piece:hover .landing-art-image::after {
+  opacity: 1;
 }
 
 .landing-art-open {
@@ -685,8 +899,8 @@ const principles = computed(() => [
   height: 38px;
   place-items: center;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.86);
-  color: #111;
+  background: rgba(241, 235, 225, 0.9);
+  color: #1b1916;
   opacity: 0;
   transition: opacity 0.2s ease;
 }
@@ -702,13 +916,18 @@ const principles = computed(() => [
 }
 
 .landing-art-caption strong {
-  color: #f1f1f4;
+  color: var(--landing-text);
   font-size: 13px;
   font-weight: 500;
+  transition: color 0.2s ease;
+}
+
+.landing-art-piece:hover .landing-art-caption strong {
+  color: var(--landing-accent-soft);
 }
 
 .landing-art-caption span {
-  color: #85858f;
+  color: #8f887f;
   font-size: 9px;
   letter-spacing: 1.2px;
 }
@@ -721,7 +940,7 @@ const principles = computed(() => [
   padding: 88px 4.5%;
   border-top: 1px solid var(--landing-line);
   border-bottom: 1px solid var(--landing-line);
-  background: #111113;
+  background: var(--landing-panel);
 }
 
 .landing-motion-art {
@@ -732,14 +951,14 @@ const principles = computed(() => [
   aspect-ratio: 16 / 10;
   overflow: hidden;
   justify-self: end;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(238, 229, 216, 0.12);
   border-radius: 6px;
 }
 
 .landing-motion-art::after {
   position: absolute;
   inset: 0;
-  background: linear-gradient(90deg, transparent 55%, rgba(17, 17, 19, 0.72));
+  background: linear-gradient(90deg, transparent 55%, rgba(35, 33, 30, 0.62));
   content: '';
 }
 
@@ -747,7 +966,12 @@ const principles = computed(() => [
   width: 100%;
   height: 100%;
   object-fit: cover;
-  filter: sepia(0.25) saturate(1.15) contrast(1.06);
+  filter: sepia(0.12) saturate(0.94) contrast(1.04) brightness(0.96);
+  transition: transform 0.8s cubic-bezier(0.2, 0.65, 0.3, 1);
+}
+
+.landing-motion-art:hover img {
+  transform: scale(1.035);
 }
 
 .landing-image-label {
@@ -755,7 +979,7 @@ const principles = computed(() => [
   bottom: 24px;
   left: 24px;
   z-index: 1;
-  color: #dedee3;
+  color: var(--landing-text-soft);
   font-size: 10px;
   letter-spacing: 1.6px;
 }
@@ -795,13 +1019,13 @@ const principles = computed(() => [
 }
 
 .landing-motion-copy h2 span {
-  color: #91919a;
+  color: #9f9890;
 }
 
 .landing-body-copy {
   max-width: 550px;
   margin: 0;
-  color: #b7b7c0;
+  color: var(--landing-text-soft);
   font-size: 15px;
   line-height: 1.9;
 }
@@ -812,7 +1036,7 @@ const principles = computed(() => [
   gap: 15px 25px;
   margin: 30px 0 34px;
   padding: 0;
-  color: #c2c2c9;
+  color: #c7c0b6;
   font-size: 12px;
   list-style: none;
 }
@@ -854,7 +1078,7 @@ const principles = computed(() => [
 }
 
 .landing-recipe-number {
-  color: #65656f;
+  color: #766f67;
   font-size: 10px;
 }
 
@@ -862,14 +1086,14 @@ const principles = computed(() => [
   overflow: hidden;
   aspect-ratio: 16 / 10;
   border-radius: 4px;
-  background: #282321;
+  background: #29231f;
 }
 
 .landing-recipe-thumb img {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  filter: saturate(0.75) contrast(1.08);
+  filter: saturate(0.78) contrast(1.06) brightness(0.95);
 }
 
 .landing-recipe-copy {
@@ -880,7 +1104,7 @@ const principles = computed(() => [
 
 .landing-recipe-copy strong {
   overflow: hidden;
-  color: #f3f3f5;
+  color: var(--landing-text);
   font-size: 15px;
   font-weight: 500;
   text-overflow: ellipsis;
@@ -927,7 +1151,7 @@ const principles = computed(() => [
 }
 
 .landing-principles-list strong {
-  color: #f3f3f5;
+  color: var(--landing-text);
   font-size: 15px;
   font-weight: 500;
 }
@@ -935,7 +1159,7 @@ const principles = computed(() => [
 .landing-principles-list p {
   max-width: 560px;
   margin: 8px 0 0;
-  color: #9696a1;
+  color: var(--landing-muted);
   font-size: 12px;
   line-height: 1.8;
 }
@@ -947,8 +1171,8 @@ const principles = computed(() => [
   padding: 110px 12% 120px;
   border-top: 1px solid var(--landing-line);
   background:
-    radial-gradient(circle at 84% 30%, rgba(255, 105, 59, 0.15), transparent 32%),
-    #0d0d10;
+    radial-gradient(circle at 84% 30%, rgba(232, 121, 78, 0.1), transparent 34%),
+    #1f1d1a;
 }
 
 .landing-final-cta h2 {
@@ -956,14 +1180,14 @@ const principles = computed(() => [
   margin-bottom: 22px;
   font-size: clamp(38px, 5vw, 76px);
   font-weight: 550;
-  letter-spacing: -2.5px;
+  letter-spacing: 0;
   line-height: 1.12;
 }
 
 .landing-final-cta > p:not(.landing-eyebrow) {
   max-width: 560px;
   margin: 0 0 30px;
-  color: #aaaab3;
+  color: var(--landing-muted);
   font-size: 14px;
   line-height: 1.85;
 }
@@ -975,7 +1199,7 @@ const principles = computed(() => [
   gap: 24px;
   padding: 30px 4.5%;
   border-top: 1px solid var(--landing-line);
-  color: #7f7f89;
+  color: #8d867d;
   font-size: 10px;
   letter-spacing: 0.6px;
 }
@@ -984,7 +1208,7 @@ const principles = computed(() => [
   display: inline-flex;
   align-items: center;
   gap: 9px;
-  color: #ddd;
+  color: var(--landing-text-soft);
   font-size: 13px;
 }
 
@@ -999,18 +1223,7 @@ const principles = computed(() => [
 }
 
 .landing-footer > div a:hover {
-  color: #fff;
-}
-
-@keyframes landing-hero-reveal {
-  from {
-    opacity: 0;
-    transform: scale(1.035);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1);
-  }
+  color: var(--landing-text);
 }
 
 @media (max-width: 1100px) {
@@ -1063,8 +1276,8 @@ const principles = computed(() => [
 
   .landing-hero-shade {
     background:
-      linear-gradient(180deg, rgba(8, 8, 11, 0.32) 0%, rgba(8, 8, 11, 0.55) 38%, #09090b 92%),
-      linear-gradient(90deg, rgba(8, 8, 11, 0.75), transparent 80%);
+      linear-gradient(180deg, rgba(29, 28, 25, 0.24) 0%, rgba(29, 28, 25, 0.48) 38%, var(--landing-bg) 92%),
+      linear-gradient(90deg, rgba(29, 28, 25, 0.68), transparent 80%);
   }
 
   .landing-hero-content {
@@ -1073,7 +1286,7 @@ const principles = computed(() => [
 
   .landing-hero h1 {
     font-size: clamp(46px, 12vw, 68px);
-    letter-spacing: -2.5px;
+    letter-spacing: 0;
   }
 
   .landing-hero-description {
@@ -1188,7 +1401,7 @@ const principles = computed(() => [
   .landing-hero h1 {
     overflow-wrap: anywhere;
     font-size: clamp(38px, 10.4vw, 52px);
-    letter-spacing: -1.5px;
+    letter-spacing: 0;
     line-height: 1.16;
   }
 

@@ -6,7 +6,7 @@
     ]"
   >
     <!-- Platform logo -->
-    <PlatformIcon v-if="platform" :platform="platform" size="sm" />
+    <PlatformIcon v-if="platform && !hidePlatformIcon" :platform="platform" size="sm" />
     <!-- Group name -->
     <span :class="truncate ? 'truncate' : 'min-w-0 whitespace-normal [overflow-wrap:anywhere]'">{{ name }}</span>
     <!-- Right side label -->
@@ -45,6 +45,8 @@ interface Props {
   peakEnd?: string
   peakRateMultiplier?: number
   showRate?: boolean
+  /** Hide the upstream platform logo for consumer-facing channel displays. */
+  hidePlatformIcon?: boolean
   /** Allow full group names to wrap in layouts that have room for multiple lines. */
   truncate?: boolean
   daysRemaining?: number | null // 剩余天数（订阅类型时使用）
@@ -59,6 +61,7 @@ interface Props {
 const props = withDefaults(defineProps<Props>(), {
   subscriptionType: 'standard',
   showRate: true,
+  hidePlatformIcon: false,
   truncate: true,
   daysRemaining: null,
   userRateMultiplier: null,

@@ -11,6 +11,7 @@
         :platform="platform"
         :subscription-type="subscriptionType"
         :show-rate="false"
+        :hide-platform-icon="hidePlatformIcon"
         class="groupOptionItemBadge"
       />
       <!-- Row 2: description with top spacing -->
@@ -81,12 +82,14 @@ interface Props {
   description?: string | null
   selected?: boolean
   showCheckmark?: boolean
+  hidePlatformIcon?: boolean
 }
 
 const props = withDefaults(defineProps<Props>(), {
   subscriptionType: 'standard',
   selected: false,
   showCheckmark: true,
+  hidePlatformIcon: false,
   userRateMultiplier: null,
   peakRateEnabled: false
 })

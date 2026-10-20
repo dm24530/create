@@ -27,12 +27,14 @@ describe('custom feature routes', () => {
       '/image-studio',
       '/video-studio',
       '/video-inspiration',
+      '/image-inspiration',
       '/video-works',
     ])
     expect(userCustomFeatureRoutesAfterRedeem.map((route) => route.path)).toEqual(['/lottery'])
     expect(userCustomFeatureRoutesAfterAvailableChannels.map((route) => route.path)).toEqual([
       '/manual',
       '/manual/:platform',
+      '/docs/api',
       '/models',
     ])
   })
@@ -52,11 +54,12 @@ describe('custom feature routes', () => {
       '/image-studio',
       '/video-studio',
       '/video-inspiration',
+      '/image-inspiration',
       '/video-works',
       '/usage',
     ])
     expectPathOrder(paths, ['/redeem', '/lottery', '/affiliate'])
-    expectPathOrder(paths, ['/available-channels', '/manual', '/manual/:platform', '/models', '/profile'])
+    expectPathOrder(paths, ['/available-channels', '/manual', '/manual/:platform', '/docs/api', '/models', '/profile'])
     expectPathOrder(paths, ['/admin/announcements', '/admin/lottery', '/admin/proxies'])
     expectPathOrder(paths, ['/admin/settings', '/admin/upstream-monitor', '/admin/risk-control'])
   })

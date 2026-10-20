@@ -91,6 +91,33 @@ func TestCompositeRouteResolverCodexFilteringMatchesProductionPriority(t *testin
 	}
 }
 
+func TestCompositeRouteResolverListExactPublicModelsFiltersUnavailablePlatforms(t *testing.T) {
+	resolver := NewCompositeRouteResolver(compositeRouteRepoStub{routes: []CompositeModelRoute{
+		{
+			GroupID: 7, PublicModel: "openai-route", MatchType: CompositeRouteMatchExact,
+			TargetPlatform: PlatformOpenAI, Endpoint: CompositeRouteEndpointAny, Enabled: true,
+		},
+		{
+			GroupID: 7, PublicModel: "grok-route", MatchType: CompositeRouteMatchExact,
+			TargetPlatform: PlatformGrok, Endpoint: CompositeRouteEndpointAny, Enabled: true,
+		},
+	}})
+
+	models, err := resolver.ListExactPublicModelsForPlatforms(
+		context.Background(),
+		7,
+		CompositeRouteEndpointAny,
+		true,
+		map[string]struct{}{PlatformOpenAI: {}},
+	)
+	require.NoError(t, err)
+	require.Equal(t, []string{"openai-route"}, models)
+
+	allModels, err := resolver.ListExactPublicModels(context.Background(), 7, CompositeRouteEndpointAny, true)
+	require.NoError(t, err)
+	require.ElementsMatch(t, []string{"openai-route", "grok-route"}, allModels)
+}
+
 func (s compositeRouteRepoStub) ListByGroup(ctx context.Context, groupID int64, includeDisabled bool) ([]CompositeModelRoute, error) {
 	routes := make([]CompositeModelRoute, 0, len(s.routes))
 	for _, route := range s.routes {

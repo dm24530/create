@@ -22,15 +22,22 @@ export default {
       startImage: 'Start with an image',
       createVideo: 'Create a video',
       explore: 'Explore what is possible',
+      slides: {
+        nebula: 'Nebula depths',
+        desert: 'Desert cinema',
+        stars: 'Under the Milky Way'
+      },
       galleryTitle: 'Imagination should not stop at imagination.',
       galleryLink: 'Open Image Studio',
       gallery: {
         items: {
           flower: 'Microscopic Garden',
           desert: 'End of the Road',
+          aurora: 'Aurora Frontier',
           nature: 'Visitor from the Deep',
           architecture: 'Geometry in Light',
-          rings: 'Beneath the Rings'
+          rings: 'Beneath the Rings',
+          city: 'Neon District'
         }
       },
       filmTitle: 'More than a frame.',
@@ -51,9 +58,9 @@ export default {
             title: 'Product study in light',
             meta: 'Product film / Storyboard'
           },
-          landscape: {
-            title: 'A road through the wild',
-            meta: 'Cinematic / Camera move'
+          facade: {
+            title: 'Rhythm in glass',
+            meta: 'Architecture / Structure'
           },
           botanical: {
             title: 'Petals in close-up',

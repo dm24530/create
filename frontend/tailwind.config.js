@@ -5,47 +5,47 @@ export default {
   theme: {
     extend: {
       colors: {
-        // 主色调 - Teal/Cyan 青色系
+        // 主色调 - Create 暖陶土橙
         primary: {
-          50: '#f0fdfa',
-          100: '#ccfbf1',
-          200: '#99f6e4',
-          300: '#5eead4',
-          400: '#2dd4bf',
-          500: '#14b8a6',
-          600: '#0d9488',
-          700: '#0f766e',
-          800: '#115e59',
-          900: '#134e4a',
-          950: '#042f2e'
+          50: '#fff4ee',
+          100: '#ffe3d6',
+          200: '#fbc6b0',
+          300: '#f5a17f',
+          400: '#ef8a64',
+          500: '#e8794e',
+          600: '#d05f36',
+          700: '#ad4a29',
+          800: '#8b3d23',
+          900: '#71331f',
+          950: '#3d190d'
         },
-        // 辅助色 - 深蓝灰
+        // 辅助色 - 暖中性灰
         accent: {
-          50: '#f8fafc',
-          100: '#f1f5f9',
-          200: '#e2e8f0',
-          300: '#cbd5e1',
-          400: '#94a3b8',
-          500: '#64748b',
-          600: '#475569',
-          700: '#334155',
-          800: '#1e293b',
-          900: '#0f172a',
-          950: '#020617'
+          50: '#faf8f4',
+          100: '#f2ede5',
+          200: '#e3dbd0',
+          300: '#c9c1b6',
+          400: '#a79f94',
+          500: '#837b71',
+          600: '#5f5951',
+          700: '#423d37',
+          800: '#2c2925',
+          900: '#211f1c',
+          950: '#181715'
         },
-        // 深色模式背景
+        // 深色模式 - 暖石墨
         dark: {
-          50: '#f8fafc',
-          100: '#f1f5f9',
-          200: '#e2e8f0',
-          300: '#cbd5e1',
-          400: '#94a3b8',
-          500: '#64748b',
-          600: '#475569',
-          700: '#334155',
-          800: '#1e293b',
-          900: '#0f172a',
-          950: '#020617'
+          50: '#faf8f4',
+          100: '#f2ede5',
+          200: '#e3dbd0',
+          300: '#c9c1b6',
+          400: '#a79f94',
+          500: '#837b71',
+          600: '#5f5951',
+          700: '#423d37',
+          800: '#2c2925',
+          900: '#211f1c',
+          950: '#181715'
         }
       },
       fontFamily: {
@@ -67,20 +67,19 @@ export default {
       boxShadow: {
         glass: '0 8px 32px rgba(0, 0, 0, 0.08)',
         'glass-sm': '0 4px 16px rgba(0, 0, 0, 0.06)',
-        glow: '0 0 20px rgba(20, 184, 166, 0.25)',
-        'glow-lg': '0 0 40px rgba(20, 184, 166, 0.35)',
+        glow: '0 0 20px rgba(232, 121, 78, 0.2)',
+        'glow-lg': '0 0 40px rgba(232, 121, 78, 0.28)',
         card: '0 1px 3px rgba(0, 0, 0, 0.04), 0 1px 2px rgba(0, 0, 0, 0.06)',
-        'card-hover': '0 10px 40px rgba(0, 0, 0, 0.08)',
+        'card-hover': '0 12px 36px rgba(0, 0, 0, 0.18)',
         'inner-glow': 'inset 0 1px 0 rgba(255, 255, 255, 0.1)'
       },
       backgroundImage: {
         'gradient-radial': 'radial-gradient(var(--tw-gradient-stops))',
-        'gradient-primary': 'linear-gradient(135deg, #14b8a6 0%, #0d9488 100%)',
-        'gradient-dark': 'linear-gradient(135deg, #1e293b 0%, #0f172a 100%)',
+        'gradient-primary': 'linear-gradient(135deg, #e8794e 0%, #d05f36 100%)',
+        'gradient-dark': 'linear-gradient(135deg, #2c2925 0%, #181715 100%)',
         'gradient-glass':
           'linear-gradient(135deg, rgba(255,255,255,0.1) 0%, rgba(255,255,255,0.05) 100%)',
-        'mesh-gradient':
-          'radial-gradient(at 40% 20%, rgba(20, 184, 166, 0.12) 0px, transparent 50%), radial-gradient(at 80% 0%, rgba(6, 182, 212, 0.08) 0px, transparent 50%), radial-gradient(at 0% 50%, rgba(20, 184, 166, 0.08) 0px, transparent 50%)'
+        'mesh-gradient': 'linear-gradient(180deg, rgba(232, 121, 78, 0.045) 0%, transparent 30%)'
       },
       animation: {
         'fade-in': 'fadeIn 0.3s ease-out',
@@ -118,8 +117,8 @@ export default {
           '100%': { backgroundPosition: '200% 0' }
         },
         glow: {
-          '0%': { boxShadow: '0 0 20px rgba(20, 184, 166, 0.25)' },
-          '100%': { boxShadow: '0 0 30px rgba(20, 184, 166, 0.4)' }
+          '0%': { boxShadow: '0 0 20px rgba(232, 121, 78, 0.2)' },
+          '100%': { boxShadow: '0 0 30px rgba(232, 121, 78, 0.3)' }
         }
       },
       backdropBlur: {

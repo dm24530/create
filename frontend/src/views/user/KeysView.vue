@@ -24,8 +24,7 @@
             />
           </div>
           <EndpointPopover
-            v-if="publicSettings?.api_base_url || (publicSettings?.custom_endpoints?.length ?? 0) > 0"
-            :api-base-url="publicSettings?.api_base_url || ''"
+            :api-base-url="displayApiBaseUrl"
             :custom-endpoints="publicSettings?.custom_endpoints || []"
           />
           <div v-if="selectedIds.length" class="flex flex-wrap items-center gap-3 text-sm">
@@ -173,11 +172,11 @@
                   :peak-start="row.group.peak_start"
                   :peak-end="row.group.peak_end"
                   :peak-rate-multiplier="row.group.peak_rate_multiplier"
+                hide-platform-icon
                 />
                 <span v-else class="text-sm text-gray-400 dark:text-dark-500">{{
                   t('keys.noGroup')
                 }}</span>
-                <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('keys.selectGroup') }}</span>
                 <svg
                   class="h-3.5 w-3.5 text-gray-400 opacity-60 transition-opacity group-hover/dropdown:opacity-100"
                   fill="none"
@@ -473,6 +472,13 @@
       @close="closeModals"
     >
       <form id="key-form" @submit.prevent="handleSubmit" class="space-y-5">
+        <div
+          v-if="!showEditModal"
+          class="rounded-lg border border-primary-100 bg-primary-50/60 px-4 py-3 text-sm leading-6 text-primary-900 dark:border-primary-500/20 dark:bg-primary-500/10 dark:text-primary-100"
+        >
+          {{ t('keys.creatorHint') }}
+        </div>
+
         <div>
           <label class="input-label">{{ t('keys.nameLabel') }}</label>
           <input
@@ -485,58 +491,14 @@
           />
         </div>
 
-        <fieldset v-if="!showEditModal" data-tour="key-form-provider">
-          <legend class="input-label">{{ t('keys.providerLabel') }}</legend>
-          <div class="grid grid-cols-2 gap-2 sm:grid-cols-4">
-            <label
-              v-for="provider in createProviderOptions"
-              :key="provider.value"
-              class="relative min-w-0"
-              :class="provider.count === 0 ? 'cursor-not-allowed' : 'cursor-pointer'"
-            >
-              <input
-                type="radio"
-                name="key-provider"
-                :value="provider.value"
-                :checked="createProvider === provider.value"
-                :disabled="provider.count === 0"
-                class="peer sr-only"
-                @change="selectCreateProvider(provider.value)"
-              />
-              <span
-                class="flex h-full flex-col items-center gap-2 rounded-xl border border-gray-200 bg-white px-2 py-3 text-center transition-colors peer-checked:border-primary-500 peer-checked:bg-primary-50/60 peer-checked:ring-1 peer-checked:ring-primary-500 peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-primary-500 peer-disabled:opacity-40 dark:border-dark-600 dark:bg-dark-800 dark:peer-checked:border-primary-500 dark:peer-checked:bg-primary-500/10"
-                :class="provider.count > 0 && 'hover:border-primary-300 dark:hover:border-primary-700'"
-              >
-                <span class="flex h-8 items-center justify-center gap-1.5" aria-hidden="true">
-                  <span
-                    v-for="platform in KEY_GROUP_PROVIDER_ICONS[provider.value]"
-                    :key="platform"
-                    class="flex h-8 w-8 items-center justify-center rounded-lg"
-                    :class="platformBadgeLightClass(platform)"
-                  >
-                    <PlatformIcon :platform="platform" size="lg" />
-                  </span>
-                </span>
-                <span class="text-sm font-semibold text-gray-800 dark:text-gray-100">{{ provider.label }}</span>
-              </span>
-              <span
-                v-if="createProvider === provider.value"
-                class="absolute right-1.5 top-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-primary-500 text-white"
-                aria-hidden="true"
-              >
-                <Icon name="check" size="xs" :stroke-width="3" />
-              </span>
-            </label>
-          </div>
-          <p class="mt-2 text-xs leading-5 text-gray-500 dark:text-gray-400" aria-live="polite">
-            {{ groups.length === 0 ? t('common.noGroupsAvailable') : t(`keys.providerHints.${createProvider}`) }}
-          </p>
-        </fieldset>
+        <p v-if="!showEditModal && creationChannelOptions.length === 0" class="text-sm text-red-500">
+          {{ t('keys.noCreativeServices') }}
+        </p>
 
-        <div>
+        <div v-if="showEditModal">
           <label class="input-label" for="key-form-group">{{ t('keys.groupLabel') }}</label>
           <Select
-            :key="showEditModal ? 'edit' : createProvider"
+            :key="showEditModal ? 'edit' : 'create'"
             id="key-form-group"
             :aria-label="t('keys.groupLabel')"
             v-model="formData.group_id"
@@ -547,7 +509,7 @@
             :search-placeholder="t('keys.searchGroup')"
             data-tour="key-form-group"
           >
-            <template #selected="{ option }">
+            <template v-if="showEditModal" #selected="{ option }">
               <GroupBadge
                 v-if="option"
                 :name="(option as unknown as GroupOption).label"
@@ -559,10 +521,11 @@
                 :peak-start="(option as unknown as GroupOption).peakStart"
                 :peak-end="(option as unknown as GroupOption).peakEnd"
                 :peak-rate-multiplier="(option as unknown as GroupOption).peakRateMultiplier"
+                hide-platform-icon
               />
               <span v-else class="text-gray-400">{{ t('keys.selectGroup') }}</span>
             </template>
-            <template #option="{ option, selected }">
+            <template v-if="showEditModal" #option="{ option, selected }">
               <GroupOptionItem
                 :name="(option as unknown as GroupOption).label"
                 :platform="(option as unknown as GroupOption).platform"
@@ -575,11 +538,28 @@
                 :peak-rate-multiplier="(option as unknown as GroupOption).peakRateMultiplier"
                 :description="(option as unknown as GroupOption).description"
                 :selected="selected"
+                hide-platform-icon
               />
             </template>
           </Select>
+          <p class="input-hint">{{ t('keys.channelHint') }}</p>
         </div>
 
+        <button
+          v-if="!showEditModal"
+          type="button"
+          class="flex w-full items-center justify-between border-t border-gray-200 pt-4 text-left text-sm font-medium text-gray-700 dark:border-dark-700 dark:text-gray-200"
+          :aria-expanded="showAdvancedSettings"
+          @click="showAdvancedSettings = !showAdvancedSettings"
+        >
+          <span>
+            {{ t('keys.advancedSettings') }}
+            <span class="ml-2 text-xs font-normal text-gray-500 dark:text-dark-400">{{ t('keys.advancedSettingsHint') }}</span>
+          </span>
+          <Icon name="chevronDown" size="sm" :class="{ 'rotate-180': showAdvancedSettings }" />
+        </button>
+
+        <div v-if="showEditModal || showAdvancedSettings" class="space-y-5">
         <!-- Custom Key Section (only for create) -->
         <div v-if="!showEditModal" class="space-y-3">
           <div class="flex items-center justify-between">
@@ -980,6 +960,7 @@
             </div>
           </div>
         </div>
+        </div>
       </form>
       <template #footer>
         <div class="flex justify-end gap-3">
@@ -989,7 +970,7 @@
           <button
             form="key-form"
             type="submit"
-            :disabled="submitting"
+            :disabled="submitting || (!showEditModal && creationChannelOptions.length === 0)"
             class="btn btn-primary"
             data-tour="key-form-submit"
           >
@@ -1073,7 +1054,7 @@
     <UseKeyModal
       :show="showUseKeyModal"
       :api-key="selectedKey?.key || ''"
-      :base-url="publicSettings?.api_base_url || ''"
+      :base-url="displayApiBaseUrl"
       :platform="selectedKey?.group?.platform || null"
       :claude-code-only="selectedKey?.group?.claude_code_only || false"
       :allow-messages-dispatch="selectedKey?.group?.allow_messages_dispatch || false"
@@ -1186,6 +1167,7 @@
                 selectedKeyForGroup?.group_id === option.value ||
                 (!selectedKeyForGroup?.group_id && option.value === null)
               "
+              hide-platform-icon
             />
           </button>
           <!-- Empty state when search has no results -->
@@ -1228,9 +1210,7 @@ import type { Column } from '@/components/common/types'
 import type { BatchApiKeyUsageStats } from '@/api/usage'
 import { formatDateTime } from '@/utils/format'
 import { maskApiKey } from '@/utils/maskApiKey'
-import PlatformIcon from '@/components/common/PlatformIcon.vue'
-import { platformBadgeLightClass } from '@/utils/platformColors'
-import { KEY_GROUP_PROVIDERS, KEY_GROUP_PROVIDER_ICONS, getKeyGroupProvider, type KeyGroupProvider } from '@/utils/keyGroupProviders'
+import { resolveDocumentedApiBaseUrl } from '@/utils/apiEndpoint'
 import {
   CC_SWITCH_USAGE_SCRIPT,
   buildCcSwitchImportDeeplink,
@@ -1256,6 +1236,7 @@ interface GroupOption {
   peakRateMultiplier: number
   subscriptionType: SubscriptionType
   platform: GroupPlatform
+  capabilities: string
 }
 
 const appStore = useAppStore()
@@ -1398,6 +1379,7 @@ const filterGroupId = ref<string | number>('')
 
 const showCreateModal = ref(false)
 const showEditModal = ref(false)
+const showAdvancedSettings = ref(false)
 const showDeleteDialog = ref(false)
 const showResetQuotaDialog = ref(false)
 const showResetRateLimitDialog = ref(false)
@@ -1409,6 +1391,10 @@ const selectedKey = ref<ApiKey | null>(null)
 const copiedKeyId = ref<number | null>(null)
 const groupSelectorKeyId = ref<number | null>(null)
 const publicSettings = ref<PublicSettings | null>(null)
+const displayApiBaseUrl = computed(() => resolveDocumentedApiBaseUrl(
+  publicSettings.value?.api_base_url,
+  typeof window === 'undefined' ? '' : window.location.origin,
+))
 const dropdownRef = ref<HTMLElement | null>(null)
 const columnDropdownRef = ref<HTMLElement | null>(null)
 const dropdownPosition = ref<{ top?: number; bottom?: number; left: number } | null>(null)
@@ -1512,47 +1498,62 @@ const onStatusFilterChange = (value: string | number | boolean | null) => {
 
 // Convert groups to Select options format with rate multiplier and subscription type
 const groupOptions = computed(() =>
-  groups.value.map((group) => ({
-    value: group.id,
-    label: group.name,
-    description: group.description,
-    rate: group.rate_multiplier,
-    userRate: userGroupRates.value[group.id] ?? null,
-    peakRateEnabled: group.peak_rate_enabled,
-    peakStart: group.peak_start,
-    peakEnd: group.peak_end,
-    peakRateMultiplier: group.peak_rate_multiplier,
-    subscriptionType: group.subscription_type,
-    platform: group.platform
+  [...groups.value]
+    .sort((left, right) =>
+      Number(right.platform === 'composite') - Number(left.platform === 'composite')
+    )
+    .map((group) => ({
+      value: group.id,
+      label: group.name,
+      description: group.description,
+      rate: group.rate_multiplier,
+      userRate: userGroupRates.value[group.id] ?? null,
+      peakRateEnabled: group.peak_rate_enabled,
+      peakStart: group.peak_start,
+      peakEnd: group.peak_end,
+      peakRateMultiplier: group.peak_rate_multiplier,
+      subscriptionType: group.subscription_type,
+      platform: group.platform,
+      capabilities: groupCapabilityLabel(group)
+    }))
+)
+
+function groupCapabilityLabel(group: Group): string {
+  const capabilities: string[] = []
+  if (group.allow_image_generation || group.allow_batch_image_generation) {
+    capabilities.push(t('keys.capabilities.image'))
+  }
+  if (group.platform === 'composite' || (
+    group.video_price_480p != null ||
+    group.video_price_720p != null ||
+    group.video_price_1080p != null
+  )) {
+    capabilities.push(t('keys.capabilities.video'))
+  }
+  return capabilities.length
+    ? capabilities.join(' · ')
+    : t('keys.capabilities.general')
+}
+
+const creationChannelOptions = computed(() =>
+  groupOptions.value.map((group) => ({
+    ...group,
+    label: `${group.label} · ${group.capabilities}`
   }))
 )
 
-const createProvider = ref<KeyGroupProvider>('anthropic')
-const createProviderOptions = computed(() => KEY_GROUP_PROVIDERS.map((value) => ({
-  value,
-  label: t(`keys.providers.${value}`),
-  count: groups.value.filter((group) => getKeyGroupProvider(group.platform) === value).length
-})))
-
-const formGroupOptions = computed(() => showEditModal.value
-  ? groupOptions.value
-  : groupOptions.value.filter((group) => getKeyGroupProvider(group.platform) === createProvider.value)
+const formGroupOptions = computed(() =>
+  showEditModal.value ? groupOptions.value : creationChannelOptions.value
 )
 
-const selectCreateProvider = (provider: KeyGroupProvider) => {
-  if (createProvider.value === provider) return
-  createProvider.value = provider
-  formData.value.group_id = null
-}
-
-// Also handles groups arriving after the create dialog has already opened.
-watch([showCreateModal, createProviderOptions], ([isOpen, providers], [wasOpen]) => {
+// Auto-select the first available creative channel and reset advanced settings.
+watch([showCreateModal, creationChannelOptions], ([isOpen, channels], [wasOpen]) => {
   if (!isOpen) return
-  if (!wasOpen || !providers.some((provider) => provider.value === createProvider.value && provider.count > 0)) {
-    selectCreateProvider(providers.find((provider) => provider.count > 0)?.value ?? 'anthropic')
+  if (!wasOpen) {
+    showAdvancedSettings.value = false
   }
-  if (!formGroupOptions.value.some((group) => group.value === formData.value.group_id)) {
-    formData.value.group_id = null
+  if (!wasOpen || !channels.some((channel) => channel.value === formData.value.group_id)) {
+    formData.value.group_id = channels[0]?.value ?? null
   }
 })
 
@@ -1922,6 +1923,7 @@ const handleDelete = async () => {
 const closeModals = () => {
   showCreateModal.value = false
   showEditModal.value = false
+  showAdvancedSettings.value = false
   selectedKey.value = null
   formData.value = {
     name: '',
@@ -2024,7 +2026,7 @@ const importToCcswitch = (row: ApiKey) => {
 }
 
 const executeCcsImport = (row: ApiKey, clientType: CcSwitchClientType) => {
-  const baseUrl = publicSettings.value?.api_base_url || window.location.origin
+  const baseUrl = displayApiBaseUrl.value
   const platform = row.group?.platform || 'anthropic'
 
   const usageScript = CC_SWITCH_USAGE_SCRIPT

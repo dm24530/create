@@ -164,11 +164,14 @@ export default {
   // Navigation
   nav: {
     dashboard: '仪表盘',
+    creationSection: '创作空间',
+    accountSection: '账户',
     announcements: '公告',
     apiKeys: 'API 密钥',
     batchImage: '批量生图',
     imageStudio: '图片工作台',
     videoStudio: '视频工作台',
+    imageInspiration: '图片灵感库',
     videoInspiration: '视频灵感库',
     videoWorks: '我的作品',
     playground: 'Playground',
@@ -210,6 +213,7 @@ export default {
     recharge: '充值',
     subscribe: '订阅',
     docs: '文档',
+    apiDocs: '接口文档',
     myOrders: '我的订单',
     orderManagement: '订单管理',
     paymentDashboard: '支付概览',

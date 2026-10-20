@@ -28,6 +28,7 @@ Disallow: /playground
 Disallow: /image-studio
 Disallow: /video-studio
 Disallow: /video-inspiration
+Disallow: /image-inspiration
 Disallow: /video-works
 Disallow: /lottery
 Disallow: /manual

@@ -59,6 +59,12 @@ func TestFetchMediaRejectsHostsOutsideAllowlist(t *testing.T) {
 	require.Contains(t, err.Error(), "unsupported media scheme")
 }
 
+func TestInspirationMediaAllowlistIncludesLibraryImageCDN(t *testing.T) {
+	target, err := url.Parse("https://cdn-gen.nbility.ai/prompts/2049019141093528045/0.jpg")
+	require.NoError(t, err)
+	require.True(t, isAllowedInspirationMediaHost(target))
+}
+
 type recordingInspirationMirror struct {
 	calls []string
 }

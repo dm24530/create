@@ -223,14 +223,7 @@ export const routes: RouteRecordRaw[] = [
   {
     path: '/dashboard',
     name: 'Dashboard',
-    component: () => import('@/views/user/DashboardView.vue'),
-    meta: {
-      requiresAuth: true,
-      requiresAdmin: false,
-      title: 'Dashboard',
-      titleKey: 'dashboard.title',
-      descriptionKey: 'dashboard.welcomeMessage'
-    }
+    redirect: '/image-studio'
   },
   {
     path: '/keys',
@@ -766,13 +759,19 @@ export const routes: RouteRecordRaw[] = [
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes,
-  scrollBehavior(_to, _from, savedPosition) {
+  scrollBehavior(to, _from, savedPosition) {
+    if (to.hash) {
+      return { el: to.hash, top: 80, behavior: 'smooth' }
+    }
+    if (to.path === '/home') {
+      return { top: 0, left: 0 }
+    }
     // Scroll to saved position when using browser back/forward
     if (savedPosition) {
       return savedPosition
     }
     // Scroll to top for new routes
-    return { top: 0 }
+    return { top: 0, left: 0 }
   }
 })
 

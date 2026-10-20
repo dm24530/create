@@ -176,7 +176,7 @@
             :media-style="onlineFrameStyle(item)"
             :title="item.prompt"
             :eyebrow="item.model || '未知模型'"
-            :summary="`@${item.author || '匿名'} · ${item.likes} 赞`"
+            :summary="`本站精选 · ${item.likes} 赞`"
             :spec="`${item.mediaType === 'video' ? '视频' : '图片'} · ${item.width}×${item.height}`"
             :badge="item.mediaType === 'video' ? '视频灵感' : '图片灵感'"
             :type-icon="item.mediaType === 'video' ? 'play' : 'grid'"
@@ -285,7 +285,7 @@
               :media-style="libraryFrameStyle(item)"
               :title="item.title"
               :eyebrow="item.model || item.category || '作品'"
-              :summary="item.author ? `@${item.author_handle || item.author} · ${item.likes} 赞` : item.category"
+              :summary="item.category || '本站作品'"
               :spec="librarySpec(item)"
               :badge="libraryCoverUrl(item) ? '分镜预览' : ''"
               :action-label="`查看「${item.title}」的大图与提示词`"
@@ -403,16 +403,6 @@
 
       <template #footer>
         <div class="detail__footer">
-          <a
-            v-if="active?.sourceUrl"
-            class="detail__source"
-            :href="active.sourceUrl"
-            target="_blank"
-            rel="noreferrer"
-          >
-            <Icon name="link" size="xs" />
-            <span>查看原作品</span>
-          </a>
           <button type="button" class="secondary-button" @click="active && copyPrompt(active.prompt)">
             <Icon name="copy" size="sm" />
             <span>复制提示词</span>
@@ -460,7 +450,6 @@ interface ActiveInspiration {
   mediaType: 'none' | 'image' | 'video'
   mediaUrl: string
   posterUrl: string
-  sourceUrl: string
   meta: MetaRow[]
   tips: string
   checkpoints: string
@@ -510,7 +499,7 @@ const periodOptions = [
 ]
 const onlineFetchedLabel = computed(() => {
   if (onlineLoading.value) return '正在拉取…'
-  if (!onlineFetchedAt.value) return '来自公开创作社区，服务端拉取并经本站代理'
+  if (!onlineFetchedAt.value) return '本站灵感库'
   const date = new Date(onlineFetchedAt.value * 1000)
   const pad = (value: number) => String(value).padStart(2, '0')
   return `更新于 ${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
@@ -611,7 +600,6 @@ function openTemplate(template: VideoInspirationTemplate) {
     mediaType: template.storyboard ? 'image' : 'none',
     mediaUrl: templatePoster(template),
     posterUrl: '',
-    sourceUrl: '',
     meta: [
       { label: '分类', value: template.category },
       { label: '时长', value: `${template.durationSeconds} 秒` },
@@ -636,11 +624,9 @@ function openOnline(item: OnlineInspirationItem) {
     mediaType: item.mediaType,
     mediaUrl: item.mediaUrl,
     posterUrl: item.posterUrl,
-    sourceUrl: item.sourceUrl,
     meta: [
       { label: '模型', value: item.model || '未知' },
       { label: '尺寸', value: `${item.width}×${item.height}` },
-      { label: '作者', value: item.author || '匿名' },
       { label: '类型', value: item.mediaType === 'video' ? '视频' : '图片' },
     ],
     tips: '',
@@ -681,7 +667,6 @@ async function loadOnline(refresh = false) {
       width: Number(entry.width ?? 0) || 0,
       height: Number(entry.height ?? 0) || 0,
       likes: Number(entry.likes ?? 0) || 0,
-      sourceUrl: String(entry.source_url ?? ''),
     }))
     if (!onlineItems.value.length) {
       onlineError.value = '这个时间范围里没有拉到带提示词的作品，换个时间范围或点「换一批」。'
@@ -689,7 +674,7 @@ async function loadOnline(refresh = false) {
   } catch (error) {
     if (controller.signal.aborted) return
     console.error('Failed to load online inspiration:', error)
-    onlineFallbackNotice.value = '在线社区暂时不可达，已自动切换到作品库，稍后可以再试在线灵感。'
+    onlineFallbackNotice.value = '灵感服务暂时不可用，已自动切换到作品库，稍后可以再试。'
     onlineError.value = ''
     source.value = 'library'
     if (!libraryItems.value.length && !libraryLoading.value) {
@@ -799,7 +784,6 @@ function openLibraryItem(item: InspirationLibraryItem) {
     mediaType: item.type === 'image' && libraryCoverUrl(item) ? 'image' : 'none',
     mediaUrl: item.type === 'image' ? libraryCoverUrl(item) : '',
     posterUrl: libraryCoverUrl(item),
-    sourceUrl: item.source_url || '',
     meta: [
       { label: '模型', value: item.model || '未知' },
       { label: '分类', value: item.category || '—' },
@@ -810,7 +794,6 @@ function openLibraryItem(item: InspirationLibraryItem) {
             { label: '画幅', value: item.aspect_ratio || '—' },
             { label: '画质', value: item.resolution || '—' },
           ]),
-      ...(item.author ? [{ label: '作者', value: item.author_handle || item.author }] : []),
     ],
     tips: '',
     checkpoints: '',
@@ -1178,7 +1161,7 @@ onMounted(() => {
 /* 详情：左边看成片，右边读提示词 —— 与图片工作台的详情弹窗一致。 */
 .detail {
   display: grid;
-  min-height: min(38rem, 68vh);
+  height: min(38rem, calc(90vh - 11rem));
   grid-template-columns: minmax(0, 1.48fr) minmax(18rem, 0.72fr);
   align-items: stretch;
   gap: 1.25rem;
@@ -1187,7 +1170,9 @@ onMounted(() => {
 .detail__media {
   position: relative;
   display: flex;
-  min-height: 28rem;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
   align-items: center;
   justify-content: center;
   overflow: hidden;
@@ -1198,7 +1183,7 @@ onMounted(() => {
 .detail__video,
 .detail__image {
   height: 100%;
-  max-height: 72vh;
+  max-height: 100%;
   width: 100%;
   object-fit: contain;
   background: rgb(0 0 0);
@@ -1208,7 +1193,7 @@ onMounted(() => {
   position: relative;
   display: flex;
   height: 100%;
-  min-height: 28rem;
+  min-height: 0;
   width: 100%;
   align-items: center;
   justify-content: center;
@@ -1238,9 +1223,12 @@ onMounted(() => {
 
 .detail__panel {
   display: flex;
+  min-height: 0;
   min-width: 0;
   flex-direction: column;
   gap: 0.55rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   border: 1px solid rgb(226 232 240);
   border-radius: 0.75rem;
   background: rgb(255 255 255);
@@ -1327,20 +1315,6 @@ onMounted(() => {
   gap: 0.5rem;
 }
 
-.detail__source {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
-  margin-right: auto;
-  font-size: 0.78rem;
-  color: rgb(107 114 128);
-  text-decoration: none;
-}
-
-.detail__source:hover {
-  color: rgb(173 74 41);
-}
-
 .detail__footer .primary-button,
 .detail__footer .secondary-button {
   flex: 0 0 auto;
@@ -1367,13 +1341,18 @@ onMounted(() => {
 
 @media (max-width: 768px) {
   .detail {
+    height: auto;
     grid-template-columns: minmax(0, 1fr);
-    min-height: 0;
   }
 
   .detail__media,
   .detail__placeholder {
-    min-height: 18rem;
+    height: min(44vh, 20rem);
+    min-height: 0;
+  }
+
+  .detail__panel {
+    max-height: 42vh;
   }
 }
 

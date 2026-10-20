@@ -1,8 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_PUBLIC_API_BASE_URL, LOCAL_PUBLIC_API_BASE_URL, resolvePlaygroundApiEndpoint, resolvePublicApiEndpoint } from '../apiEndpoint'
+import {
+  DEFAULT_PUBLIC_API_BASE_URL,
+  LOCAL_PUBLIC_API_BASE_URL,
+  resolveDocumentedApiBaseUrl,
+  resolvePlaygroundApiEndpoint,
+  resolvePublicApiEndpoint,
+} from '../apiEndpoint'
 
 describe('resolvePublicApiEndpoint', () => {
-  it('defaults to the dedicated API domain', () => {
+  it('defaults to the same-origin API path', () => {
     expect(resolvePublicApiEndpoint('')).toBe(DEFAULT_PUBLIC_API_BASE_URL)
     expect(resolvePublicApiEndpoint(null)).toBe(DEFAULT_PUBLIC_API_BASE_URL)
   })
@@ -33,5 +39,20 @@ describe('resolvePlaygroundApiEndpoint', () => {
 
   it('keeps explicitly configured endpoints even on localhost', () => {
     expect(resolvePlaygroundApiEndpoint('https://custom.example.com/v1/', 'localhost')).toBe('https://custom.example.com/v1')
+  })
+})
+
+describe('resolveDocumentedApiBaseUrl', () => {
+  it('uses the production domain for local documentation previews', () => {
+    expect(resolveDocumentedApiBaseUrl('/v1', 'http://127.0.0.1:3000')).toBe('https://create.superai.sbs/v1')
+    expect(resolveDocumentedApiBaseUrl('/v1', 'http://localhost:5174')).toBe('https://create.superai.sbs/v1')
+  })
+
+  it('uses the current public origin outside local development', () => {
+    expect(resolveDocumentedApiBaseUrl('/v1', 'https://create.superai.sbs')).toBe('https://create.superai.sbs/v1')
+  })
+
+  it('keeps an explicitly configured absolute API endpoint', () => {
+    expect(resolveDocumentedApiBaseUrl('https://api.example.com/v1/', 'http://localhost:3000')).toBe('https://api.example.com/v1')
   })
 })

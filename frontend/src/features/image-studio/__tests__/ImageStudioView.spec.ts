@@ -7,11 +7,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import ImageStudioView from '../ImageStudioView.vue'
 
-const { listKeys, getPublicSettings, listGallery, saveGallery, copyToClipboard } = vi.hoisted(() => ({
+const { listKeys, getPublicSettings, listGallery, saveGallery, pinGallery, galleryQuota, copyToClipboard } = vi.hoisted(() => ({
   listKeys: vi.fn(),
   getPublicSettings: vi.fn(),
   listGallery: vi.fn(),
   saveGallery: vi.fn(),
+  pinGallery: vi.fn(),
+  galleryQuota: vi.fn(),
   copyToClipboard: vi.fn(),
 }))
 
@@ -25,6 +27,8 @@ vi.mock('@/api', () => ({
   imageStudioGalleryAPI: {
     list: listGallery,
     save: saveGallery,
+    pin: pinGallery,
+    quota: galleryQuota,
   },
 }))
 
@@ -32,6 +36,14 @@ vi.mock('@/composables/useClipboard', () => ({
   useClipboard: () => ({
     copyToClipboard,
   }),
+}))
+
+vi.mock('@/composables/useCreatorKey', () => ({
+  ensureCreatorKey: async () => {
+    const result = await listKeys()
+    const key = result.items.find((item: any) => item.group?.allow_image_generation !== false) || result.items[0]
+    return { keys: result.items, key }
+  },
 }))
 
 const componentPath = resolve(dirname(fileURLToPath(import.meta.url)), '../ImageStudioView.vue')
@@ -58,8 +70,12 @@ function resetCommonMocks() {
   getPublicSettings.mockReset()
   listGallery.mockReset()
   saveGallery.mockReset()
+  pinGallery.mockReset()
+  galleryQuota.mockReset()
   copyToClipboard.mockReset()
   listGallery.mockResolvedValue([])
+  pinGallery.mockResolvedValue(undefined)
+  galleryQuota.mockResolvedValue({ used: 0, limit: 100 })
   copyToClipboard.mockResolvedValue(true)
   saveGallery.mockResolvedValue({
     id: 'gallery-1',
@@ -436,6 +452,35 @@ describe('ImageStudioView image size dialog', () => {
   })
 })
 
+describe('ImageStudioView inspiration handoff', () => {
+  beforeEach(() => {
+    resetCommonMocks()
+    sessionStorage.clear()
+    listKeys.mockResolvedValue({
+      items: [{ id: 1, name: 'dd', key: 'sk-local', status: 'active', group_id: 2 }],
+    })
+    getPublicSettings.mockResolvedValue({ api_base_url: '/v1' })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: [] }),
+    } as Response))
+  })
+
+  it('hydrates a prompt handed over from the image inspiration library', async () => {
+    sessionStorage.setItem(
+      'sub2api:image-studio:pending-prompt',
+      '清晨薄雾中的现代建筑，克制的灰蓝色调。',
+    )
+
+    const wrapper = mountImageStudio()
+    await flushPromises()
+
+    expect(wrapper.get('textarea').element.value).toBe('清晨薄雾中的现代建筑，克制的灰蓝色调。')
+    expect(wrapper.get('[data-testid="inspiration-hint"]').text()).toContain('已带入图片灵感提示词')
+    expect(sessionStorage.getItem('sub2api:image-studio:pending-prompt')).toBeNull()
+  })
+})
+
 describe('ImageStudioView gallery', () => {
   beforeEach(() => {
     resetCommonMocks()
@@ -462,10 +507,43 @@ describe('ImageStudioView gallery', () => {
     const wrapper = mountImageStudio()
     await flushPromises()
 
-    expect(wrapper.text()).toContain('历史图片 1')
+    expect(wrapper.text()).not.toContain('历史图片 1')
     const image = wrapper.get('img[src="https://cdn.example.com/gallery-1.png"]')
     expect(image.exists()).toBe(true)
     expect(image.attributes('loading')).toBe('lazy')
+  })
+
+  it('saves a temporary gallery image from the detail dialog', async () => {
+    listGallery.mockResolvedValue([
+      {
+        id: 'gallery-temp',
+        url: 'https://cdn.example.com/gallery-temp.png',
+        prompt: 'a cat',
+        model: 'gpt-image-1',
+        size: '1024x1024',
+        format: 'png',
+        saved: false,
+        created_at: 1,
+        expires_at: 9999999999,
+      },
+    ])
+
+    const wrapper = mountImageStudio()
+    await flushPromises()
+
+    const imageButton = wrapper.findAll('button').find((button) =>
+      button.find('img[src="https://cdn.example.com/gallery-temp.png"]').exists(),
+    )
+    await imageButton!.trigger('click')
+
+    const saveButton = wrapper.get('[data-testid="save-preview-to-gallery"]')
+    expect(saveButton.text()).toContain('保存到我的作品')
+    await saveButton.trigger('click')
+    await flushPromises()
+
+    expect(pinGallery).toHaveBeenCalledWith('gallery-temp')
+    expect(wrapper.get('[data-testid="preview-saved-state"]').text()).toContain('已保存到我的作品')
+    expect(wrapper.find('[data-testid="save-preview-to-gallery"]').exists()).toBe(false)
   })
 
   it('opens the image detail dialog and copies the original prompt', async () => {
@@ -492,7 +570,8 @@ describe('ImageStudioView gallery', () => {
     await imageButton!.trigger('click')
 
     expect(wrapper.text()).toContain('提示词')
-    expect(wrapper.text()).toContain('a cat wearing a spacesuit')
+    expect((wrapper.get('[data-testid="edit-image-prompt"]').element as HTMLTextAreaElement).value)
+      .toBe('a cat wearing a spacesuit')
 
     const copyButton = wrapper.findAll('button').find((button) => button.text().includes('复制'))
     expect(copyButton).toBeDefined()
@@ -522,10 +601,11 @@ describe('ImageStudioView gallery', () => {
       button.find('img[src="https://cdn.example.com/gallery-1.png"]').exists(),
     )
     await imageButton!.trigger('click')
-    expect(wrapper.text()).toContain('a cat')
+    expect((wrapper.get('[data-testid="edit-image-prompt"]').element as HTMLTextAreaElement).value)
+      .toBe('a cat')
 
     await wrapper.get('[data-testid="dialog-backdrop"]').trigger('click')
-    expect(wrapper.text()).not.toContain('a cat')
+    expect(wrapper.find('[data-testid="edit-image-prompt"]').exists()).toBe(false)
   })
 
   it('saves a generated image to the seven-day gallery', async () => {
@@ -601,9 +681,59 @@ describe('ImageStudioView gallery', () => {
     await flushPromises()
     await flushPromises()
 
-    expect(wrapper.text()).toContain('生成结果 1')
+    expect(wrapper.text()).not.toContain('生成结果 1')
+    expect(wrapper.find('img[alt="生成结果 1"]').exists()).toBe(true)
     // 同一张图不能既作为生成结果显示、又以「历史图片」再显示一遍
     expect(wrapper.text()).not.toContain('历史图片')
+  })
+
+  it('edits the prompt in the result dialog and regenerates with the same settings', async () => {
+    listKeys.mockResolvedValue({
+      items: [{ id: 1, name: 'dd', key: 'sk-local', status: 'active', group_id: 2 }],
+    })
+    getPublicSettings.mockResolvedValue({ api_base_url: '/v1' })
+    const generationBodies: Array<Record<string, unknown>> = []
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = String(input)
+      if (url.endsWith('/images/batches/models')) {
+        return { ok: true, json: async () => ({ data: [] }) } as Response
+      }
+      if (url.endsWith('/models')) {
+        return { ok: true, json: async () => ({ data: [{ id: 'gpt-image-1' }] }) } as Response
+      }
+      if (url.endsWith('/images/generations')) {
+        generationBodies.push(JSON.parse(String(init?.body || '{}')))
+        return { ok: true, json: async () => ({ data: [{ b64_json: 'aGVsbG8=' }] }) } as Response
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountImageStudio()
+    await flushPromises()
+    await flushPromises()
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    await flushPromises()
+
+    const imageButton = wrapper.findAll('button').find((button) =>
+      button.find('img[alt="生成结果 1"]').exists(),
+    )
+    await imageButton!.trigger('click')
+
+    const promptInput = wrapper.get('[data-testid="edit-image-prompt"]')
+    expect((promptInput.element as HTMLTextAreaElement).value).toContain('橙色小猫')
+    await promptInput.setValue('一只在雪地里的白色狐狸，电影感光线')
+    await wrapper.get('[data-testid="regenerate-image-prompt"]').trigger('click')
+    await flushPromises()
+
+    expect(generationBodies).toHaveLength(2)
+    expect(generationBodies[1]).toEqual(expect.objectContaining({
+      prompt: '一只在雪地里的白色狐狸，电影感光线',
+      model: 'gpt-image-1',
+      size: '1024x1024',
+      output_format: 'png',
+    }))
+    expect(wrapper.find('[data-testid="edit-image-prompt"]').exists()).toBe(false)
   })
 
   it('rewrites upstream image URLs so the enlarged image is not served from the other site', async () => {
@@ -757,7 +887,8 @@ describe('ImageStudioView gallery', () => {
     await flushPromises()
 
     expect(localStorage.getItem('sub2api:image-studio:pending')).toBeNull()
-    expect(wrapper.text()).toContain('生成结果 1')
+    expect(wrapper.text()).not.toContain('生成结果 1')
+    expect(wrapper.find('img[alt="生成结果 1"]').exists()).toBe(true)
   })
 
   it('restores pending image placeholders from browser storage on entry', async () => {

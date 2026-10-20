@@ -22,15 +22,22 @@ export default {
       startImage: '开始生图',
       createVideo: '创作视频',
       explore: '探索无限可能',
+      slides: {
+        nebula: '星云深处',
+        desert: '荒漠电影感',
+        stars: '银河之下'
+      },
       galleryTitle: '想象，不止于想象。',
       galleryLink: '进入图片工作台',
       gallery: {
         items: {
           flower: '微观花园',
           desert: '公路尽头',
+          aurora: '极光边界',
           nature: '深海来客',
           architecture: '几何边界',
-          rings: '星环之下'
+          rings: '星环之下',
+          city: '霓虹街巷'
         }
       },
       filmTitle: '不止一帧。',
@@ -51,9 +58,9 @@ export default {
             title: '光影里的产品镜头',
             meta: '产品广告 / 分镜模板'
           },
-          landscape: {
-            title: '穿行荒原的公路',
-            meta: '电影感 / 运镜模板'
+          facade: {
+            title: '玻璃幕墙的节奏',
+            meta: '建筑 / 结构模板'
           },
           botanical: {
             title: '花瓣与微距呼吸',

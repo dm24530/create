@@ -51,6 +51,18 @@ export const userCustomFeatureRoutesAfterKeys: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/image-inspiration',
+    name: 'ImageInspiration',
+    component: () => import('@/features/image-studio/ImageInspirationView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      title: 'Image Inspiration',
+      titleKey: 'imageInspiration.title',
+      descriptionKey: 'imageInspiration.description'
+    }
+  },
+  {
     path: '/video-works',
     name: 'VideoWorks',
     component: () => import('@/features/video-studio/VideoWorksView.vue'),
@@ -94,14 +106,18 @@ export const userCustomFeatureRoutesAfterAvailableChannels: RouteRecordRaw[] = [
   },
   {
     path: '/manual/:platform',
-    name: 'UserManualPlatform',
-    component: () => import('@/views/user/ManualView.vue'),
+    redirect: '/manual'
+  },
+  {
+    path: '/docs/api',
+    alias: ['/docs'],
+    name: 'ApiDocs',
+    component: () => import('@/views/user/ApiDocsView.vue'),
     meta: {
       requiresAuth: true,
       requiresAdmin: false,
-      title: 'User Manual',
-      titleKey: 'manual.title',
-      descriptionKey: 'manual.description'
+      title: 'API Docs',
+      titleKey: 'nav.apiDocs'
     }
   },
   {

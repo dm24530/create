@@ -85,7 +85,7 @@ export default {
 },
 manual: {
   title: 'User Manual',
-  description: 'Per-platform setup steps, FAQ, and example configuration.'
+  description: 'Image and video studio workflows, parameters, saved works, and API integration.'
 },
 videoStudio: {
   title: 'Video Studio',
@@ -94,6 +94,10 @@ videoStudio: {
 videoInspiration: {
   title: 'Video Inspiration',
   description: 'Browse complete prompts and shot templates, then send one to the studio.'
+},
+imageInspiration: {
+  title: 'Image Inspiration',
+  description: 'Browse image works and complete prompts, then send one to Image Studio.'
 },
 videoWorks: {
   title: 'My Video Works',

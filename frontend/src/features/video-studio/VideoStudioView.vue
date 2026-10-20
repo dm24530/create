@@ -8,7 +8,7 @@
         </div>
 
         <div class="video-studio__toolbar">
-          <div class="segmented segmented--compact provider-switch" role="tablist" aria-label="生成渠道">
+          <div class="segmented segmented--compact provider-switch !hidden" role="tablist" aria-label="生成渠道">
             <button
               type="button"
               role="tab"
@@ -34,7 +34,7 @@
           </div>
 
           <template v-if="providerMode === 'platform'">
-            <label class="toolbar-field">
+            <label class="toolbar-field toolbar-field--select">
               <span>API Key</span>
               <ImageStudioSelect
                 v-model="selectedKeyId"
@@ -45,7 +45,7 @@
                 direction="down"
               />
             </label>
-            <label class="toolbar-field">
+            <label class="toolbar-field toolbar-field--select">
               <span>模型</span>
               <ImageStudioSelect
                 v-model="videoModel"
@@ -126,8 +126,6 @@
             <span>我的作品</span>
             <em v-if="works.length">{{ works.length }}</em>
           </RouterLink>
-          <span v-if="modelLoadError" class="toolbar-error">{{ modelLoadError }}</span>
-          <span v-if="customModelError" class="toolbar-error">{{ customModelError }}</span>
         </div>
       </header>
 
@@ -243,14 +241,29 @@
           </div>
         </div>
 
-        <textarea
-          v-model="prompt"
-          rows="3"
-          class="video-composer__prompt"
-          :maxlength="MAX_PROMPT_CHARS"
-          placeholder="描述画面、动作与运镜，例如：镜头缓慢推进，海雾从左侧涌入，光线逐渐转暖..."
-          @paste="onPaste"
-        />
+        <div class="video-composer__prompt-wrap">
+          <textarea
+            ref="promptTextareaRef"
+            v-model="prompt"
+            rows="3"
+            class="video-composer__prompt"
+            :maxlength="MAX_PROMPT_CHARS"
+            placeholder="描述画面、动作与运镜，例如：镜头缓慢推进，海雾从左侧涌入，光线逐渐转暖..."
+            @paste="onPaste"
+          />
+          <button
+            v-show="promptToggleVisible"
+            type="button"
+            class="video-composer__prompt-toggle"
+            data-testid="video-prompt-toggle"
+            :aria-label="promptCompact ? '放大提示词输入框' : '缩小提示词输入框'"
+            :title="promptCompact ? '放大提示词输入框' : '缩小提示词输入框'"
+            :aria-expanded="!promptCompact"
+            @click="togglePromptCompact"
+          >
+            <Icon :name="promptCompact ? 'expand' : 'collapse'" size="sm" />
+          </button>
+        </div>
         <div class="video-composer__prompt-meta">
           <span>{{ prompt.length }}/{{ MAX_PROMPT_CHARS }}</span>
         </div>
@@ -492,10 +505,13 @@ import { useRoute } from 'vue-router'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Icon from '@/components/icons/Icon.vue'
-import { authAPI, keysAPI } from '@/api'
+import { authAPI } from '@/api'
 import type { ApiKey } from '@/types'
 import { useClipboard } from '@/composables/useClipboard'
+import { rootRemToPx, useAutoGrowTextarea } from '@/composables/useAutoGrowTextarea'
+import { ensureCreatorKey } from '@/composables/useCreatorKey'
 import { resolvePlaygroundApiEndpoint } from '@/utils/apiEndpoint'
+import { useAppStore } from '@/stores/app'
 
 import ImageStudioSelect from '../image-studio/ImageStudioSelect.vue'
 import {
@@ -574,6 +590,7 @@ const PENDING_PROMPT_STORAGE_KEY = 'sub2api:video-studio:pending-prompt'
 const PROVIDER_STORAGE_KEY = 'sub2api:video-studio:provider'
 
 const route = useRoute()
+const appStore = useAppStore()
 const { copyToClipboard } = useClipboard()
 
 const keys = ref<ApiKey[]>([])
@@ -586,17 +603,32 @@ const customApiKey = ref('')
 const customModel = ref('')
 const customModels = ref<string[]>([])
 const customLoadingModels = ref(false)
-const customModelError = ref('')
 const videoModel = ref('')
 const videoModels = ref<string[]>([])
 const loadingModels = ref(false)
 const refreshing = ref(false)
-const modelLoadError = ref('')
 
 const errorMessage = ref('')
 const inspirationHint = ref('')
 const archiveHint = ref('')
 const prompt = ref('')
+const promptCompact = ref(false)
+const {
+  textareaRef: promptTextareaRef,
+  resize: resizePromptTextarea,
+  contentHeight: promptContentHeight,
+} = useAutoGrowTextarea(prompt, {
+  maxHeight: () => promptCompact.value
+    ? rootRemToPx(4.5)
+    : Math.min(rootRemToPx(12.5), Math.max(rootRemToPx(8), window.innerHeight * 0.28)),
+})
+const promptToggleVisible = computed(() => promptCompact.value || promptContentHeight.value > 72)
+watch(promptCompact, () => {
+  void nextTick(resizePromptTextarea)
+})
+function togglePromptCompact() {
+  promptCompact.value = !promptCompact.value
+}
 const durationSeconds = ref(5)
 const resolution = ref('720p')
 const aspectRatio = ref('16:9')
@@ -622,9 +654,18 @@ let nextReferenceId = 1
 let modelRequestId = 0
 
 const activeKeys = computed(() => keys.value.filter((key) => key.status === 'active'))
-const apiKeyOptions = computed(() => activeKeys.value.map((key) => ({ value: String(key.id), label: key.name })))
+const videoCapableKeys = computed(() => activeKeys.value.filter((key) => {
+  if (!key.group) return true
+  if (key.group.platform === 'composite') return true
+  return (
+    key.group.video_price_480p != null ||
+    key.group.video_price_720p != null ||
+    key.group.video_price_1080p != null
+  )
+}))
+const apiKeyOptions = computed(() => videoCapableKeys.value.map((key) => ({ value: String(key.id), label: key.name })))
 const selectedKey = computed(() =>
-  activeKeys.value.find((key) => String(key.id) === selectedKeyId.value) || null,
+  videoCapableKeys.value.find((key) => String(key.id) === selectedKeyId.value) || null,
 )
 const videoModelOptions = computed(() => videoModels.value.map((model) => ({ value: model, label: model })))
 // 自定义渠道：地址与密钥都由用户自己填，模型既可以手写也可以用「获取模型」拉一次。
@@ -698,12 +739,17 @@ function normalizeBaseUrl(raw: string): string {
   return raw.trim().replace(/\/+$/, '')
 }
 
-// 切换渠道时清掉上一侧遗留的报错，避免"密钥缺失"之类的提示串台。
+function showModelHint(message: string, type: 'warning' | 'error' = 'warning') {
+  const text = message.trim()
+  if (!text) return
+  if (type === 'error') appStore.showError(text, 5000)
+  else appStore.showWarning(text, 4000)
+}
+
 function setProviderMode(mode: 'platform' | 'custom') {
   if (providerMode.value === mode) return
   providerMode.value = mode
   errorMessage.value = ''
-  customModelError.value = ''
   persistProviderSettings()
 }
 
@@ -723,7 +769,6 @@ function restoreProviderSettings() {
   try {
     const stored = JSON.parse(localStorage.getItem(PROVIDER_STORAGE_KEY) || 'null')
     if (!stored || typeof stored !== 'object') return
-    if (stored.mode === 'custom' || stored.mode === 'platform') providerMode.value = stored.mode
     if (typeof stored.baseUrl === 'string') customBaseUrl.value = stored.baseUrl
     if (typeof stored.model === 'string') customModel.value = stored.model
   } catch {
@@ -774,15 +819,13 @@ function taskMeta(task: StudioTask): string {
 
 async function loadData() {
   errorMessage.value = ''
-  const keysPromise = keysAPI.list(1, 100, { status: 'active' })
-    .then((response) => {
-      keys.value = response.items || []
-      if (!selectedKeyId.value || !activeKeys.value.some((key) => String(key.id) === selectedKeyId.value)) {
-        selectedKeyId.value = activeKeys.value.length ? String(activeKeys.value[0].id) : ''
-      }
+  const keysPromise = ensureCreatorKey('video')
+    .then((result) => {
+      keys.value = result.keys
+      selectedKeyId.value = String(result.key.id)
     })
     .catch((error) => {
-      errorMessage.value = errorMessageFrom(error, '加载密钥失败')
+      errorMessage.value = errorMessageFrom(error, '视频创作服务暂不可用')
     })
   const settingsPromise = authAPI.getPublicSettings()
     .then((settings) => {
@@ -897,7 +940,6 @@ async function loadModels() {
   loadingModels.value = true
   videoModels.value = []
   videoModel.value = ''
-  modelLoadError.value = ''
   const key = selectedKey.value
   const endpoint = apiBaseUrl.value
   if (!key || !endpoint) {
@@ -911,7 +953,9 @@ async function loadModels() {
     videoModels.value = deduplicateModelNames(names.filter(isVideoModel))
     videoModel.value = videoModels.value[0] || ''
   } catch (error) {
-    if (requestId === modelRequestId) modelLoadError.value = errorMessageFrom(error, '加载视频模型失败')
+    if (requestId === modelRequestId) {
+      showModelHint(errorMessageFrom(error, '加载视频模型失败'), 'error')
+    }
   } finally {
     if (requestId === modelRequestId) loadingModels.value = false
   }
@@ -922,21 +966,20 @@ async function loadCustomModels() {
   const baseUrl = normalizeBaseUrl(customBaseUrl.value)
   const apiKey = customApiKey.value.trim()
   if (!baseUrl || !apiKey) {
-    customModelError.value = '请先填写接口地址和密钥。'
+    showModelHint('请先填写接口地址和密钥。')
     return
   }
   customLoadingModels.value = true
-  customModelError.value = ''
   try {
     const names = deduplicateModelNames(await fetchModelNames(`${baseUrl}/models`, apiKey))
     const videoOnly = names.filter(isVideoModel)
     // 别家渠道的模型命名五花八门，过滤后为空就退回全部，让用户自己挑。
     customModels.value = videoOnly.length ? videoOnly : names
-    if (!customModels.value.length) customModelError.value = '没有读到模型，可以直接手写模型名。'
+    if (!customModels.value.length) showModelHint('没有读到模型，可以直接手写模型名。')
     else if (!customModel.value.trim()) customModel.value = customModels.value[0]
     persistProviderSettings()
   } catch (error) {
-    customModelError.value = errorMessageFrom(error, '获取模型失败')
+    showModelHint(errorMessageFrom(error, '获取模型失败'), 'error')
   } finally {
     customLoadingModels.value = false
   }
@@ -946,7 +989,6 @@ async function refreshAll() {
   if (refreshing.value) return
   refreshing.value = true
   errorMessage.value = ''
-  modelLoadError.value = ''
   const previousModel = videoModel.value
   try {
     await loadData()
@@ -1418,17 +1460,20 @@ onBeforeUnmount(() => {
 <style scoped>
 .video-studio {
   display: flex;
-  min-height: calc(100vh - 8rem);
+  height: calc(100vh - 8rem - 1px);
+  min-height: 0;
   width: 100%;
   /* 与图片工作台保持同宽，否则两个工作台来回切换会有明显的宽度差。 */
   max-width: 120rem;
   margin: 0 auto;
+  overflow: hidden;
   flex-direction: column;
   gap: 1rem;
 }
 
 .video-studio__header {
   display: flex;
+  flex-shrink: 0;
   flex-wrap: wrap;
   align-items: flex-end;
   justify-content: space-between;
@@ -1465,6 +1510,39 @@ onBeforeUnmount(() => {
   padding: 0 0.6rem;
   font-size: 0.8rem;
   color: rgb(107 114 128);
+}
+
+.toolbar-field--select {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-height: 2.4rem;
+  border: 1px solid rgb(226 232 240);
+  border-radius: 0.6rem;
+  background: rgb(255 255 255);
+  padding: 0 0.55rem;
+}
+
+.toolbar-field--select > span {
+  font-size: 0.75rem;
+}
+
+.toolbar-field--select:focus-within {
+  border-color: rgb(232 121 78);
+}
+
+.toolbar-field--select :deep(.studio-select__trigger) {
+  height: 2.1rem;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+}
+
+.toolbar-field--select :deep(.studio-select__trigger:hover),
+.toolbar-field--select :deep(.studio-select--open .studio-select__trigger) {
+  border: 0;
+  box-shadow: none;
 }
 
 .toolbar-field__select {
@@ -1516,32 +1594,27 @@ onBeforeUnmount(() => {
 }
 
 .toolbar-link:hover {
-  border-color: rgb(45 212 191);
-  color: rgb(15 118 110);
+  border-color: rgb(232 121 78);
+  color: rgb(173 74 41);
 }
 
 .toolbar-link em {
   border-radius: 9999px;
-  background: rgb(204 251 241);
+  background: rgb(255 227 214);
   padding: 0 0.35rem;
   font-style: normal;
   font-size: 0.7rem;
-  color: rgb(15 118 110);
+  color: rgb(173 74 41);
 }
 
 .is-spinning {
   animation: video-spin 0.9s linear infinite;
 }
 
-.toolbar-error {
-  font-size: 0.78rem;
-  color: rgb(220 38 38);
-}
-
 .video-studio__stage {
   flex: 1;
-  min-height: 22rem;
-  overflow: auto;
+  min-height: 0;
+  overflow-y: auto;
   border: 1px solid rgb(226 232 240);
   border-radius: 0.75rem;
   background: rgb(255 255 255);
@@ -1681,8 +1754,7 @@ onBeforeUnmount(() => {
 }
 
 .video-composer {
-  position: sticky;
-  bottom: 0.75rem;
+  flex-shrink: 0;
   border: 1px solid rgb(226 232 240);
   border-radius: 1rem;
   background: rgb(255 255 255);
@@ -1781,14 +1853,45 @@ onBeforeUnmount(() => {
   color: rgb(239 68 68);
 }
 
+.video-composer__prompt-wrap {
+  position: relative;
+}
+
 .video-composer__prompt {
   width: 100%;
+  min-height: 4.5rem;
+  max-height: clamp(8rem, 28vh, 12.5rem);
   resize: none;
   border: 0;
   background: transparent;
+  padding-right: 2.5rem;
+  line-height: 1.65;
+  overflow-y: hidden;
+  transition: height 0.16s ease;
   font-size: 0.875rem;
   color: rgb(17 24 39);
   outline: none;
+}
+
+.video-composer__prompt-toggle {
+  position: absolute;
+  top: 0.25rem;
+  right: 0.25rem;
+  display: inline-flex;
+  height: 1.75rem;
+  width: 1.75rem;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 0.4rem;
+  background: transparent;
+  color: rgb(148 163 184);
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.video-composer__prompt-toggle:hover {
+  background: rgb(241 245 249);
+  color: rgb(173 74 41);
 }
 
 .video-composer__prompt::placeholder {
@@ -1843,22 +1946,22 @@ onBeforeUnmount(() => {
 
 .control-button:hover,
 .control-toggle:hover {
-  border-color: rgb(45 212 191);
+  border-color: rgb(232 121 78);
 }
 
 .control-button em {
   border-radius: 9999px;
-  background: rgb(204 251 241);
+  background: rgb(255 227 214);
   padding: 0 0.35rem;
   font-style: normal;
   font-size: 0.7rem;
-  color: rgb(15 118 110);
+  color: rgb(173 74 41);
 }
 
 .control-toggle--on {
-  border-color: rgb(45 212 191);
-  background: rgb(240 253 250);
-  color: rgb(15 118 110);
+  border-color: rgb(232 121 78);
+  background: rgb(255 244 238);
+  color: rgb(173 74 41);
 }
 
 .mini-action {
@@ -1874,8 +1977,8 @@ onBeforeUnmount(() => {
 }
 
 .mini-action:hover {
-  border-color: rgb(45 212 191);
-  color: rgb(15 118 110);
+  border-color: rgb(232 121 78);
+  color: rgb(173 74 41);
 }
 
 .mini-action:disabled {
@@ -1894,12 +1997,12 @@ onBeforeUnmount(() => {
 }
 
 .primary-button {
-  background: rgb(13 148 136);
-  color: rgb(255 255 255);
+  background: rgb(232 121 78);
+  color: rgb(28 18 13);
 }
 
 .primary-button:hover {
-  background: rgb(15 118 110);
+  background: rgb(240 152 115);
 }
 
 .primary-button:disabled {
@@ -1950,8 +2053,8 @@ onBeforeUnmount(() => {
 }
 
 .count-stepper__button:hover {
-  background: rgb(240 253 250);
-  color: rgb(15 118 110);
+  background: rgb(255 244 238);
+  color: rgb(173 74 41);
 }
 
 .count-stepper__button:disabled {
@@ -2010,7 +2113,7 @@ onBeforeUnmount(() => {
 }
 
 .text-input:focus {
-  border-color: rgb(45 212 191);
+  border-color: rgb(232 121 78);
 }
 
 .segmented {
@@ -2034,7 +2137,7 @@ onBeforeUnmount(() => {
 
 .segmented__item--active {
   background: rgb(255 255 255);
-  color: rgb(15 118 110);
+  color: rgb(173 74 41);
   box-shadow: 0 1px 2px rgb(15 23 42 / 0.08);
 }
 
@@ -2101,7 +2204,13 @@ onBeforeUnmount(() => {
 }
 
 :global(.dark .video-studio__title h1) {
-  color: rgb(255 255 255);
+  color: rgb(242 237 229);
+}
+
+:global(.dark .toolbar-field--select) {
+  border-color: rgb(66 61 55);
+  background: rgb(35 33 30);
+  padding: 0 0.55rem;
 }
 
 :global(.dark .toolbar-field),
@@ -2114,35 +2223,77 @@ onBeforeUnmount(() => {
 :global(.dark .count-stepper),
 :global(.dark .text-input),
 :global(.dark .toolbar-input) {
-  border-color: rgb(51 65 85);
-  background: rgb(30 41 59);
-  color: rgb(226 232 240);
+  border-color: rgb(66 61 55);
+  background: rgb(35 33 30);
+  color: rgb(227 219 208);
+}
+
+:global(.dark .toolbar-field--select) {
+  border-color: rgb(66 61 55);
+  background: rgb(35 33 30);
+  padding: 0 0.55rem;
 }
 
 :global(.dark .video-studio__stage) {
-  border-color: rgb(51 65 85);
-  background: rgb(15 23 42);
+  border-color: rgb(66 61 55);
+  background: rgb(29 28 25);
 }
 
 :global(.dark .video-card) {
-  border-color: rgb(51 65 85);
-  background: rgb(30 41 59);
+  border-color: rgb(66 61 55);
+  background: rgb(35 33 30);
 }
 
 :global(.dark .video-card__prompt) {
-  color: rgb(241 245 249);
+  color: rgb(242 237 229);
 }
 
 :global(.dark .video-composer__prompt) {
-  color: rgb(241 245 249);
+  color: rgb(242 237 229);
+}
+
+:global(.dark .video-composer__prompt-toggle) {
+  border: 0;
+  background: transparent;
+  color: rgb(167 159 148);
+}
+
+:global(.dark .video-composer__prompt-toggle:hover) {
+  background: rgb(44 41 37);
+  color: rgb(245 161 127);
 }
 
 :global(.dark .preview__prompt) {
-  color: rgb(226 232 240);
+  color: rgb(227 219 208);
 }
 
 :global(.dark .reference-chip) {
-  border-color: rgb(51 65 85);
-  background: rgb(30 41 59);
+  border-color: rgb(66 61 55);
+  background: rgb(35 33 30);
+}
+
+:global(.dark .video-studio__empty-icon) {
+  border-color: rgb(66 61 55);
+  background: rgb(35 33 30);
+  color: rgb(167 159 148);
+}
+
+:global(.dark .video-card__media) {
+  background: rgb(20 19 18);
+}
+
+:global(.dark .segmented) {
+  background: rgb(35 33 30);
+}
+
+:global(.dark .segmented__item--active) {
+  background: rgb(44 41 37);
+  color: rgb(245 161 127);
+}
+
+:global(.dark .control-toggle--on) {
+  border-color: rgb(232 121 78);
+  background: rgb(232 121 78 / 0.12);
+  color: rgb(245 161 127);
 }
 </style>
