@@ -47,10 +47,12 @@ describe('LandingPage', () => {
   it('renders the editorial hero, gallery and story sections', () => {
     const wrapper = mountPage()
 
-    expect(wrapper.get('.landing-hero img').attributes('src')).toBe('/landing/hero-stars-8k.webp')
-    expect(wrapper.get('.landing-hero img').attributes('srcset')).toContain('7680w')
+    expect(wrapper.get('.landing-hero img').attributes('src')).toBe('/landing/hero-stars-1280.webp')
+    expect(wrapper.get('.landing-hero img').attributes('srcset')).toContain('640w')
+    expect(wrapper.get('.landing-hero img').attributes('srcset')).toContain('2560w')
+    expect(wrapper.get('.landing-hero img').attributes('srcset')).not.toContain('7680w')
     expect(wrapper.get('.landing-hero img').attributes('sizes')).toBe('100vw')
-    expect(wrapper.findAll('.landing-hero-art')).toHaveLength(3)
+    expect(wrapper.findAll('.landing-hero-art')).toHaveLength(1)
     expect(wrapper.findAll('.landing-art-piece')).toHaveLength(5)
     expect(wrapper.findAll('.landing-recipe-row')).toHaveLength(3)
     expect(wrapper.text()).toContain('home.landing.titleAccent')
@@ -58,14 +60,16 @@ describe('LandingPage', () => {
 
   it('switches the hero image from the manual slide controls', async () => {
     const wrapper = mountPage()
-    const slides = wrapper.findAll('.landing-hero-art')
     const dots = wrapper.findAll('.landing-hero-dot')
 
+    let slides = wrapper.findAll('.landing-hero-art')
     expect(slides[0].classes()).toContain('is-active')
     expect(dots).toHaveLength(3)
 
     await dots[1].trigger('click')
 
+    slides = wrapper.findAll('.landing-hero-art')
+    expect(slides).toHaveLength(2)
     expect(slides[1].classes()).toContain('is-active')
     expect(wrapper.get('.landing-hero-count').text()).toContain('02 / 03')
   })

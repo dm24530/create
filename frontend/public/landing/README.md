@@ -6,6 +6,7 @@
 - `hero-nebula-4k.webp` / `hero-nebula-8k.webp`: Unsplash `photo-1462331940025-496dfbfc7564`.
 - `hero-desert-4k.webp` / `hero-desert-8k.webp`: Unsplash `photo-1500530855697-b586d89ba3ee`.
 - `hero-stars-4k.webp` / `hero-stars-8k.webp`: Unsplash `photo-1444703686981-a3abbc4d4fe3`.
+- `hero-*-640/960/1280/1920/2560.webp`: responsive landing variants generated from the 8K sources.
 - `gallery-aurora.jpg`: Unsplash `photo-1483347756197-71ef80e95f73`.
 - `gallery-city.jpg`: Unsplash `photo-1519608487953-e999c86e7455`.
 - `motion-cinema.jpg`: Unsplash `photo-1519681393784-d120267933ba`.

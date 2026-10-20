@@ -43,17 +43,22 @@
         @pointerleave="resetHeroPointer"
       >
         <div class="landing-hero-media" :style="heroMediaStyle">
-          <img
-            v-for="(slide, index) in heroSlides"
-            :key="slide.id"
-            :src="slide.image"
-            :srcset="slide.srcset"
-            sizes="100vw"
-            class="landing-hero-art"
-            :class="{ 'is-active': index === activeHeroSlide }"
-            alt=""
-            :fetchpriority="index === 0 ? 'high' : 'auto'"
-          />
+          <template v-for="(slide, index) in heroSlides" :key="slide.id">
+            <img
+              v-if="heroRequested[index]"
+              :src="slide.image"
+              :srcset="slide.srcset"
+              sizes="100vw"
+              class="landing-hero-art"
+              :class="{ 'is-active': index === activeHeroSlide }"
+              alt=""
+              decoding="async"
+              loading="eager"
+              :fetchpriority="index === 0 ? 'high' : 'low'"
+              @load="handleHeroImageLoad(index)"
+              @error="handleHeroImageLoad(index)"
+            />
+          </template>
         </div>
         <div class="landing-hero-light" :style="heroLightStyle" />
         <div class="landing-hero-shade" />
@@ -260,24 +265,31 @@ const heroRef = ref<HTMLElement | null>(null)
 const activeHeroSlide = ref(0)
 const heroPointer = ref({ x: 0.5, y: 0.5, active: false })
 const reducedMotion = ref(false)
+const heroRequested = ref([true, false, false])
+
+function heroSrcset(name: string): string {
+  return [640, 960, 1280, 1920, 2560]
+    .map((width) => `/landing/${name}-${width}.webp ${width}w`)
+    .join(', ')
+}
 
 const heroSlides = computed(() => [
   {
     id: 'stars',
-    image: '/landing/hero-stars-8k.webp',
-    srcset: '/landing/hero-stars-4k.webp 3840w, /landing/hero-stars-8k.webp 7680w',
+    image: '/landing/hero-stars-1280.webp',
+    srcset: heroSrcset('hero-stars'),
     label: t('home.landing.slides.stars'),
   },
   {
     id: 'nebula',
-    image: '/landing/hero-nebula-8k.webp',
-    srcset: '/landing/hero-nebula-4k.webp 3840w, /landing/hero-nebula-8k.webp 7680w',
+    image: '/landing/hero-nebula-1280.webp',
+    srcset: heroSrcset('hero-nebula'),
     label: t('home.landing.slides.nebula'),
   },
   {
     id: 'desert',
-    image: '/landing/hero-desert-8k.webp',
-    srcset: '/landing/hero-desert-4k.webp 3840w, /landing/hero-desert-8k.webp 7680w',
+    image: '/landing/hero-desert-1280.webp',
+    srcset: heroSrcset('hero-desert'),
     label: t('home.landing.slides.desert'),
   },
 ])
@@ -296,6 +308,7 @@ const heroLightStyle = computed(() => ({
 }))
 
 let heroRotationTimer: ReturnType<typeof setInterval> | null = null
+let heroPrefetchTimer: ReturnType<typeof setTimeout> | null = null
 let heroPointerFrame = 0
 let motionQuery: MediaQueryList | null = null
 
@@ -314,7 +327,23 @@ function startHeroRotation() {
   }, HERO_ROTATION_MS)
 }
 
+function requestHeroSlide(index: number) {
+  if (index < 0 || index >= heroRequested.value.length || heroRequested.value[index]) return
+  const next = [...heroRequested.value]
+  next[index] = true
+  heroRequested.value = next
+}
+
+function handleHeroImageLoad(index: number) {
+  if (index === 0) startHeroRotation()
+  if (heroPrefetchTimer) clearTimeout(heroPrefetchTimer)
+  const nextIndex = index + 1
+  if (nextIndex >= heroSlides.value.length) return
+  heroPrefetchTimer = setTimeout(() => requestHeroSlide(nextIndex), 700)
+}
+
 function selectHeroSlide(index: number) {
+  requestHeroSlide(index)
   activeHeroSlide.value = index
   startHeroRotation()
 }
@@ -349,11 +378,11 @@ onMounted(() => {
   motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)')
   reducedMotion.value = motionQuery.matches
   motionQuery.addEventListener?.('change', handleMotionPreferenceChange)
-  startHeroRotation()
 })
 
 onBeforeUnmount(() => {
   stopHeroRotation()
+  if (heroPrefetchTimer) clearTimeout(heroPrefetchTimer)
   motionQuery?.removeEventListener?.('change', handleMotionPreferenceChange)
   if (heroPointerFrame) cancelAnimationFrame(heroPointerFrame)
 })
