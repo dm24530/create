@@ -20,6 +20,12 @@ const { listArchivedVideos, deleteArchivedVideo, pinArchivedVideo, fetchOnlineIn
   fetchInspirationLibrary: vi.fn(),
 }))
 
+const { listImages, pinImage, deleteImage } = vi.hoisted(() => ({
+  listImages: vi.fn(),
+  pinImage: vi.fn(),
+  deleteImage: vi.fn(),
+}))
+
 vi.mock('../videoArchiveApi', () => ({
   listArchivedVideos,
   deleteArchivedVideo,
@@ -36,6 +42,11 @@ vi.mock('../videoArchiveApi', () => ({
 vi.mock('@/api', () => ({
   keysAPI: { list: listKeys },
   authAPI: { getPublicSettings },
+  imageStudioGalleryAPI: {
+    list: listImages,
+    pin: pinImage,
+    delete: deleteImage,
+  },
 }))
 
 vi.mock('@/composables/useClipboard', () => ({
@@ -315,6 +326,12 @@ describe('VideoWorksView', () => {
     vi.stubGlobal('fetch', vi.fn())
     listArchivedVideos.mockReset()
     listArchivedVideos.mockResolvedValue([])
+    listImages.mockReset()
+    listImages.mockResolvedValue([])
+    pinImage.mockReset()
+    pinImage.mockResolvedValue(undefined)
+    deleteImage.mockReset()
+    deleteImage.mockResolvedValue(undefined)
     deleteArchivedVideo.mockReset()
     deleteArchivedVideo.mockResolvedValue(undefined)
     listKeys.mockResolvedValue({
@@ -335,6 +352,30 @@ describe('VideoWorksView', () => {
     expect(wrapper.text()).toContain('云海在山脊之间缓慢流动')
     expect(wrapper.text()).toContain('seedance-2-720p')
     expect(wrapper.get('video').attributes('src')).toBe('https://cdn.example.com/out.mp4')
+  })
+
+  it('lists saved image studio works alongside videos', async () => {
+    listImages.mockResolvedValue([
+      {
+        id: 'image-1',
+        url: 'https://cdn.example.com/saved-image.png',
+        prompt: '一张已保存的海报',
+        model: 'gpt-image-2',
+        size: '1024x1024',
+        format: 'png',
+        saved: true,
+        created_at: 1760000000,
+        expires_at: 0,
+      },
+    ])
+
+    const wrapper = mount(VideoWorksView, { global: { stubs: globalStubs } })
+    await flushPromises()
+
+    const card = wrapper.get('[data-testid="image-work-image-1"]')
+    expect(card.text()).toContain('一张已保存的海报')
+    expect(card.text()).toContain('已保存到我的作品')
+    expect(card.get('img').attributes('src')).toBe('https://cdn.example.com/saved-image.png')
   })
 
   it('shows the empty state after clearing every record', async () => {

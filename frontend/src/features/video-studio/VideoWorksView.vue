@@ -4,7 +4,7 @@
       <header class="works__header">
         <div>
           <h1>我的作品</h1>
-          <p>这里保存这个浏览器里生成的视频任务，可随时重新载入或下载。</p>
+          <p>这里保存生成的图片和视频作品，已保存的内容换设备也能看到。</p>
           <p v-if="studioQuota" class="works__quota" data-testid="works-quota">
             存储额度：{{ studioQuota.used }} / {{ studioQuota.limit }}（图片与视频共用）
           </p>
@@ -56,6 +56,68 @@
       </div>
 
       <section class="works__stage">
+        <template v-if="images.length">
+          <div class="works__section-head">
+            <h2>图片作品</h2>
+            <span>图片工作台生成并保存到作品库的内容</span>
+          </div>
+          <div class="works-grid works-grid--archived">
+            <article
+              v-for="entry in images"
+              :key="entry.id"
+              class="work-card"
+              :data-testid="`image-work-${entry.id}`"
+            >
+              <div class="work-card__media work-card__media--image">
+                <img
+                  :src="entry.url"
+                  :alt="entry.prompt || '图片作品'"
+                  class="work-card__image"
+                  loading="lazy"
+                />
+              </div>
+              <div class="work-card__body">
+                <p class="work-card__prompt" :title="entry.prompt">{{ entry.prompt || '未填写提示词' }}</p>
+                <p class="work-card__meta">{{ imageMeta(entry) }}</p>
+                <p class="work-card__time">{{ formatTime(entry.created_at * 1000) }}</p>
+                <p v-if="entry.saved" class="work-card__state work-card__state--saved">
+                  已保存到我的作品
+                </p>
+                <p v-else class="work-card__state work-card__state--temp">
+                  临时内容 · 还剩 {{ remainingDays(entry) }} 天
+                </p>
+              </div>
+              <div class="work-card__actions">
+                <button
+                  v-if="!entry.saved"
+                  type="button"
+                  class="mini-action"
+                  data-testid="image-work-pin"
+                  title="存到我的作品（长期保留）"
+                  @click="pinImageWork(entry)"
+                >
+                  <Icon name="bookmark" size="sm" />
+                </button>
+                <button type="button" class="mini-action" title="下载图片" @click="downloadImageWork(entry)">
+                  <Icon name="download" size="sm" />
+                </button>
+                <button
+                  type="button"
+                  class="mini-action"
+                  title="复制提示词"
+                  :disabled="!entry.prompt"
+                  @click="copyPromptText(entry.prompt)"
+                >
+                  <Icon name="copy" size="sm" />
+                </button>
+                <button type="button" class="mini-action" title="删除图片作品" @click="removeImageWork(entry)">
+                  <Icon name="trash" size="sm" />
+                </button>
+              </div>
+            </article>
+          </div>
+        </template>
+
         <!-- 已归档：文件在对象存储、记录在后端，换浏览器/清缓存都还在。 -->
         <template v-if="archived.length">
           <div class="works__section-head">
@@ -110,12 +172,12 @@
           </div>
         </template>
 
-        <div v-if="!records.length && !archived.length" class="works__empty">
+        <div v-if="!records.length && !archived.length && !images.length" class="works__empty">
           <div class="works__empty-icon">
             <Icon name="grid" size="xl" />
           </div>
           <p class="works__empty-title">还没有作品</p>
-          <p class="works__empty-hint">在工作台生成第一个视频后，记录会自动出现在这里。</p>
+          <p class="works__empty-hint">生成并保存第一张图片或第一段视频后，会出现在这里。</p>
           <RouterLink class="primary-button" to="/video-studio">
             <Icon name="sparkles" size="sm" />
             <span>开始生成</span>
@@ -265,7 +327,12 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Icon from '@/components/icons/Icon.vue'
-import { authAPI, keysAPI } from '@/api'
+import {
+  authAPI,
+  imageStudioGalleryAPI,
+  keysAPI,
+  type ImageStudioGalleryEntry,
+} from '@/api'
 import type { ApiKey } from '@/types'
 import { useClipboard } from '@/composables/useClipboard'
 import { resolvePlaygroundApiEndpoint } from '@/utils/apiEndpoint'
@@ -299,6 +366,7 @@ const selectedKeyId = ref('')
 const apiBaseUrl = ref('')
 const records = ref<VideoWorkRecord[]>([])
 const archived = ref<ArchivedVideoEntry[]>([])
+const images = ref<ImageStudioGalleryEntry[]>([])
 const studioQuota = ref<{ used: number; limit: number } | null>(null)
 const playable = ref<Record<string, string>>({})
 const activeRecord = ref<VideoWorkRecord | null>(null)
@@ -353,7 +421,7 @@ function formatTime(timestamp: number): string {
 
 async function loadData() {
   errorMessage.value = ''
-  await loadArchivedVideos()
+  await Promise.allSettled([loadArchivedVideos(), loadImages()])
   records.value = visibleLocalRecords()
   const keysPromise = keysAPI.list(1, 100, { status: 'active' })
     .then((response) => {
@@ -373,6 +441,14 @@ async function loadData() {
 
   await Promise.allSettled([keysPromise, settingsPromise])
   await restoreAvailableVideos()
+}
+
+async function loadImages() {
+  try {
+    images.value = await imageStudioGalleryAPI.list()
+  } catch {
+    images.value = []
+  }
 }
 
 // 已归档的记录会同时留下一条本机记录，这里把重复的本地条目过滤掉，
@@ -407,6 +483,49 @@ function archivedMeta(entry: ArchivedVideoEntry): string {
     .join(' · ')
 }
 
+function imageMeta(entry: ImageStudioGalleryEntry): string {
+  return [entry.format?.toUpperCase(), entry.size, entry.model]
+    .filter(Boolean)
+    .join(' · ')
+}
+
+async function pinImageWork(entry: ImageStudioGalleryEntry) {
+  errorMessage.value = ''
+  try {
+    await imageStudioGalleryAPI.pin(entry.id)
+    entry.saved = true
+    entry.expires_at = 0
+    await loadStudioQuota()
+  } catch (error) {
+    errorMessage.value = isStudioQuotaError(error)
+      ? `我的作品已满（${studioQuota.value?.limit || 100} 个），先删除一些再保存。`
+      : error instanceof Error ? error.message : '保存到我的作品失败'
+  }
+}
+
+function downloadImageWork(entry: ImageStudioGalleryEntry) {
+  const link = document.createElement('a')
+  link.href = entry.url
+  link.download = `image-${entry.created_at}.${entry.format || 'png'}`
+  link.target = '_blank'
+  link.rel = 'noopener'
+  link.click()
+}
+
+async function removeImageWork(entry: ImageStudioGalleryEntry) {
+  const confirmed = typeof window === 'undefined'
+    || window.confirm('删除这张图片？对象存储里的文件会一起删除，无法恢复。')
+  if (!confirmed) return
+  errorMessage.value = ''
+  try {
+    await imageStudioGalleryAPI.delete(entry.id)
+    images.value = images.value.filter((item) => item.id !== entry.id)
+    await loadStudioQuota()
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : '删除图片失败'
+  }
+}
+
 async function downloadArchived(entry: ArchivedVideoEntry) {
   await downloadUrl(entry.url, `video-${entry.created_at}.mp4`)
 }
@@ -427,7 +546,7 @@ async function removeArchived(entry: ArchivedVideoEntry) {
 }
 
 // 临时内容的剩余天数：向上取整，最少显示 1 天。
-function remainingDays(entry: ArchivedVideoEntry): number {
+function remainingDays(entry: { expires_at: number }): number {
   const expiresAt = Number(entry.expires_at || 0)
   if (!expiresAt) return 0
   return Math.max(1, Math.ceil((expiresAt * 1000 - Date.now()) / 86_400_000))
@@ -789,6 +908,17 @@ onBeforeUnmount(() => {
   height: 100%;
   width: 100%;
   object-fit: contain;
+}
+
+.work-card__media--image {
+  aspect-ratio: 1 / 1;
+}
+
+.work-card__image {
+  display: block;
+  height: 100%;
+  width: 100%;
+  object-fit: cover;
 }
 
 .work-card__placeholder {

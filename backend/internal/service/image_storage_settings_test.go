@@ -77,6 +77,15 @@ func (s *healthCheckingStorage) HeadBucket(context.Context) error {
 	return s.headErr
 }
 
+type writeFailingStorage struct {
+	healthCheckingStorage
+	writeErr error
+}
+
+func (s *writeFailingStorage) Save(context.Context, string, string, []byte) (string, error) {
+	return "", s.writeErr
+}
+
 func newImageStorageFixture(t *testing.T, fallback config.ImageStorageConfig) (*ImageStorageSettingService, *stubSettingRepo, *[]config.ImageStorageConfig) {
 	return newImageStorageFixtureWithKey(t, fallback, true)
 }
@@ -363,6 +372,35 @@ func TestImageStorageTestConnectionChecksBucket(t *testing.T) {
 		SecretAccessKey: "sk",
 	})
 	require.ErrorIs(t, err, headErr)
+}
+
+func TestImageStorageTestConnectionChecksWritePermission(t *testing.T) {
+	repo := newStubSettingRepo()
+	backup := NewBackupService(repo, &config.Config{
+		Totp: config.TotpConfig{EncryptionKeyConfigured: true},
+	}, reversibleEncryptor{}, nil, nil)
+	writeErr := errors.New("AccessDenied: PutObject")
+	svc := NewImageStorageSettingService(
+		repo,
+		reversibleEncryptor{},
+		backup,
+		func(context.Context, *config.ImageStorageConfig) (ImageStorage, error) {
+			return &writeFailingStorage{writeErr: writeErr}, nil
+		},
+		config.ImageStorageConfig{},
+	)
+
+	err := svc.TestConnection(context.Background(), ImageStorageSettings{
+		Enabled:         true,
+		Bucket:          "create",
+		Endpoint:        "https://s3.example.com",
+		Region:          "auto",
+		AccessKeyID:     "ak",
+		SecretAccessKey: "sk",
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "S3 write test failed")
+	require.Contains(t, err.Error(), "AccessDenied")
 }
 
 // Deployments that already enabled the feature through config.yaml must keep

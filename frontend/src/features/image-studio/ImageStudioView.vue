@@ -998,11 +998,18 @@ async function persistGeneratedImages(items: GeneratedImage[], prompt: string, m
     await loadStudioQuota()
   }
   if (failed > 0) {
+    const failedResult = results.find(
+      (result): result is PromiseRejectedResult => result.status === 'rejected',
+    )
+    const detail = errorMessageFrom(
+      failedResult?.reason,
+      '请检查对象存储是否已启用并保存配置。',
+    )
     errorMessage.value = quotaReached(results)
       ? `作品已达上限（${studioQuota.value?.limit || 100} 个），请先在下方删除一些作品再保存。`
       : succeeded > 0
-        ? '部分图片未能保存到图库，请检查对象存储配置。'
-        : '图片已生成，但保存到图库失败。请检查对象存储是否已启用并保存配置。'
+        ? `部分图片未能保存到图库：${detail}`
+        : `图片已生成，但保存到图库失败：${detail}`
   }
 }
 

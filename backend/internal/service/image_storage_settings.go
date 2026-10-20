@@ -441,7 +441,24 @@ func (s *ImageStorageSettingService) TestConnection(ctx context.Context, in Imag
 		return err
 	}
 	if checker, ok := storage.(ImageStorageConnectionChecker); ok {
-		return checker.HeadBucket(ctx)
+		if err := checker.HeadBucket(ctx); err != nil {
+			return err
+		}
+	}
+	// HeadBucket only proves the bucket exists and is readable. R2/OSS tokens are
+	// commonly scoped read-only, which passes that probe but makes every gallery
+	// upload fail later. Write and remove a tiny probe object so the admin test
+	// reflects what image saving actually needs.
+	probeKey := fmt.Sprintf(".connection-test-%d.txt", time.Now().UnixNano())
+	if _, err := storage.Save(ctx, probeKey, "text/plain", []byte("ok")); err != nil {
+		return infraerrors.New(
+			http.StatusServiceUnavailable,
+			"IMAGE_STORAGE_WRITE_TEST_FAILED",
+			"S3 write test failed: "+err.Error(),
+		)
+	}
+	if deleter, ok := storage.(ImageStorageDeleter); ok {
+		_ = deleter.Delete(ctx, probeKey)
 	}
 	return nil
 }
