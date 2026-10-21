@@ -10,23 +10,12 @@
           </p>
         </div>
         <div class="works__toolbar">
-          <label class="toolbar-field">
-            <span>API Key</span>
-            <ImageStudioSelect
-              v-model="selectedKeyId"
-              class="toolbar-field__select"
-              data-testid="works-api-key-select"
-              :options="apiKeyOptions"
-              :placeholder="apiKeyOptions.length ? '选择密钥' : '没有可用密钥'"
-              direction="down"
-            />
-          </label>
           <button
             type="button"
             class="mini-action"
-            title="刷新密钥"
+            title="刷新作品"
             :disabled="refreshing"
-            @click="refreshKeys"
+            @click="refreshWorks"
           >
             <Icon name="refresh" size="sm" :class="{ 'is-spinning': refreshing }" />
           </button>
@@ -61,7 +50,7 @@
             <h2>图片作品</h2>
             <span>图片工作台生成并保存到作品库的内容</span>
           </div>
-          <div class="works-grid works-grid--archived">
+          <div class="works-grid works-grid--images">
             <article
               v-for="entry in images"
               :key="entry.id"
@@ -70,11 +59,16 @@
             >
               <div class="work-card__media work-card__media--image">
                 <img
-                  :src="entry.url"
+                  v-if="imageThumbs[entry.id]"
+                  :src="imageThumbs[entry.id]"
                   :alt="entry.prompt || '图片作品'"
                   class="work-card__image"
                   loading="lazy"
+                  decoding="async"
                 />
+                <div v-else class="work-card__thumb-loading" aria-hidden="true">
+                  <span />
+                </div>
               </div>
               <div class="work-card__body">
                 <p class="work-card__prompt" :title="entry.prompt">{{ entry.prompt || '未填写提示词' }}</p>
@@ -337,7 +331,6 @@ import type { ApiKey } from '@/types'
 import { useClipboard } from '@/composables/useClipboard'
 import { resolvePlaygroundApiEndpoint } from '@/utils/apiEndpoint'
 
-import ImageStudioSelect from '../image-studio/ImageStudioSelect.vue'
 import {
   fetchVideoPlayableUrl,
   fetchVideoTask,
@@ -362,11 +355,11 @@ import {
 const { copyToClipboard } = useClipboard()
 
 const keys = ref<ApiKey[]>([])
-const selectedKeyId = ref('')
 const apiBaseUrl = ref('')
 const records = ref<VideoWorkRecord[]>([])
 const archived = ref<ArchivedVideoEntry[]>([])
 const images = ref<ImageStudioGalleryEntry[]>([])
+const imageThumbs = ref<Record<string, string>>({})
 const studioQuota = ref<{ used: number; limit: number } | null>(null)
 const playable = ref<Record<string, string>>({})
 const activeRecord = ref<VideoWorkRecord | null>(null)
@@ -374,7 +367,6 @@ const errorMessage = ref('')
 const refreshing = ref(false)
 
 const activeKeys = computed(() => keys.value.filter((key) => key.status === 'active'))
-const apiKeyOptions = computed(() => activeKeys.value.map((key) => ({ value: String(key.id), label: key.name })))
 
 function resolveEndpoint(configured: string) {
   const hostname = typeof window === 'undefined' ? '' : window.location.hostname
@@ -426,11 +418,6 @@ async function loadData() {
   const keysPromise = keysAPI.list(1, 100, { status: 'active' })
     .then((response) => {
       keys.value = response.items || []
-      if (!selectedKeyId.value && activeKeys.value.length) {
-        selectedKeyId.value = String(
-          (records.value.length ? keyFor(records.value[0]) : null)?.id ?? activeKeys.value[0].id,
-        )
-      }
     })
     .catch(() => undefined)
   const settingsPromise = authAPI.getPublicSettings()
@@ -448,6 +435,25 @@ async function loadImages() {
     images.value = await imageStudioGalleryAPI.list()
   } catch {
     images.value = []
+  }
+  for (const entry of images.value) {
+    if (entry.thumb_url) {
+      imageThumbs.value = { ...imageThumbs.value, [entry.id]: entry.thumb_url }
+    } else {
+      void loadImageThumbnail(entry)
+    }
+  }
+}
+
+async function loadImageThumbnail(entry: ImageStudioGalleryEntry) {
+  try {
+    const blob = await imageStudioGalleryAPI.thumbnail(entry.id)
+    const url = URL.createObjectURL(blob)
+    const previous = imageThumbs.value[entry.id]
+    if (previous) URL.revokeObjectURL(previous)
+    imageThumbs.value = { ...imageThumbs.value, [entry.id]: url }
+  } catch {
+    // The placeholder stays visible if the preview cannot be generated.
   }
 }
 
@@ -573,7 +579,7 @@ async function pinArchived(entry: ArchivedVideoEntry) {
   }
 }
 
-async function refreshKeys() {
+async function refreshWorks() {
   if (refreshing.value) return
   refreshing.value = true
   try {
@@ -698,6 +704,9 @@ onMounted(loadData)
 
 onBeforeUnmount(() => {
   for (const url of Object.values(playable.value)) {
+    if (url.startsWith('blob:')) URL.revokeObjectURL(url)
+  }
+  for (const url of Object.values(imageThumbs.value)) {
     if (url.startsWith('blob:')) URL.revokeObjectURL(url)
   }
 })
@@ -869,6 +878,13 @@ onBeforeUnmount(() => {
   margin-bottom: 1.25rem;
 }
 
+.works-grid--images {
+  grid-template-columns: repeat(auto-fill, minmax(160px, 220px));
+  justify-content: start;
+  gap: 0.9rem;
+  margin-bottom: 1.25rem;
+}
+
 .works__section-head {
   display: flex;
   flex-wrap: wrap;
@@ -925,6 +941,24 @@ onBeforeUnmount(() => {
   height: 100%;
   width: 100%;
   object-fit: cover;
+}
+
+.work-card__thumb-loading {
+  display: flex;
+  height: 100%;
+  width: 100%;
+  align-items: center;
+  justify-content: center;
+  background:
+    linear-gradient(110deg, rgb(30 41 59) 8%, rgb(51 65 85) 18%, rgb(30 41 59) 33%);
+  background-size: 220% 100%;
+  animation: work-thumb-shimmer 1.2s linear infinite;
+}
+
+@keyframes work-thumb-shimmer {
+  to {
+    background-position-x: -220%;
+  }
 }
 
 .work-card__placeholder {

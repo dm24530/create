@@ -103,6 +103,7 @@ func RegisterUserRoutes(
 		{
 			imageStudio.GET("/gallery", h.ImageStudioGallery.List)
 			imageStudio.POST("/gallery", h.ImageStudioGallery.Save)
+			imageStudio.GET("/gallery/:id/thumbnail", h.ImageStudioGallery.Thumbnail)
 			imageStudio.GET("/gallery/:id/download", h.ImageStudioGallery.Download)
 			imageStudio.POST("/gallery/:id/pin", h.ImageStudioGallery.Pin)
 			imageStudio.DELETE("/gallery/:id", h.ImageStudioGallery.Delete)

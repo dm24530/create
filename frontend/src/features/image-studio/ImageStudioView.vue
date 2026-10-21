@@ -85,7 +85,7 @@
                 <strong>正在生成</strong>
                 <small>请稍候，完成后将在此显示</small>
               </div>
-              <img v-else :src="image.src" :alt="image.title" loading="lazy" decoding="async" class="h-full w-full object-cover transition-transform duration-200 group-hover:scale-[1.02]" />
+              <img v-else :src="image.thumbSrc || image.src" :alt="image.title" loading="lazy" decoding="async" class="h-full w-full object-cover transition-transform duration-200 group-hover:scale-[1.02]" />
             </button>
             <div class="flex items-center justify-between gap-2 px-3 py-2">
               <div class="min-w-0">
@@ -513,6 +513,7 @@ interface GeneratedImage {
   id: number | string
   title: string
   src: string
+  thumbSrc?: string
   meta: string
   prompt?: string
   model?: string
@@ -905,6 +906,7 @@ function galleryEntryToImage(entry: ImageStudioGalleryEntry, index: number): Gen
     id: entry.id,
     title: `历史图片 ${index + 1}`,
     src: entry.url,
+    thumbSrc: entry.thumb_url || '',
     prompt: entry.prompt,
     model: entry.model,
     size: entry.size,
@@ -991,6 +993,7 @@ async function persistGeneratedImages(items: GeneratedImage[], prompt: string, m
       result.value.item.expiresAt = result.value.entry.expires_at || 0
       const storedURL = String(result.value.entry.url || '')
       if (storedURL) result.value.item.src = storedURL
+      result.value.item.thumbSrc = String(result.value.entry.thumb_url || '')
     }
   }
   if (succeeded > 0) {
@@ -1083,6 +1086,7 @@ async function savePreviewToGallery() {
     image.expiresAt = entry.expires_at || 0
     image.prompt = promptText
     if (entry.url) image.src = entry.url
+    image.thumbSrc = entry.thumb_url || ''
     await loadGallery()
     await loadStudioQuota()
   } catch (error) {

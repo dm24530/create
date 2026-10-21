@@ -16,7 +16,7 @@ import (
 // 两种作品共用一张表，用 kind 区分；配额计数刻意不带 kind 条件，
 // 所以「每人 100 个文件」是图片 + 视频合并计算的。
 const studioWorksColumns = `
-	id, user_id, kind, object_key, url, prompt, model, format, size, duration_seconds, saved,
+	id, user_id, kind, object_key, url, thumb_url, prompt, model, format, size, duration_seconds, saved,
 	EXTRACT(EPOCH FROM created_at)::bigint AS created_at,
 	COALESCE(EXTRACT(EPOCH FROM expires_at)::bigint, 0) AS expires_at`
 
@@ -79,9 +79,9 @@ func (s *studioWorksDB) insert(ctx context.Context, entry *studioWorkRow, quota 
 
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO studio_works (
-			id, user_id, kind, object_key, url, prompt, model, format, size, duration_seconds, saved, expires_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
-		entry.ID, entry.UserID, entry.Kind, entry.ObjectKey, entry.URL, entry.Prompt,
+			id, user_id, kind, object_key, url, thumb_url, prompt, model, format, size, duration_seconds, saved, expires_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+		entry.ID, entry.UserID, entry.Kind, entry.ObjectKey, entry.URL, entry.ThumbURL, entry.Prompt,
 		entry.Model, entry.Format, entry.Size, entry.DurationSeconds, entry.Saved, studioWorkExpiry(entry.ExpiresAt),
 	); err != nil {
 		return fmt.Errorf("insert studio work: %w", err)
@@ -129,7 +129,7 @@ func (s *studioWorksDB) list(
 	for rows.Next() {
 		entry := &studioWorkRow{}
 		if err := rows.Scan(
-			&entry.ID, &entry.UserID, &entry.Kind, &entry.ObjectKey, &entry.URL, &entry.Prompt,
+			&entry.ID, &entry.UserID, &entry.Kind, &entry.ObjectKey, &entry.URL, &entry.ThumbURL, &entry.Prompt,
 			&entry.Model, &entry.Format, &entry.Size, &entry.DurationSeconds, &entry.Saved,
 			&entry.CreatedAt, &entry.ExpiresAt,
 		); err != nil {
@@ -267,6 +267,27 @@ func (s *studioWorksDB) objectKey(ctx context.Context, userID int64, id string) 
 	return key, nil
 }
 
+func (s *studioWorksDB) updateThumbURL(ctx context.Context, userID int64, id, thumbURL string) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("studio works store is unavailable")
+	}
+	result, err := s.db.ExecContext(ctx,
+		`UPDATE studio_works SET thumb_url = $3 WHERE user_id = $1 AND id = $2`,
+		userID, id, thumbURL,
+	)
+	if err != nil {
+		return fmt.Errorf("update studio work thumbnail: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("update studio work thumbnail: %w", err)
+	}
+	if affected == 0 {
+		return service.ErrStudioWorkNotFound
+	}
+	return nil
+}
+
 func (s *studioWorksDB) delete(ctx context.Context, userID int64, id string) error {
 	if s == nil || s.db == nil {
 		return fmt.Errorf("studio works store is unavailable")
@@ -293,6 +314,7 @@ type studioWorkRow struct {
 	Kind            string
 	ObjectKey       string
 	URL             string
+	ThumbURL        string
 	Prompt          string
 	Model           string
 	Format          string
@@ -325,6 +347,7 @@ func (s *imageStudioGalleryStore) Save(
 		Kind:      "image",
 		ObjectKey: entry.ObjectKey,
 		URL:       entry.URL,
+		ThumbURL:  entry.ThumbURL,
 		Prompt:    entry.Prompt,
 		Model:     entry.Model,
 		Format:    entry.Format,
@@ -348,6 +371,7 @@ func (s *imageStudioGalleryStore) List(
 			UserID:    row.UserID,
 			ObjectKey: row.ObjectKey,
 			URL:       row.URL,
+			ThumbURL:  row.ThumbURL,
 			Prompt:    row.Prompt,
 			Model:     row.Model,
 			Size:      row.Size,
@@ -366,6 +390,10 @@ func (s *imageStudioGalleryStore) Count(ctx context.Context, userID int64) (int6
 
 func (s *imageStudioGalleryStore) ObjectKey(ctx context.Context, userID int64, id string) (string, error) {
 	return s.objectKey(ctx, userID, id)
+}
+
+func (s *imageStudioGalleryStore) UpdateThumbURL(ctx context.Context, userID int64, id, thumbURL string) error {
+	return s.updateThumbURL(ctx, userID, id, thumbURL)
 }
 
 func (s *imageStudioGalleryStore) Delete(ctx context.Context, userID int64, id string) error {

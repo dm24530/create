@@ -133,6 +133,28 @@ func (h *ImageStudioGalleryHandler) Download(c *gin.Context) {
 	c.Data(http.StatusOK, contentType, data)
 }
 
+// Thumbnail returns a cached small JPEG preview for list views. Loading the
+// original image in every card is the main reason the works page feels slow.
+func (h *ImageStudioGalleryHandler) Thumbnail(c *gin.Context) {
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not found in context")
+		return
+	}
+	data, err := h.gallery.Thumbnail(
+		c.Request.Context(),
+		subject.UserID,
+		strings.TrimSpace(c.Param("id")),
+		360,
+	)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	c.Header("Cache-Control", "private, max-age=86400")
+	c.Data(http.StatusOK, "image/jpeg", data)
+}
+
 // studioWorksScopeSaved 把 ?scope=saved|temp 翻译成列表过滤条件。
 // 不传（或传其它值）时不过滤：图片工作台要同屏展示临时内容和已保存的作品。
 func studioWorksScopeSaved(c *gin.Context) *bool {

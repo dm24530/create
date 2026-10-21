@@ -3,6 +3,7 @@ import { apiClient } from './client'
 export interface ImageStudioGalleryEntry {
   id: string
   url: string
+  thumb_url?: string
   prompt: string
   model: string
   size: string
@@ -58,6 +59,14 @@ export async function downloadImageStudioGallery(id: string): Promise<Blob> {
   return data
 }
 
+export async function thumbnailImageStudioGallery(id: string): Promise<Blob> {
+  const { data } = await apiClient.get<Blob>(
+    `/image-studio/gallery/${encodeURIComponent(id)}/thumbnail`,
+    { responseType: 'blob', timeout: 60 * 1000 },
+  )
+  return data
+}
+
 export interface StudioWorksQuota {
   used: number
   limit: number
@@ -75,6 +84,7 @@ export const imageStudioGalleryAPI = {
   delete: deleteImageStudioGallery,
   pin: pinImageStudioGallery,
   download: downloadImageStudioGallery,
+  thumbnail: thumbnailImageStudioGallery,
   quota: fetchStudioWorksQuota,
 }
 

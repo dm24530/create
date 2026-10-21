@@ -3,8 +3,12 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"image"
+	"image/png"
+	"strings"
 	"testing"
 	"time"
 
@@ -50,6 +54,16 @@ func (s *galleryStoreStub) ObjectKey(_ context.Context, _ int64, id string) (str
 	return key, nil
 }
 
+func (s *galleryStoreStub) UpdateThumbURL(_ context.Context, _ int64, id, thumbURL string) error {
+	for _, entry := range s.entries {
+		if entry.ID == id {
+			entry.ThumbURL = thumbURL
+			return nil
+		}
+	}
+	return ErrStudioWorkNotFound
+}
+
 func (s *galleryStoreStub) Delete(_ context.Context, _ int64, id string) error {
 	s.deleted = append(s.deleted, id)
 	return nil
@@ -69,6 +83,7 @@ func (s *galleryStoreStub) SweepExpired(context.Context, int) ([]string, error) 
 
 type gallerySaverStub struct {
 	key           string
+	thumbKey      string
 	contentType   string
 	data          []byte
 	retention     time.Duration
@@ -76,6 +91,7 @@ type gallerySaverStub struct {
 	fetchType     string
 	fetchErr      error
 	fetchedURL    string
+	fetchCalls    int
 	deleteErr     error
 	deletedObject []string
 	// quota 为 0 时走内置默认值，用来验证后台配置的配额能被读到。
@@ -85,6 +101,10 @@ type gallerySaverStub struct {
 func (s *gallerySaverStub) SaveImageWithKey(
 	_ context.Context, key, contentType string, data []byte,
 ) (string, string, error) {
+	if strings.HasPrefix(key, "thumbs/") {
+		s.thumbKey = key
+		return "https://cdn.example.com/" + key, "images/" + key, nil
+	}
 	s.key = key
 	s.contentType = contentType
 	s.data = append([]byte(nil), data...)
@@ -94,6 +114,7 @@ func (s *gallerySaverStub) SaveImageWithKey(
 
 func (s *gallerySaverStub) FetchImageURL(_ context.Context, rawURL string) ([]byte, string, error) {
 	s.fetchedURL = rawURL
+	s.fetchCalls++
 	if s.fetchErr != nil {
 		return nil, "", s.fetchErr
 	}
@@ -144,6 +165,7 @@ func TestImageStudioGallerySaveKeepsWorkPermanently(t *testing.T) {
 	require.Len(t, saver.data, len(smallPNG(t)))
 	require.Equal(t, int64(0), entry.ExpiresAt, "作品不再有过期时间")
 	require.Equal(t, "images/"+entry.ID+".png", entry.ObjectKey, "记录里必须存最终对象键（带前缀）")
+	require.Equal(t, "https://cdn.example.com/thumbs/"+entry.ID+".jpg", entry.ThumbURL)
 	require.Len(t, store.entries, 1)
 }
 
@@ -187,6 +209,26 @@ func TestImageStudioGalleryReadImageFetchesOwnedEntry(t *testing.T) {
 	require.Equal(t, "https://cdn.example.com/work-1.png", saver.fetchedURL)
 }
 
+func TestImageStudioGalleryThumbnailResizesAndCaches(t *testing.T) {
+	store := &galleryStoreStub{entries: []*ImageStudioGalleryEntry{
+		{ID: "work-1", URL: "https://cdn.example.com/work-1.png"},
+	}}
+	saver := &gallerySaverStub{
+		fetchData: smallPNG(t),
+		fetchType: "image/png",
+	}
+	svc := NewImageStudioGalleryService(store, saver)
+
+	thumb, err := svc.Thumbnail(context.Background(), 7, "work-1", 120)
+	require.NoError(t, err)
+	require.True(t, len(thumb) > 2)
+	require.Equal(t, []byte{0xFF, 0xD8}, thumb[:2], "thumbnail should be JPEG")
+
+	_, err = svc.Thumbnail(context.Background(), 7, "work-1", 120)
+	require.NoError(t, err)
+	require.Equal(t, 1, saver.fetchCalls)
+}
+
 // 删除作品：先把对象存储里的文件删掉，再删记录。
 func TestImageStudioGalleryDeleteRemovesObjectThenRecord(t *testing.T) {
 	store := &galleryStoreStub{}
@@ -207,7 +249,10 @@ func TestImageStudioGalleryDeleteRemovesObjectThenRecord(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, svc.Delete(context.Background(), 42, entry.ID))
-	require.Equal(t, []string{"images/" + entry.ID + ".png"}, saver.deletedObject, "删记录前必须先删对象")
+	require.Equal(t, []string{
+		"images/thumbs/" + entry.ID + ".jpg",
+		"images/" + entry.ID + ".png",
+	}, saver.deletedObject, "删记录前必须先删缩略图和原图")
 	require.Equal(t, []string{entry.ID}, store.deleted)
 }
 
@@ -271,7 +316,7 @@ func TestImageStudioGalleryRollsBackUploadWhenStoreRejectsQuota(t *testing.T) {
 		true,
 	)
 	require.ErrorIs(t, err, ErrImageStudioGalleryQuotaExceeded)
-	require.Len(t, saver.deletedObject, 1, "被配额拒绝时要撤回刚上传的对象")
+	require.Len(t, saver.deletedObject, 2, "被配额拒绝时要撤回原图和缩略图")
 	require.Empty(t, store.entries)
 }
 
@@ -376,15 +421,9 @@ func TestImageStudioGallerySweepDeletesObjects(t *testing.T) {
 
 func smallPNG(t *testing.T) []byte {
 	t.Helper()
-	return []byte{
-		0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
-		0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
-		0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
-		0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4,
-		0x89, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x44, 0x41,
-		0x54, 0x08, 0xd7, 0x63, 0xf8, 0xcf, 0xc0, 0xf0,
-		0x1f, 0x00, 0x05, 0x00, 0x01, 0xff, 0x89, 0x99,
-		0x3d, 0x1d, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45,
-		0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, image.NewRGBA(image.Rect(0, 0, 2, 2))); err != nil {
+		t.Fatalf("encode test png: %v", err)
 	}
+	return buf.Bytes()
 }

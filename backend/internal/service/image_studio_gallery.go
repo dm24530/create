@@ -1,16 +1,25 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"image"
+	"image/jpeg"
+	_ "image/png"
 	"net/http"
+	"path"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
+	xdraw "golang.org/x/image/draw"
+	_ "golang.org/x/image/webp"
 )
 
 const (
@@ -45,6 +54,7 @@ type ImageStudioGalleryEntry struct {
 	// ObjectKey 是对象存储里的完整键，删除作品时用它删对象；不下发给前端。
 	ObjectKey string `json:"-"`
 	URL       string `json:"url"`
+	ThumbURL  string `json:"thumb_url,omitempty"`
 	Prompt    string `json:"prompt"`
 	Model     string `json:"model"`
 	Size      string `json:"size"`
@@ -69,6 +79,7 @@ type ImageStudioGalleryStore interface {
 	SweepExpired(ctx context.Context, batch int) ([]string, error)
 	// ObjectKey 返回记录的 object_key；记录不存在时返回 ErrStudioWorkNotFound。
 	ObjectKey(ctx context.Context, userID int64, id string) (string, error)
+	UpdateThumbURL(ctx context.Context, userID int64, id, thumbURL string) error
 	Delete(ctx context.Context, userID int64, id string) error
 }
 
@@ -88,10 +99,16 @@ type ImageStudioImageSaver interface {
 type ImageStudioGalleryService struct {
 	store   ImageStudioGalleryStore
 	storage ImageStudioImageSaver
+	thumbMu sync.Mutex
+	thumbs  map[string]thumbnailCacheEntry
 }
 
 func NewImageStudioGalleryService(store ImageStudioGalleryStore, storage ImageStudioImageSaver) *ImageStudioGalleryService {
-	return &ImageStudioGalleryService{store: store, storage: storage}
+	return &ImageStudioGalleryService{
+		store:   store,
+		storage: storage,
+		thumbs:  make(map[string]thumbnailCacheEntry),
+	}
 }
 
 // ProvideImageStudioGalleryService 是 wire 用的版本：构造服务并启动临时作品的过期清扫，
@@ -150,6 +167,29 @@ func (s *ImageStudioGalleryService) Save(
 	if err != nil {
 		return nil, err
 	}
+	thumbURL := ""
+	thumbObjectKey := ""
+	if thumb, thumbErr := buildThumbnail(data, 360); thumbErr != nil {
+		logger.L().Warn("studio_work.thumbnail_build_failed", zap.String("work_id", id), zap.Error(thumbErr))
+	} else if thumbURL, thumbObjectKey, thumbErr = s.storage.SaveImageWithKey(
+		ctx,
+		"thumbs/"+id+".jpg",
+		"image/jpeg",
+		thumb,
+	); thumbErr != nil {
+		logger.L().Warn("studio_work.thumbnail_upload_failed", zap.String("work_id", id), zap.Error(thumbErr))
+	}
+	cleanupObjects := func() {
+		for _, objectKey := range []string{objectKey, thumbObjectKey} {
+			if objectKey == "" {
+				continue
+			}
+			if delErr := s.storage.DeleteObject(ctx, objectKey); delErr != nil {
+				logger.L().Warn("studio_work.rollback_delete_failed",
+					zap.String("object_key", objectKey), zap.Error(delErr))
+			}
+		}
+	}
 
 	now := time.Now().UTC()
 	expiresAt := int64(0)
@@ -162,6 +202,7 @@ func (s *ImageStudioGalleryService) Save(
 		// 存"最终键"（可能带 images/ 之类的前缀），而不是本地拼的那个短键。
 		ObjectKey: objectKey,
 		URL:       url,
+		ThumbURL:  thumbURL,
 		Prompt:    strings.TrimSpace(prompt),
 		Model:     strings.TrimSpace(model),
 		Size:      strings.TrimSpace(size),
@@ -173,23 +214,14 @@ func (s *ImageStudioGalleryService) Save(
 	if err := s.store.Save(ctx, entry, resolveStudioQuota(s.storage)); err != nil {
 		if errors.Is(err, ErrStudioWorksQuotaExceeded) {
 			// 并发下抢先失败：刚上传的对象要撤掉，不然就成了没人认领的孤儿。
-			if objectKey != "" {
-				if delErr := s.storage.DeleteObject(ctx, objectKey); delErr != nil {
-					logger.L().Warn("studio_work.rollback_delete_failed",
-						zap.String("object_key", objectKey), zap.Error(delErr))
-				}
-			}
+			cleanupObjects()
 			return nil, ErrImageStudioGalleryQuotaExceeded
 		}
 		if errors.Is(err, ErrStudioWorksTempLimitExceeded) {
-			if objectKey != "" {
-				if delErr := s.storage.DeleteObject(ctx, objectKey); delErr != nil {
-					logger.L().Warn("studio_work.rollback_delete_failed",
-						zap.String("object_key", objectKey), zap.Error(delErr))
-				}
-			}
+			cleanupObjects()
 			return nil, ErrStudioWorksTempLimitExceeded
 		}
+		cleanupObjects()
 		return nil, err
 	}
 	return entry, nil
@@ -272,6 +304,89 @@ func (s *ImageStudioGalleryService) ReadImage(ctx context.Context, userID int64,
 	return entry, data, contentType, nil
 }
 
+type thumbnailCacheEntry struct {
+	data      []byte
+	expiresAt time.Time
+}
+
+// Thumbnail returns a small JPEG preview while keeping the original object
+// untouched for downloads. Results are cached because work cards request the
+// same preview repeatedly.
+func (s *ImageStudioGalleryService) Thumbnail(ctx context.Context, userID int64, id string, maxEdge int) ([]byte, error) {
+	if maxEdge < 64 {
+		maxEdge = 360
+	}
+	if maxEdge > 1024 {
+		maxEdge = 1024
+	}
+	cacheKey := id + ":" + strconv.Itoa(maxEdge)
+	now := time.Now()
+	s.thumbMu.Lock()
+	if cached, ok := s.thumbs[cacheKey]; ok && cached.expiresAt.After(now) {
+		data := append([]byte(nil), cached.data...)
+		s.thumbMu.Unlock()
+		return data, nil
+	}
+	s.thumbMu.Unlock()
+
+	_, data, _, err := s.ReadImage(ctx, userID, id)
+	if err != nil {
+		return nil, err
+	}
+	thumb, err := buildThumbnail(data, maxEdge)
+	if err != nil {
+		return nil, err
+	}
+	// Backfill old rows once: after this, list responses point straight at the
+	// CDN thumbnail and never hit the application server again.
+	if thumbURL, thumbKey, saveErr := s.storage.SaveImageWithKey(
+		ctx,
+		"thumbs/"+id+".jpg",
+		"image/jpeg",
+		thumb,
+	); saveErr != nil {
+		logger.L().Warn("studio_work.thumbnail_backfill_upload_failed", zap.String("work_id", id), zap.Error(saveErr))
+	} else if updateErr := s.store.UpdateThumbURL(ctx, userID, id, thumbURL); updateErr != nil {
+		logger.L().Warn("studio_work.thumbnail_backfill_update_failed", zap.String("work_id", id), zap.Error(updateErr))
+		if thumbKey != "" {
+			_ = s.storage.DeleteObject(ctx, thumbKey)
+		}
+	}
+	s.thumbMu.Lock()
+	if len(s.thumbs) > 512 {
+		s.thumbs = make(map[string]thumbnailCacheEntry)
+	}
+	s.thumbs[cacheKey] = thumbnailCacheEntry{data: append([]byte(nil), thumb...), expiresAt: now.Add(24 * time.Hour)}
+	s.thumbMu.Unlock()
+	return thumb, nil
+}
+
+func buildThumbnail(data []byte, maxEdge int) ([]byte, error) {
+	img, _, err := image.Decode(bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	bounds := img.Bounds()
+	width, height := bounds.Dx(), bounds.Dy()
+	if width <= 0 || height <= 0 {
+		return nil, errors.New("image has empty bounds")
+	}
+	scale := float64(maxEdge) / float64(max(width, height))
+	if scale > 1 {
+		scale = 1
+	}
+	dstWidth := max(1, int(float64(width)*scale))
+	dstHeight := max(1, int(float64(height)*scale))
+	dst := image.NewRGBA(image.Rect(0, 0, dstWidth, dstHeight))
+	xdraw.CatmullRom.Scale(dst, dst.Bounds(), img, bounds, xdraw.Over, nil)
+
+	var out bytes.Buffer
+	if err := jpeg.Encode(&out, dst, &jpeg.Options{Quality: 78}); err != nil {
+		return nil, err
+	}
+	return out.Bytes(), nil
+}
+
 // Delete 删除一条作品：先删对象存储里的文件，成功后再删记录。
 //
 // 顺序是刻意的：反过来的话，删对象失败就会留下一个再也找不到的孤儿文件。
@@ -279,7 +394,27 @@ func (s *ImageStudioGalleryService) Delete(ctx context.Context, userID int64, id
 	if s == nil || s.store == nil || userID <= 0 || strings.TrimSpace(id) == "" {
 		return ErrImageStudioGalleryUnavailable
 	}
+	if key, err := s.store.ObjectKey(ctx, userID, strings.TrimSpace(id)); err == nil && s.storage != nil {
+		if thumbKey := thumbnailObjectKey(key); thumbKey != "" {
+			if err := s.storage.DeleteObject(ctx, thumbKey); err != nil && !isStorageNotConfigured(err) {
+				return err
+			}
+		}
+	}
 	return deleteStudioWorkByKey(ctx, s.store, s.storage, userID, strings.TrimSpace(id))
+}
+
+func thumbnailObjectKey(objectKey string) string {
+	objectKey = strings.TrimSpace(objectKey)
+	if objectKey == "" {
+		return ""
+	}
+	dir := path.Dir(objectKey)
+	base := strings.TrimSuffix(path.Base(objectKey), path.Ext(objectKey))
+	if dir == "." {
+		return path.Join("thumbs", base+".jpg")
+	}
+	return path.Join(dir, "thumbs", base+".jpg")
 }
 
 // Quota 返回该用户作品库的使用量。图片与视频共用同一份配额，所以这里统计的是总数。

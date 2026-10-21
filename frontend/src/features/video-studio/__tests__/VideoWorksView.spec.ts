@@ -20,11 +20,12 @@ const { listArchivedVideos, deleteArchivedVideo, pinArchivedVideo, fetchOnlineIn
   fetchInspirationLibrary: vi.fn(),
 }))
 
-const { listImages, pinImage, deleteImage, downloadImage } = vi.hoisted(() => ({
+const { listImages, pinImage, deleteImage, downloadImage, thumbnailImage } = vi.hoisted(() => ({
   listImages: vi.fn(),
   pinImage: vi.fn(),
   deleteImage: vi.fn(),
   downloadImage: vi.fn(),
+  thumbnailImage: vi.fn(),
 }))
 
 vi.mock('../videoArchiveApi', () => ({
@@ -48,6 +49,7 @@ vi.mock('@/api', () => ({
     pin: pinImage,
     delete: deleteImage,
     download: downloadImage,
+    thumbnail: thumbnailImage,
   },
 }))
 
@@ -336,6 +338,16 @@ describe('VideoWorksView', () => {
     deleteImage.mockResolvedValue(undefined)
     downloadImage.mockReset()
     downloadImage.mockResolvedValue(new Blob(['image'], { type: 'image/png' }))
+    thumbnailImage.mockReset()
+    thumbnailImage.mockResolvedValue(new Blob(['thumb'], { type: 'image/jpeg' }))
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      value: vi.fn(() => 'blob:image-thumb'),
+    })
+    Object.defineProperty(URL, 'revokeObjectURL', {
+      configurable: true,
+      value: vi.fn(),
+    })
     deleteArchivedVideo.mockReset()
     deleteArchivedVideo.mockResolvedValue(undefined)
     listKeys.mockResolvedValue({
@@ -363,6 +375,7 @@ describe('VideoWorksView', () => {
       {
         id: 'image-1',
         url: 'https://cdn.example.com/saved-image.png',
+        thumb_url: 'https://cdn.example.com/saved-image-thumb.jpg',
         prompt: '一张已保存的海报',
         model: 'gpt-image-2',
         size: '1024x1024',
@@ -379,7 +392,30 @@ describe('VideoWorksView', () => {
     const card = wrapper.get('[data-testid="image-work-image-1"]')
     expect(card.text()).toContain('一张已保存的海报')
     expect(card.text()).toContain('已保存到我的作品')
-    expect(card.get('img').attributes('src')).toBe('https://cdn.example.com/saved-image.png')
+    expect(card.get('img').attributes('src')).toBe('https://cdn.example.com/saved-image-thumb.jpg')
+    expect(thumbnailImage).not.toHaveBeenCalled()
+  })
+
+  it('backfills a preview for older images without a stored thumbnail', async () => {
+    listImages.mockResolvedValue([
+      {
+        id: 'image-old',
+        url: 'https://cdn.example.com/old-image.png',
+        prompt: '旧图片',
+        model: 'gpt-image-2',
+        size: '1024x1024',
+        format: 'png',
+        saved: true,
+        created_at: 1760000000,
+        expires_at: 0,
+      },
+    ])
+
+    const wrapper = mount(VideoWorksView, { global: { stubs: globalStubs } })
+    await flushPromises()
+
+    expect(thumbnailImage).toHaveBeenCalledWith('image-old')
+    expect(wrapper.get('[data-testid="image-work-image-old"] img').attributes('src')).toBe('blob:image-thumb')
   })
 
   it('shows the empty state after clearing every record', async () => {
