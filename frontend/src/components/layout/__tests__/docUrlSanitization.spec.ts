@@ -18,6 +18,13 @@ describe('doc_url sanitization', () => {
     expect(headerSource).toContain('sanitizeUrl(appStore.docUrl)')
   })
 
+  it('AppHeader opens API docs externally instead of the in-app route', () => {
+    expect(headerSource).not.toContain('to="/docs/api"')
+    expect(headerSource).toContain(':href="apiDocsUrl"')
+    expect(headerSource).toContain(':title="t(\'nav.apiDocs\')"')
+    expect(headerSource).toContain('target="_blank"')
+  })
+
   it('HomeView imports sanitizeUrl', () => {
     expect(homeViewSource).toContain("import { sanitizeUrl } from '@/utils/url'")
   })

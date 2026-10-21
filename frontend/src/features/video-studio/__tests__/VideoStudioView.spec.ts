@@ -36,6 +36,9 @@ vi.mock('@/composables/useClipboard', () => ({
 }))
 
 vi.mock('@/composables/useCreatorKey', () => ({
+  isCreationServiceUnavailable: (error: unknown) =>
+    String((error as { message?: unknown } | null)?.message ?? error ?? '')
+      .includes('NO_VIDEO_CREATION_SERVICE'),
   ensureCreatorKey: async () => {
     const result = await listKeys()
     return { keys: result.items, key: result.items[0] }
@@ -167,6 +170,18 @@ describe('VideoStudioView model loading', () => {
       headers: { Authorization: 'Bearer sk-composite' },
     })
   })
+
+  it('does not expose raw no-service errors in the composer', async () => {
+    listKeys.mockRejectedValue(new Error('NO_VIDEO_CREATION_SERVICE'))
+    getPublicSettings.mockResolvedValue({ api_base_url: '/v1' })
+
+    const wrapper = mountStudio()
+    await flushPromises()
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('NO_VIDEO_CREATION_SERVICE')
+    expect(wrapper.text()).not.toContain('视频创作服务暂不可用')
+  })
 })
 
 describe('VideoStudioView seedance generation', () => {
@@ -222,6 +237,44 @@ describe('VideoStudioView seedance generation', () => {
 
     const video = wrapper.get('video')
     expect(video.attributes('src')).toBe('https://cdn.example.com/out.mp4')
+  })
+
+  it('submits the selected number of independent video tasks', async () => {
+    let createCount = 0
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = String(input)
+      if (url.endsWith('/models')) {
+        return jsonResponse({ data: [{ id: 'seedance-2-720p' }] })
+      }
+      if (url.endsWith('/contents/generations/tasks') && init?.method === 'POST') {
+        createCount += 1
+        return jsonResponse({ id: `task-${createCount}` })
+      }
+      const task = url.match(/\/contents\/generations\/tasks\/(task-\d+)$/)?.[1]
+      if (task) {
+        return jsonResponse({
+          id: task,
+          status: 'succeeded',
+          content: { video_url: `https://cdn.example.com/${task}.mp4` },
+        })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountStudio()
+    await flushPromises()
+    await flushPromises()
+
+    await wrapper.get('textarea').setValue('镜头缓慢推进，海雾从左侧涌入')
+    await wrapper.get('[data-testid="video-task-count"]').setValue('3')
+    await wrapper.get('[data-testid="video-task-count"]').trigger('blur')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    await flushPromises()
+
+    expect(createCount).toBe(3)
+    expect(wrapper.findAll('video')).toHaveLength(3)
   })
 
   it('keeps the duration parameter inside the range the upstream accepts', async () => {
@@ -657,9 +710,9 @@ describe('VideoStudioView reference limits', () => {
     await input.trigger('change')
     // FileReader 的 load 回调落在宏任务里，等它跑完再断言。
     await vi.waitFor(() => {
-      expect(wrapper.findAll('.reference-chip').length).toBe(1)
+      expect(wrapper.findAll('.video-composer__reference').length).toBe(1)
     })
-    expect(wrapper.get('.reference-chip').text()).toContain('参考视频')
+    expect(wrapper.get('.video-composer__reference').text()).toContain('参考视频')
   })
 })
 

@@ -61,17 +61,17 @@
     <Transition name="agreement-fade">
       <div
         v-if="dialogVisible"
-        class="fixed inset-0 z-[140] flex items-center justify-center overflow-y-auto bg-gray-950/60 p-4 backdrop-blur-sm"
+        class="fixed inset-0 z-[140] flex items-start justify-center overflow-y-auto bg-gray-950/60 p-2 py-3 backdrop-blur-sm sm:items-center sm:p-4"
       >
-        <div class="w-full max-w-[600px] overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-black/10 dark:bg-dark-900 dark:ring-white/10">
-          <div class="border-b border-gray-100 bg-white px-6 py-6 dark:border-dark-800 dark:bg-dark-900">
-            <div class="flex items-start gap-4">
-              <span class="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-xl bg-primary-50 text-primary-700 ring-1 ring-primary-100 dark:bg-primary-500/10 dark:text-primary-300 dark:ring-primary-500/20">
+        <div class="flex max-h-[calc(100dvh-1.5rem)] w-full max-w-[600px] flex-col overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-black/10 dark:bg-dark-900 dark:ring-white/10">
+          <div class="flex-shrink-0 border-b border-gray-100 bg-white px-4 py-4 dark:border-dark-800 dark:bg-dark-900 sm:px-6 sm:py-6">
+            <div class="flex items-start gap-3 sm:gap-4">
+              <span class="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-primary-50 text-primary-700 ring-1 ring-primary-100 dark:bg-primary-500/10 dark:text-primary-300 dark:ring-primary-500/20 sm:h-12 sm:w-12">
                 <Icon name="shield" size="md" />
               </span>
               <div class="min-w-0 flex-1">
                 <div class="flex flex-wrap items-center gap-2">
-                  <h2 class="text-xl font-bold tracking-normal text-gray-950 dark:text-white">
+                  <h2 class="text-lg font-bold tracking-normal text-gray-950 dark:text-white sm:text-xl">
                     {{ t('legal.loginAgreementPrompt.dialogTitle') }}
                   </h2>
                   <span
@@ -81,7 +81,7 @@
                     {{ updatedAt }}
                   </span>
                 </div>
-                <p class="mt-2 text-sm leading-6 text-gray-600 dark:text-dark-300">
+                <p class="mt-2 text-xs leading-5 text-gray-600 dark:text-dark-300 sm:text-sm sm:leading-6">
                   {{
                     t('legal.loginAgreementPrompt.dialogDescription', {
                       date: updatedAt || t('legal.loginAgreementPrompt.recently'),
@@ -92,7 +92,7 @@
             </div>
           </div>
 
-          <div class="max-h-[58vh] overflow-y-auto px-6 py-5">
+          <div class="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6 sm:py-5">
             <div class="mb-3 flex items-center justify-between gap-3">
               <p class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('legal.loginAgreementPrompt.relatedDocuments') }}</p>
             </div>
@@ -118,7 +118,7 @@
             </div>
           </div>
 
-          <div class="border-t border-gray-100 bg-gray-50/80 px-6 py-4 dark:border-dark-800 dark:bg-dark-950/60">
+          <div class="flex-shrink-0 border-t border-gray-100 bg-gray-50/80 px-4 py-3 dark:border-dark-800 dark:bg-dark-950/60 sm:px-6 sm:py-4">
             <div class="grid grid-cols-2 gap-3">
               <button
                 type="button"

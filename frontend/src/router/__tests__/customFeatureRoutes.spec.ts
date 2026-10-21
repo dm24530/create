@@ -44,6 +44,20 @@ describe('custom feature routes', () => {
     expect(adminCustomFeatureRoutesAfterSettings.map((route) => route.path)).toEqual(['/admin/upstream-monitor'])
   })
 
+  it('keeps the user studio navigation horizontal on every studio page', () => {
+    const studioPaths = new Set([
+      '/image-studio',
+      '/video-studio',
+      '/image-inspiration',
+      '/video-inspiration',
+      '/video-works',
+    ])
+    const studioRoutes = userCustomFeatureRoutesAfterKeys.filter((route) => studioPaths.has(route.path))
+
+    expect(studioRoutes).toHaveLength(studioPaths.size)
+    expect(studioRoutes.every((route) => route.meta?.immersive === true)).toBe(true)
+  })
+
   it('mounts custom routes in the main router at stable positions', () => {
     const paths = routes.map((route) => route.path)
 

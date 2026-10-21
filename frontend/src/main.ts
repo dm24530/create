@@ -29,6 +29,22 @@ function initThemeClass() {
   document.documentElement.classList.toggle('dark', shouldUseDark)
 }
 
+function renderBootFailure(error?: unknown) {
+  console.error('Application bootstrap failed:', error)
+  const app = document.getElementById('app')
+  if (!app) return
+  app.innerHTML = `
+    <div class="boot-screen" role="alert">
+      <div class="boot-mark">C</div>
+      <p class="boot-title">页面加载失败</p>
+      <p class="boot-subtitle">可能是网络波动或版本更新导致，请刷新重试。</p>
+      <button id="boot-retry-button" type="button">重新加载页面</button>
+    </div>
+  `
+  const retry = document.getElementById('boot-retry-button')
+  retry?.addEventListener('click', () => window.location.reload())
+}
+
 async function bootstrap() {
   if ('scrollRestoration' in history) {
     history.scrollRestoration = 'manual'
@@ -57,9 +73,17 @@ async function bootstrap() {
   app.use(router)
   app.use(i18n)
 
-  // 等待路由器完成初始导航后再挂载，避免竞态条件导致的空白渲染
-  await router.isReady()
+  // 等待路由器完成初始导航后再挂载，避免竞态条件导致的空白渲染。
+  // 路由分包或会话接口异常时不能无限空白，超时后给出可操作的错误页。
+  await Promise.race([
+    router.isReady(),
+    new Promise<never>((_, reject) => {
+      window.setTimeout(() => reject(new Error('ROUTER_READY_TIMEOUT')), 15_000)
+    }),
+  ])
   app.mount('#app')
 }
 
-bootstrap()
+bootstrap().catch((error) => {
+  renderBootFailure(error)
+})

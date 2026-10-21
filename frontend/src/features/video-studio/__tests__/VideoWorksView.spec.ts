@@ -185,7 +185,7 @@ describe('VideoInspirationView', () => {
   })
 })
 
-describe('VideoInspirationView online source', () => {
+describe.skip('VideoInspirationView online source (removed from product)', () => {
   const onlineFeed = {
     items: [
       {
@@ -305,21 +305,20 @@ describe('VideoInspirationView online source', () => {
     expect(fetchOnlineInspirationFeed).toHaveBeenNthCalledWith(2, expect.objectContaining({ refresh: true }))
   })
 
-  it('reloads with the chosen media type and period', async () => {
+  it('keeps the video feed focused and reloads with the chosen period', async () => {
     fetchOnlineInspirationFeed.mockResolvedValue(onlineFeed)
 
     const wrapper = mount(VideoInspirationView, { global: { stubs: globalStubs } })
     await wrapper.get('[data-testid="inspiration-source-online"]').trigger('click')
     await flushPromises()
 
-    await wrapper.get('[data-testid="online-media-image"]').trigger('click')
-    await flushPromises()
+    expect(wrapper.find('[data-testid="online-media-image"]').exists()).toBe(false)
     await wrapper.get('[data-testid="online-period-day"]').trigger('click')
     await flushPromises()
 
-    // 切到「图片 + 今天」要重新按新条件取，而不是复用视频那批。
+    // 视频灵感不再混入图片，但时间筛选仍要重新拉取。
     expect(fetchOnlineInspirationFeed).toHaveBeenLastCalledWith(
-      expect.objectContaining({ mediaType: 'image', period: 'day' }),
+      expect.objectContaining({ mediaType: 'video', period: 'day' }),
     )
   })
 })
@@ -361,7 +360,19 @@ describe('VideoWorksView', () => {
   })
 
   it('lists saved works and plays the stored url', async () => {
-    saveVideoWork(seedRecord())
+    listArchivedVideos.mockResolvedValue([
+      {
+        id: 'arch-saved',
+        url: 'https://cdn.example.com/out.mp4',
+        prompt: '云海在山脊之间缓慢流动',
+        model: 'seedance-2-720p',
+        format: 'mp4',
+        duration_seconds: 5,
+        saved: true,
+        created_at: 1760000000,
+        expires_at: 0,
+      },
+    ])
     const wrapper = mount(VideoWorksView, { global: { stubs: globalStubs } })
     await flushPromises()
 
@@ -418,13 +429,9 @@ describe('VideoWorksView', () => {
     expect(wrapper.get('[data-testid="image-work-image-old"] img').attributes('src')).toBe('blob:image-thumb')
   })
 
-  it('shows the empty state after clearing every record', async () => {
+  it('does not show unsaved local records in my works', async () => {
     saveVideoWork(seedRecord())
     const wrapper = mount(VideoWorksView, { global: { stubs: globalStubs } })
-    await flushPromises()
-    expect(wrapper.findAll('article').length).toBe(1)
-
-    await wrapper.get('[data-testid="works-clear"]').trigger('click')
     await flushPromises()
 
     expect(wrapper.findAll('article').length).toBe(0)
@@ -439,8 +446,9 @@ describe('VideoWorksView', () => {
       model: 'seedance-2-720p',
       format: 'mp4',
       duration_seconds: 8,
+      saved: true,
       created_at: 1760000000,
-      expires_at: 1900000000,
+      expires_at: 0,
     }
     listArchivedVideos.mockResolvedValue([archivedEntry])
     // 同一条视频本地也留了记录：不该重复显示。
@@ -464,8 +472,9 @@ describe('VideoWorksView', () => {
         model: 'seedance-2-720p',
         format: 'mp4',
         duration_seconds: 5,
+        saved: true,
         created_at: 1760000000,
-        expires_at: 1900000000,
+        expires_at: 0,
       },
     ])
 
@@ -473,7 +482,7 @@ describe('VideoWorksView', () => {
     await flushPromises()
 
     const card = wrapper.get('[data-testid="archived-arch-2"]')
-    const deleteButton = card.findAll('button').find((button) => button.attributes('title') === '删除归档')
+    const deleteButton = card.findAll('button').find((button) => button.attributes('title') === '取消收藏并删除视频')
     // 删除要连带删对象存储里的文件，所以走一次确认框。
     const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
     await deleteButton!.trigger('click')
@@ -485,8 +494,7 @@ describe('VideoWorksView', () => {
     confirmSpy.mockRestore()
   })
 
-  // 临时内容默认带过期时间：卡片上要标"还剩 N 天"，并提供"存到我的作品"。
-  it('marks temporary archives and pins them into the permanent library', async () => {
+  it('does not render temporary archives in my works', async () => {
     listArchivedVideos.mockResolvedValue([
       {
         id: 'arch-temp',
@@ -500,18 +508,12 @@ describe('VideoWorksView', () => {
         expires_at: Math.floor(Date.now() / 1000) + 7 * 86400,
       },
     ])
-    pinArchivedVideo.mockResolvedValue(undefined)
-
     const wrapper = mount(VideoWorksView, { global: { stubs: globalStubs } })
     await flushPromises()
 
-    expect(wrapper.get('[data-testid="archived-temp-badge"]').text()).toContain('还剩 7 天')
-    await wrapper.get('[data-testid="archived-pin"]').trigger('click')
-    await flushPromises()
-
-    expect(pinArchivedVideo).toHaveBeenCalledWith('arch-temp')
-    expect(wrapper.find('[data-testid="archived-saved-badge"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="archived-temp-badge"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="archived-arch-temp"]').exists()).toBe(false)
+    expect(listArchivedVideos).toHaveBeenCalledWith('saved')
+    expect(wrapper.text()).toContain('还没有作品')
   })
 })
 
@@ -566,6 +568,7 @@ describe('VideoInspirationView library source', () => {
     expect(fetchInspirationLibrary).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'video', model: 'all', category: 'all', page: 1 }),
     )
+    expect(wrapper.find('[data-testid="library-type-image"]').exists()).toBe(false)
     expect(wrapper.get('[data-testid="library-summary"]').text()).toContain('共 418 条')
     const card = wrapper.get('[data-testid="library-prompt-1"]')
     expect(card.text()).toContain('Seedance')

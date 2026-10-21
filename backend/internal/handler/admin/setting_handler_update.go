@@ -324,6 +324,7 @@ type UpdateSettingsRequest struct {
 	PaymentHelpImageURL              *string                        `json:"payment_help_image_url"`
 	PaymentHelpText                  *string                        `json:"payment_help_text"`
 	PaymentRechargePackages          *[]service.RechargePackage     `json:"payment_recharge_packages"`
+	PaymentRechargeCardEnabled       *bool                          `json:"payment_recharge_card_enabled"`
 	PaymentRechargeCardProducts      *[]service.RechargeCardProduct `json:"payment_recharge_card_products"`
 	// nil 表示不更新；空数组表示清空阶梯
 	PaymentRechargeBonusTiers  *[]dto.RechargeBonusTier `json:"payment_recharge_bonus_tiers"`
@@ -2160,6 +2161,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			HelpImageURL:                  req.PaymentHelpImageURL,
 			HelpText:                      req.PaymentHelpText,
 			RechargePackages:              req.PaymentRechargePackages,
+			RechargeCardEnabled:           req.PaymentRechargeCardEnabled,
 			RechargeCardProducts:          req.PaymentRechargeCardProducts,
 			CancelRateLimitEnabled:        req.PaymentCancelRateLimitEnabled,
 			CancelRateLimitMax:            req.PaymentCancelRateLimitMax,
@@ -2448,6 +2450,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		PaymentHelpImageURL:                                    updatedPaymentCfg.HelpImageURL,
 		PaymentHelpText:                                        updatedPaymentCfg.HelpText,
 		PaymentRechargePackages:                                updatedPaymentCfg.RechargePackages,
+		PaymentRechargeCardEnabled:                             updatedPaymentCfg.RechargeCardEnabled,
 		PaymentRechargeCardProducts:                            updatedPaymentCfg.RechargeCardProducts,
 		PaymentCancelRateLimitEnabled:                          updatedPaymentCfg.CancelRateLimitEnabled,
 		PaymentCancelRateLimitMax:                              updatedPaymentCfg.CancelRateLimitMax,
@@ -2524,7 +2527,7 @@ func hasPaymentFields(req UpdateSettingsRequest) bool {
 		req.PaymentLoadBalanceStrat != nil || req.PaymentProductNamePrefix != nil ||
 		req.PaymentProductNameSuffix != nil || req.PaymentHelpImageURL != nil ||
 		req.PaymentHelpText != nil || req.PaymentRechargePackages != nil ||
-		req.PaymentRechargeCardProducts != nil || req.PaymentCancelRateLimitEnabled != nil ||
+		req.PaymentRechargeCardEnabled != nil || req.PaymentRechargeCardProducts != nil || req.PaymentCancelRateLimitEnabled != nil ||
 		req.PaymentCancelRateLimitMax != nil || req.PaymentCancelRateLimitWindow != nil ||
 		req.PaymentCancelRateLimitUnit != nil || req.PaymentCancelRateLimitMode != nil ||
 		req.PaymentAlipayForceQRCode != nil || req.PaymentAlipayMobilePrecreateDeepLink != nil

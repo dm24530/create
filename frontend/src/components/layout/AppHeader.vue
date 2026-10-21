@@ -1,8 +1,8 @@
 <template>
   <header class="glass sticky top-0 z-30 border-b border-gray-200/50 dark:border-dark-700/50">
-    <div class="flex h-16 items-center justify-between gap-2 px-2 sm:px-4 md:px-6">
+    <div class="relative flex h-14 items-center justify-between gap-2 px-2 sm:px-4 md:px-6">
       <!-- Left: Mobile Menu Toggle + Page Title -->
-      <div class="flex shrink-0 items-center gap-2 sm:gap-4">
+      <div v-if="!compact" class="flex shrink-0 items-center gap-2 sm:gap-4">
         <button
           @click="toggleMobileSidebar"
           class="btn-ghost btn-icon lg:hidden"
@@ -21,57 +21,101 @@
         </div>
       </div>
 
+      <!-- Inline studio navigation on wide screens -->
+      <div
+        v-if="$slots.nav"
+        class="app-header__nav hidden min-w-0 flex-1 justify-center px-2 xl:flex"
+      >
+        <slot name="nav" />
+      </div>
+
       <!-- Right: Announcements + Docs + Language + Subscriptions + Balance + User Dropdown -->
-      <div class="flex min-w-0 items-center gap-1 sm:gap-3">
+      <div class="ml-auto flex min-w-0 flex-nowrap items-center justify-end gap-0.5 sm:gap-1.5">
         <!-- Announcement Bell -->
         <AnnouncementBell v-if="user" />
 
-        <!-- Docs Link -->
+        <!-- API Docs Link -->
         <a
-          v-if="docUrl"
-          :href="docUrl"
+          v-if="user"
+          :href="apiDocsUrl"
           target="_blank"
           rel="noopener noreferrer"
-          class="hidden items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900 dark:text-dark-400 dark:hover:bg-dark-800 dark:hover:text-white sm:flex"
+          :title="t('nav.apiDocs')"
+          :aria-label="t('nav.apiDocs')"
+          class="hidden items-center rounded-md p-2 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 dark:text-dark-400 dark:hover:bg-dark-800 dark:hover:text-white sm:flex"
         >
           <Icon name="book" size="sm" />
-          <span class="hidden sm:inline">{{ t('nav.docs') }}</span>
         </a>
 
-        <router-link
+        <button
           v-if="user"
-          to="/docs/api"
-          class="hidden items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900 dark:text-dark-400 dark:hover:bg-dark-800 dark:hover:text-white sm:flex"
+          type="button"
+          data-tour="header-api-keys"
+          :title="t('nav.apiKeys')"
+          :aria-label="t('nav.apiKeys')"
+          class="hidden items-center gap-1 rounded-md px-2 py-2 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 dark:text-dark-400 dark:hover:bg-dark-800 dark:hover:text-white sm:flex"
+          @click="openApiKeyModal"
         >
-          <Icon name="book" size="sm" />
-          <span>{{ t('nav.apiDocs') }}</span>
-        </router-link>
+          <Icon name="key" size="sm" />
+        </button>
+
+        <button
+          v-if="user"
+          type="button"
+          :title="t('nav.usage')"
+          :aria-label="t('nav.usage')"
+          class="hidden items-center gap-1 rounded-md px-2 py-2 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 dark:text-dark-400 dark:hover:bg-dark-800 dark:hover:text-white sm:flex"
+          @click="usageModalOpen = true"
+        >
+          <Icon name="chart" size="sm" />
+        </button>
 
         <!-- Model Plaza Entry (icon only below sm) -->
-        <router-link
-          v-if="user && modelPlazaEnabled"
-          :to="{ path: '/model-plaza', query: { embedded: '1' } }"
+        <button
+          v-if="user"
+          type="button"
           :title="t('nav.modelPlaza')"
           :aria-label="t('nav.modelPlaza')"
-          class="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900 dark:text-dark-400 dark:hover:bg-dark-800 dark:hover:text-white"
+          class="flex items-center rounded-md p-2 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 dark:text-dark-400 dark:hover:bg-dark-800 dark:hover:text-white"
+          @click="modelPlazaModalOpen = true"
         >
           <Icon name="grid" size="sm" />
-          <span class="hidden sm:inline">{{ t('nav.modelPlaza') }}</span>
-        </router-link>
+        </button>
+
+        <!-- Theme Toggle -->
+        <button
+          type="button"
+          data-testid="header-theme-toggle"
+          class="theme-toggle flex items-center rounded-md p-2 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 dark:text-dark-400 dark:hover:bg-dark-800 dark:hover:text-white"
+          :title="isDark ? t('nav.lightMode') : t('nav.darkMode')"
+          :aria-label="isDark ? t('nav.lightMode') : t('nav.darkMode')"
+          :aria-pressed="isDark"
+          @click="toggleTheme"
+        >
+          <Icon
+            :name="isDark ? 'sun' : 'moon'"
+            size="sm"
+            :class="isDark ? 'text-amber-500' : ''"
+          />
+        </button>
 
         <!-- Language Switcher -->
-        <LocaleSwitcher />
+        <LocaleSwitcher compact />
 
         <!-- Subscription Progress (for users with active subscriptions; not mounted at all when the feature is off) -->
         <SubscriptionProgressMini v-if="user && subscriptionFeatureEnabled" />
 
         <!-- Balance Display -->
-        <div
+        <button
           v-if="user"
-          class="group relative hidden items-center gap-2 rounded-xl bg-primary-50 px-3 py-1.5 dark:bg-primary-900/20 sm:flex"
+          type="button"
+          title="充值"
+          aria-label="充值"
+          class="group relative hidden items-center gap-1.5 rounded-lg bg-primary-50 px-2 py-1 dark:bg-primary-900/20 sm:flex"
+          @click="openRechargeModal"
         >
           <svg
-            class="h-4 w-4 text-primary-600 dark:text-primary-400"
+            class="h-3.5 w-3.5 text-primary-600 dark:text-primary-400"
             fill="none"
             viewBox="0 0 24 24"
             stroke="currentColor"
@@ -83,14 +127,8 @@
               d="M2.25 18.75a60.07 60.07 0 0115.797 2.101c.727.198 1.453-.342 1.453-1.096V18.75M3.75 4.5v.75A.75.75 0 013 6h-.75m0 0v-.375c0-.621.504-1.125 1.125-1.125H20.25M2.25 6v9m18-10.5v.75c0 .414.336.75.75.75h.75m-1.5-1.5h.375c.621 0 1.125.504 1.125 1.125v9.75c0 .621-.504 1.125-1.125 1.125h-.375m1.5-1.5H21a.75.75 0 00-.75.75v.75m0 0H3.75m0 0h-.375a1.125 1.125 0 01-1.125-1.125V15m1.5 1.5v-.75A.75.75 0 003 15h-.75M15 10.5a3 3 0 11-6 0 3 3 0 016 0zm3 0h.008v.008H18V10.5zm-12 0h.008v.008H6V10.5z"
             />
           </svg>
-          <span class="text-sm font-semibold text-primary-700 dark:text-primary-300">
+          <span class="text-xs font-semibold text-primary-700 dark:text-primary-300">
             {{ formatHeaderMoney(availableBalance) }}
-          </span>
-          <span
-            v-if="frozenBalance > 0"
-            class="rounded-full bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/40 dark:text-amber-200"
-          >
-            {{ balanceFrozenLabel }}
           </span>
           <div
             class="pointer-events-none absolute right-0 top-full mt-2 hidden w-56 rounded-lg border border-gray-200 bg-white p-3 text-xs shadow-lg group-hover:block dark:border-dark-700 dark:bg-dark-800"
@@ -110,16 +148,18 @@
               </div>
             </div>
           </div>
-        </div>
+        </button>
 
         <!-- User Dropdown -->
         <div v-if="user" class="relative" ref="dropdownRef">
           <button
             @click="toggleDropdown"
-            class="flex items-center gap-2 rounded-xl p-1.5 transition-colors hover:bg-gray-100 dark:hover:bg-dark-800"
+            data-tour="header-user-menu"
+            :title="displayName"
+            class="flex items-center rounded-lg p-1 transition-colors hover:bg-gray-100 dark:hover:bg-dark-800"
             :aria-label="t('common.userMenu')"
           >
-            <div class="flex h-8 w-8 items-center justify-center overflow-hidden rounded-xl bg-gradient-to-br from-primary-500 to-primary-600 text-sm font-medium text-white shadow-sm">
+            <div class="flex h-7 w-7 items-center justify-center overflow-hidden rounded-lg bg-gradient-to-br from-primary-500 to-primary-600 text-xs font-medium text-white shadow-sm">
               <img
                 v-if="avatarUrl"
                 :src="avatarUrl"
@@ -128,15 +168,6 @@
               >
               <span v-else>{{ userInitials }}</span>
             </div>
-            <div class="hidden text-left md:block">
-              <div class="text-sm font-medium text-gray-900 dark:text-white">
-                {{ displayName }}
-              </div>
-              <div class="text-xs text-gray-500 dark:text-dark-400">
-                {{ t('admin.users.roles.' + user.role) }}
-              </div>
-            </div>
-            <Icon name="chevronDown" size="sm" class="hidden text-gray-400 md:block" />
           </button>
 
           <!-- Dropdown Menu -->
@@ -164,33 +195,15 @@
               </div>
 
               <div class="py-1">
-                <router-link to="/profile" @click="closeDropdown" class="dropdown-item">
+                <button type="button" @click="openProfileModal" class="dropdown-item w-full">
                   <Icon name="user" size="sm" />
                   {{ t('nav.profile') }}
-                </router-link>
+                </button>
 
-                <router-link to="/keys" @click="closeDropdown" class="dropdown-item">
+                <button type="button" @click="openApiKeyModal" class="dropdown-item w-full">
                   <Icon name="key" size="sm" />
                   {{ t('nav.apiKeys') }}
-                </router-link>
-
-                <a
-                  v-if="authStore.isAdmin"
-                  href="https://github.com/diminglucky/create"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  @click="closeDropdown"
-                  class="dropdown-item"
-                >
-                  <svg class="h-4 w-4" fill="currentColor" viewBox="0 0 24 24">
-                    <path
-                      fill-rule="evenodd"
-                      clip-rule="evenodd"
-                      d="M12 2C6.477 2 2 6.477 2 12c0 4.42 2.865 8.17 6.839 9.49.5.092.682-.217.682-.482 0-.237-.008-.866-.013-1.7-2.782.604-3.369-1.34-3.369-1.34-.454-1.156-1.11-1.464-1.11-1.464-.908-.62.069-.608.069-.608 1.003.07 1.531 1.03 1.531 1.03.892 1.529 2.341 1.087 2.91.831.092-.646.35-1.086.636-1.336-2.22-.253-4.555-1.11-4.555-4.943 0-1.091.39-1.984 1.029-2.683-.103-.253-.446-1.27.098-2.647 0 0 .84-.269 2.75 1.025A9.578 9.578 0 0112 6.836c.85.004 1.705.114 2.504.336 1.909-1.294 2.747-1.025 2.747-1.025.546 1.377.203 2.394.1 2.647.64.699 1.028 1.592 1.028 2.683 0 3.842-2.339 4.687-4.566 4.935.359.309.678.919.678 1.852 0 1.336-.012 2.415-.012 2.743 0 .267.18.578.688.48C19.138 20.167 22 16.418 22 12c0-5.523-4.477-10-10-10z"
-                    />
-                  </svg>
-                  {{ t('nav.github') }}
-                </a>
+                </button>
 
               </div>
 
@@ -257,11 +270,21 @@
         </div>
       </div>
     </div>
+    <ApiKeyQuickModal :show="apiKeyModalOpen" @close="apiKeyModalOpen = false" />
+    <UsageQuickModal :show="usageModalOpen" @close="usageModalOpen = false" />
+    <ModelPlazaQuickModal :show="modelPlazaModalOpen" @close="modelPlazaModalOpen = false" />
+    <ProfileQuickModal :show="profileModalOpen" @close="profileModalOpen = false" />
+    <ManualQuickModal :show="manualModalOpen" @close="manualModalOpen = false" />
+    <RechargeQuickModal
+      :show="rechargeModalOpen"
+      :initial-tab="rechargeInitialTab"
+      @close="rechargeModalOpen = false"
+    />
   </header>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, nextTick, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useAppStore, useAuthStore, useOnboardingStore } from '@/stores'
@@ -269,26 +292,51 @@ import { useAdminSettingsStore } from '@/stores/adminSettings'
 import LocaleSwitcher from '@/components/common/LocaleSwitcher.vue'
 import SubscriptionProgressMini from '@/components/common/SubscriptionProgressMini.vue'
 import AnnouncementBell from '@/components/common/AnnouncementBell.vue'
+import ApiKeyQuickModal from '@/components/keys/ApiKeyQuickModal.vue'
+import UsageQuickModal from '@/components/usage/UsageQuickModal.vue'
+import ModelPlazaQuickModal from '@/components/modelPlaza/ModelPlazaQuickModal.vue'
+import ProfileQuickModal from '@/components/user/ProfileQuickModal.vue'
+import RechargeQuickModal from '@/components/payment/RechargeQuickModal.vue'
+import ManualQuickModal from '@/components/docs/ManualQuickModal.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { sanitizeUrl } from '@/utils/url'
 import { FeatureFlags, isFeatureFlagEnabled } from '@/utils/featureFlags'
 import { resolveRouteMetaKeys } from '@/router/title'
 import { resolveSiteBillingMode } from '@/utils/siteBillingMode'
+import { useTheme } from '@/composables/useTheme'
+
+withDefaults(defineProps<{
+  compact?: boolean
+}>(), {
+  compact: false,
+})
 
 const router = useRouter()
 const route = useRoute()
 const { t } = useI18n()
+const apiKeyModalOpen = ref(false)
+const usageModalOpen = ref(false)
+const modelPlazaModalOpen = ref(false)
+const profileModalOpen = ref(false)
+const manualModalOpen = ref(false)
+const rechargeModalOpen = ref(false)
+const rechargeInitialTab = ref<'recharge' | 'redeem'>('recharge')
 const appStore = useAppStore()
 const authStore = useAuthStore()
 const adminSettingsStore = useAdminSettingsStore()
 const onboardingStore = useOnboardingStore()
+const { isDark, toggleTheme } = useTheme()
 
 const user = computed(() => authStore.user)
 const dropdownOpen = ref(false)
 const dropdownRef = ref<HTMLElement | null>(null)
 const contactInfo = computed(() => appStore.contactInfo)
 const docUrl = computed(() => sanitizeUrl(appStore.docUrl))
-const modelPlazaEnabled = computed(() => isFeatureFlagEnabled(FeatureFlags.modelPlaza))
+const apiDocsUrl = computed(() => {
+  if (docUrl.value) return docUrl.value
+  if (typeof window === 'undefined') return '/docs/api'
+  return new URL('/docs/api', window.location.origin).toString()
+})
 const avatarUrl = computed(() => user.value?.avatar_url?.trim() || '')
 const availableBalance = computed(() => Number(user.value?.balance || 0))
 const frozenBalance = computed(() => Number(user.value?.frozen_balance || 0))
@@ -296,7 +344,6 @@ const totalBalance = computed(() => availableBalance.value + frozenBalance.value
 const balanceAvailableText = computed(() => t('common.availableBalance') === 'common.availableBalance' ? '可用余额' : t('common.availableBalance'))
 const balanceFrozenText = computed(() => t('common.frozenBalance') === 'common.frozenBalance' ? '冻结金额' : t('common.frozenBalance'))
 const balanceTotalText = computed(() => t('common.totalBalance') === 'common.totalBalance' ? '总余额' : t('common.totalBalance'))
-const balanceFrozenLabel = computed(() => `${balanceFrozenText.value} ${formatHeaderMoney(frozenBalance.value)}`)
 
 // 只在标准模式的管理员下显示新手引导按钮
 const showOnboardingButton = computed(() => {
@@ -324,6 +371,60 @@ const displayName = computed(() => {
 
 // 订阅功能关闭时不挂载顶栏订阅徽章（组件 onMounted 会拉取订阅接口）。
 const subscriptionFeatureEnabled = computed(() => isFeatureFlagEnabled(FeatureFlags.subscription))
+
+watch(
+  [
+    () => route.query.openApiKeys,
+    () => route.query.openModelPlaza,
+    () => route.query.openUsage,
+    () => route.query.openProfile,
+    () => route.query.openManual,
+    () => route.query.openRecharge,
+    () => route.query.rechargeTab,
+  ],
+  ([openApiKeys, openModelPlaza, openUsage, openProfile, openManual, openRecharge, rechargeTab]) => {
+    if (openApiKeys === '1') {
+      apiKeyModalOpen.value = true
+      clearModalQuery('openApiKeys')
+    }
+    if (openModelPlaza === '1') {
+      modelPlazaModalOpen.value = true
+      clearModalQuery('openModelPlaza')
+    }
+    if (openUsage === '1') {
+      usageModalOpen.value = true
+      clearModalQuery('openUsage')
+    }
+    if (openProfile === '1') {
+      profileModalOpen.value = true
+      clearModalQuery('openProfile')
+    }
+    if (openManual === '1') {
+      manualModalOpen.value = true
+      clearModalQuery('openManual')
+    }
+    if (openRecharge === '1') {
+      rechargeInitialTab.value = rechargeTab === 'redeem' ? 'redeem' : 'recharge'
+      rechargeModalOpen.value = true
+      clearModalQueries('openRecharge', 'rechargeTab')
+    }
+  },
+  { immediate: true },
+)
+
+function clearModalQuery(
+  key: 'openApiKeys' | 'openModelPlaza' | 'openUsage' | 'openProfile' | 'openManual' | 'openRecharge' | 'rechargeTab',
+) {
+  clearModalQueries(key)
+}
+
+function clearModalQueries(
+  ...keys: Array<'openApiKeys' | 'openModelPlaza' | 'openUsage' | 'openProfile' | 'openManual' | 'openRecharge' | 'rechargeTab'>
+) {
+  const query = { ...route.query }
+  for (const key of keys) delete query[key]
+  void router.replace({ path: route.path, query })
+}
 
 // /purchase 的标题/描述随站点计费模式切换，与 document.title 共用同一解析。
 const routeMetaKeys = computed(() => resolveRouteMetaKeys(route, {
@@ -366,6 +467,22 @@ function closeDropdown() {
   dropdownOpen.value = false
 }
 
+function openApiKeyModal() {
+  closeDropdown()
+  apiKeyModalOpen.value = true
+}
+
+function openProfileModal() {
+  closeDropdown()
+  profileModalOpen.value = true
+}
+
+function openRechargeModal() {
+  closeDropdown()
+  rechargeInitialTab.value = 'recharge'
+  rechargeModalOpen.value = true
+}
+
 async function handleLogout() {
   closeDropdown()
   try {
@@ -377,8 +494,12 @@ async function handleLogout() {
   await router.push('/login')
 }
 
-function handleReplayGuide() {
+async function handleReplayGuide() {
   closeDropdown()
+  if (route.path !== '/image-studio') {
+    await router.push('/image-studio')
+    await nextTick()
+  }
   onboardingStore.replay()
 }
 
@@ -403,6 +524,18 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+@media (min-width: 1440px) {
+  .app-header__nav {
+    position: absolute;
+    top: 0;
+    left: 50%;
+    height: 100%;
+    flex: none;
+    align-items: center;
+    transform: translateX(-50%);
+  }
+}
+
 .dropdown-enter-active,
 .dropdown-leave-active {
   transition: all 0.2s ease;

@@ -3,6 +3,13 @@ import type { ApiKey, Group } from '@/types'
 
 export type CreatorKind = 'image' | 'video'
 
+export function isCreationServiceUnavailable(error: unknown): boolean {
+  const message = error instanceof Error
+    ? error.message
+    : String((error as { message?: unknown } | null)?.message ?? error ?? '')
+  return message.includes('NO_IMAGE_CREATION_SERVICE') || message.includes('NO_VIDEO_CREATION_SERVICE')
+}
+
 function supportsImage(group: Group | null | undefined): boolean {
   return Boolean(group) && group?.allow_image_generation === true
 }

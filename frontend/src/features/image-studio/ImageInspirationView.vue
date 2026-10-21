@@ -1,36 +1,13 @@
 <template>
   <AppLayout>
-    <div class="image-inspiration">
+    <div class="studio-library">
+      <div class="studio-library__nav xl:hidden"><StudioNav /></div>
+      <div class="studio-library__content image-inspiration">
       <header class="image-inspiration__header">
         <div>
           <h1>图片灵感库</h1>
-          <p>浏览图片作品和完整提示词，寻找构图、配色与材质参考，一键带入图片工作台。</p>
         </div>
         <div class="image-inspiration__header-actions">
-          <div class="segmented" role="tablist" aria-label="灵感来源">
-            <button
-              type="button"
-              role="tab"
-              class="segmented__item"
-              :class="{ 'segmented__item--active': source === 'library' }"
-              :aria-selected="source === 'library'"
-              data-testid="image-inspiration-source-library"
-              @click="switchSource('library')"
-            >
-              作品库
-            </button>
-            <button
-              type="button"
-              role="tab"
-              class="segmented__item"
-              :class="{ 'segmented__item--active': source === 'online' }"
-              :aria-selected="source === 'online'"
-              data-testid="image-inspiration-source-online"
-              @click="switchSource('online')"
-            >
-              在线灵感
-            </button>
-          </div>
           <RouterLink class="toolbar-link" to="/image-studio">
             <Icon name="grid" size="sm" />
             <span>去图片工作台</span>
@@ -72,7 +49,7 @@
             </div>
             <button
               type="button"
-              class="secondary-button"
+              class="secondary-button search-submit"
               data-testid="image-library-search-button"
               @click="reloadLibrary"
             >
@@ -312,6 +289,7 @@
         </div>
       </template>
     </BaseDialog>
+    </div>
   </AppLayout>
 </template>
 
@@ -322,9 +300,11 @@ import { useRouter } from 'vue-router'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Icon from '@/components/icons/Icon.vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
+import StudioNav from '@/components/layout/StudioNav.vue'
 import { useClipboard } from '@/composables/useClipboard'
 import ImageStudioSelect from './ImageStudioSelect.vue'
 import ImageInspirationTile from './ImageInspirationTile.vue'
+import { HOME_INSPIRATION_ITEMS } from './homeInspiration'
 import {
   fetchInspirationLibrary,
   fetchOnlineInspirationFeed,
@@ -476,6 +456,16 @@ function reloadLibrary() {
   void loadLibrary()
 }
 
+function localHomeItems(): InspirationLibraryItem[] {
+  const keyword = libraryQuery.keyword.trim().toLowerCase()
+  return HOME_INSPIRATION_ITEMS.filter((item) => {
+    if (libraryQuery.model !== 'all' && item.model !== libraryQuery.model) return false
+    if (libraryQuery.category !== 'all' && item.category !== libraryQuery.category) return false
+    if (!keyword) return true
+    return `${item.title} ${item.prompt}`.toLowerCase().includes(keyword)
+  })
+}
+
 async function loadLibrary(options: { append?: boolean; refresh?: boolean } = {}) {
   const append = options.append === true
   const page = append ? libraryPageNumber.value + 1 : 1
@@ -491,19 +481,26 @@ async function loadLibrary(options: { append?: boolean; refresh?: boolean } = {}
       pageSize: 60,
       refresh: options.refresh === true,
     })
-    libraryItems.value = append ? [...libraryItems.value, ...result.items] : result.items
+    const localItems = page === 1 ? localHomeItems() : []
+    libraryItems.value = append
+      ? [...libraryItems.value, ...localItems, ...result.items]
+      : [...localItems, ...result.items]
     libraryPageNumber.value = page
-    libraryTotal.value = result.total
+    libraryTotal.value = result.total + (page === 1 ? localItems.length : 0)
     libraryHasMore.value = result.has_more
     libraryFetchedAt.value = result.fetched_at
     libraryStale.value = result.stale
-    libraryModels.value = result.models
-    libraryCategories.value = result.categories
+    libraryModels.value = Array.from(new Set([...result.models, ...HOME_INSPIRATION_ITEMS.map((item) => item.model)]))
+    libraryCategories.value = Array.from(new Set([...result.categories, ...HOME_INSPIRATION_ITEMS.map((item) => item.category)]))
   } catch (error) {
     const message = error instanceof Error ? error.message : ''
+    libraryItems.value = localHomeItems()
+    libraryModels.value = Array.from(new Set(HOME_INSPIRATION_ITEMS.map((item) => item.model)))
+    libraryCategories.value = Array.from(new Set(HOME_INSPIRATION_ITEMS.map((item) => item.category)))
+    libraryTotal.value = libraryItems.value.length
     libraryError.value = message
-      ? `加载图片灵感失败：${message}`
-      : '加载图片灵感失败：请检查服务器能否访问灵感站。'
+      ? `在线作品库暂时不可用，已展示本站家居灵感：${message}`
+      : '在线作品库暂时不可用，已展示本站家居灵感。'
   } finally {
     libraryLoading.value = false
   }
@@ -555,11 +552,6 @@ async function loadOnline(refresh = false) {
   } finally {
     if (!controller.signal.aborted) onlineLoading.value = false
   }
-}
-
-function switchSource(next: 'library' | 'online') {
-  source.value = next
-  if (next === 'online' && !onlineItems.value.length && !onlineLoading.value) void loadOnline()
 }
 
 function openLibraryItem(item: InspirationLibraryItem) {
@@ -868,6 +860,13 @@ onMounted(() => {
 .secondary-button:hover {
   border-color: rgb(232 121 78);
   color: rgb(173 74 41);
+}
+
+.secondary-button.search-submit {
+  flex: 0 0 auto;
+  min-width: 4.8rem;
+  padding: 0 0.8rem;
+  white-space: nowrap;
 }
 
 .load-more .secondary-button {

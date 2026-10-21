@@ -1,6 +1,6 @@
 <template>
-  <div class="grid grid-cols-2 gap-4 lg:grid-cols-4">
-    <div class="card p-4 flex items-center gap-3">
+  <div class="grid grid-cols-2 gap-4" :class="gridColumnsClass">
+    <div v-if="showRequests" class="card p-4 flex items-center gap-3">
       <div class="rounded-lg bg-blue-100 p-2 dark:bg-blue-900/30 text-blue-600">
         <Icon name="document" size="md" />
       </div>
@@ -10,7 +10,7 @@
         <p class="text-xs text-gray-400">{{ t('usage.inSelectedRange') }}</p>
       </div>
     </div>
-    <div class="card p-4 flex items-center gap-3">
+    <div v-if="showTokens" class="card p-4 flex items-center gap-3">
       <div class="rounded-lg bg-amber-100 p-2 dark:bg-amber-900/30 text-amber-600"><svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m21 7.5-9-5.25L3 7.5m18 0-9 5.25m9-5.25v9l-9 5.25M3 7.5l9 5.25M3 7.5v9l9 5.25m0-9v9" /></svg></div>
       <div>
         <p class="text-xs font-medium text-gray-500">{{ t('usage.totalTokens') }}</p>
@@ -58,7 +58,7 @@
         </p>
       </div>
     </div>
-    <div class="card p-4 flex items-center gap-3">
+    <div v-if="showCost" class="card p-4 flex items-center gap-3">
       <div class="rounded-lg bg-green-100 p-2 dark:bg-green-900/30 text-green-600">
         <Icon name="dollar" size="md" />
       </div>
@@ -67,7 +67,7 @@
         <p class="text-xl font-bold text-green-600">
           ¥{{ (stats?.total_actual_cost || 0).toFixed(4) }}
         </p>
-        <p class="text-xs text-gray-400">
+        <p v-if="showCostBreakdown" class="text-xs text-gray-400">
           <span class="text-orange-500">{{ t('usage.accountCost') }} ¥{{ (stats?.total_account_cost || 0).toFixed(4) }}</span>
           <span> · </span>
           <span>{{ t('usage.standardCost') }} ¥{{ (stats?.total_cost || 0).toFixed(4) }}</span>
@@ -84,14 +84,36 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { AdminUsageStatsResponse } from '@/api/admin/usage'
 import type { UsageStatsResponse } from '@/types'
 import Icon from '@/components/icons/Icon.vue'
 
-defineProps<{ stats: AdminUsageStatsResponse | UsageStatsResponse | null }>()
+const props = withDefaults(defineProps<{
+  stats: AdminUsageStatsResponse | UsageStatsResponse | null
+  showRequests?: boolean
+  showTokens?: boolean
+  showCost?: boolean
+  showAccountCost?: boolean
+  showCostBreakdown?: boolean
+  strikeStandardCost?: boolean
+}>(), {
+  showRequests: true,
+  showTokens: true,
+  showCost: true,
+  showAccountCost: true,
+  showCostBreakdown: true,
+  strikeStandardCost: false,
+})
 
 const { t } = useI18n()
+const gridColumnsClass = computed(() => {
+  const count = 1 + Number(props.showRequests) + Number(props.showTokens) + Number(props.showCost)
+  if (count >= 4) return 'lg:grid-cols-4'
+  if (count === 3) return 'lg:grid-cols-3'
+  return 'lg:grid-cols-2'
+})
 
 const formatDuration = (ms: number) =>
   ms < 1000 ? `${ms.toFixed(0)}ms` : `${(ms / 1000).toFixed(2)}s`

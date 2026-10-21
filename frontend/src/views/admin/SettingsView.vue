@@ -8526,6 +8526,20 @@
                     ></textarea>
                   </div>
                 </div>
+                <div class="flex items-center justify-between gap-4 rounded-lg border border-gray-200 p-4 dark:border-dark-700">
+                  <div>
+                    <label class="input-label">
+                      {{ t("admin.settings.payment.rechargeCardEnabled") }}
+                    </label>
+                    <p class="mt-1 text-xs text-gray-400 dark:text-gray-500">
+                      {{ t("admin.settings.payment.rechargeCardEnabledHint") }}
+                    </p>
+                  </div>
+                  <Toggle
+                    v-model="form.payment_recharge_card_enabled"
+                    data-testid="payment-recharge-card-enabled"
+                  />
+                </div>
                 <div class="space-y-3">
                   <div class="flex items-center justify-between gap-3">
                     <div>
@@ -8575,7 +8589,7 @@
                           <input v-model.number="product.sort_order" type="number" step="1" class="input" />
                         </div>
                         <div>
-                          <label class="input-label">{{ t("admin.settings.payment.rechargeCardEnabled") }}</label>
+                          <label class="input-label">{{ t("admin.settings.payment.rechargeCardProductEnabled") }}</label>
                           <button
                             type="button"
                             :class="[
@@ -10031,6 +10045,7 @@ const form = reactive<SettingsForm>({
   payment_enabled_types: [],
   payment_help_image_url: "",
   payment_help_text: "",
+  payment_recharge_card_enabled: true,
   payment_recharge_card_products: [],
   payment_product_name_prefix: "",
   payment_product_name_suffix: "",
@@ -12017,6 +12032,7 @@ async function saveSettings() {
       payment_product_name_suffix: form.payment_product_name_suffix,
       payment_help_image_url: form.payment_help_image_url,
       payment_help_text: form.payment_help_text,
+      payment_recharge_card_enabled: form.payment_recharge_card_enabled,
       payment_recharge_card_products: normalizedRechargeCardProducts,
       payment_cancel_rate_limit_enabled: form.payment_cancel_rate_limit_enabled,
       payment_cancel_rate_limit_max:

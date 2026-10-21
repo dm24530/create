@@ -228,7 +228,10 @@ export const routes: RouteRecordRaw[] = [
   {
     path: '/keys',
     name: 'Keys',
-    component: () => import('@/views/user/KeysView.vue'),
+    redirect: {
+      path: '/image-studio',
+      query: { openApiKeys: '1' }
+    },
     meta: {
       requiresAuth: true,
       requiresAdmin: false,
@@ -254,7 +257,10 @@ export const routes: RouteRecordRaw[] = [
   {
     path: '/usage',
     name: 'Usage',
-    component: () => import('@/views/user/UsageView.vue'),
+    redirect: {
+      path: '/image-studio',
+      query: { openUsage: '1' }
+    },
     meta: {
       requiresAuth: true,
       requiresAdmin: false,
@@ -266,7 +272,10 @@ export const routes: RouteRecordRaw[] = [
   {
     path: '/redeem',
     name: 'Redeem',
-    component: () => import('@/views/user/RedeemView.vue'),
+    redirect: {
+      path: '/image-studio',
+      query: { openRecharge: '1', rechargeTab: 'redeem' }
+    },
     meta: {
       requiresAuth: true,
       requiresAdmin: false,
@@ -304,7 +313,10 @@ export const routes: RouteRecordRaw[] = [
   {
     path: '/profile',
     name: 'Profile',
-    component: () => import('@/views/user/ProfileView.vue'),
+    redirect: {
+      path: '/image-studio',
+      query: { openProfile: '1' }
+    },
     meta: {
       requiresAuth: true,
       requiresAdmin: false,
@@ -859,8 +871,7 @@ router.beforeEach(async (to, _from, next) => {
         next()
         return
       }
-      // Admin users go to admin dashboard, regular users go to user dashboard
-      next(authStore.isAdmin ? '/admin/dashboard' : '/dashboard')
+      next(authStore.isAdmin ? '/admin/dashboard' : '/image-studio')
       return
     }
     // Model Plaza:公开路由但受「启用开关 + 可选强制登录」双重控制(后端同口径 fail-closed)
@@ -879,7 +890,7 @@ router.beforeEach(async (to, _from, next) => {
           authStore.isAuthenticated
             ? authStore.isAdmin
               ? '/admin/dashboard'
-              : '/dashboard'
+              : '/image-studio'
             : '/home'
         )
         return
@@ -919,7 +930,7 @@ router.beforeEach(async (to, _from, next) => {
   // Check admin requirement
   if (requiresAdmin && !authStore.isAdmin) {
     // User is authenticated but not admin, redirect to user dashboard
-    next('/dashboard')
+    next(authStore.isAdmin ? '/admin/dashboard' : '/image-studio')
     return
   }
 
@@ -956,7 +967,7 @@ router.beforeEach(async (to, _from, next) => {
     appStore.publicSettingsLoaded &&
     appStore.cachedPublicSettings?.payment_enabled === false
   ) {
-    next(authStore.isAdmin ? '/admin/dashboard' : '/dashboard')
+    next(authStore.isAdmin ? '/admin/dashboard' : '/image-studio')
     return
   }
 
@@ -965,7 +976,7 @@ router.beforeEach(async (to, _from, next) => {
     appStore.publicSettingsLoaded &&
     appStore.cachedPublicSettings?.risk_control_enabled === false
   ) {
-    next(authStore.isAdmin ? '/admin/settings' : '/dashboard')
+    next(authStore.isAdmin ? '/admin/settings' : '/image-studio')
     return
   }
 
@@ -975,7 +986,7 @@ router.beforeEach(async (to, _from, next) => {
     appStore.publicSettingsLoaded &&
     appStore.cachedPublicSettings?.subscription_enabled === false
   ) {
-    next(authStore.isAdmin ? '/admin/dashboard' : '/dashboard')
+    next(authStore.isAdmin ? '/admin/dashboard' : '/image-studio')
     return
   }
 
@@ -990,7 +1001,7 @@ router.beforeEach(async (to, _from, next) => {
 
     if (restrictedPaths.some((path) => to.path.startsWith(path))) {
       // 简易模式下访问受限页面,重定向到仪表板
-      next(authStore.isAdmin ? '/admin/dashboard' : '/dashboard')
+      next(authStore.isAdmin ? '/admin/dashboard' : '/image-studio')
       return
     }
   }

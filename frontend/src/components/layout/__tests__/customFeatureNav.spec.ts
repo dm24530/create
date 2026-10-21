@@ -18,7 +18,9 @@ describe('custom feature sidebar navigation', () => {
       '/models',
       '/lottery',
     ])
-    expect(buildUserCustomNavBeforeProfile(t, { ManualIcon: icon }).map((item) => item.path)).toEqual(['/manual'])
+    expect(buildUserCustomNavBeforeProfile(t, { ManualIcon: icon }).map((item) => item.path)).toEqual([
+      '/image-studio?openManual=1',
+    ])
   })
 
   it('keeps admin custom nav entries in stable groups', () => {

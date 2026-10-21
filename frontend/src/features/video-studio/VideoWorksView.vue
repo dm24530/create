@@ -1,10 +1,11 @@
 <template>
   <AppLayout>
-    <div class="works">
+    <div class="studio-library">
+      <div class="studio-library__nav xl:hidden"><StudioNav /></div>
+      <div class="studio-library__content works">
       <header class="works__header">
         <div>
           <h1>我的作品</h1>
-          <p>这里保存生成的图片和视频作品，已保存的内容换设备也能看到。</p>
           <p v-if="studioQuota" class="works__quota" data-testid="works-quota">
             存储额度：{{ studioQuota.used }} / {{ studioQuota.limit }}（图片与视频共用）
           </p>
@@ -48,7 +49,6 @@
         <template v-if="images.length">
           <div class="works__section-head">
             <h2>图片作品</h2>
-            <span>图片工作台生成并保存到作品库的内容</span>
           </div>
           <div class="works-grid works-grid--images">
             <article
@@ -104,7 +104,7 @@
                 >
                   <Icon name="copy" size="sm" />
                 </button>
-                <button type="button" class="mini-action" title="删除图片作品" @click="removeImageWork(entry)">
+                <button type="button" class="mini-action" title="取消收藏并删除图片" @click="removeImageWork(entry)">
                   <Icon name="trash" size="sm" />
                 </button>
               </div>
@@ -116,7 +116,6 @@
         <template v-if="archived.length">
           <div class="works__section-head">
             <h2>已归档</h2>
-            <span>存在对象存储里，换设备也能看到</span>
           </div>
           <div class="works-grid works-grid--archived">
             <article v-for="entry in archived" :key="entry.id" class="work-card" :data-testid="`archived-${entry.id}`">
@@ -158,7 +157,7 @@
                 >
                   <Icon name="copy" size="sm" />
                 </button>
-                <button type="button" class="mini-action" title="删除归档" @click="removeArchived(entry)">
+                <button type="button" class="mini-action" title="取消收藏并删除视频" @click="removeArchived(entry)">
                   <Icon name="trash" size="sm" />
                 </button>
               </div>
@@ -166,7 +165,7 @@
           </div>
         </template>
 
-        <div v-if="!records.length && !archived.length && !images.length" class="works__empty">
+        <div v-if="!archived.length && !images.length" class="works__empty">
           <div class="works__empty-icon">
             <Icon name="grid" size="xl" />
           </div>
@@ -178,84 +177,6 @@
           </RouterLink>
         </div>
 
-        <template v-if="records.length">
-          <div v-if="archived.length" class="works__section-head">
-            <h2>本机记录</h2>
-            <span>只存在这个浏览器里，可用来重试或重新载入</span>
-          </div>
-          <div class="works-grid">
-          <article
-            v-for="record in records"
-            :key="record.id"
-            class="work-card"
-            :data-testid="`work-${record.id}`"
-          >
-            <div class="work-card__media">
-              <video
-                v-if="playable[record.id]"
-                :src="playable[record.id]"
-                class="work-card__video"
-                controls
-                playsinline
-                preload="metadata"
-              />
-              <div v-else class="work-card__placeholder">
-                <Icon :name="record.status === 'failed' ? 'exclamationCircle' : 'play'" size="lg" />
-                <strong>{{ statusLabel(record) }}</strong>
-                <small>{{ record.statusMessage || record.requestId || '—' }}</small>
-              </div>
-            </div>
-
-            <div class="work-card__body">
-              <p class="work-card__prompt" :title="record.prompt">{{ record.prompt || '未填写提示词' }}</p>
-              <p class="work-card__meta">{{ workMeta(record) }}</p>
-              <p class="work-card__time">{{ formatTime(record.createdAt) }}</p>
-            </div>
-
-            <div class="work-card__actions">
-              <button
-                v-if="!playable[record.id]"
-                type="button"
-                class="mini-action"
-                title="载入视频"
-                @click="loadVideo(record)"
-              >
-                <Icon name="download" size="sm" />
-              </button>
-              <button
-                v-if="record.status === 'queued' || record.status === 'running'"
-                type="button"
-                class="mini-action"
-                title="刷新任务状态"
-                @click="refreshRecord(record)"
-              >
-                <Icon name="sync" size="sm" />
-              </button>
-              <button
-                v-if="playable[record.id]"
-                type="button"
-                class="mini-action"
-                title="下载视频"
-                @click="downloadRecord(record)"
-              >
-                <Icon name="download" size="sm" />
-              </button>
-              <button
-                type="button"
-                class="mini-action"
-                title="复制提示词"
-                :disabled="!record.prompt"
-                @click="copyPrompt(record)"
-              >
-                <Icon name="copy" size="sm" />
-              </button>
-              <button type="button" class="mini-action" title="删除记录" @click="removeRecord(record)">
-                <Icon name="trash" size="sm" />
-              </button>
-            </div>
-          </article>
-          </div>
-        </template>
       </section>
     </div>
 
@@ -312,6 +233,7 @@
         </div>
       </template>
     </BaseDialog>
+    </div>
   </AppLayout>
 </template>
 
@@ -321,6 +243,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Icon from '@/components/icons/Icon.vue'
+import StudioNav from '@/components/layout/StudioNav.vue'
 import {
   authAPI,
   imageStudioGalleryAPI,
@@ -346,8 +269,6 @@ import {
 } from './videoArchiveApi'
 import {
   clearVideoWorks,
-  listVideoWorks,
-  removeVideoWork,
   updateVideoWork,
   type VideoWorkRecord,
 } from './videoWorks'
@@ -381,29 +302,6 @@ function keyFor(record: VideoWorkRecord): ApiKey | null {
   return activeKeys.value.find((key) => key.id === record.keyId) || null
 }
 
-function statusLabel(record: VideoWorkRecord): string {
-  switch (record.status) {
-    case 'succeeded':
-      return '已完成'
-    case 'failed':
-      return '生成失败'
-    case 'running':
-      return '生成中'
-    default:
-      return '排队中'
-  }
-}
-
-function workMeta(record: VideoWorkRecord): string {
-  return [
-    record.model,
-    `${record.durationSeconds}秒`,
-    record.resolution,
-    record.aspectRatio,
-    record.generateAudio ? '含音频' : '',
-  ].filter(Boolean).join(' · ')
-}
-
 function formatTime(timestamp: number): string {
   if (!timestamp) return ''
   const date = new Date(timestamp)
@@ -414,7 +312,7 @@ function formatTime(timestamp: number): string {
 async function loadData() {
   errorMessage.value = ''
   await Promise.allSettled([loadArchivedVideos(), loadImages()])
-  records.value = visibleLocalRecords()
+  records.value = []
   const keysPromise = keysAPI.list(1, 100, { status: 'active' })
     .then((response) => {
       keys.value = response.items || []
@@ -432,7 +330,7 @@ async function loadData() {
 
 async function loadImages() {
   try {
-    images.value = await imageStudioGalleryAPI.list()
+    images.value = (await imageStudioGalleryAPI.list('saved')).filter((entry) => entry.saved)
   } catch {
     images.value = []
   }
@@ -457,21 +355,19 @@ async function loadImageThumbnail(entry: ImageStudioGalleryEntry) {
   }
 }
 
-// 已归档的记录会同时留下一条本机记录，这里把重复的本地条目过滤掉，
-// 免得同一段视频既显示在「已归档」又显示在「本机记录」。
-function visibleLocalRecords(): VideoWorkRecord[] {
-  const archivedUrls = new Set(archived.value.map((entry) => entry.url))
-  return listVideoWorks().filter((record) => !record.archivedUrl || !archivedUrls.has(record.archivedUrl))
-}
-
 async function loadArchivedVideos() {
   try {
-    archived.value = await listArchivedVideos()
+    archived.value = (await listArchivedVideos('saved')).filter((entry) => entry.saved)
   } catch {
     // 归档接口不可用（例如对象存储没配）时不影响本机记录展示。
     archived.value = []
   }
   await loadStudioQuota()
+}
+
+function visibleLocalRecords(): VideoWorkRecord[] {
+  // 我的作品只展示用户明确收藏的内容；本机任务记录不再混入作品库。
+  return []
 }
 
 // 配额是图片 + 视频合起来算的，这里只做展示，满了后端会在归档时拒绝。
@@ -525,8 +421,11 @@ async function downloadImageWork(entry: ImageStudioGalleryEntry) {
 }
 
 async function removeImageWork(entry: ImageStudioGalleryEntry) {
+  const expired = entry.expires_at > 0 && entry.expires_at * 1000 <= Date.now()
   const confirmed = typeof window === 'undefined'
-    || window.confirm('删除这张图片？对象存储里的文件会一起删除，无法恢复。')
+    || window.confirm(expired
+      ? '这张图片已经过期。取消收藏后会永久删除，无法恢复，确定继续吗？'
+      : '取消收藏并删除这张图片？对象存储里的文件会一起删除，无法恢复。')
   if (!confirmed) return
   errorMessage.value = ''
   try {
@@ -543,8 +442,11 @@ async function downloadArchived(entry: ArchivedVideoEntry) {
 }
 
 async function removeArchived(entry: ArchivedVideoEntry) {
+  const expired = entry.expires_at > 0 && entry.expires_at * 1000 <= Date.now()
   const confirmed = typeof window === 'undefined'
-    || window.confirm('删除这段视频？对象存储里的文件会一起删除，无法恢复。')
+    || window.confirm(expired
+      ? '这段视频已经过期。取消收藏后会永久删除，无法恢复，确定继续吗？'
+      : '取消收藏并删除这段视频？对象存储里的文件会一起删除，无法恢复。')
   if (!confirmed) return
   try {
     await deleteArchivedVideo(entry.id)
@@ -630,10 +532,6 @@ async function loadVideo(record: VideoWorkRecord) {
   }
 }
 
-async function refreshRecord(record: VideoWorkRecord) {
-  await loadVideo(record)
-}
-
 function updateRecord(
   record: VideoWorkRecord,
   status: VideoTaskStatus,
@@ -666,17 +564,6 @@ async function downloadUrl(url: string, filename: string) {
   } catch {
     window.open(url, '_blank')
   }
-}
-
-function removeRecord(record: VideoWorkRecord) {
-  const url = playable.value[record.id]
-  if (url?.startsWith('blob:')) URL.revokeObjectURL(url)
-  const next = { ...playable.value }
-  delete next[record.id]
-  playable.value = next
-  removeVideoWork(record.id)
-  records.value = visibleLocalRecords()
-  if (activeRecord.value?.id === record.id) activeRecord.value = null
 }
 
 function clearAll() {
@@ -715,16 +602,20 @@ onBeforeUnmount(() => {
 <style scoped>
 .works {
   display: flex;
+  height: calc(100dvh - 8rem - 1px);
+  min-height: 0;
   width: 100%;
   /* 与图片工作台保持同宽。 */
   max-width: 120rem;
   margin: 0 auto;
   flex-direction: column;
   gap: 1rem;
+  overflow: hidden;
 }
 
 .works__header {
   display: flex;
+  flex-shrink: 0;
   flex-wrap: wrap;
   align-items: flex-end;
   justify-content: space-between;
@@ -829,7 +720,9 @@ onBeforeUnmount(() => {
 }
 
 .works__stage {
-  min-height: 22rem;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
   border: 1px solid rgb(226 232 240);
   border-radius: 0.75rem;
   background: rgb(255 255 255);
@@ -838,6 +731,7 @@ onBeforeUnmount(() => {
 
 .works__empty {
   display: flex;
+  height: 100%;
   min-height: 20rem;
   flex-direction: column;
   align-items: center;

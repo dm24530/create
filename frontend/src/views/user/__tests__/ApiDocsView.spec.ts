@@ -1,7 +1,15 @@
 import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { readFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import ApiDocsView from '../ApiDocsView.vue'
+
+const viewSource = readFileSync(
+  resolve(dirname(fileURLToPath(import.meta.url)), '../ApiDocsView.vue'),
+  'utf8',
+)
 
 vi.mock('@/composables/useClipboard', () => ({
   useClipboard: () => ({ copyToClipboard: vi.fn().mockResolvedValue(true) }),
@@ -11,13 +19,17 @@ vi.mock('@/stores/app', () => ({
   useAppStore: () => ({
     cachedPublicSettings: { api_base_url: 'https://api.example.com/v1' },
     apiBaseUrl: 'https://api.example.com/v1',
+    siteName: 'Create',
   }),
 }))
 
 const stubs = {
-  AppLayout: { template: '<div><slot /></div>' },
   RouterLink: { props: ['to'], template: '<a><slot /></a>' },
   Icon: true,
+  ManualQuickModal: {
+    props: ['show'],
+    template: '<div data-testid="manual-modal" :data-show="String(show)" />',
+  },
   DocCodeBlock: {
     props: ['code', 'title', 'language'],
     template: '<pre data-testid="doc-code">{{ code }}</pre>',
@@ -25,6 +37,15 @@ const stubs = {
 }
 
 describe('ApiDocsView', () => {
+  it('renders as a standalone docs page without the workspace layout', () => {
+    expect(viewSource).not.toContain("import AppLayout from '@/components/layout/AppLayout.vue'")
+    expect(viewSource).not.toContain('<AppLayout>')
+
+    const wrapper = mount(ApiDocsView, { global: { stubs } })
+    expect(wrapper.get('.docs-topbar').text()).toContain('接口文档')
+    expect(wrapper.get('.docs-topbar').text()).toContain('返回工作台')
+  })
+
   it('renders the complete API reference with configured base URL and examples', () => {
     const wrapper = mount(ApiDocsView, { global: { stubs } })
 
@@ -43,5 +64,16 @@ describe('ApiDocsView', () => {
     expect(wrapper.text()).not.toContain('/messages')
     expect(wrapper.text()).not.toContain('/embeddings')
     expect(wrapper.findAll('[data-testid="doc-code"]').length).toBeGreaterThan(8)
+  })
+
+  it('opens the current studio manual instead of navigating to the retired page', async () => {
+    const wrapper = mount(ApiDocsView, { global: { stubs } })
+
+    expect(wrapper.find('a[href="/manual"]').exists()).toBe(false)
+    expect(wrapper.getComponent(stubs.ManualQuickModal).props('show')).toBe(false)
+
+    await wrapper.get('.docs-sidebar__manual-link').trigger('click')
+
+    expect(wrapper.getComponent(stubs.ManualQuickModal).props('show')).toBe(true)
   })
 })

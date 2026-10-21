@@ -38,6 +38,8 @@
         :platforms="platforms"
         :groups="groupOptions"
         :rates="rates"
+        :compact="compactFilters"
+        :show-group-and-rate-filters="showGroupAndRateFilters"
         :platform="selectedPlatform"
         :group-id="selectedGroupId"
         :rate="selectedRate"
@@ -79,6 +81,10 @@ const props = defineProps<{
   error?: boolean
   /** 后台内嵌形态(AppLayout 内):隐藏页头。 */
   embedded?: boolean
+  /** 弹窗形态:筛选选项横向滚动，不换行。 */
+  compactFilters?: boolean
+  /** 是否展示分组和倍率筛选。 */
+  showGroupAndRateFilters?: boolean
 }>()
 
 const { t } = useI18n()

@@ -1,5 +1,30 @@
 <template>
-  <AppLayout>
+  <div class="api-docs-page">
+    <header class="docs-topbar">
+      <div class="docs-topbar__identity">
+        <RouterLink to="/image-studio" class="docs-topbar__brand">
+          {{ appStore.siteName || 'Create' }}
+        </RouterLink>
+        <span class="docs-topbar__separator">/</span>
+        <span class="docs-topbar__current">接口文档</span>
+      </div>
+      <div class="docs-topbar__actions">
+        <button
+          type="button"
+          class="docs-topbar__icon"
+          :title="isDark ? '切换到浅色模式' : '切换到深色模式'"
+          :aria-label="isDark ? '切换到浅色模式' : '切换到深色模式'"
+          @click="toggleTheme"
+        >
+          <Icon :name="isDark ? 'sun' : 'moon'" size="sm" :class="isDark ? 'text-amber-500' : ''" />
+        </button>
+        <RouterLink to="/image-studio" class="docs-topbar__back">
+          <Icon name="arrowLeft" size="xs" />
+          <span>返回工作台</span>
+        </RouterLink>
+      </div>
+    </header>
+
     <div class="api-docs">
       <header class="docs-hero">
         <div class="docs-hero__copy">
@@ -27,9 +52,11 @@
             <a v-for="item in navSections" :key="item.id" :href="`#${item.id}`">{{ item.label }}</a>
           </nav>
           <div class="docs-sidebar__links">
-            <router-link to="/keys">创建 API 密钥</router-link>
-            <router-link to="/models">查看可用模型</router-link>
-            <router-link to="/manual">查看图片/视频使用手册</router-link>
+            <router-link :to="{ path: '/image-studio', query: { openApiKeys: '1' } }">创建 API 密钥</router-link>
+            <router-link :to="{ path: '/image-studio', query: { openModelPlaza: '1' } }">查看模型价格</router-link>
+            <button type="button" class="docs-sidebar__manual-link" @click="manualModalOpen = true">
+              查看图片/视频使用手册
+            </button>
           </div>
         </aside>
 
@@ -74,7 +101,7 @@
                   <strong>创建 API 密钥</strong>
                   <p>
                     打开
-                    <router-link to="/keys">API 密钥页面</router-link>
+                    <router-link :to="{ path: '/image-studio', query: { openApiKeys: '1' } }">工作台 API 密钥弹窗</router-link>
                     ，创建密钥并复制完整的 <code>sk-...</code> 内容。不要把密钥写进前端代码或公开仓库。
                   </p>
                 </div>
@@ -85,7 +112,7 @@
                   <strong>选择可用模型</strong>
                   <p>
                     打开
-                    <router-link to="/models">模型页面</router-link>
+                    <router-link :to="{ path: '/image-studio', query: { openModelPlaza: '1' } }">模型广场弹窗</router-link>
                     复制完整模型名。模型必须与密钥所属分组的能力匹配，否则会返回模型不存在或无权访问。
                   </p>
                 </div>
@@ -403,25 +430,29 @@
         </main>
       </div>
     </div>
-  </AppLayout>
+    <ManualQuickModal :show="manualModalOpen" @close="manualModalOpen = false" />
+  </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref } from 'vue'
-import AppLayout from '@/components/layout/AppLayout.vue'
 import DocCodeBlock from '@/components/docs/DocCodeBlock.vue'
 import Icon from '@/components/icons/Icon.vue'
+import ManualQuickModal from '@/components/docs/ManualQuickModal.vue'
 import { useAppStore } from '@/stores/app'
 import { resolveDocumentedApiBaseUrl } from '@/utils/apiEndpoint'
 import { useClipboard } from '@/composables/useClipboard'
+import { useTheme } from '@/composables/useTheme'
 
 const appStore = useAppStore()
 const { copyToClipboard } = useClipboard()
+const { isDark, toggleTheme } = useTheme()
 const apiBaseUrl = computed(() => resolveDocumentedApiBaseUrl(
   appStore.cachedPublicSettings?.api_base_url || appStore.apiBaseUrl,
   typeof window === 'undefined' ? '' : window.location.origin,
 ))
 const baseCopied = ref(false)
+const manualModalOpen = ref(false)
 let baseTimer: ReturnType<typeof setTimeout> | null = null
 
 const navSections = [
@@ -576,6 +607,94 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+.api-docs-page {
+  min-height: 100dvh;
+  width: 100%;
+  background: rgb(247 247 246);
+  color: rgb(30 41 59);
+}
+
+.docs-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  display: flex;
+  height: 3.5rem;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  border-bottom: 1px solid rgb(229 231 235);
+  background: rgb(255 255 255 / 0.92);
+  padding: 0 clamp(1rem, 4vw, 3rem);
+  backdrop-filter: blur(14px);
+}
+
+.docs-topbar__identity,
+.docs-topbar__actions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.docs-topbar__brand {
+  overflow: hidden;
+  color: rgb(15 23 42);
+  font-size: 0.88rem;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.docs-topbar__brand:hover {
+  color: rgb(173 74 41);
+}
+
+.docs-topbar__separator {
+  color: rgb(203 213 225);
+}
+
+.docs-topbar__current {
+  color: rgb(100 116 139);
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+.docs-topbar__icon {
+  display: inline-flex;
+  height: 2rem;
+  width: 2rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.45rem;
+  color: rgb(100 116 139);
+}
+
+.docs-topbar__icon:hover {
+  background: rgb(241 245 249);
+  color: rgb(15 23 42);
+}
+
+.docs-topbar__back {
+  display: inline-flex;
+  height: 2rem;
+  align-items: center;
+  gap: 0.3rem;
+  border: 1px solid rgb(226 232 240);
+  border-radius: 0.45rem;
+  background: rgb(255 255 255);
+  padding: 0 0.65rem;
+  color: rgb(71 85 105);
+  font-size: 0.74rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.docs-topbar__back:hover {
+  border-color: rgb(203 213 225);
+  color: rgb(15 23 42);
+}
+
 .api-docs {
   display: flex;
   width: 100%;
@@ -583,6 +702,7 @@ onBeforeUnmount(() => {
   margin: 0 auto;
   flex-direction: column;
   gap: 1.5rem;
+  padding: 2rem clamp(1rem, 4vw, 3rem) 5rem;
   color: rgb(30 41 59);
 }
 
@@ -707,8 +827,18 @@ onBeforeUnmount(() => {
   font-size: 0.76rem;
 }
 
-.docs-sidebar__links a {
+.docs-sidebar__links a,
+.docs-sidebar__manual-link {
   color: rgb(173 74 41);
+}
+
+.docs-sidebar__manual-link {
+  padding: 0;
+  text-align: left;
+}
+
+.docs-sidebar__manual-link:hover {
+  text-decoration: underline;
 }
 
 .docs-main {
@@ -746,9 +876,9 @@ onBeforeUnmount(() => {
 }
 
 .doc-section code {
-  border-radius: 0.25rem;
-  background: rgb(241 245 249);
-  padding: 0.08rem 0.3rem;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
   font-size: 0.82em;
   color: rgb(30 41 59);
 }
@@ -919,6 +1049,48 @@ onBeforeUnmount(() => {
   color: rgb(227 219 208);
 }
 
+:global(.dark .api-docs-page) {
+  background: rgb(18 18 20);
+}
+
+:global(.dark .docs-topbar) {
+  border-color: rgb(63 63 70);
+  background: rgb(24 24 27 / 0.94);
+}
+
+:global(.dark .docs-topbar__brand) {
+  color: rgb(244 244 245);
+}
+
+:global(.dark .docs-topbar__brand:hover) {
+  color: rgb(245 161 127);
+}
+
+:global(.dark .docs-topbar__separator) {
+  color: rgb(82 82 91);
+}
+
+:global(.dark .docs-topbar__current),
+:global(.dark .docs-topbar__icon) {
+  color: rgb(167 159 148);
+}
+
+:global(.dark .docs-topbar__icon:hover) {
+  background: rgb(39 39 42);
+  color: rgb(244 244 245);
+}
+
+:global(.dark .docs-topbar__back) {
+  border-color: rgb(63 63 70);
+  background: rgb(39 39 42);
+  color: rgb(212 212 216);
+}
+
+:global(.dark .docs-topbar__back:hover) {
+  border-color: rgb(82 82 91);
+  color: rgb(250 250 250);
+}
+
 :global(.dark .docs-hero),
 :global(.dark .doc-section),
 :global(.dark .docs-sidebar__links) {
@@ -950,7 +1122,6 @@ onBeforeUnmount(() => {
 }
 
 :global(.dark .doc-section code) {
-  background: rgb(44 41 37);
   color: rgb(227 219 208);
 }
 
@@ -1011,6 +1182,20 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 639px) {
+  .docs-topbar {
+    gap: 0.5rem;
+  }
+
+  .docs-topbar__back {
+    width: 2rem;
+    justify-content: center;
+    padding: 0;
+  }
+
+  .docs-topbar__back span {
+    display: none;
+  }
+
   .docs-hero h1 {
     font-size: 1.75rem;
   }

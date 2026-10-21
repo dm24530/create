@@ -1,5 +1,5 @@
 <template>
-  <AppLayout>
+  <component :is="embedded ? 'div' : AppLayout">
     <div class="mx-auto max-w-4xl space-y-6">
       <div v-if="loading" class="flex items-center justify-center py-20">
         <div class="h-8 w-8 animate-spin rounded-full border-4 border-primary-500 border-t-transparent"></div>
@@ -40,10 +40,14 @@
           <!-- Top-up Tab -->
           <template v-else-if="activeTab === 'recharge'">
             <!-- Recharge Account Card -->
-            <div class="card p-5">
-              <p class="text-xs font-medium text-gray-400 dark:text-gray-500">{{ t('payment.rechargeAccount') }}</p>
-              <p class="mt-1 text-base font-semibold text-gray-900 dark:text-white">{{ user?.username || '' }}</p>
-              <p class="mt-0.5 text-sm font-medium text-green-600 dark:text-green-400">{{ t('payment.currentBalance') }}: {{ user?.balance?.toFixed(2) || '0.00' }}</p>
+            <div class="card flex min-w-0 items-center gap-4 p-5">
+              <div class="flex min-w-0 flex-1 items-baseline gap-3">
+                <span class="shrink-0 text-xs font-medium text-gray-400 dark:text-gray-500">{{ t('payment.rechargeAccount') }}</span>
+                <span class="min-w-0 truncate text-base font-semibold text-gray-900 dark:text-white">{{ user?.username || '' }}</span>
+              </div>
+              <p class="shrink-0 text-sm font-medium text-green-600 dark:text-green-400">
+                {{ t('payment.currentBalance') }}: {{ user?.balance?.toFixed(2) || '0.00' }}
+              </p>
             </div>
             <div v-if="enabledMethods.length === 0" class="card py-16 text-center">
               <p class="text-gray-500 dark:text-gray-400">{{ t('payment.notAvailable') }}</p>
@@ -160,7 +164,7 @@
                     <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ t('payment.rechargeCardRedeemHint') }}</p>
                   </div>
                 </div>
-                <button type="button" class="btn btn-secondary" @click="router.push('/redeem')">
+                <button type="button" class="btn btn-secondary" @click="goRedeem">
                   {{ t('payment.goRedeem') }}
                 </button>
               </header>
@@ -397,7 +401,7 @@
                 </div>
 
                 <div class="flex flex-wrap gap-2">
-                  <button type="button" class="btn btn-primary" @click="router.push('/redeem'); closeRechargeCardDialog()">
+                  <button type="button" class="btn btn-primary" @click="goRedeem">
                     {{ t('payment.goRedeem') }}
                   </button>
                   <a
@@ -435,10 +439,20 @@
         </div>
       </Transition>
     </Teleport>
-  </AppLayout>
+  </component>
 </template>
 
 <script setup lang="ts">
+const props = withDefaults(defineProps<{
+  embedded?: boolean
+}>(), {
+  embedded: false,
+})
+
+const emit = defineEmits<{
+  (event: 'open-redeem'): void
+}>()
+
 import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { marked } from 'marked'
@@ -511,7 +525,7 @@ const loading = ref(true)
 const submitting = ref(false)
 const errorMessage = ref('')
 const errorHintMessage = ref('')
-const activeTab = ref<'recharge' | 'rechargeCard' | 'subscription'>('rechargeCard')
+const activeTab = ref<'recharge' | 'rechargeCard' | 'subscription'>('recharge')
 const amount = ref<number | null>(null)
 const selectedRechargePackageId = ref('')
 const selectedMethod = ref('')
@@ -726,11 +740,14 @@ const rechargeCardProducts = computed(() =>
 
 const tabs = computed(() => {
   const result: { key: 'recharge' | 'rechargeCard' | 'subscription'; label: string }[] = []
-  if (!checkout.value.balance_disabled || rechargeCardProducts.value.length > 0) {
-    result.push({ key: 'rechargeCard', label: t('payment.tabRechargeCard') })
-  }
   if (!checkout.value.balance_disabled) result.push({ key: 'recharge', label: t('payment.tabTopUp') })
   if (subscriptionEnabled.value) result.push({ key: 'subscription', label: t('payment.tabSubscribe') })
+  if (
+    checkout.value.recharge_card_enabled !== false &&
+    (!checkout.value.balance_disabled || rechargeCardProducts.value.length > 0)
+  ) {
+    result.push({ key: 'rechargeCard', label: t('payment.tabRechargeCard') })
+  }
   return result
 })
 
@@ -739,7 +756,7 @@ const tabs = computed(() => {
 watch(tabs, (available) => {
   if (available.some((tab) => tab.key === activeTab.value)) return
   const leavingSubscription = activeTab.value === 'subscription'
-  activeTab.value = available[0]?.key ?? 'rechargeCard'
+  activeTab.value = available[0]?.key ?? 'recharge'
   if (leavingSubscription) selectedPlan.value = null
 })
 
@@ -1052,6 +1069,15 @@ function openRechargeCardDialog(product: RechargeCardProduct) {
 
 function closeRechargeCardDialog() {
   selectedRechargeCardProduct.value = null
+}
+
+function goRedeem() {
+  closeRechargeCardDialog()
+  if (props.embedded) {
+    emit('open-redeem')
+  } else {
+    void router.push('/redeem')
+  }
 }
 
 async function renderRechargeCardQr() {
@@ -1471,7 +1497,7 @@ onMounted(async () => {
     }
     await resumeWechatPaymentFromQuery()
     if (checkout.value.balance_disabled) {
-      activeTab.value = rechargeCardProducts.value.length > 0 ? 'rechargeCard' : 'subscription'
+      activeTab.value = subscriptionEnabled.value ? 'subscription' : 'rechargeCard'
     }
     // balance_disabled → the tabs watcher above moves activeTab to the first available tab.
     // Handle renewal navigation: ?tab=subscription&group=123 (ignored when subscriptions are disabled)

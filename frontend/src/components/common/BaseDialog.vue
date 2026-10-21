@@ -11,9 +11,9 @@
         @click.self="handleClose"
       >
         <!-- Modal panel -->
-        <div ref="dialogRef" :class="['modal-content', widthClasses]" @click.stop>
+        <div ref="dialogRef" :class="['modal-content', 'relative', widthClasses]" @click.stop>
           <!-- Header -->
-          <div class="modal-header">
+          <div v-if="!headerless" class="modal-header">
             <h3 :id="dialogId" class="modal-title">
               {{ title }}
             </h3>
@@ -26,9 +26,20 @@
               <Icon name="x" size="md" />
             </button>
           </div>
+          <template v-else>
+            <h3 :id="dialogId" class="sr-only">{{ title }}</h3>
+            <button
+              v-if="showCloseButton"
+              @click="emit('close')"
+              class="absolute right-3 top-3 z-10 rounded-xl p-2 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/30 dark:text-dark-500 dark:hover:bg-dark-700 dark:hover:text-dark-300"
+              aria-label="Close modal"
+            >
+              <Icon name="x" size="md" />
+            </button>
+          </template>
 
           <!-- Body -->
-          <div ref="modalBodyRef" class="modal-body">
+          <div ref="modalBodyRef" :class="['modal-body', bodyClass]">
             <slot></slot>
           </div>
 
@@ -69,6 +80,8 @@ interface Props {
   closeOnClickOutside?: boolean
   showCloseButton?: boolean
   zIndex?: number
+  bodyClass?: string
+  headerless?: boolean
 }
 
 interface Emits {
@@ -80,7 +93,8 @@ const props = withDefaults(defineProps<Props>(), {
   closeOnEscape: true,
   closeOnClickOutside: false,
   showCloseButton: true,
-  zIndex: 50
+  zIndex: 50,
+  headerless: false,
 })
 
 const emit = defineEmits<Emits>()

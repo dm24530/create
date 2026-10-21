@@ -1,6 +1,54 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" class="dark">
   <head>
+    <script>
+      (function () {
+        let savedTheme = null
+        try {
+          savedTheme = localStorage.getItem('theme')
+        } catch {}
+        const useDarkTheme = savedTheme !== 'light'
+        const path = window.location.pathname.replace(/\/+$/, '')
+        const bootContext = path === '/docs' || path.startsWith('/docs/') ? 'docs' : 'app'
+        document.documentElement.classList.toggle('dark', useDarkTheme)
+        document.documentElement.dataset.bootContext = bootContext
+        document.documentElement.style.backgroundColor = bootContext === 'docs'
+          ? (useDarkTheme ? '#121214' : '#f7f7f6')
+          : (useDarkTheme ? '#23211e' : '#f7f6f2')
+      })()
+    </script>
+    <style>
+      html,
+      body,
+      #app {
+        min-height: 100%;
+        margin: 0;
+        box-sizing: border-box;
+      }
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+      }
+      html {
+        background-color: #23211e;
+        color-scheme: dark;
+      }
+      html:not(.dark) {
+        background-color: #f7f6f2;
+        color-scheme: light;
+      }
+      html[data-boot-context="docs"] {
+        background-color: #121214;
+      }
+      html[data-boot-context="docs"]:not(.dark) {
+        background-color: #f7f7f6;
+      }
+      body {
+        background-color: inherit;
+      }
+    </style>
+    <meta name="color-scheme" content="dark light" />
     <meta charset="UTF-8" />
     <meta name="google-site-verification" content="IVnuZo_KasKHg92XLKlEE1Vk8gjA5NRVgM0f-ILtDhA" />
     <link rel="icon" type="image/svg+xml" href="/logo.svg" />
@@ -17,7 +65,7 @@
     />
     <meta name="robots" content="index,follow" />
     <meta name="application-name" content="Create" />
-    <meta name="theme-color" content="#14b8a6" />
+    <meta name="theme-color" content="#1d1c19" />
     <link rel="canonical" href="/" />
     <link rel="manifest" href="/site.webmanifest" />
     <meta property="og:type" content="website" />
@@ -72,7 +120,41 @@
     <!--seo:end-->
   </head>
   <body>
-    <div id="app"></div>
+    <div id="app">
+      <div class="boot-screen" role="status" aria-live="polite">
+        <div class="boot-app">
+          <div class="boot-mark">C</div>
+          <span class="boot-spinner" aria-hidden="true"></span>
+          <p class="boot-title">正在加载页面</p>
+          <p class="boot-subtitle">首次打开或网络较慢时，可能需要几秒钟。</p>
+          <a class="boot-retry" href="">长时间无法加载？点击刷新</a>
+        </div>
+        <div class="boot-docs">
+          <div class="boot-docs__topbar">
+            <div class="boot-docs__identity">
+              <strong>Create</strong>
+              <span>/</span>
+              <span>接口文档</span>
+            </div>
+            <span class="boot-spinner boot-docs__spinner" aria-hidden="true"></span>
+          </div>
+          <div class="boot-docs__body">
+            <div class="boot-docs__eyebrow"></div>
+            <div class="boot-docs__title"></div>
+            <div class="boot-docs__line boot-docs__line--wide"></div>
+            <div class="boot-docs__line"></div>
+            <div class="boot-docs__layout">
+              <div class="boot-docs__sidebar">
+                <span></span><span></span><span></span><span></span><span></span><span></span>
+              </div>
+              <div class="boot-docs__content">
+                <span></span><span></span><span></span><span></span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
     <noscript>
       <main>
         <p><strong>Create AI 视频与图片生成平台</strong></p>
@@ -81,5 +163,239 @@
       </main>
     </noscript>
     <script type="module" src="/src/main.ts"></script>
+    <style>
+      .boot-copy-docs {
+        display: none;
+      }
+      .boot-docs {
+        display: none;
+      }
+      html[data-boot-context="docs"] .boot-app {
+        display: none;
+      }
+      html[data-boot-context="docs"] .boot-screen {
+        display: block;
+        background: #121214;
+        padding: 0;
+        text-align: left;
+      }
+      html[data-boot-context="docs"]:not(.dark) .boot-screen {
+        background: #f7f7f6;
+      }
+      html[data-boot-context="docs"] .boot-docs {
+        display: block;
+        min-height: 100svh;
+      }
+      .boot-app {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .boot-docs__topbar {
+        display: flex;
+        height: 56px;
+        align-items: center;
+        justify-content: space-between;
+        border-bottom: 1px solid #3f3f46;
+        background: rgba(24, 24, 27, 0.94);
+        padding: 0 clamp(16px, 4vw, 48px);
+      }
+      .boot-docs__identity {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: #a79f94;
+        font-size: 13px;
+      }
+      .boot-docs__identity strong {
+        color: #f4f4f5;
+        font-size: 14px;
+      }
+      .boot-docs__spinner {
+        width: 18px;
+        height: 18px;
+      }
+      .boot-docs__body {
+        box-sizing: border-box;
+        width: 100%;
+        max-width: 1440px;
+        margin: 0 auto;
+        padding: 32px clamp(16px, 4vw, 48px) 80px;
+      }
+      .boot-docs__eyebrow {
+        width: 150px;
+        height: 10px;
+        border-radius: 999px;
+        background: #713d28;
+      }
+      .boot-docs__title {
+        width: min(280px, 55vw);
+        height: 34px;
+        margin-top: 14px;
+        border-radius: 8px;
+        background: #2a2926;
+      }
+      .boot-docs__line {
+        width: min(620px, 78vw);
+        height: 10px;
+        margin-top: 14px;
+        border-radius: 999px;
+        background: #272623;
+      }
+      .boot-docs__line--wide {
+        width: min(820px, 90vw);
+      }
+      .boot-docs__layout {
+        display: grid;
+        grid-template-columns: 190px minmax(0, 1fr);
+        gap: 48px;
+        margin-top: 42px;
+      }
+      .boot-docs__sidebar,
+      .boot-docs__content {
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+      }
+      .boot-docs__sidebar span {
+        width: 82%;
+        height: 10px;
+        border-radius: 999px;
+        background: #272623;
+      }
+      .boot-docs__content span {
+        width: 100%;
+        height: 52px;
+        border: 1px solid #33322f;
+        border-radius: 10px;
+        background: #1d1c1a;
+      }
+      .boot-docs__content span:nth-child(2) {
+        height: 120px;
+      }
+      .boot-docs__content span:nth-child(3) {
+        height: 76px;
+      }
+      html:not(.dark) .boot-docs__topbar {
+        border-color: #e5e7eb;
+        background: rgba(255, 255, 255, 0.94);
+      }
+      html:not(.dark) .boot-docs__identity {
+        color: #64748b;
+      }
+      html:not(.dark) .boot-docs__identity strong {
+        color: #0f172a;
+      }
+      html:not(.dark) .boot-docs__title,
+      html:not(.dark) .boot-docs__line,
+      html:not(.dark) .boot-docs__sidebar span {
+        background: #e8e8e4;
+      }
+      html:not(.dark) .boot-docs__content span {
+        border-color: #e5e7eb;
+        background: #f1f1ee;
+      }
+      .boot-screen {
+        min-height: 100svh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-direction: column;
+        gap: 12px;
+        background: #23211e;
+        color: #f2ede5;
+        font-family: Inter, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+        text-align: center;
+        padding: 24px;
+      }
+      .boot-mark {
+        display: grid;
+        width: 52px;
+        height: 52px;
+        place-items: center;
+        border-radius: 14px;
+        background: #f2ede5;
+        color: #23211e;
+        font-size: 24px;
+        font-weight: 700;
+      }
+      .boot-spinner {
+        width: 22px;
+        height: 22px;
+        border: 2px solid rgba(242, 237, 229, 0.16);
+        border-top-color: #f5a17f;
+        border-radius: 50%;
+        animation: boot-spin 0.8s linear infinite;
+      }
+      .boot-title {
+        margin: 0;
+        font-size: 15px;
+        font-weight: 600;
+      }
+      .boot-subtitle {
+        margin: 0;
+        color: #a79f94;
+        font-size: 12px;
+      }
+      .boot-retry {
+        margin-top: 6px;
+        color: #f5a17f;
+        font-size: 12px;
+        text-decoration: none;
+        opacity: 0;
+        animation: boot-reveal 0.2s ease 8s forwards;
+      }
+      #boot-retry-button {
+        margin-top: 6px;
+        border: 0;
+        border-radius: 9px;
+        background: #f5a17f;
+        color: #23211e;
+        cursor: pointer;
+        padding: 9px 16px;
+        font: inherit;
+        font-size: 13px;
+        font-weight: 600;
+      }
+      @keyframes boot-spin {
+        to { transform: rotate(360deg); }
+      }
+      @keyframes boot-reveal {
+        to { opacity: 1; }
+      }
+      html:not(.dark) .boot-screen {
+        background: #f7f6f2;
+        color: #1f1e1b;
+      }
+      html:not(.dark) .boot-mark {
+        background: #1f1e1b;
+        color: #f7f6f2;
+      }
+      html:not(.dark) .boot-spinner {
+        border-color: rgba(31, 30, 27, 0.16);
+        border-top-color: #e8794e;
+      }
+      html:not(.dark) .boot-subtitle {
+        color: #78736b;
+      }
+      html:not(.dark) .boot-retry {
+        color: #ad4a29;
+      }
+      html:not(.dark) #boot-retry-button {
+        background: #e8794e;
+        color: #1f1e1b;
+      }
+    </style>
+    <script>
+      (function () {
+        const retry = document.querySelector('.boot-retry')
+        if (!retry) return
+        const url = new URL(window.location.href)
+        url.searchParams.set('reload', '1')
+        retry.href = url.toString()
+      })()
+    </script>
   </body>
 </html>

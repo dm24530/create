@@ -1,10 +1,11 @@
 <template>
   <AppLayout>
-    <div class="inspiration">
+    <div class="studio-library">
+      <div class="studio-library__nav xl:hidden"><StudioNav /></div>
+      <div class="studio-library__content inspiration">
       <header class="inspiration__header">
         <div>
           <h1>视频灵感库</h1>
-          <p>像刷灵感一样浏览画面，点开查看大图与完整提示词，一键复制或直接带入工作台。</p>
         </div>
         <div class="inspiration__header-actions">
           <div class="segmented" role="tablist" aria-label="灵感来源">
@@ -18,17 +19,6 @@
               @click="switchSource('library')"
             >
               作品库
-            </button>
-            <button
-              type="button"
-              role="tab"
-              class="segmented__item"
-              :class="{ 'segmented__item--active': source === 'online' }"
-              :aria-selected="source === 'online'"
-              data-testid="inspiration-source-online"
-              @click="switchSource('online')"
-            >
-              在线灵感
             </button>
             <button
               type="button"
@@ -95,20 +85,6 @@
       <template v-else-if="source === 'online'">
         <div class="online-bar">
           <div class="online-bar__controls">
-            <div class="segmented segmented--compact" role="tablist" aria-label="素材类型">
-              <button
-                v-for="option in mediaTypeOptions"
-                :key="option.value"
-                type="button"
-                role="tab"
-                class="segmented__item"
-                :class="{ 'segmented__item--active': onlineQuery.mediaType === option.value }"
-                :data-testid="`online-media-${option.value}`"
-                @click="setOnlineQuery({ mediaType: option.value })"
-              >
-                {{ option.label }}
-              </button>
-            </div>
             <div class="segmented segmented--compact" role="tablist" aria-label="排序">
               <button
                 v-for="option in sortOptions"
@@ -177,33 +153,19 @@
             :title="item.prompt"
             :eyebrow="item.model || '未知模型'"
             :summary="`本站精选 · ${item.likes} 赞`"
-            :spec="`${item.mediaType === 'video' ? '视频' : '图片'} · ${item.width}×${item.height}`"
-            :badge="item.mediaType === 'video' ? '视频灵感' : '图片灵感'"
-            :type-icon="item.mediaType === 'video' ? 'play' : 'grid'"
-            :action-label="`查看在线${item.mediaType === 'video' ? '视频' : '图片'}灵感与提示词`"
+            :spec="`视频 · ${item.width}×${item.height}`"
+            badge="视频灵感"
+            type-icon="play"
+            :action-label="`查看在线视频灵感与提示词`"
             @open="openOnline(item)"
           />
         </div>
       </template>
 
       <template v-else>
-        <!-- 作品库：自家灵感站的数据（视频提示词 / 图片灵感），服务端筛选分页 -->
+        <!-- 作品库：自家灵感站的视频提示词数据，服务端筛选分页 -->
         <div class="online-bar">
           <div class="online-bar__controls">
-            <div class="segmented segmented--compact" role="tablist" aria-label="作品类型">
-              <button
-                v-for="option in libraryTypeOptions"
-                :key="option.value"
-                type="button"
-                role="tab"
-                class="segmented__item"
-                :class="{ 'segmented__item--active': libraryQuery.type === option.value }"
-                :data-testid="`library-type-${option.value}`"
-                @click="setLibraryQuery({ type: option.value })"
-              >
-                {{ option.label }}
-              </button>
-            </div>
             <label class="inline-field">
               <span>模型</span>
               <ImageStudioSelect
@@ -233,7 +195,7 @@
                 @keydown.enter.prevent="reloadLibrary"
               />
             </div>
-            <button type="button" class="secondary-button" data-testid="library-search-button" @click="reloadLibrary">
+            <button type="button" class="secondary-button search-submit" data-testid="library-search-button" @click="reloadLibrary">
               <Icon name="search" size="sm" />
               <span>搜索</span>
             </button>
@@ -414,6 +376,7 @@
         </div>
       </template>
     </BaseDialog>
+    </div>
   </AppLayout>
 </template>
 
@@ -424,6 +387,7 @@ import { useRouter } from 'vue-router'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Icon from '@/components/icons/Icon.vue'
+import StudioNav from '@/components/layout/StudioNav.vue'
 import { useClipboard } from '@/composables/useClipboard'
 import ImageStudioSelect from '../image-studio/ImageStudioSelect.vue'
 import VideoInspirationTile from './VideoInspirationTile.vue'
@@ -477,16 +441,11 @@ const onlineFallbackNotice = ref('')
 const onlineFetchedAt = ref(0)
 let onlineAbort: AbortController | null = null
 
-// 公开社区每天都有新作品：默认「视频 + 最新 + 本周」，按需切到图片或当天。
-const onlineQuery = reactive<{ mediaType: 'video' | 'image'; sort: 'newest' | 'reactions'; period: 'day' | 'week' | 'month' | 'all' }>({
-  mediaType: 'video',
+// 视频灵感只展示视频方向，避免和独立的图片灵感入口重复。
+const onlineQuery = reactive<{ sort: 'newest' | 'reactions'; period: 'day' | 'week' | 'month' | 'all' }>({
   sort: 'newest',
   period: 'week',
 })
-const mediaTypeOptions = [
-  { value: 'video' as const, label: '视频' },
-  { value: 'image' as const, label: '图片' },
-]
 const sortOptions = [
   { value: 'newest' as const, label: '最新' },
   { value: 'reactions' as const, label: '最热' },
@@ -518,16 +477,11 @@ const libraryStale = ref(false)
 const libraryModels = ref<string[]>([])
 const libraryCategories = ref<string[]>([])
 const libraryFailedCovers = ref<Record<string, boolean>>({})
-const libraryQuery = reactive<{ type: 'video' | 'image'; model: string; category: string; keyword: string }>({
-  type: 'video',
+const libraryQuery = reactive<{ model: string; category: string; keyword: string }>({
   model: 'all',
   category: 'all',
   keyword: '',
 })
-const libraryTypeOptions = [
-  { value: 'video' as const, label: '视频提示词' },
-  { value: 'image' as const, label: '图片灵感' },
-]
 const libraryModelOptions = computed(() => [
   { value: 'all', label: '全部模型' },
   ...libraryModels.value.map((model) => ({ value: model, label: model })),
@@ -647,7 +601,7 @@ async function loadOnline(refresh = false) {
   onlineFallbackNotice.value = ''
   try {
     const feed = await fetchOnlineInspirationFeed({
-      mediaType: onlineQuery.mediaType,
+      mediaType: 'video',
       sort: onlineQuery.sort,
       period: onlineQuery.period,
       limit: 48,
@@ -655,19 +609,21 @@ async function loadOnline(refresh = false) {
     })
     if (controller.signal.aborted) return
     onlineFetchedAt.value = feed.fetched_at
-    onlineItems.value = feed.items.map((entry) => ({
-      id: String(entry.id),
-      mediaType: entry.media_type === 'image' ? 'image' : 'video',
-      mediaUrl: String(entry.media_url ?? ''),
-      posterUrl: String(entry.poster_url ?? ''),
-      prompt: String(entry.prompt ?? ''),
-      negativePrompt: String(entry.negative_prompt ?? ''),
-      model: String(entry.model ?? ''),
-      author: String(entry.author ?? ''),
-      width: Number(entry.width ?? 0) || 0,
-      height: Number(entry.height ?? 0) || 0,
-      likes: Number(entry.likes ?? 0) || 0,
-    }))
+    onlineItems.value = feed.items
+      .filter((entry) => entry.media_type !== 'image')
+      .map((entry) => ({
+        id: String(entry.id),
+        mediaType: 'video' as const,
+        mediaUrl: String(entry.media_url ?? ''),
+        posterUrl: String(entry.poster_url ?? ''),
+        prompt: String(entry.prompt ?? ''),
+        negativePrompt: String(entry.negative_prompt ?? ''),
+        model: String(entry.model ?? ''),
+        author: String(entry.author ?? ''),
+        width: Number(entry.width ?? 0) || 0,
+        height: Number(entry.height ?? 0) || 0,
+        likes: Number(entry.likes ?? 0) || 0,
+      }))
     if (!onlineItems.value.length) {
       onlineError.value = '这个时间范围里没有拉到带提示词的作品，换个时间范围或点「换一批」。'
     }
@@ -726,16 +682,6 @@ function libraryCoverUrl(item: InspirationLibraryItem): string {
   return item.cover_url
 }
 
-function setLibraryQuery(patch: Partial<typeof libraryQuery>) {
-  Object.assign(libraryQuery, patch)
-  // 换类型时模型/分类的候选会变，回到"全部"再取。
-  if (patch.type) {
-    libraryQuery.model = 'all'
-    libraryQuery.category = 'all'
-  }
-  void loadLibrary()
-}
-
 function reloadLibrary() {
   void loadLibrary()
 }
@@ -747,7 +693,7 @@ async function loadLibrary(options: { append?: boolean; refresh?: boolean } = {}
   libraryError.value = ''
   try {
     const result = await fetchInspirationLibrary({
-      type: libraryQuery.type,
+      type: 'video',
       model: libraryQuery.model,
       category: libraryQuery.category,
       keyword: libraryQuery.keyword,
@@ -755,7 +701,8 @@ async function loadLibrary(options: { append?: boolean; refresh?: boolean } = {}
       pageSize: 60,
       refresh: options.refresh === true,
     })
-    libraryItems.value = append ? [...libraryItems.value, ...result.items] : result.items
+    const videoItems = result.items.filter((item) => item.type === 'video')
+    libraryItems.value = append ? [...libraryItems.value, ...videoItems] : videoItems
     libraryPageNumber.value = page
     libraryTotal.value = result.total
     libraryHasMore.value = result.has_more
@@ -1152,6 +1099,13 @@ onMounted(() => {
 .secondary-button:hover {
   border-color: rgb(232 121 78);
   color: rgb(173 74 41);
+}
+
+.secondary-button.search-submit {
+  flex: 0 0 auto;
+  min-width: 4.8rem;
+  padding: 0 0.8rem;
+  white-space: nowrap;
 }
 
 .is-spinning {

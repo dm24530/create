@@ -39,7 +39,7 @@
           </a>
           <router-link
             v-if="showModelPlazaEntry"
-            to="/model-plaza"
+            :to="modelPlazaDestination"
             class="flex h-10 shrink-0 items-center gap-1.5 rounded-lg px-2.5 text-sm font-medium text-gray-500 hover:bg-gray-100 hover:text-gray-700 dark:text-dark-400 dark:hover:bg-dark-800 dark:hover:text-white"
             :title="t('nav.modelPlaza')"
           >
@@ -141,6 +141,11 @@ const showModelPlazaEntry = computed(
 )
 const isAdmin = computed(() => authStore.isAdmin)
 const dashboardPath = computed(() => isAdmin.value ? '/admin/dashboard' : '/image-studio')
+const modelPlazaDestination = computed(() => (
+  isAuthenticated.value
+    ? { path: '/image-studio', query: { openModelPlaza: '1' } }
+    : '/model-plaza'
+))
 const currentYear = computed(() => new Date().getFullYear())
 
 function toggleTheme() {
@@ -151,13 +156,9 @@ function toggleTheme() {
 
 function initTheme() {
   const savedTheme = localStorage.getItem('theme')
-  if (
-    savedTheme === 'dark' ||
-    (!savedTheme && window.matchMedia('(prefers-color-scheme: dark)').matches)
-  ) {
-    isDark.value = true
-    document.documentElement.classList.add('dark')
-  }
+  const shouldUseDark = savedTheme !== 'light'
+  isDark.value = shouldUseDark
+  document.documentElement.classList.toggle('dark', shouldUseDark)
 }
 
 onMounted(async () => {

@@ -99,7 +99,7 @@ describe('ImageInspirationView', () => {
     expect(fetchInspirationLibrary).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'image', model: 'all', category: 'all', page: 1 }),
     )
-    expect(wrapper.get('[data-testid="image-library-summary"]').text()).toContain('共 37 条')
+    expect(wrapper.get('[data-testid="image-library-summary"]').text()).toContain('共 43 条')
     const card = wrapper.get('[data-testid="image-library-image-1"]')
     expect(card.text()).toContain('薄雾中的现代建筑')
     expect(card.get('img').attributes('src')).toBe('/api/v1/public/video-inspiration/media?u=building.webp')
@@ -124,39 +124,9 @@ describe('ImageInspirationView', () => {
     expect(push).toHaveBeenCalledWith({ path: '/image-studio' })
   })
 
-  it('only requests image entries from the online feed', async () => {
-    fetchOnlineInspirationFeed.mockResolvedValue({
-      items: [
-        {
-          id: 'online-1',
-          media_type: 'image',
-          media_url: '/proxied/image.webp',
-          poster_url: '/proxied/image.webp',
-          prompt: '柔和自然光下的一只玻璃杯',
-          negative_prompt: '',
-          model: 'Seedream',
-          author: 'Mia',
-          width: 1024,
-          height: 1024,
-          likes: 42,
-        },
-      ],
-      source: 'online',
-      media_type: 'image',
-      sort: 'newest',
-      period: 'week',
-      fetched_at: 1760400000,
-      cached: false,
-    })
-
+  it('does not expose the online inspiration source', async () => {
     const wrapper = mount(ImageInspirationView, { global: { stubs: globalStubs } })
     await flushPromises()
-    await wrapper.get('[data-testid="image-inspiration-source-online"]').trigger('click')
-    await flushPromises()
-
-    expect(fetchOnlineInspirationFeed).toHaveBeenCalledWith(
-      expect.objectContaining({ mediaType: 'image', sort: 'newest', period: 'week' }),
-    )
-    expect(wrapper.get('[data-testid="image-online-online-1"]').text()).toContain('柔和自然光')
+    expect(wrapper.find('[data-testid="image-inspiration-source-online"]').exists()).toBe(false)
   })
 })

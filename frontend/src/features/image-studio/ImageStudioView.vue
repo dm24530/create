@@ -1,12 +1,10 @@
 <template>
   <AppLayout>
-    <div class="mx-auto flex h-[calc(100vh-8rem-1px)] min-h-0 w-full max-w-[120rem] flex-col gap-4 overflow-hidden">
-      <header class="flex shrink-0 flex-wrap items-end justify-between gap-3">
+    <div class="image-studio studio-page">
+      <div class="studio-page__nav xl:hidden"><StudioNav /></div>
+      <header class="studio-page__header">
         <div>
-          <h1 class="text-2xl font-bold text-gray-900 dark:text-white">AI 图片生成</h1>
-          <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
-            选择模型，描述画面，直接生成或编辑图片。
-          </p>
+          <h1 class="text-2xl font-bold text-gray-900 dark:text-white">生图工作台</h1>
         </div>
 
         <div class="flex flex-wrap items-center gap-2">
@@ -17,19 +15,7 @@
               class="toolbar-image-select"
               data-testid="api-key-select"
               :options="apiKeyOptions"
-              :placeholder="imageCapableKeys.length ? '选择密钥' : '没有可生图的密钥'"
-              direction="down"
-            />
-          </label>
-          <label class="toolbar-field toolbar-field--select">
-            <span>模型</span>
-            <ImageStudioSelect
-              v-model="imageModel"
-              class="toolbar-image-select toolbar-image-select--model"
-              data-testid="image-model-select"
-              :options="imageModelOptions"
-              :disabled="loadingModels || imageModels.length === 0"
-              :placeholder="modelSelectPlaceholder"
+              :placeholder="'选择密钥'"
               direction="down"
             />
           </label>
@@ -47,24 +33,30 @@
         </div>
       </header>
 
-      <div
-        v-if="inspirationHint"
-        class="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200"
-        data-testid="inspiration-hint"
-      >
-        <Icon name="sparkles" size="sm" class="mt-0.5 shrink-0" />
-        <span class="min-w-0 flex-1">{{ inspirationHint }}</span>
-        <button
-          type="button"
-          class="shrink-0 rounded p-0.5 text-amber-700 hover:bg-amber-100 dark:text-amber-300 dark:hover:bg-amber-900/40"
-          aria-label="关闭提示"
-          @click="inspirationHint = ''"
-        >
-          <Icon name="x" size="xs" />
-        </button>
-      </div>
-
-      <section class="min-h-0 flex-1 overflow-y-auto rounded-xl border border-gray-200 bg-white p-4 dark:border-dark-700 dark:bg-dark-900">
+      <section class="studio-page__results">
+        <div class="studio-results__head">
+          <div class="studio-results__title">
+            <Icon name="grid" size="sm" />
+            <h2>全部结果</h2>
+            <span>{{ images.length }}</span>
+          </div>
+          <div class="studio-results__actions">
+            <span
+              v-if="generating"
+              class="image-generation-status"
+              data-testid="image-active-generations"
+              aria-live="polite"
+            >
+              <Icon name="refresh" size="xs" class="is-spinning" />
+              <span>{{ activeGenerations }} 个任务进行中</span>
+            </span>
+            <button type="button" class="studio-results__action" :disabled="refreshing" @click="loadGallery">
+              <Icon name="refresh" size="sm" :class="{ 'is-spinning': refreshing }" />
+              <span>加载历史记录</span>
+            </button>
+          </div>
+        </div>
+        <div class="studio-results__body">
         <div v-if="!images.length" class="flex min-h-[22rem] flex-col items-center justify-center text-center text-gray-500 dark:text-gray-400">
           <div class="flex h-16 w-16 items-center justify-center rounded-2xl border border-gray-200 bg-gray-50 dark:border-dark-700 dark:bg-dark-800">
             <Icon name="sparkles" size="xl" />
@@ -89,7 +81,9 @@
             </button>
             <div class="flex items-center justify-between gap-2 px-3 py-2">
               <div class="min-w-0">
-                <p class="truncate text-xs text-gray-400">{{ image.meta }}</p>
+                <p class="truncate text-[11px] text-gray-400">
+                  {{ image.createdAt ? `${formatCreatedAt(image.createdAt)} · ${image.meta}` : image.meta }}
+                </p>
                 <p
                   v-if="!image.pending && image.saved"
                   class="text-xs text-emerald-600 dark:text-emerald-400"
@@ -133,45 +127,88 @@
             </div>
           </article>
         </div>
+        </div>
       </section>
 
-      <form class="shrink-0 rounded-2xl border border-gray-200 bg-white p-4 shadow-xl dark:border-dark-700 dark:bg-dark-900" @submit.prevent="generate">
-        <div v-if="errorMessage" class="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300">
-          {{ errorMessage }}
-        </div>
-
-        <div v-if="references.length" class="mb-3 flex flex-wrap gap-2">
-          <div v-for="item in references" :key="item.id" class="flex max-w-48 items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-2 py-1 dark:border-dark-700 dark:bg-dark-800">
-            <img :src="item.preview" :alt="item.name" class="h-8 w-8 rounded object-cover" />
-            <span class="truncate text-xs text-gray-600 dark:text-gray-300">{{ item.name }}</span>
-            <button type="button" class="text-gray-400 hover:text-red-500" @click="removeReference(item.id)">
-              <Icon name="x" size="xs" />
-            </button>
-          </div>
-        </div>
-
-        <div class="composer-prompt-wrap">
+      <form class="studio-page__composer image-composer" @submit.prevent="generate">
+        <section class="image-composer__prompt-shell">
           <textarea
             ref="promptTextareaRef"
             v-model="prompt"
-            rows="2"
-            class="composer-prompt w-full resize-none border-0 bg-transparent text-sm text-gray-900 outline-none placeholder:text-gray-400 dark:text-white"
-            placeholder="描述你想生成的图片，支持上传参考图..."
+            rows="5"
+            class="image-composer__prompt"
+            :style="{ height: promptHeight }"
+            placeholder="描述画面主体、风格、构图、光线和用途"
             @paste="onPaste"
           />
-          <button
-            v-show="promptToggleVisible"
-            type="button"
-            class="composer-prompt-toggle"
-            data-testid="image-prompt-toggle"
-            :aria-label="promptCompact ? '放大提示词输入框' : '缩小提示词输入框'"
-            :title="promptCompact ? '放大提示词输入框' : '缩小提示词输入框'"
-            :aria-expanded="!promptCompact"
-            @click="togglePromptCompact"
-          >
-            <Icon :name="promptCompact ? 'expand' : 'collapse'" size="sm" />
-          </button>
-        </div>
+          <div class="image-composer__prompt-footer">
+            <ImageStudioSelect
+              v-model="imageModel"
+              class="image-composer__model"
+              data-testid="image-model-select"
+              :options="imageModelOptions"
+              :disabled="loadingModels || imageModels.length === 0"
+              :placeholder="modelSelectPlaceholder"
+              direction="down"
+            />
+            <div class="image-composer__prompt-actions">
+              <button type="button" title="复制提示词" @click="copyComposerPrompt">
+                <Icon name="copy" size="sm" />
+              </button>
+              <button type="button" title="从剪贴板粘贴" @click="pasteComposerPrompt">
+                <Icon name="clipboard" size="sm" />
+              </button>
+              <button type="button" title="清空提示词" @click="prompt = ''">
+                <Icon name="trash" size="sm" />
+              </button>
+              <button type="button" title="上传参考图" @click="fileInput?.click()">
+                <Icon name="paperclip" size="sm" />
+              </button>
+            </div>
+          </div>
+          <div class="prompt-resize-row">
+            <button
+              type="button"
+              class="prompt-resize-handle"
+              aria-label="调整提示词框高度"
+              title="拖拽调整提示词框高度"
+              @pointerdown="startPromptResize"
+            />
+          </div>
+        </section>
+
+        <section
+          class="image-composer__references"
+          @dragover.prevent
+          @drop.prevent="onDropReferences"
+        >
+          <div class="image-composer__section-head">
+            <span>参考图</span>
+            <button type="button" title="上传参考图" aria-label="上传参考图" @click="fileInput?.click()">
+              <Icon name="upload" size="sm" />
+            </button>
+          </div>
+          <div class="image-composer__reference-grid">
+            <div v-for="item in references" :key="item.id" class="image-composer__reference">
+              <img :src="item.preview" :alt="item.name" />
+              <button type="button" :aria-label="`移除 ${item.name}`" @click="removeReference(item.id)">
+                <Icon name="x" size="xs" />
+              </button>
+            </div>
+            <button
+              type="button"
+              class="image-composer__upload-tile"
+              title="添加参考图"
+              aria-label="添加参考图"
+              @click="fileInput?.click()"
+            >
+              <Icon name="plus" size="md" />
+            </button>
+          </div>
+          <p class="image-composer__helper">
+            可拖拽或粘贴参考图，最多 14 张。参考图会随提示词一起提交。
+          </p>
+        </section>
 
         <p
           v-if="sizeIssue"
@@ -181,83 +218,179 @@
           当前尺寸不可用：{{ sizeIssue }}。点左侧「尺寸」调整后再生成。
         </p>
 
-        <div class="mt-3 flex flex-wrap items-end gap-3 border-t border-gray-100 pt-3 dark:border-dark-800">
-          <button
-            type="button"
-            class="composer-size-trigger"
-            data-testid="image-size-trigger"
-            @click="openSizeDialog"
+        <div class="image-composer__toggle-row">
+          <span>
+            透明背景
+            <span v-if="isGeminiImageModel" class="text-xs font-normal text-gray-400 dark:text-gray-500">
+              （当前模型不支持）
+            </span>
+          </span>
+          <div
+            :class="{ 'pointer-events-none opacity-45': isGeminiImageModel }"
+            :title="isGeminiImageModel ? 'Gemini 原生图片接口不返回透明通道' : undefined"
           >
-            <span>尺寸</span>
-            <strong>{{ size }}</strong>
-            <Icon name="chevronDown" size="xs" />
-          </button>
-          <label class="composer-field">
-            <span>质量</span>
-            <ImageStudioSelect
-              v-model="quality"
-              data-testid="quality-select"
-              :options="qualityOptions"
-            />
-          </label>
-          <label class="composer-field">
-            <span>格式</span>
-            <ImageStudioSelect
-              v-model="format"
-              data-testid="format-select"
-              :options="formatOptions"
-            />
-          </label>
-          <label class="composer-field">
-            <span>背景</span>
-            <ImageStudioSelect
-              v-model="background"
-              data-testid="background-select"
-              :options="backgroundOptions"
-            />
-          </label>
-          <div class="composer-field composer-field--count">
-            <span>数量</span>
-            <div class="count-stepper" data-testid="image-count-control">
+            <Toggle v-model="transparentBackground" />
+          </div>
+        </div>
+
+        <div class="image-composer__field">
+          <span class="image-composer__label">质量</span>
+          <div class="image-composer__segmented" data-testid="quality-select" role="group" aria-label="质量">
+            <button
+              v-for="option in qualityDisplayOptions"
+              :key="option.value"
+              type="button"
+              :class="{ 'is-active': quality === option.value }"
+              @click="quality = option.value"
+            >
+              {{ option.label }}
+            </button>
+          </div>
+          <p v-if="isGeminiImageModel" class="mt-2 text-xs text-gray-400 dark:text-gray-500">
+            质量会按高 4K、中 2K、低 1K 发送；透明背景需要模型返回透明通道，当前 Gemini 接口不支持。
+          </p>
+        </div>
+
+        <div ref="sizeFieldRef" class="image-composer__field image-composer__size-field">
+          <div class="image-composer__label-row">
+            <span class="image-composer__label">尺寸</span>
+            <button
+              type="button"
+              class="image-composer__text-action"
+              aria-label="自定义尺寸"
+              data-testid="image-custom-size-toggle"
+              @click="toggleCustomSize"
+            >
+              {{ customSizeOpen ? '收起自定义' : '自定义尺寸' }}
+            </button>
+          </div>
+          <div class="image-composer__size-row">
+            <div class="image-composer__size-anchor">
               <button
                 type="button"
-                class="count-stepper__button"
-                data-testid="count-decrement"
-                aria-label="减少数量"
-                :disabled="count <= 1"
-                @click="adjustCount(-1)"
+                class="image-composer__select-like"
+                data-testid="image-size-trigger"
+                aria-label="尺寸"
+                :aria-expanded="sizeMenuOpen"
+                @click="toggleSizeMenu"
               >
-                <Icon name="minus" size="xs" />
+                <span>{{ sizeDisplayLabel }}</span>
+                <Icon name="chevronDown" size="sm" :class="{ 'rotate-180': sizeMenuOpen }" />
               </button>
-              <input
-                v-model.number="count"
-                type="number"
-                min="1"
-                max="4"
-                aria-label="生成数量"
-                @blur="normalizeCount"
-              />
-              <button
-                type="button"
-                class="count-stepper__button"
-                data-testid="count-increment"
-                aria-label="增加数量"
-                :disabled="count >= 4"
-                @click="adjustCount(1)"
+              <div
+                v-if="sizeMenuOpen"
+                class="image-composer__size-menu"
+                :class="{ 'is-up': sizeMenuPlacement === 'up' }"
+                role="listbox"
+                data-testid="image-size-menu"
               >
-                <Icon name="plus" size="xs" />
-              </button>
+                <button
+                  type="button"
+                  class="image-composer__size-option"
+                  data-testid="size-preset-auto"
+                  @click="applyAutoSize"
+                >
+                  自动
+                </button>
+                <p class="image-composer__size-option-note">自动（由模型决定）</p>
+                <template v-for="base in aspectBaseOptions" :key="base.value">
+                  <p class="image-composer__size-group">{{ base.label }}</p>
+                  <button
+                    v-for="ratio in ratioOptions"
+                    :key="`${base.value}-${ratio.value}`"
+                    type="button"
+                    class="image-composer__size-option"
+                    :class="{ 'is-active': isRatioSelected(base.value, ratio.value) }"
+                    :data-testid="`size-preset-${base.value}-${ratio.value}`"
+                    @click="applyRatioPreset(base.value, ratio.value)"
+                  >
+                    <span class="image-composer__size-ratio-frame">
+                      <span
+                        class="image-composer__size-ratio-shape"
+                        :style="ratioShapeStyle(ratio.value)"
+                      />
+                    </span>
+                    <span>{{ ratio.value }} {{ ratioSize(ratio.value, base.value) }}</span>
+                  </button>
+                </template>
+              </div>
             </div>
           </div>
+          <div v-if="customSizeOpen" class="image-composer__custom-size" data-testid="image-custom-size-panel">
+            <div class="image-composer__custom-size-toggle">
+              <span>16 倍数对齐</span>
+              <Toggle v-model="snapTo16Enabled" />
+            </div>
+            <div class="image-composer__dimension-row">
+              <label class="image-composer__dimension">
+                <span>W</span>
+                <input
+                  v-model.number="appliedSize.width"
+                  data-testid="custom-width"
+                  type="number"
+                  min="256"
+                  max="3840"
+                  step="16"
+                  aria-label="宽度"
+                />
+              </label>
+              <span class="image-composer__dimension-x">×</span>
+              <label class="image-composer__dimension">
+                <span>H</span>
+                <input
+                  v-model.number="appliedSize.height"
+                  data-testid="custom-height"
+                  type="number"
+                  min="256"
+                  max="3840"
+                  step="16"
+                  aria-label="高度"
+                />
+              </label>
+            </div>
+            <p class="image-composer__custom-size-help">
+              支持 auto（默认，由模型决定）或自定义分辨率。自定义需满足：最长边不超过
+              3840px，宽高均为 16px 的倍数，长短边比不超过 3:1，总像素 655,360–8,294,400。
+            </p>
+            <p class="image-composer__custom-size-summary" data-testid="custom-size-summary">
+              当前 {{ customSizeSummary }}
+            </p>
+            <p v-if="sizeIssue" class="image-composer__custom-size-error" data-testid="size-dialog-issue">
+              {{ sizeIssue }}
+            </p>
+          </div>
+        </div>
 
-          <div class="flex-1" />
-          <input ref="fileInput" type="file" accept="image/png,image/jpeg,image/webp" multiple class="hidden" @change="onFilesSelected" />
-          <button type="button" class="secondary-button" title="上传参考图" @click="fileInput?.click()">
-            <Icon name="paperclip" size="sm" />
-          </button>
-          <button type="submit" class="primary-button" :disabled="!canGenerate">
+        <div class="image-composer__field">
+          <span class="image-composer__label">生成张数</span>
+          <div class="image-composer__segmented" data-testid="image-count-control" role="group" aria-label="生成张数">
+            <button
+              v-for="value in [1, 2, 3, 4]"
+              :key="value"
+              type="button"
+              :class="{ 'is-active': count === value }"
+              @click="count = value"
+            >
+              {{ value }}
+            </button>
+          </div>
+          <input
+            v-model.number="count"
+            type="number"
+            min="1"
+            max="4"
+            aria-label="生成数量"
+            class="sr-only"
+            @blur="normalizeCount"
+          />
+        </div>
+
+        <input ref="fileInput" type="file" accept="image/png,image/jpeg,image/webp" multiple class="hidden" @change="onFilesSelected" />
+
+        <div class="image-composer__footer">
+          <button type="submit" class="image-composer__generate" :disabled="!canGenerate">
             <Icon name="sparkles" size="sm" />
-            {{ generating ? '生成中' : '生成' }}
+            {{ generating ? '继续生成' : '开始生成' }}
           </button>
         </div>
       </form>
@@ -345,168 +478,35 @@
       </template>
     </BaseDialog>
 
-    <BaseDialog
-      :show="sizeDialogOpen"
-      title="设置图像尺寸"
-      width="normal"
-      @close="closeSizeDialog"
-    >
-      <div class="size-dialog">
-        <p class="size-dialog__current">当前：<strong>{{ size }}</strong></p>
-
-        <div class="size-tabs" role="tablist" aria-label="尺寸设置方式">
-          <button
-            v-for="mode in sizeModeOptions"
-            :key="mode.value"
-            type="button"
-            role="tab"
-            class="size-tab"
-            :class="{ active: draftSize.mode === mode.value }"
-            :aria-selected="draftSize.mode === mode.value"
-            :data-testid="`size-mode-${mode.value}`"
-            @click="draftSize.mode = mode.value"
-          >
-            {{ mode.label }}
-          </button>
-        </div>
-
-        <div class="size-dialog__content">
-          <div v-if="draftSize.mode === 'auto'" class="size-auto-panel">
-            <div class="size-auto-icon">
-              <Icon name="bolt" size="lg" />
-            </div>
-            <p class="size-auto-title">自动尺寸</p>
-            <p class="size-auto-description">
-              不向模型传递具体的分辨率参数<br />
-              由模型自己决定生成尺寸
-            </p>
-          </div>
-
-          <template v-else-if="draftSize.mode === 'ratio'">
-            <section class="size-section">
-              <p class="size-section__label">基准分辨率</p>
-              <div class="size-base-options">
-                <button
-                  v-for="base in aspectBaseOptions"
-                  :key="base.value"
-                  type="button"
-                  class="size-base-option"
-                  :class="{ active: draftSize.aspectBase === base.value }"
-                  @click="draftSize.aspectBase = base.value"
-                >
-                  {{ base.label }}
-                </button>
-              </div>
-            </section>
-
-            <section class="size-section">
-              <p class="size-section__label">图像比例</p>
-              <div class="size-ratio-grid">
-                <button
-                  v-for="ratio in ratioOptions"
-                  :key="ratio.value"
-                  type="button"
-                  class="size-ratio-option"
-                  :class="{ active: !draftSize.useCustomRatio && draftSize.aspectRatio === ratio.value }"
-                  @click="selectAspectRatio(ratio.value)"
-                >
-                  <span
-                    class="size-ratio-shape"
-                    :style="{ aspectRatio: ratio.css }"
-                  />
-                  <span>{{ ratio.value }}</span>
-                </button>
-              </div>
-              <button
-                type="button"
-                class="size-custom-ratio-toggle"
-                :class="{ active: draftSize.useCustomRatio }"
-                @click="draftSize.useCustomRatio = !draftSize.useCustomRatio"
-              >
-                自定义比例
-              </button>
-              <div v-if="draftSize.useCustomRatio" class="size-custom-ratio">
-                <input v-model.number="draftSize.customRatioWidth" type="number" min="1" max="64" />
-                <span>:</span>
-                <input v-model.number="draftSize.customRatioHeight" type="number" min="1" max="64" />
-              </div>
-            </section>
-          </template>
-
-          <template v-else>
-            <section class="size-section">
-              <p class="size-section__label">输入具体像素值</p>
-              <div class="size-dimension-row">
-                <label>
-                  <span>宽度（Width）</span>
-                  <input
-                    v-model.number="draftSize.width"
-                    data-testid="custom-width"
-                    type="number"
-                    min="256"
-                    max="3840"
-                    step="16"
-                  />
-                </label>
-                <span class="size-dimension-separator">×</span>
-                <label>
-                  <span>高度（Height）</span>
-                  <input
-                    v-model.number="draftSize.height"
-                    data-testid="custom-height"
-                    type="number"
-                    min="256"
-                    max="3840"
-                    step="16"
-                  />
-                </label>
-              </div>
-              <p class="size-dimension-hint">
-                边长按 16 的倍数规整；最长边 256~3840、长短边比 ≤ 3:1、总像素
-                655360~8294400。选到 4K 方形这类超限组合时会按比例自动收紧。
-              </p>
-            </section>
-          </template>
-        </div>
-
-        <div class="size-preview">
-          <span>将使用</span>
-          <strong>{{ draftSizeValue }}</strong>
-        </div>
-        <p v-if="draftSizeIssue" class="size-dialog__issue" data-testid="size-dialog-issue">
-          {{ draftSizeIssue }}
-        </p>
-      </div>
-
-      <template #footer>
-        <div class="size-dialog__footer">
-          <button type="button" class="size-dialog__cancel" @click="closeSizeDialog">取消</button>
-          <button
-            type="button"
-            class="size-dialog__confirm"
-            data-testid="confirm-image-size"
-            :disabled="!canConfirmSize"
-            @click="confirmSize"
-          >
-            确定
-          </button>
-        </div>
-      </template>
-    </BaseDialog>
+    <ConfirmDialog
+      :show="!!pendingDeleteImage"
+      title="删除作品"
+      message="删除后无法恢复，确定要继续吗？"
+      confirm-text="确认删除"
+      cancel-text="取消"
+      :danger="true"
+      @confirm="confirmRemoveGalleryImage"
+      @cancel="pendingDeleteImage = null"
+    />
   </AppLayout>
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onActivated, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onActivated, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
+import StudioNav from '@/components/layout/StudioNav.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
+import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
+import Toggle from '@/components/common/Toggle.vue'
 import ImageStudioSelect from './ImageStudioSelect.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { useClipboard } from '@/composables/useClipboard'
-import { rootRemToPx, useAutoGrowTextarea } from '@/composables/useAutoGrowTextarea'
-import { ensureCreatorKey } from '@/composables/useCreatorKey'
+import { usePromptResize } from '@/composables/usePromptResize'
+import { ensureCreatorKey, isCreationServiceUnavailable } from '@/composables/useCreatorKey'
 import { authAPI, imageStudioGalleryAPI, type ImageStudioGalleryEntry } from '@/api'
 import type { ApiKey } from '@/types'
+import { useAppStore } from '@/stores/app'
+import { useAuthStore } from '@/stores/auth'
 import { resolvePlaygroundApiEndpoint } from '@/utils/apiEndpoint'
 
 interface GeneratedImage {
@@ -526,6 +526,7 @@ interface GeneratedImage {
   // 否则是生成页的临时内容，expiresAt 是过期时间（秒）。
   saved?: boolean
   expiresAt?: number
+  createdAt?: number
 }
 
 interface ReferenceItem {
@@ -557,24 +558,10 @@ const loadingModels = ref(false)
 const refreshing = ref(false)
 const modelLoadError = ref('')
 const prompt = ref('一只趴在桌上的橙色小猫，柔和窗边自然光，电影感，极简背景')
-const promptCompact = ref(false)
-const {
-  textareaRef: promptTextareaRef,
-  resize: resizePromptTextarea,
-  contentHeight: promptContentHeight,
-} = useAutoGrowTextarea(prompt, {
-  maxHeight: () => promptCompact.value
-    ? rootRemToPx(3.5)
-    : Math.min(rootRemToPx(13.75), Math.max(rootRemToPx(8), window.innerHeight * 0.3)),
+const promptTextareaRef = ref<HTMLTextAreaElement | null>(null)
+const { height: promptHeight, startResize: startPromptResize } = usePromptResize(promptTextareaRef, {
+  storageKey: 'sub2api:image-studio:prompt-height',
 })
-const promptToggleVisible = computed(() => promptCompact.value || promptContentHeight.value > 56)
-watch(promptCompact, () => {
-  void nextTick(resizePromptTextarea)
-})
-function togglePromptCompact() {
-  promptCompact.value = !promptCompact.value
-}
-const inspirationHint = ref('')
 const appliedSize = reactive<SizeSettings>({
   mode: 'ratio',
   aspectBase: 1024,
@@ -585,49 +572,59 @@ const appliedSize = reactive<SizeSettings>({
   width: 1024,
   height: 1024,
 })
-const draftSize = reactive<SizeSettings>({ ...appliedSize })
-const sizeDialogOpen = ref(false)
+const sizeMenuOpen = ref(false)
+const customSizeOpen = ref(false)
+const snapTo16 = ref(true)
+const sizeFieldRef = ref<HTMLElement | null>(null)
 const quality = ref('auto')
 const format = ref('png')
 const background = ref('auto')
 const count = ref(1)
+const sizeMenuPlacement = ref<'up' | 'down'>('down')
 const generating = ref(false)
 const activeGenerations = ref(0)
 const errorMessage = ref('')
 const images = ref<GeneratedImage[]>([])
 const references = ref<ReferenceItem[]>([])
 const previewImage = ref<GeneratedImage | null>(null)
+const pendingDeleteImage = ref<GeneratedImage | null>(null)
+const deletingImage = ref(false)
 const previewPromptDraft = ref('')
 const savingPreviewImage = ref(false)
 const fileInput = ref<HTMLInputElement | null>(null)
 const { copyToClipboard } = useClipboard()
+const appStore = useAppStore()
+const authStore = useAuthStore()
 
 const PENDING_STORAGE_KEY = 'sub2api:image-studio:pending'
 const PENDING_PROMPT_STORAGE_KEY = 'sub2api:image-studio:pending-prompt'
 
 const size = computed(() => formatSize(appliedSize))
-const draftSizeValue = computed(() => formatSize(draftSize))
 // 上游按"总像素 + 比例"卡尺寸，本地不拦的话只能在生成时吃上游的 400。
 const sizeIssue = computed(() => validateSize(size.value))
-const draftSizeIssue = computed(() => validateSize(draftSizeValue.value))
-const canConfirmSize = computed(() => {
-  if (draftSize.mode === 'ratio' && draftSize.useCustomRatio) {
-    return draftSize.customRatioWidth > 0 && draftSize.customRatioHeight > 0 && !draftSizeIssue.value
-  }
-  if (draftSize.mode === 'custom') {
-    return Number.isFinite(Number(draftSize.width)) &&
-      Number.isFinite(Number(draftSize.height)) &&
-      Number(draftSize.width) >= 256 &&
-      Number(draftSize.height) >= 256 &&
-      !draftSizeIssue.value
-  }
-  return !draftSizeIssue.value
+const sizeDisplayLabel = computed(() => {
+  if (appliedSize.mode === 'auto') return '自动（由模型决定）'
+  if (appliedSize.mode === 'ratio') return `${appliedSize.aspectRatio} ${size.value}`
+  const dimensions = parseSize(size.value)
+  if (!dimensions) return size.value
+  const divisor = greatestCommonDivisor(dimensions.width, dimensions.height)
+  return `${dimensions.width / divisor}:${dimensions.height / divisor} ${size.value}`
 })
-const sizeModeOptions: Array<{ value: SizeMode; label: string }> = [
-  { value: 'auto', label: '自动' },
-  { value: 'ratio', label: '按比例' },
-  { value: 'custom', label: '自定义宽高' },
-]
+const snapTo16Enabled = computed({
+  get: () => snapTo16.value,
+  set: (value: boolean) => {
+    snapTo16.value = value
+    if (!value) return
+    appliedSize.width = normalizeDimension(appliedSize.width)
+    appliedSize.height = normalizeDimension(appliedSize.height)
+  },
+})
+const customSizeSummary = computed(() => {
+  const dimensions = parseSize(size.value)
+  if (!dimensions) return size.value
+  const { width, height } = dimensions
+  return `${width}×${height}，${width * height} 像素，比例 ${(width / height).toFixed(2)}:1。`
+})
 const aspectBaseOptions = [
   { value: 1024, label: '1K' },
   { value: 2048, label: '2K' },
@@ -644,10 +641,16 @@ const ratioOptions = [
   { value: '21:9', css: '21 / 9' },
 ]
 const qualityOptions = [
-  { value: 'auto', label: 'auto' },
-  { value: 'low', label: 'low' },
-  { value: 'medium', label: 'medium' },
-  { value: 'high', label: 'high' },
+  { value: 'auto', label: '自动' },
+  { value: 'low', label: '低' },
+  { value: 'medium', label: '中' },
+  { value: 'high', label: '高' },
+]
+const qualityDisplayOptions = [
+  qualityOptions[0],
+  qualityOptions[3],
+  qualityOptions[2],
+  qualityOptions[1],
 ]
 const formatOptions = [
   { value: 'png', label: 'PNG' },
@@ -659,10 +662,15 @@ const backgroundOptions = [
   { value: 'transparent', label: '透明' },
   { value: 'opaque', label: '不透明' },
 ]
+const transparentBackground = computed({
+  get: () => background.value === 'transparent',
+  set: (value: boolean) => {
+    background.value = value ? 'transparent' : 'auto'
+  },
+})
 const imageModelOptions = computed(() => imageModels.value.map((model) => ({ value: model, label: model })))
 const modelSelectPlaceholder = computed(() => {
   if (loadingModels.value) return '正在加载...'
-  if (!imageModels.value.length) return '未找到图片模型'
   return '选择模型'
 })
 const activeKeys = computed(() => keys.value.filter((key) => key.status === 'active'))
@@ -672,6 +680,7 @@ const imageCapableKeys = computed(() => activeKeys.value.filter(
 const apiKeyOptions = computed(() => imageCapableKeys.value.map((key) => ({ value: String(key.id), label: key.name })))
 const selectedKey = computed(() => imageCapableKeys.value.find((key) => String(key.id) === selectedKeyId.value) || null)
 const canGenerate = computed(() => Boolean(apiBaseUrl.value && selectedKey.value?.key && imageModel.value.trim() && prompt.value.trim()) && !sizeIssue.value)
+const isGeminiImageModel = computed(() => isGeminiModel(imageModel.value))
 const canRegeneratePreview = computed(() => Boolean(
   previewImage.value &&
   previewPromptDraft.value.trim() &&
@@ -698,59 +707,84 @@ function resolveEndpoint(configured: string) {
   return resolvePlaygroundApiEndpoint(configured, typeof window === 'undefined' ? '' : window.location.hostname)
 }
 
-function openSizeDialog() {
-  Object.assign(draftSize, appliedSize)
-  const match = findSizeMatch(size.value)
-  if (match) Object.assign(draftSize, match)
-  sizeDialogOpen.value = true
+function toggleSizeMenu(event?: MouseEvent) {
+  if (sizeMenuOpen.value) {
+    sizeMenuOpen.value = false
+    return
+  }
+
+  const trigger = event?.currentTarget as HTMLElement | null
+  if (trigger && typeof window !== 'undefined') {
+    const rect = trigger.getBoundingClientRect()
+    const menuHeight = Math.min(21 * 16, window.innerHeight * 0.52)
+    const spaceAbove = rect.top - 8
+    const spaceBelow = window.innerHeight - rect.bottom - 8
+    sizeMenuPlacement.value = spaceAbove >= menuHeight
+      ? 'up'
+      : spaceBelow >= menuHeight
+        ? 'down'
+        : spaceAbove > spaceBelow
+          ? 'up'
+          : 'down'
+  }
+  sizeMenuOpen.value = true
 }
 
-function closeSizeDialog() {
-  sizeDialogOpen.value = false
+function handleSizeOutside(event: MouseEvent) {
+  if (!sizeMenuOpen.value) return
+  if (sizeFieldRef.value?.contains(event.target as Node)) return
+  sizeMenuOpen.value = false
 }
 
-function confirmSize() {
-  if (!canConfirmSize.value) return
-  Object.assign(appliedSize, draftSize)
-  sizeDialogOpen.value = false
+function handleSizeEscape(event: KeyboardEvent) {
+  if (event.key === 'Escape') sizeMenuOpen.value = false
 }
 
-function selectAspectRatio(value: string) {
-  draftSize.aspectRatio = value
-  draftSize.useCustomRatio = false
+function toggleCustomSize() {
+  customSizeOpen.value = !customSizeOpen.value
+  sizeMenuOpen.value = false
+  if (!customSizeOpen.value) return
+  const dimensions = parseSize(size.value)
+  appliedSize.mode = 'custom'
+  appliedSize.width = dimensions?.width ?? appliedSize.aspectBase
+  appliedSize.height = dimensions?.height ?? appliedSize.aspectBase
 }
 
-function adjustCount(delta: number) {
-  count.value = Math.min(4, Math.max(1, Number(count.value || 1) + delta))
+function applyAutoSize() {
+  appliedSize.mode = 'auto'
+  sizeMenuOpen.value = false
+  customSizeOpen.value = false
+}
+
+function applyRatioPreset(base: number, ratio: string) {
+  appliedSize.mode = 'ratio'
+  appliedSize.aspectBase = base
+  appliedSize.aspectRatio = ratio
+  appliedSize.useCustomRatio = false
+  sizeMenuOpen.value = false
+  customSizeOpen.value = false
+}
+
+function isRatioSelected(base: number, ratio: string) {
+  return (
+    appliedSize.mode === 'ratio' &&
+    !appliedSize.useCustomRatio &&
+    appliedSize.aspectBase === base &&
+    appliedSize.aspectRatio === ratio
+  )
+}
+
+function ratioShapeStyle(value: string) {
+  const [width, height] = value.split(':').map(Number)
+  const max = 1.15
+  if (!width || !height) return { width: `${max}rem`, height: `${max}rem` }
+  return width >= height
+    ? { width: `${max}rem`, height: `${max * height / width}rem` }
+    : { width: `${max * width / height}rem`, height: `${max}rem` }
 }
 
 function normalizeCount() {
   count.value = Math.min(4, Math.max(1, Math.round(Number(count.value) || 1)))
-}
-
-function findSizeMatch(value: string): Partial<SizeSettings> | null {
-  if (value === 'auto') return { mode: 'auto' }
-  const dimensions = parseSize(value)
-  if (!dimensions) return { mode: 'custom' }
-
-  for (const base of aspectBaseOptions) {
-    for (const ratio of ratioOptions) {
-      if (ratioSize(ratio.value, base.value) === value) {
-        return {
-          mode: 'ratio',
-          aspectBase: base.value,
-          aspectRatio: ratio.value,
-          useCustomRatio: false,
-        }
-      }
-    }
-  }
-
-  return {
-    mode: 'custom',
-    width: dimensions.width,
-    height: dimensions.height,
-  }
 }
 
 // 上游（gpt-image 系列）对 size 的约束：边长 16 的倍数、最长边 256~3840、
@@ -764,7 +798,8 @@ const IMAGE_MAX_PIXELS = 8_294_400
 function formatSize(settings: SizeSettings) {
   if (settings.mode === 'auto') return 'auto'
   if (settings.mode === 'custom') {
-    return `${normalizeDimension(settings.width)}x${normalizeDimension(settings.height)}`
+    const formatDimension = snapTo16.value ? normalizeDimension : clampDimension
+    return `${formatDimension(settings.width)}x${formatDimension(settings.height)}`
   }
   if (settings.useCustomRatio) {
     return ratioSize(`${settings.customRatioWidth}:${settings.customRatioHeight}`, settings.aspectBase)
@@ -838,9 +873,12 @@ function validateSize(value: string) {
 }
 
 function normalizeDimension(value: number) {
+  return Math.round(clampDimension(value) / 16) * 16
+}
+
+function clampDimension(value: number) {
   const numeric = Number.isFinite(Number(value)) ? Number(value) : 1024
-  const clamped = Math.min(IMAGE_MAX_EDGE, Math.max(IMAGE_MIN_EDGE, numeric))
-  return Math.round(clamped / 16) * 16
+  return Math.round(Math.min(IMAGE_MAX_EDGE, Math.max(IMAGE_MIN_EDGE, numeric)))
 }
 
 function parseSize(value: string) {
@@ -858,7 +896,9 @@ async function loadData() {
       selectedKeyId.value = String(result.key.id)
     })
     .catch((error) => {
-      errorMessage.value = errorMessageFrom(error, '图片创作服务暂不可用')
+      if (!isCreationServiceUnavailable(error)) {
+        errorMessage.value = errorMessageFrom(error, '图片创作服务暂不可用')
+      }
     })
   const settingsPromise = authAPI.getPublicSettings()
     .then((settings) => {
@@ -918,7 +958,15 @@ function galleryEntryToImage(entry: ImageStudioGalleryEntry, index: number): Gen
     ].filter(Boolean).join(' · '),
     saved: entry.saved !== false,
     expiresAt: entry.expires_at || 0,
+    createdAt: entry.created_at || 0,
   }
+}
+
+function formatCreatedAt(timestamp?: number): string {
+  if (!timestamp) return '—'
+  const date = new Date(Number(timestamp) * 1000)
+  const pad = (value: number) => String(value).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
 }
 
 function restorePendingImages() {
@@ -945,7 +993,7 @@ function applyInspirationFromRoute() {
     const pending = sessionStorage.getItem(PENDING_PROMPT_STORAGE_KEY)
     if (pending && pending.trim()) {
       prompt.value = pending.trim()
-      inspirationHint.value = '已带入图片灵感提示词，选好模型和尺寸就可以生成。'
+      appStore.showSuccess('已带入图片灵感提示词，选好模型和尺寸就可以生成。', 3000)
       sessionStorage.removeItem(PENDING_PROMPT_STORAGE_KEY)
     }
   } catch {
@@ -1008,6 +1056,9 @@ async function persistGeneratedImages(items: GeneratedImage[], prompt: string, m
       failedResult?.reason,
       '请检查对象存储是否已启用并保存配置。',
     )
+    if (isImageStorageConfigError(failedResult?.reason) && !authStore.isAdmin) {
+      return
+    }
     errorMessage.value = quotaReached(results)
       ? `作品已达上限（${studioQuota.value?.limit || 100} 个），请先在下方删除一些作品再保存。`
       : succeeded > 0
@@ -1113,16 +1164,20 @@ function galleryIdFor(image: GeneratedImage): string {
   return localToGalleryId.value.get(local) || local
 }
 
-async function removeGalleryImage(image: GeneratedImage) {
+function removeGalleryImage(image: GeneratedImage) {
   const id = galleryIdFor(image)
   if (!id || !galleryBackedIds.value.has(id)) return
-  const label = image.title || '这张图片'
-  const confirmed = typeof window === 'undefined'
-    || window.confirm(`删除「${label}」？存储里的文件会一起删除，无法恢复。`)
-  if (!confirmed) return
+  pendingDeleteImage.value = image
+}
 
+async function confirmRemoveGalleryImage() {
+  const image = pendingDeleteImage.value
+  pendingDeleteImage.value = null
+  if (!image || deletingImage.value) return
+  deletingImage.value = true
   errorMessage.value = ''
   try {
+    const id = galleryIdFor(image)
     await imageStudioGalleryAPI.delete(id)
     galleryBackedIds.value.delete(id)
     locallySavedGalleryIds.delete(id)
@@ -1131,6 +1186,8 @@ async function removeGalleryImage(image: GeneratedImage) {
     await loadStudioQuota()
   } catch (error) {
     errorMessage.value = errorMessageFrom(error, '删除失败')
+  } finally {
+    deletingImage.value = false
   }
 }
 
@@ -1253,16 +1310,17 @@ async function fetchModelNames(endpoint: string, apiKey: string, filterImages = 
 }
 
 function errorMessageFrom(error: unknown, fallback = '加载图片模型失败') {
+  if (isCreationServiceUnavailable(error)) return ''
   // 后端对"没开启"和"凭证不全"给了可区分的业务码，直接给出可执行的下一步，
   // 而不是让用户对着笼统的失败提示猜。
   const reason = typeof error === 'object' && error !== null && 'reason' in error
     ? String((error as { reason?: unknown }).reason || '')
     : ''
-  if (reason === 'IMAGE_STORAGE_DISABLED') {
-    return '图片存储未启用：请到后台「设置 → 数据备份」打开「异步生图对象存储」。'
-  }
-  if (reason === 'IMAGE_STORAGE_INCOMPLETE') {
-    return '图片存储凭证不完整：请到后台「设置 → 数据备份」补齐存储桶与密钥。'
+  if (reason === 'IMAGE_STORAGE_DISABLED' || reason === 'IMAGE_STORAGE_INCOMPLETE') {
+    if (!authStore.isAdmin) return ''
+    return reason === 'IMAGE_STORAGE_DISABLED'
+      ? '图片存储未启用：请到后台「设置 → 数据备份」打开「异步生图对象存储」。'
+      : '图片存储凭证不完整：请到后台「设置 → 数据备份」补齐存储桶与密钥。'
   }
   const message = error instanceof Error
     ? error.message
@@ -1293,6 +1351,13 @@ function errorMessageFrom(error: unknown, fallback = '加载图片模型失败')
     return '当前模型暂时不可用，请稍后重试或换一个模型。'
   }
   return message || fallback
+}
+
+function isImageStorageConfigError(error: unknown): boolean {
+  const reason = typeof error === 'object' && error !== null && 'reason' in error
+    ? String((error as { reason?: unknown }).reason || '')
+    : ''
+  return reason === 'IMAGE_STORAGE_DISABLED' || reason === 'IMAGE_STORAGE_INCOMPLETE'
 }
 
 function isImageModel(name: string) {
@@ -1326,23 +1391,25 @@ async function generate() {
   if (!canGenerate.value || !selectedKey.value) return
   generating.value = true
   activeGenerations.value += 1
-  const requestId = nextImageId++
-  const pendingImage: GeneratedImage = {
-    id: requestId,
-    title: '正在生成',
+  const requestCount = Math.min(Math.max(Number(count.value) || 1, 1), 4)
+  const pendingImages = Array.from({ length: requestCount }, (_, index): GeneratedImage => ({
+    id: nextImageId++,
+    title: `正在生成 ${index + 1}`,
     src: '',
     meta: `${format.value.toUpperCase()} · ${size.value} · ${imageModel.value}`,
     pending: true,
-  }
-  images.value.unshift(pendingImage)
+  }))
+  const pendingIds = new Set(pendingImages.map((item) => item.id))
+  images.value.unshift(...pendingImages)
   persistPendingImages()
   errorMessage.value = ''
   const currentPrompt = prompt.value.trim()
+  const geminiModel = isGeminiModel(imageModel.value)
   try {
     const headers: Record<string, string> = { Authorization: `Bearer ${selectedKey.value.key}` }
     let url = `${apiBaseUrl.value}${hasReferences.value ? '/images/edits' : '/images/generations'}`
     let body: string | FormData
-    if (isGeminiModel(imageModel.value)) {
+    if (geminiModel) {
       headers['Content-Type'] = 'application/json'
       body = JSON.stringify(buildGeminiPayload(currentPrompt))
       url = buildGeminiURL(imageModel.value)
@@ -1357,17 +1424,33 @@ async function generate() {
         quality: quality.value,
         output_format: format.value,
         background: background.value,
-        n: Math.min(Math.max(Number(count.value) || 1, 1), 4),
+        n: 1,
         response_format: 'b64_json',
       })
     }
-    const response = await fetch(url, { method: 'POST', headers, body })
-    const payload = await response.json().catch(() => null)
-    if (!response.ok) {
-      throw new Error(payload?.error?.message || payload?.message || `${response.status} ${response.statusText}`)
+    const results = await Promise.allSettled(Array.from({ length: requestCount }, async () => {
+      const response = await fetch(url, { method: 'POST', headers, body })
+      const payload = await response.json().catch(() => null)
+      if (!response.ok) {
+        throw new Error(payload?.error?.message || payload?.message || `${response.status} ${response.statusText}`)
+      }
+      return extractImages(payload)
+    }))
+    const items: any[] = []
+    let firstError: unknown = null
+    for (const result of results) {
+      if (result.status === 'fulfilled') {
+        items.push(...result.value)
+      } else if (!firstError) {
+        firstError = result.reason
+      }
     }
-    const items = extractImages(payload)
-    if (!items.length) throw new Error('上游没有返回图片')
+    if (!items.length) {
+      throw firstError || new Error('上游没有返回图片')
+    }
+    if (firstError) {
+      errorMessage.value = errorMessageFrom(firstError, '部分图片生成失败')
+    }
     const generated = (await Promise.all(items.map(async (item: any, index: number): Promise<GeneratedImage | null> => {
       const mime = String(item.mimeType || item.mime_type || 'image/png')
       const b64 = String(item.b64_json || item.data || '')
@@ -1384,15 +1467,18 @@ async function generate() {
         quality: quality.value,
         background: background.value,
         meta: `${format.value.toUpperCase()} · ${size.value} · ${imageModel.value}`,
+        createdAt: Date.now() / 1000,
       }
     }))).filter((item): item is GeneratedImage => item !== null)
-    const pendingIndex = images.value.findIndex((item) => item.id === requestId)
-    if (pendingIndex >= 0) images.value.splice(pendingIndex, 1, ...generated)
+    const pendingIndex = images.value.findIndex((item) => pendingIds.has(item.id))
+    images.value = images.value.filter((item) => !pendingIds.has(item.id))
+    if (pendingIndex >= 0) {
+      images.value.splice(Math.min(pendingIndex, images.value.length), 0, ...generated)
+    }
     persistPendingImages()
     await persistGeneratedImages(generated, currentPrompt, imageModel.value)
   } catch (error) {
-    const pendingIndex = images.value.findIndex((item) => item.id === requestId)
-    if (pendingIndex >= 0) images.value.splice(pendingIndex, 1)
+    images.value = images.value.filter((item) => !pendingIds.has(item.id))
     persistPendingImages()
     errorMessage.value = errorMessageFrom(error, '生成失败')
   } finally {
@@ -1413,13 +1499,25 @@ function buildGeminiPayload(text: string) {
     return match ? { inlineData: { mimeType: match[1], data: match[2] } } : { text: item.name }
   })
   parts.push({ text })
+  const imageConfig: Record<string, string> = {
+    aspectRatio: geminiAspectRatio(size.value),
+  }
+  const imageSize = geminiImageSizeForQuality(quality.value)
+  if (imageSize) imageConfig.imageSize = imageSize
   return {
     contents: [{ role: 'user', parts }],
     generationConfig: {
       responseModalities: ['TEXT', 'IMAGE'],
-      imageConfig: { aspectRatio: geminiAspectRatio(size.value) },
+      imageConfig,
     },
   }
+}
+
+function geminiImageSizeForQuality(value: string) {
+  if (value === 'high') return '4K'
+  if (value === 'medium') return '2K'
+  if (value === 'low') return '1K'
+  return undefined
 }
 
 function geminiAspectRatio(value: string) {
@@ -1447,7 +1545,7 @@ function buildEditForm(text: string) {
   form.append('quality', quality.value)
   form.append('output_format', format.value)
   form.append('background', background.value)
-  form.append('n', String(Math.min(Math.max(Number(count.value) || 1, 1), 4)))
+  form.append('n', '1')
   form.append('response_format', 'b64_json')
   references.value.forEach((item) => form.append('image[]', item.file, item.name))
   return form
@@ -1483,8 +1581,28 @@ function onPaste(event: ClipboardEvent) {
   if (files.length) addFiles(files)
 }
 
+function onDropReferences(event: DragEvent) {
+  const files = Array.from(event.dataTransfer?.files || []).filter((file) => file.type.startsWith('image/'))
+  if (files.length) addFiles(files)
+}
+
+async function copyComposerPrompt() {
+  const text = prompt.value.trim()
+  if (!text) return
+  await copyToClipboard(text, '提示词已复制')
+}
+
+async function pasteComposerPrompt() {
+  try {
+    const text = await navigator.clipboard.readText()
+    if (text.trim()) prompt.value = text
+  } catch {
+    errorMessage.value = '无法读取剪贴板，请直接在提示词框中粘贴。'
+  }
+}
+
 function addFiles(files: File[]) {
-  const available = Math.max(0, 4 - references.value.length)
+  const available = Math.max(0, 14 - references.value.length)
   files
     .filter((file) => ['image/png', 'image/jpeg', 'image/webp'].includes(file.type))
     .slice(0, available)
@@ -1578,15 +1696,27 @@ watch(previewImage, (image) => {
   previewPromptDraft.value = image?.prompt || ''
 })
 
+watch(errorMessage, (message) => {
+  if (!message) return
+  appStore.showError(message, 5000)
+  errorMessage.value = ''
+})
+
 watch([selectedKeyId, apiBaseUrl], () => {
   void loadModels()
 })
 
 onMounted(() => {
+  document.addEventListener('click', handleSizeOutside)
+  document.addEventListener('keydown', handleSizeEscape)
   applyInspirationFromRoute()
   void loadData()
 })
 onActivated(applyInspirationFromRoute)
+onBeforeUnmount(() => {
+  document.removeEventListener('click', handleSizeOutside)
+  document.removeEventListener('keydown', handleSizeEscape)
+})
 </script>
 
 <style scoped>
@@ -1658,6 +1788,11 @@ onActivated(applyInspirationFromRoute)
 .toolbar-field--select :deep(.studio-select--open .studio-select__trigger) {
   border: 0;
   box-shadow: none;
+}
+
+.toolbar-field--select :deep(.studio-select__menu) {
+  width: 100%;
+  max-width: 100%;
 }
 
 .toolbar-field .toolbar-image-select--model {
@@ -2292,6 +2427,560 @@ onActivated(applyInspirationFromRoute)
   font-weight: 600;
 }
 
+.image-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  padding: 0.15rem 0.85rem 0.75rem;
+  background: rgb(255 255 255);
+}
+
+.image-composer > * {
+  flex-shrink: 0;
+}
+
+.image-composer__prompt-shell {
+  position: relative;
+  z-index: 2;
+  overflow: visible;
+  border: 1px solid rgb(235 235 233);
+  border-radius: 1.2rem;
+  background: rgb(248 248 246);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.8);
+  transition:
+    border-color 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+.image-composer__prompt-shell:focus-within {
+  border-color: rgb(208 208 204);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.9),
+    0 8px 24px rgb(24 24 27 / 0.05);
+}
+
+.image-composer__prompt {
+  display: block;
+  width: 100%;
+  height: 9rem;
+  min-height: 9rem;
+  max-height: min(36rem, 65vh);
+  resize: none;
+  overflow-y: auto;
+  border: 0;
+  background: transparent;
+  padding: 0.75rem 0.85rem 0.25rem;
+  color: rgb(31 31 30);
+  font-family: inherit;
+  font-size: 0.92rem;
+  line-height: 1.72;
+  outline: none;
+}
+
+.image-composer__prompt::placeholder {
+  color: rgb(156 156 151);
+}
+
+.image-composer__prompt-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.35rem 0.65rem 0.5rem;
+}
+
+.image-composer__model {
+  min-width: 0;
+  max-width: none;
+  flex: 1 1 auto;
+}
+
+.image-composer__model :deep(.studio-select__trigger) {
+  min-width: 0;
+  height: 2.2rem;
+  border-color: rgb(226 226 222);
+  border-radius: 999px;
+  background: rgb(255 255 255);
+  padding: 0 0.75rem;
+  box-shadow: none;
+  font-size: 0.8rem;
+}
+
+.image-composer__model :deep(.studio-select__trigger span) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.image-composer__model :deep(.studio-select__trigger:hover),
+.image-composer__model :deep(.studio-select--open .studio-select__trigger) {
+  border-color: rgb(201 201 196);
+  box-shadow: none;
+}
+
+.image-composer__prompt-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.1rem;
+}
+
+.image-composer__prompt-actions button,
+.image-composer__section-head button {
+  display: inline-flex;
+  height: 2rem;
+  width: 2rem;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 0.55rem;
+  background: transparent;
+  color: rgb(82 82 78);
+  transition:
+    background 0.16s ease,
+    color 0.16s ease;
+}
+
+.image-composer__prompt-actions button:hover,
+.image-composer__section-head button:hover {
+  background: rgb(238 238 235);
+  color: rgb(24 24 23);
+}
+
+.image-composer__references {
+  border-radius: 0.8rem;
+  padding: 0.1rem 0.15rem 0.35rem;
+  transition:
+    background 0.16s ease,
+    outline-color 0.16s ease;
+}
+
+.image-composer__references:focus-within {
+  outline: 2px solid rgb(24 24 27 / 0.08);
+  outline-offset: 0.25rem;
+}
+
+.image-composer__section-head {
+  display: flex;
+  min-height: 1.65rem;
+  align-items: center;
+  justify-content: space-between;
+  color: rgb(42 42 40);
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.image-composer__reference-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(4.9rem, 1fr));
+  gap: 0.55rem;
+  margin-top: 0.4rem;
+}
+
+.image-composer__reference,
+.image-composer__upload-tile {
+  position: relative;
+  aspect-ratio: 1;
+  overflow: hidden;
+  border-radius: 0.8rem;
+}
+
+.image-composer__reference {
+  border: 1px solid rgb(231 231 228);
+  background: rgb(245 245 243);
+}
+
+.image-composer__reference img {
+  height: 100%;
+  width: 100%;
+  object-fit: cover;
+}
+
+.image-composer__reference button {
+  position: absolute;
+  top: 0.3rem;
+  right: 0.3rem;
+  display: flex;
+  height: 1.5rem;
+  width: 1.5rem;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgb(255 255 255 / 0.4);
+  border-radius: 999px;
+  background: rgb(24 24 27 / 0.72);
+  color: white;
+}
+
+.image-composer__upload-tile {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed rgb(198 198 193);
+  background: rgb(255 255 255);
+  color: rgb(44 44 42);
+  transition:
+    border-color 0.16s ease,
+    background 0.16s ease;
+}
+
+.image-composer__upload-tile:hover {
+  border-color: rgb(109 109 103);
+  background: rgb(249 249 247);
+}
+
+.image-composer__helper {
+  margin-top: 0.4rem;
+  font-size: 0.68rem;
+  line-height: 1.55;
+  color: rgb(142 142 136);
+}
+
+.image-composer__toggle-row {
+  display: flex;
+  min-height: 1.9rem;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  border-radius: 0.75rem;
+  color: rgb(42 42 40);
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.image-composer__field {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.image-composer__label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.image-composer__size-row {
+  display: block;
+}
+
+.image-composer__label-row .image-composer__text-action {
+  min-height: auto;
+  padding: 0;
+}
+
+.image-composer__size-field {
+  position: relative;
+}
+
+.image-composer__size-anchor {
+  position: relative;
+  min-width: 0;
+}
+
+.image-composer__size-menu {
+  position: absolute;
+  top: calc(100% + 0.35rem);
+  right: 0;
+  left: 0;
+  z-index: 35;
+  max-height: min(21rem, 52vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border: 1px solid rgb(226 226 222);
+  border-radius: 0.7rem;
+  background: rgb(255 255 255);
+  padding: 0.35rem;
+  box-shadow: 0 18px 38px rgb(24 24 27 / 0.16);
+}
+
+.image-composer__size-menu.is-up {
+  top: auto;
+  bottom: calc(100% + 0.35rem);
+}
+
+.image-composer__size-option {
+  display: flex;
+  width: 100%;
+  min-height: 2.2rem;
+  align-items: center;
+  gap: 0.55rem;
+  border: 0;
+  border-radius: 0.45rem;
+  background: transparent;
+  padding: 0 0.7rem;
+  color: rgb(54 54 51);
+  font-size: 0.8rem;
+  text-align: left;
+}
+
+.image-composer__size-ratio-frame {
+  display: flex;
+  width: 1.3rem;
+  height: 1.3rem;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+}
+
+.image-composer__size-ratio-shape {
+  display: block;
+  border: 1.5px solid currentColor;
+  border-radius: 0.2rem;
+  opacity: 0.72;
+}
+
+.image-composer__size-option:hover {
+  background: rgb(247 247 245);
+}
+
+.image-composer__size-option.is-active {
+  background: rgb(232 232 229);
+  color: rgb(25 25 24);
+  font-weight: 600;
+}
+
+.image-composer__size-option-note {
+  margin: -0.15rem 0 0.35rem;
+  padding: 0 0.7rem;
+  color: rgb(142 142 136);
+  font-size: 0.7rem;
+}
+
+.image-composer__size-group {
+  margin: 0.45rem 0 0.15rem;
+  padding: 0 0.7rem;
+  color: rgb(142 142 136);
+  font-size: 0.7rem;
+}
+
+.image-composer__custom-size {
+  display: grid;
+  gap: 0.48rem;
+  margin-top: 0.55rem;
+  border-top: 1px solid rgb(239 239 236);
+  padding-top: 0.55rem;
+}
+
+.image-composer__custom-size-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.4rem;
+  color: rgb(54 54 51);
+  font-size: 0.68rem;
+}
+
+.image-composer__dimension-row {
+  display: grid;
+  width: 100%;
+  max-width: 18rem;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.image-composer__dimension {
+  display: flex;
+  height: 2.05rem;
+  align-items: center;
+  gap: 0.35rem;
+  border: 1px solid rgb(231 231 228);
+  border-radius: 0.55rem;
+  background: rgb(255 255 255);
+  padding: 0 0.55rem;
+  color: rgb(113 113 107);
+  font-size: 0.67rem;
+}
+
+.image-composer__dimension input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: rgb(31 31 30);
+  font-size: 0.76rem;
+  font-weight: 500;
+  outline: none;
+}
+
+.image-composer__dimension-x {
+  color: rgb(142 142 136);
+  font-size: 0.7rem;
+}
+
+.image-composer__custom-size-help {
+  color: rgb(142 142 136);
+  font-size: 0.64rem;
+  line-height: 1.55;
+}
+
+.image-composer__custom-size-summary {
+  color: rgb(54 54 51);
+  font-size: 0.68rem;
+  line-height: 1.45;
+}
+
+.image-composer__custom-size-error {
+  border-radius: 0.5rem;
+  background: rgb(255 243 237);
+  padding: 0.35rem 0.5rem;
+  color: rgb(194 65 12);
+  font-size: 0.66rem;
+  line-height: 1.45;
+}
+
+.image-composer__label {
+  color: rgb(42 42 40);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.image-composer__text-action {
+  min-height: 2.35rem;
+  border: 0;
+  border-radius: 0.5rem;
+  background: transparent;
+  padding: 0 0.45rem;
+  color: rgb(90 90 86);
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+.image-composer__text-action:hover {
+  color: rgb(24 24 23);
+  text-decoration: underline;
+  text-underline-offset: 0.2rem;
+}
+
+.image-composer__segmented {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0;
+  overflow: hidden;
+  border-radius: 0.55rem;
+  background: rgb(232 232 229);
+  padding: 0;
+}
+
+.image-composer__segmented button {
+  min-height: 2.15rem;
+  border: 0;
+  border-radius: 0.45rem;
+  background: transparent;
+  color: rgb(113 113 107);
+  font-size: 0.82rem;
+  transition:
+    background 0.16s ease,
+    color 0.16s ease,
+    box-shadow 0.16s ease;
+}
+
+.image-composer__segmented button:hover {
+  color: rgb(31 31 30);
+}
+
+.image-composer__segmented button.is-active {
+  background: rgb(250 250 248);
+  color: rgb(31 31 30);
+  box-shadow:
+    0 1px 2px rgb(24 24 27 / 0.08),
+    0 0 0 1px rgb(24 24 27 / 0.03);
+}
+
+.image-composer__select-like {
+  display: flex;
+  width: 100%;
+  min-height: 2.35rem;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  border: 1px solid rgb(231 231 228);
+  border-radius: 0.55rem;
+  background: rgb(255 255 255);
+  padding: 0 0.8rem;
+  color: rgb(54 54 51);
+  font-size: 0.82rem;
+  text-align: left;
+  transition:
+    border-color 0.16s ease,
+    box-shadow 0.16s ease;
+}
+
+.image-composer__select-like:hover {
+  border-color: rgb(201 201 196);
+  box-shadow: 0 4px 14px rgb(24 24 27 / 0.05);
+}
+
+.image-composer__footer {
+  margin-top: 0.05rem;
+  border-top: 1px solid rgb(239 239 236);
+  padding-top: 0.7rem;
+}
+
+.image-composer__generate {
+  display: inline-flex;
+  width: 100%;
+  min-height: 2.85rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border: 0;
+  border-radius: 0.9rem;
+  background: rgb(25 25 24);
+  color: white;
+  font-size: 0.92rem;
+  font-weight: 600;
+  transition:
+    background 0.16s ease,
+    transform 0.16s ease,
+    opacity 0.16s ease;
+}
+
+.image-composer__generate:hover:not(:disabled) {
+  background: rgb(45 45 43);
+}
+
+.image-composer__generate:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.image-composer__generate:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.studio-results__actions {
+  display: flex;
+  min-width: 0;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.image-generation-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border-radius: 9999px;
+  background: rgb(240 253 250);
+  padding: 0.3rem 0.58rem;
+  color: rgb(15 118 110);
+  font-size: 0.72rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.image-generation-status .is-spinning {
+  animation: studio-refresh-spin 0.8s linear infinite;
+}
+
+@media (max-width: 640px) {
+  .image-generation-status span {
+    display: none;
+  }
+}
+
 @media (max-width: 900px) {
   .image-detail-dialog {
     grid-template-columns: minmax(0, 1fr);
@@ -2304,6 +2993,40 @@ onActivated(applyInspirationFromRoute)
 
   .image-detail-dialog__panel {
     max-height: 42vh;
+  }
+}
+
+@media (max-width: 480px) {
+  .image-composer {
+    padding-right: 0.65rem;
+    padding-left: 0.65rem;
+  }
+
+  .image-composer__prompt {
+    height: 7.75rem;
+    min-height: 7.75rem;
+    max-height: min(28rem, 60vh);
+    padding: 0.75rem 0.8rem 0.2rem;
+    font-size: 0.88rem;
+  }
+
+  .image-composer__prompt-footer {
+    padding-right: 0.6rem;
+    padding-left: 0.6rem;
+  }
+
+  .image-composer__model {
+    min-width: 0;
+    max-width: none;
+  }
+
+  .image-composer__prompt-actions button {
+    height: 1.9rem;
+    width: 1.9rem;
+  }
+
+  .image-composer__reference-grid {
+    grid-template-columns: repeat(auto-fill, minmax(4.6rem, 1fr));
   }
 }
 
@@ -2507,7 +3230,7 @@ onActivated(applyInspirationFromRoute)
 }
 
 :global(.dark .image-detail-dialog__media) {
-  background: rgb(15 23 42);
+  background: rgb(29 28 25);
 }
 
 :global(.dark .image-detail-dialog__section-head),
@@ -2517,7 +3240,7 @@ onActivated(applyInspirationFromRoute)
 
 :global(.dark .image-detail-dialog__prompt-input) {
   border-color: rgb(63 63 70);
-  background: rgb(15 23 42);
+  background: rgb(38 38 36);
   color: rgb(244 244 245);
 }
 
@@ -2530,5 +3253,222 @@ onActivated(applyInspirationFromRoute)
   border-color: rgb(63 63 70);
   background: rgb(24 24 27);
   color: rgb(226 232 240);
+}
+
+.image-studio .studio-page__header {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: 0.85rem;
+}
+
+.image-studio .studio-page__header h1 {
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: rgb(24 24 27);
+}
+
+.image-studio .studio-page__header p {
+  margin-top: 0.25rem;
+  font-size: 0.78rem;
+  color: rgb(113 113 122);
+}
+
+.image-studio .studio-page__header > .flex {
+  align-items: stretch;
+}
+
+.image-studio .studio-page__composer {
+  padding: 0 1rem 1rem;
+}
+
+.image-studio .studio-page__results .grid {
+  gap: 1rem;
+}
+
+.image-studio .studio-page__results article {
+  border-radius: 0.55rem;
+  background: rgb(255 255 255);
+  box-shadow: 0 1px 2px rgb(15 23 42 / 0.03);
+}
+
+.image-studio .studio-page__results article > button {
+  background: rgb(250 250 249);
+}
+
+.image-studio .studio-results__body > .flex:first-child {
+  min-height: 100%;
+}
+
+@media (max-width: 1024px) {
+  .image-studio .studio-page__header {
+    padding-bottom: 1rem;
+  }
+}
+
+:global(.dark .image-studio .studio-page__header h1) {
+  color: rgb(244 244 245);
+}
+
+:global(.dark .image-studio .studio-page__results article) {
+  border-color: rgb(63 63 70);
+  background: rgb(24 24 27);
+}
+
+:global(.dark .image-composer) {
+  background: rgb(24 24 27);
+}
+
+:global(.dark .image-composer__prompt-shell) {
+  border-color: rgb(54 54 51);
+  background: rgb(35 35 33);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.04);
+}
+
+:global(.dark .image-composer__prompt-shell:focus-within) {
+  border-color: rgb(82 82 76);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.24);
+}
+
+:global(.dark .image-composer__prompt) {
+  color: rgb(244 244 242);
+}
+
+:global(.dark .image-composer__model .studio-select__trigger) {
+  border-color: rgb(64 64 60) !important;
+  background: rgb(46 46 43) !important;
+  color: rgb(239 239 235) !important;
+}
+
+:global(.dark .image-composer__model .studio-select__trigger span) {
+  color: rgb(239 239 235) !important;
+}
+
+:global(.dark .image-composer__prompt-actions button),
+:global(.dark .image-composer__section-head button) {
+  color: rgb(188 188 181);
+}
+
+:global(.dark .image-composer__prompt-actions button:hover),
+:global(.dark .image-composer__section-head button:hover) {
+  background: rgb(48 48 45);
+  color: rgb(247 247 243);
+}
+
+:global(.dark .image-composer__section-head),
+:global(.dark .image-composer__toggle-row),
+:global(.dark .image-composer__label) {
+  color: rgb(236 236 232);
+}
+
+:global(.dark .image-composer__reference) {
+  border-color: rgb(62 62 58);
+  background: rgb(38 38 36);
+}
+
+:global(.dark .image-composer__upload-tile),
+:global(.dark .image-composer__select-like),
+:global(.dark .image-composer__dimension) {
+  border-color: rgb(70 70 65);
+  background: rgb(38 38 36);
+  color: rgb(232 232 227);
+}
+
+:global(.dark .image-composer__upload-tile:hover),
+:global(.dark .image-composer__select-like:hover) {
+  border-color: rgb(98 98 91);
+  background: rgb(44 44 41);
+}
+
+:global(.dark .image-composer__helper) {
+  color: rgb(151 151 144);
+}
+
+:global(.dark .image-composer__size-menu) {
+  border-color: rgb(70 70 65);
+  background: rgb(35 35 33);
+}
+
+:global(.dark .image-composer__size-option) {
+  color: rgb(229 229 224);
+}
+
+:global(.dark .image-composer__size-option:hover) {
+  background: rgb(47 47 44);
+}
+
+:global(.dark .image-composer__size-option.is-active) {
+  background: rgb(58 58 54);
+  color: rgb(250 250 247);
+}
+
+:global(.dark .image-composer__size-option-note),
+:global(.dark .image-composer__size-group),
+:global(.dark .image-composer__custom-size-help),
+:global(.dark .image-composer__dimension-x) {
+  color: rgb(151 151 144);
+}
+
+:global(.dark .image-composer__custom-size) {
+  border-color: rgb(54 54 51);
+}
+
+:global(.dark .image-composer__custom-size-toggle),
+:global(.dark .image-composer__custom-size-summary) {
+  color: rgb(226 226 221);
+}
+
+:global(.dark .image-composer__dimension input) {
+  color: rgb(244 244 241);
+}
+
+:global(.dark .image-composer__custom-size-error) {
+  background: rgb(67 30 15);
+  color: rgb(253 186 116);
+}
+
+:global(.dark .image-composer__text-action) {
+  color: rgb(185 185 178);
+}
+
+:global(.dark .image-composer__text-action:hover) {
+  color: rgb(247 247 243);
+}
+
+:global(.dark .image-composer__segmented) {
+  background: rgb(48 48 45);
+}
+
+:global(.dark .image-composer__segmented button) {
+  color: rgb(166 166 159);
+}
+
+:global(.dark .image-composer__segmented button:hover) {
+  color: rgb(238 238 234);
+}
+
+:global(.dark .image-composer__segmented button.is-active) {
+  background: rgb(66 66 62);
+  color: rgb(250 250 247);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.2);
+}
+
+:global(.dark .image-composer__footer) {
+  border-color: rgb(54 54 51);
+}
+
+:global(.dark .image-composer__generate) {
+  background: rgb(244 244 241);
+  color: rgb(24 24 23);
+}
+
+:global(.dark .image-composer__generate:hover:not(:disabled)) {
+  background: rgb(226 226 221);
+}
+
+:global(.dark .image-generation-status) {
+  background: rgb(19 78 74 / 0.45);
+  color: rgb(153 246 228);
 }
 </style>

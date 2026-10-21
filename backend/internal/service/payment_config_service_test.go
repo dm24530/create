@@ -201,6 +201,17 @@ func TestParsePaymentConfig(t *testing.T) {
 		}
 	})
 
+	t.Run("recharge card visibility defaults on and supports explicit disable", func(t *testing.T) {
+		t.Parallel()
+		if cfg := svc.parsePaymentConfig(map[string]string{}); !cfg.RechargeCardEnabled {
+			t.Fatal("expected recharge cards to remain enabled when the setting is absent")
+		}
+		cfg := svc.parsePaymentConfig(map[string]string{SettingRechargeCardEnabled: "false"})
+		if cfg.RechargeCardEnabled {
+			t.Fatal("expected recharge cards to be disabled")
+		}
+	})
+
 	t.Run("recharge packages are parsed and normalized", func(t *testing.T) {
 		t.Parallel()
 		vals := map[string]string{
@@ -558,9 +569,10 @@ func TestUpdatePaymentConfig_PersistsExplicitEmptyAndFalseValues(t *testing.T) {
 	falseValue := false
 	emptyString := ""
 	err := svc.UpdatePaymentConfig(context.Background(), UpdatePaymentConfigRequest{
-		EnabledTypes:      []string{},
-		BalanceDisabled:   &falseValue,
-		ProductNamePrefix: &emptyString,
+		EnabledTypes:        []string{},
+		BalanceDisabled:     &falseValue,
+		RechargeCardEnabled: &falseValue,
+		ProductNamePrefix:   &emptyString,
 	})
 	if err != nil {
 		t.Fatalf("UpdatePaymentConfig returned error: %v", err)
@@ -569,6 +581,7 @@ func TestUpdatePaymentConfig_PersistsExplicitEmptyAndFalseValues(t *testing.T) {
 	want := map[string]string{
 		SettingEnabledPaymentTypes: "",
 		SettingBalancePayDisabled:  "false",
+		SettingRechargeCardEnabled: "false",
 		SettingProductNamePrefix:   "",
 	}
 	if len(repo.updates) != len(want) {

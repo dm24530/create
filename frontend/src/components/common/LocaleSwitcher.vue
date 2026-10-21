@@ -3,12 +3,15 @@
     <button
       @click="toggleDropdown"
       :disabled="switching"
-      class="flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-dark-700"
+      class="flex items-center gap-1 rounded-md text-xs font-medium text-gray-500 transition-colors hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-dark-700"
+      :class="compact ? 'px-1.5 py-1' : 'px-2 py-1.5 text-sm'"
       :title="currentLocale?.name"
+      :aria-label="currentLocale?.name"
     >
-      <span class="text-base">{{ currentLocale?.flag }}</span>
-      <span class="hidden sm:inline">{{ currentLocale?.code.toUpperCase() }}</span>
+      <span :class="compact ? 'text-sm' : 'text-base'">{{ currentLocale?.flag }}</span>
+      <span v-if="!compact" class="hidden sm:inline">{{ currentLocale?.code.toUpperCase() }}</span>
       <Icon
+        v-if="!compact"
         name="chevronDown"
         size="xs"
         class="text-gray-400 transition-transform duration-200"
@@ -46,6 +49,12 @@ import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
 import { setLocale, availableLocales } from '@/i18n'
+
+withDefaults(defineProps<{
+  compact?: boolean
+}>(), {
+  compact: false,
+})
 
 const { locale } = useI18n()
 

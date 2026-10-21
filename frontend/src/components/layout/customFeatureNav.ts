@@ -38,7 +38,7 @@ export function buildUserCustomNavAfterUsage(t: TranslateFn, icons: Pick<UserCus
 
 export function buildUserCustomNavBeforeProfile(t: TranslateFn, icons: Pick<UserCustomNavIcons, 'ManualIcon'>): SidebarNavItem[] {
   return [
-    { path: '/manual', label: t('nav.manual'), icon: icons.ManualIcon, hideInSimpleMode: true },
+    { path: '/image-studio?openManual=1', label: t('nav.manual'), icon: icons.ManualIcon, hideInSimpleMode: true },
   ]
 }
 

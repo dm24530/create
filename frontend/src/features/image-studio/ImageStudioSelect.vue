@@ -16,7 +16,15 @@
       @click="toggle"
       @keydown.esc.prevent="close"
     >
-      <span>{{ selectedOption?.label ?? placeholder }}</span>
+      <span class="studio-select__value">
+        <span v-if="selectedOption?.preview" class="studio-select__preview-frame">
+          <span
+            class="studio-select__preview"
+            :style="previewShapeStyle(selectedOption.preview)"
+          />
+        </span>
+        <span class="studio-select__label">{{ selectedOption?.label ?? placeholder }}</span>
+      </span>
       <Icon name="chevronDown" size="sm" :class="{ 'rotate-180': open }" />
     </button>
 
@@ -36,7 +44,15 @@
           :aria-selected="option.value === modelValue"
           @click="option.disabled || select(option.value)"
         >
-          {{ option.label }}
+          <span class="studio-select__value">
+            <span v-if="option.preview" class="studio-select__preview-frame">
+              <span
+                class="studio-select__preview"
+                :style="previewShapeStyle(option.preview)"
+              />
+            </span>
+            <span class="studio-select__label">{{ option.label }}</span>
+          </span>
         </button>
       </div>
     </Transition>
@@ -52,6 +68,7 @@ interface SelectOption {
   value: string
   label: string
   disabled?: boolean
+  preview?: string
 }
 
 const props = withDefaults(defineProps<{
@@ -86,6 +103,15 @@ function close() {
 function select(value: string) {
   emit('update:modelValue', value)
   close()
+}
+
+function previewShapeStyle(preview: string) {
+  const [width, height] = preview.split('/').map((part) => Number(part.trim()))
+  const max = 1.05
+  if (!width || !height) return { width: `${max}rem`, height: `${max}rem` }
+  return width >= height
+    ? { width: `${max}rem`, height: `${max * height / width}rem` }
+    : { width: `${max * width / height}rem`, height: `${max}rem` }
 }
 
 function handleClickOutside(event: MouseEvent) {
@@ -124,6 +150,37 @@ onBeforeUnmount(() => document.removeEventListener('click', handleClickOutside))
     transform 0.18s ease;
 }
 
+.studio-select__value {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.studio-select__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio-select__preview-frame {
+  display: flex;
+  width: 1.2rem;
+  height: 1.2rem;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+}
+
+.studio-select__preview {
+  display: block;
+  border: 1.5px solid currentColor;
+  border-radius: 2px;
+  opacity: 0.78;
+}
+
 .studio-select__trigger:hover,
 .studio-select--open .studio-select__trigger {
   border-color: rgb(232 121 78);
@@ -138,11 +195,15 @@ onBeforeUnmount(() => document.removeEventListener('click', handleClickOutside))
 
 .studio-select__menu {
   position: absolute;
-  right: 0;
+  left: 0;
   bottom: calc(100% + 0.45rem);
   z-index: 40;
-  min-width: 100%;
-  overflow: hidden;
+  width: max(100%, min(22rem, calc(100vw - 2rem)));
+  max-width: calc(100vw - 1rem);
+  max-height: min(20rem, 60vh);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   border: 1px solid rgb(226 232 240);
   border-radius: 0.85rem;
   background: rgb(255 255 255 / 0.98);
@@ -157,8 +218,10 @@ onBeforeUnmount(() => document.removeEventListener('click', handleClickOutside))
 }
 
 .studio-select__option {
-  display: block;
+  display: flex;
   width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
   border: 0;
   border-bottom: 1px solid rgb(241 245 249);
   background: transparent;
@@ -228,5 +291,25 @@ onBeforeUnmount(() => document.removeEventListener('click', handleClickOutside))
 :global(.dark .studio-select__option--selected) {
   background: rgb(232 121 78 / 0.14);
   color: rgb(245 161 127);
+}
+
+:global(.dark .studio-select__option:hover) {
+  background: rgb(232 121 78 / 0.12);
+  color: rgb(244 244 245);
+}
+
+:global(.dark .studio-select__option--selected:hover) {
+  background: rgb(232 121 78 / 0.22);
+  color: rgb(251 146 60);
+}
+
+:global(.dark .studio-select__option--disabled) {
+  background: transparent;
+  color: rgb(113 113 122);
+}
+
+:global(.dark .studio-select__option--disabled:hover) {
+  background: rgb(63 63 70 / 0.35);
+  color: rgb(161 161 170);
 }
 </style>

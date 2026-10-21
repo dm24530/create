@@ -62,7 +62,10 @@ function compactDestination(wrapper: ReturnType<typeof mountHome>) {
 function modelPlazaDestination(wrapper: ReturnType<typeof mountHome>) {
   return wrapper
     .findAllComponents(RouterLinkStub)
-    .find((link) => link.props('to') === '/model-plaza')
+    .find((link) => {
+      const to = link.props('to')
+      return to === '/model-plaza' || to?.query?.openModelPlaza === '1'
+    })
     ?.props('to')
 }
 
@@ -161,7 +164,10 @@ describe('HomeView compact mode', () => {
       model_plaza_require_auth: true,
     })
 
-    expect(modelPlazaDestination(wrapper)).toBe('/model-plaza')
+    expect(modelPlazaDestination(wrapper)).toEqual({
+      path: '/image-studio',
+      query: { openModelPlaza: '1' },
+    })
   })
 
   it('shows the model plaza link in the default home header', () => {

@@ -256,7 +256,10 @@ async function mountSubscriptionConfirm(options: Parameters<typeof checkoutInfoW
   return wrapper
 }
 
-async function mountSubscriptionPlanList(planCount: number) {
+async function mountSubscriptionPlanList(
+  planCount: number,
+  checkoutOverrides: Partial<CheckoutInfoResponse> = {},
+) {
   vi.useRealTimers()
   routeState.path = '/purchase'
   routeState.query = { tab: 'subscription' }
@@ -275,7 +278,7 @@ async function mountSubscriptionPlanList(planCount: number) {
     id: index + 1,
     name: `Plan ${index + 1}`,
   }))
-  getCheckoutInfo.mockReset().mockResolvedValue(checkoutInfoFixture({ plans }))
+  getCheckoutInfo.mockReset().mockResolvedValue(checkoutInfoFixture({ plans, ...checkoutOverrides }))
   bridgeInvoke.mockReset()
   window.localStorage.clear()
   ;(window as Window & { WeixinJSBridge?: { invoke: typeof bridgeInvoke } }).WeixinJSBridge = undefined
@@ -842,9 +845,9 @@ describe('PaymentView subscription feature flag', () => {
     const wrapper = await mountSubscriptionPlanList(2)
 
     expect(tabLabels(wrapper)).toEqual([
-      'payment.tabRechargeCard',
       'payment.tabTopUp',
       'payment.tabSubscribe',
+      'payment.tabRechargeCard',
     ])
     expect(wrapper.findAllComponents(SubscriptionPlanCard)).toHaveLength(2)
   })
@@ -853,9 +856,17 @@ describe('PaymentView subscription feature flag', () => {
     appStoreState.setPublicSettings({ subscription_enabled: false })
     const wrapper = await mountSubscriptionPlanList(2)
 
-    expect(tabLabels(wrapper)).toEqual(['payment.tabRechargeCard', 'payment.tabTopUp'])
+    expect(tabLabels(wrapper)).toEqual(['payment.tabTopUp', 'payment.tabRechargeCard'])
     expect(wrapper.findAllComponents(SubscriptionPlanCard)).toHaveLength(0)
+    await wrapper.findAll('button').find((button) => button.text() === 'payment.tabRechargeCard')?.trigger('click')
     expect(wrapper.text()).toContain('payment.buyRechargeCard')
+  })
+
+  it('hides the recharge card tab when the admin disables it', async () => {
+    const wrapper = await mountSubscriptionPlanList(2, { recharge_card_enabled: false })
+
+    expect(tabLabels(wrapper)).toEqual(['payment.tabTopUp', 'payment.tabSubscribe'])
+    expect(wrapper.text()).not.toContain('payment.buyRechargeCard')
   })
 
   it('shows an unavailable notice instead of a doomed top-up form when balance recharge is disabled too', async () => {
@@ -877,8 +888,9 @@ describe('PaymentView subscription feature flag', () => {
     appStoreState.setPublicSettings({ subscription_enabled: false })
     await flushPromises()
 
-    expect(tabLabels(wrapper)).toEqual(['payment.tabRechargeCard', 'payment.tabTopUp'])
+    expect(tabLabels(wrapper)).toEqual(['payment.tabTopUp', 'payment.tabRechargeCard'])
     expect(wrapper.findAllComponents(SubscriptionPlanCard)).toHaveLength(0)
+    await wrapper.findAll('button').find((button) => button.text() === 'payment.tabRechargeCard')?.trigger('click')
     expect(wrapper.text()).toContain('payment.buyRechargeCard')
     wrapper.unmount()
   })

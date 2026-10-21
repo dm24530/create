@@ -246,16 +246,13 @@ describe('usage reasoning effort page display', () => {
     localStorage.clear()
   })
 
-  it('user usage page only shows the requested reasoning effort', async () => {
+  it('user usage page keeps the simplified columns without reasoning effort', async () => {
     const wrapper = mount(UserUsageView, {
       global: { stubs: sharedPageStubs },
     })
     await flushPromises()
 
-    const cell = reasoningCellText(wrapper)
-    expect(cell).toContain('Max')
-    expect(cell).not.toContain('XHigh')
-    expect(cell).not.toContain('↳')
+    expect(wrapper.find('[data-testid="reasoning-effort-cell"]').exists()).toBe(false)
     expect(wrapper.text()).not.toContain('XHigh')
   })
 

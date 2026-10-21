@@ -24,6 +24,7 @@ export const userCustomFeatureRoutesAfterKeys: RouteRecordRaw[] = [
       requiresAdmin: false,
       title: 'Image Studio',
       keepAlive: true,
+      immersive: true,
     }
   },
   {
@@ -35,7 +36,8 @@ export const userCustomFeatureRoutesAfterKeys: RouteRecordRaw[] = [
       requiresAdmin: false,
       title: 'Video Studio',
       titleKey: 'videoStudio.title',
-      descriptionKey: 'videoStudio.description'
+      descriptionKey: 'videoStudio.description',
+      immersive: true,
     }
   },
   {
@@ -47,7 +49,8 @@ export const userCustomFeatureRoutesAfterKeys: RouteRecordRaw[] = [
       requiresAdmin: false,
       title: 'Video Inspiration',
       titleKey: 'videoInspiration.title',
-      descriptionKey: 'videoInspiration.description'
+      descriptionKey: 'videoInspiration.description',
+      immersive: true,
     }
   },
   {
@@ -59,7 +62,8 @@ export const userCustomFeatureRoutesAfterKeys: RouteRecordRaw[] = [
       requiresAdmin: false,
       title: 'Image Inspiration',
       titleKey: 'imageInspiration.title',
-      descriptionKey: 'imageInspiration.description'
+      descriptionKey: 'imageInspiration.description',
+      immersive: true,
     }
   },
   {
@@ -71,7 +75,8 @@ export const userCustomFeatureRoutesAfterKeys: RouteRecordRaw[] = [
       requiresAdmin: false,
       title: 'My Video Works',
       titleKey: 'videoWorks.title',
-      descriptionKey: 'videoWorks.description'
+      descriptionKey: 'videoWorks.description',
+      immersive: true,
     }
   }
 ]
@@ -95,7 +100,10 @@ export const userCustomFeatureRoutesAfterAvailableChannels: RouteRecordRaw[] = [
   {
     path: '/manual',
     name: 'UserManual',
-    component: () => import('@/views/user/ManualView.vue'),
+    redirect: {
+      path: '/image-studio',
+      query: { openManual: '1' }
+    },
     meta: {
       requiresAuth: true,
       requiresAdmin: false,
@@ -106,7 +114,10 @@ export const userCustomFeatureRoutesAfterAvailableChannels: RouteRecordRaw[] = [
   },
   {
     path: '/manual/:platform',
-    redirect: '/manual'
+    redirect: {
+      path: '/image-studio',
+      query: { openManual: '1' }
+    }
   },
   {
     path: '/docs/api',
@@ -123,7 +134,10 @@ export const userCustomFeatureRoutesAfterAvailableChannels: RouteRecordRaw[] = [
   {
     path: '/models',
     name: 'UserModels',
-    component: () => import('@/views/user/ModelsView.vue'),
+    redirect: {
+      path: '/image-studio',
+      query: { openModelPlaza: '1' }
+    },
     meta: {
       requiresAuth: true,
       requiresAdmin: false,

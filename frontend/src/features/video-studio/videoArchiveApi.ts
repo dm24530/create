@@ -28,8 +28,12 @@ export interface ArchiveVideoRequest {
   saved?: boolean
 }
 
-export async function listArchivedVideos(): Promise<ArchivedVideoEntry[]> {
-  const { data } = await apiClient.get<ArchivedVideoEntry[]>('/video-studio/gallery')
+export async function listArchivedVideos(
+  scope?: 'saved' | 'temp',
+): Promise<ArchivedVideoEntry[]> {
+  const { data } = await apiClient.get<ArchivedVideoEntry[]>('/video-studio/gallery', {
+    params: scope ? { scope } : undefined,
+  })
   return Array.isArray(data) ? data : []
 }
 

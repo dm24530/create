@@ -5,7 +5,7 @@
       <span class="w-10 shrink-0 pt-2 text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-dark-500">
         {{ t('modelPlaza.filters.platformLabel') }}
       </span>
-      <div class="flex flex-wrap items-center gap-2">
+      <div :class="compact ? 'plaza-filter-scroll' : 'flex flex-wrap items-center gap-2'">
         <button
           v-for="p in ['all', ...platforms]"
           :key="`platform-${p}`"
@@ -23,11 +23,11 @@
     </div>
 
     <!-- 二级:分组(按所属平台着色,当前组合下无结果的置灰) -->
-    <div class="flex items-start gap-2">
+    <div v-if="showGroupAndRateFilters" class="flex items-start gap-2">
       <span class="w-10 shrink-0 pt-2 text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-dark-500">
         {{ t('modelPlaza.filters.groupLabel') }}
       </span>
-      <div class="flex flex-wrap items-center gap-2">
+      <div :class="compact ? 'plaza-filter-scroll' : 'flex flex-wrap items-center gap-2'">
         <button
           type="button"
           class="rounded-lg px-3 py-1.5 text-sm font-medium transition"
@@ -52,11 +52,11 @@
     </div>
 
     <!-- 三级:倍率(当前组合下不存在的置灰) -->
-    <div class="flex items-start gap-2">
+    <div v-if="showGroupAndRateFilters" class="flex items-start gap-2">
       <span class="w-10 shrink-0 pt-2 text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-dark-500">
         {{ t('modelPlaza.filters.rateLabel') }}
       </span>
-      <div class="flex flex-wrap items-center gap-2">
+      <div :class="compact ? 'plaza-filter-scroll' : 'flex flex-wrap items-center gap-2'">
         <button
           type="button"
           class="rounded-lg px-3 py-1.5 text-sm font-medium transition"
@@ -80,11 +80,11 @@
     </div>
 
     <!-- 四级:模型名搜索(纯前端过滤) -->
-    <div class="flex flex-wrap items-start gap-2">
+    <div :class="compact ? 'flex min-w-0 items-start gap-2' : 'flex flex-wrap items-start gap-2'">
       <span class="w-10 shrink-0 pt-2 text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-dark-500">
         {{ t('modelPlaza.filters.modelLabel') }}
       </span>
-      <div class="relative w-full sm:w-72">
+      <div :class="compact ? 'relative min-w-0 flex-1' : 'relative w-full sm:w-72'">
         <Icon
           name="search"
           size="sm"
@@ -117,7 +117,7 @@ import PlatformIcon from '@/components/common/PlatformIcon.vue'
 import { platformAccentColor } from '@/utils/platformColors'
 import type { GroupPlatform } from '@/types'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   /** 数据中出现的平台(去重排序后)。 */
   platforms: string[]
   /** 全量分组(含平台与生效倍率),三个维度的置灰联动由此推导。 */
@@ -129,7 +129,12 @@ const props = defineProps<{
   rate: number | 'all'
   /** 模型名搜索词(纯前端过滤)。 */
   search: string
-}>()
+  compact?: boolean
+  showGroupAndRateFilters?: boolean
+}>(), {
+  compact: false,
+  showGroupAndRateFilters: true,
+})
 
 defineEmits<{
   'update:platform': [value: string]
@@ -217,5 +222,25 @@ function chipClass(active: boolean): string {
 
 .dark .chip-tinted-active:not(:disabled):hover {
   background-color: var(--chip-accent);
+}
+
+.plaza-filter-scroll {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 0.5rem;
+  overflow-x: auto;
+  padding-bottom: 0.25rem;
+  scrollbar-width: none;
+}
+
+.plaza-filter-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.plaza-filter-scroll > * {
+  flex-shrink: 0;
 }
 </style>

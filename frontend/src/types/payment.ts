@@ -45,6 +45,8 @@ export interface PaymentConfig {
   help_image_url: string
   help_text: string
   recharge_packages: RechargePackage[]
+  /** Controls whether the recharge-card tab and products are exposed. Missing = enabled for compatibility. */
+  recharge_card_enabled?: boolean
   recharge_card_products: RechargeCardProduct[]
   stripe_publishable_key: string
 }
@@ -108,6 +110,8 @@ export interface CheckoutInfoResponse {
   help_text: string
   help_image_url: string
   recharge_packages: RechargePackage[]
+  /** Controls whether the recharge-card tab and products are exposed. Missing = enabled for compatibility. */
+  recharge_card_enabled?: boolean
   recharge_card_products: RechargeCardProduct[]
   stripe_publishable_key: string
   /** When true, Alipay payments on mobile always show the QR code instead of redirecting */

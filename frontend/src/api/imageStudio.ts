@@ -26,8 +26,12 @@ export interface SaveImageStudioGalleryRequest {
   saved?: boolean
 }
 
-export async function listImageStudioGallery(): Promise<ImageStudioGalleryEntry[]> {
-  const { data } = await apiClient.get<ImageStudioGalleryEntry[]>('/image-studio/gallery')
+export async function listImageStudioGallery(
+  scope?: 'saved' | 'temp',
+): Promise<ImageStudioGalleryEntry[]> {
+  const { data } = await apiClient.get<ImageStudioGalleryEntry[]>('/image-studio/gallery', {
+    params: scope ? { scope } : undefined,
+  })
   return data
 }
 

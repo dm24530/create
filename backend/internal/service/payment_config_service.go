@@ -35,6 +35,7 @@ const (
 	SettingHelpImageURL                  = "PAYMENT_HELP_IMAGE_URL"
 	SettingHelpText                      = "PAYMENT_HELP_TEXT"
 	SettingRechargePackages              = "RECHARGE_PACKAGES"
+	SettingRechargeCardEnabled           = "RECHARGE_CARD_ENABLED"
 	SettingRechargeCardProducts          = "RECHARGE_CARD_PRODUCTS"
 	SettingCancelRateLimitOn             = "CANCEL_RATE_LIMIT_ENABLED"
 	SettingCancelRateLimitMax            = "CANCEL_RATE_LIMIT_MAX"
@@ -71,6 +72,7 @@ type PaymentConfig struct {
 	HelpImageURL             string                `json:"help_image_url"`
 	HelpText                 string                `json:"help_text"`
 	RechargePackages         []RechargePackage     `json:"recharge_packages"`
+	RechargeCardEnabled      bool                  `json:"recharge_card_enabled"`
 	RechargeCardProducts     []RechargeCardProduct `json:"recharge_card_products"`
 	StripePublishableKey     string                `json:"stripe_publishable_key,omitempty"`
 	// RechargeBonusTiers 余额充值优惠阶梯（按 MinAmount 升序）；空表示无优惠。
@@ -130,6 +132,7 @@ type UpdatePaymentConfigRequest struct {
 	HelpImageURL              *string                `json:"help_image_url"`
 	HelpText                  *string                `json:"help_text"`
 	RechargePackages          *[]RechargePackage     `json:"recharge_packages"`
+	RechargeCardEnabled       *bool                  `json:"recharge_card_enabled"`
 	RechargeCardProducts      *[]RechargeCardProduct `json:"recharge_card_products"`
 	// RechargeBonusTiers nil 表示不更新；空切片表示清空阶梯。
 	RechargeBonusTiers  *[]RechargeBonusTier `json:"recharge_bonus_tiers"`
@@ -259,7 +262,7 @@ func (s *PaymentConfigService) GetPaymentConfig(ctx context.Context) (*PaymentCo
 		SettingEnabledPaymentTypes, SettingBalancePayDisabled, SettingBalanceRechargeMult, SettingSubscriptionUSDToCNYRate, SettingRechargeFeeRate, SettingLoadBalanceStrategy,
 		SettingRechargeBonusTiers, SettingRechargeBonusMode, SettingRechargeBonusNotice,
 		SettingProductNamePrefix, SettingProductNameSuffix,
-		SettingHelpImageURL, SettingHelpText, SettingRechargePackages, SettingRechargeCardProducts,
+		SettingHelpImageURL, SettingHelpText, SettingRechargePackages, SettingRechargeCardEnabled, SettingRechargeCardProducts,
 		SettingCancelRateLimitOn, SettingCancelRateLimitMax,
 		SettingCancelWindowSize, SettingCancelWindowUnit, SettingCancelWindowMode,
 		SettingAlipayForceQRCode, SettingAlipayMobilePrecreateDeepLink,
@@ -296,6 +299,7 @@ func (s *PaymentConfigService) parsePaymentConfig(vals map[string]string) *Payme
 		HelpImageURL:              vals[SettingHelpImageURL],
 		HelpText:                  vals[SettingHelpText],
 		RechargePackages:          parseRechargePackages(vals[SettingRechargePackages]),
+		RechargeCardEnabled:       strings.TrimSpace(vals[SettingRechargeCardEnabled]) != "false",
 		RechargeCardProducts:      parseRechargeCardProducts(vals[SettingRechargeCardProducts]),
 
 		CancelRateLimitEnabled: vals[SettingCancelRateLimitOn] == "true",
@@ -465,6 +469,9 @@ func (s *PaymentConfigService) UpdatePaymentConfig(ctx context.Context, req Upda
 	}
 	if req.RechargePackages != nil {
 		m[SettingRechargePackages] = formatRechargePackages(req.RechargePackages)
+	}
+	if req.RechargeCardEnabled != nil {
+		m[SettingRechargeCardEnabled] = formatBoolOrEmpty(req.RechargeCardEnabled)
 	}
 	if req.CancelRateLimitEnabled != nil {
 		m[SettingCancelRateLimitOn] = formatBoolOrEmpty(req.CancelRateLimitEnabled)

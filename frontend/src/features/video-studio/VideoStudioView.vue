@@ -1,10 +1,10 @@
 <template>
   <AppLayout>
-    <div class="video-studio">
-      <header class="video-studio__header">
+    <div class="video-studio studio-page">
+      <div class="studio-page__nav xl:hidden"><StudioNav /></div>
+      <header class="video-studio__header studio-page__header">
         <div class="video-studio__title">
-          <h1>AI 视频工作台</h1>
-          <p>写清镜头与动作，或带上参考素材，生成一段短视频。</p>
+          <h1>视频创作台</h1>
         </div>
 
         <div class="video-studio__toolbar">
@@ -41,19 +41,7 @@
                 class="toolbar-field__select"
                 data-testid="api-key-select"
                 :options="apiKeyOptions"
-                :placeholder="apiKeyOptions.length ? '选择密钥' : '没有可用密钥'"
-                direction="down"
-              />
-            </label>
-            <label class="toolbar-field toolbar-field--select">
-              <span>模型</span>
-              <ImageStudioSelect
-                v-model="videoModel"
-                class="toolbar-field__select toolbar-field__select--model"
-                data-testid="video-model-select"
-                :options="videoModelOptions"
-                :disabled="loadingModels || videoModels.length === 0"
-                :placeholder="modelSelectPlaceholder"
+                :placeholder="'选择密钥'"
                 direction="down"
               />
             </label>
@@ -91,20 +79,6 @@
                 data-testid="custom-api-key"
               />
             </label>
-            <label class="toolbar-field">
-              <span>模型</span>
-              <input
-                v-model="customModel"
-                type="text"
-                class="toolbar-input toolbar-input--model"
-                placeholder="模型名"
-                list="video-custom-models"
-                data-testid="custom-model"
-              />
-              <datalist id="video-custom-models">
-                <option v-for="model in customModels" :key="model" :value="model" />
-              </datalist>
-            </label>
             <button
               type="button"
               class="mini-action"
@@ -129,7 +103,19 @@
         </div>
       </header>
 
-      <section class="video-studio__stage" data-testid="video-stage">
+      <section class="video-studio__stage studio-page__results" data-testid="video-stage">
+        <div class="studio-results__head">
+          <div class="studio-results__title">
+            <Icon name="play" size="sm" />
+            <h2>全部结果</h2>
+            <span>{{ tasks.length }}</span>
+          </div>
+          <RouterLink to="/video-works" class="studio-results__action">
+            <Icon name="bookmark" size="sm" />
+            <span>我的作品</span>
+          </RouterLink>
+        </div>
+        <div class="studio-results__body">
         <div v-if="!tasks.length" class="video-studio__empty">
           <div class="video-studio__empty-icon">
             <Icon name="play" size="xl" />
@@ -162,7 +148,7 @@
             </div>
             <div class="video-card__body">
               <p class="video-card__prompt" :title="task.prompt">{{ task.prompt || '未填写提示词' }}</p>
-              <p class="video-card__meta">{{ taskMeta(task) }}</p>
+              <p class="video-card__meta">{{ formatTaskTime(task.createdAt) }} · {{ taskMeta(task) }}</p>
             </div>
             <div class="video-card__actions">
               <button
@@ -198,9 +184,10 @@
             </div>
           </article>
         </div>
+        </div>
       </section>
 
-      <form class="video-composer" @submit.prevent="generate">
+      <form class="video-composer studio-page__composer" @submit.prevent="generate">
         <div
           v-if="errorMessage"
           class="video-composer__alert video-composer__alert--error"
@@ -220,79 +207,161 @@
           </button>
         </div>
 
-        <div v-if="references.length" class="reference-row">
-          <div v-for="asset in references" :key="asset.id" class="reference-chip">
-            <img
-              v-if="asset.kind === 'image'"
-              :src="asset.url"
-              :alt="asset.name"
-              class="reference-chip__thumb"
-            />
-            <span v-else class="reference-chip__glyph">
-              <Icon :name="asset.kind === 'video' ? 'play' : 'bell'" size="xs" />
-            </span>
-            <span class="reference-chip__text">
-              <strong>{{ kindLabel(asset) }}</strong>
-              <small>{{ asset.name }}</small>
-            </span>
-            <button type="button" class="reference-chip__remove" @click="removeReference(asset.id)">
-              <Icon name="x" size="xs" />
-            </button>
-          </div>
-        </div>
-
-        <div class="video-composer__prompt-wrap">
+        <section class="video-composer__prompt-shell">
           <textarea
             ref="promptTextareaRef"
             v-model="prompt"
-            rows="3"
+            rows="6"
             class="video-composer__prompt"
+            :style="{ height: promptHeight }"
             :maxlength="MAX_PROMPT_CHARS"
             placeholder="描述画面、动作与运镜，例如：镜头缓慢推进，海雾从左侧涌入，光线逐渐转暖..."
             @paste="onPaste"
           />
-          <button
-            v-show="promptToggleVisible"
-            type="button"
-            class="video-composer__prompt-toggle"
-            data-testid="video-prompt-toggle"
-            :aria-label="promptCompact ? '放大提示词输入框' : '缩小提示词输入框'"
-            :title="promptCompact ? '放大提示词输入框' : '缩小提示词输入框'"
-            :aria-expanded="!promptCompact"
-            @click="togglePromptCompact"
-          >
-            <Icon :name="promptCompact ? 'expand' : 'collapse'" size="sm" />
-          </button>
-        </div>
-        <div class="video-composer__prompt-meta">
-          <span>{{ prompt.length }}/{{ MAX_PROMPT_CHARS }}</span>
-        </div>
+          <div class="video-composer__prompt-footer">
+            <ImageStudioSelect
+              v-if="providerMode === 'platform'"
+              v-model="videoModel"
+              class="video-composer__model"
+              data-testid="video-model-select"
+              :options="videoModelOptions"
+              :disabled="loadingModels || videoModels.length === 0"
+              :placeholder="modelSelectPlaceholder"
+              direction="down"
+            />
+            <input
+              v-else
+              v-model="customModel"
+              class="video-composer__model-input"
+              type="text"
+              placeholder="模型名"
+              list="video-custom-models"
+              data-testid="custom-model"
+            />
+            <datalist id="video-custom-models">
+              <option v-for="model in customModels" :key="model" :value="model" />
+            </datalist>
+            <div class="video-composer__prompt-actions">
+              <button type="button" title="复制提示词" aria-label="复制提示词" @click="copyComposerPrompt">
+                <Icon name="copy" size="sm" />
+              </button>
+              <button type="button" title="从剪贴板粘贴" aria-label="从剪贴板粘贴" @click="pasteComposerPrompt">
+                <Icon name="clipboard" size="sm" />
+              </button>
+              <button type="button" title="清空提示词" aria-label="清空提示词" @click="prompt = ''">
+                <Icon name="trash" size="sm" />
+              </button>
+              <button type="button" title="添加参考素材" aria-label="添加参考素材" @click="openReferenceDialog">
+                <Icon name="paperclip" size="sm" />
+              </button>
+            </div>
+          </div>
+          <div class="video-composer__prompt-meta">
+            <span>{{ prompt.length }}/{{ MAX_PROMPT_CHARS }}</span>
+          </div>
+          <div class="prompt-resize-row">
+            <button
+              type="button"
+              class="prompt-resize-handle"
+              aria-label="调整提示词框高度"
+              title="拖拽调整提示词框高度"
+              @pointerdown="startPromptResize"
+            />
+          </div>
+        </section>
 
-        <div class="video-composer__controls">
-          <button
-            type="button"
-            class="control-button"
-            data-testid="video-reference-trigger"
-            @click="openReferenceDialog"
-          >
-            <Icon name="paperclip" size="sm" />
+        <section
+          class="video-composer__references"
+          @dragover.prevent
+          @drop.prevent="onDropReferences"
+        >
+          <div class="video-composer__section-head">
             <span>参考素材</span>
-            <em v-if="references.length">{{ references.length }}</em>
-          </button>
-
-          <div class="control-field control-field--duration">
-            <span class="control-field__label">时长</span>
-            <div class="count-stepper" data-testid="video-duration-control">
+            <button type="button" title="添加参考素材" aria-label="添加参考素材" @click="openReferenceDialog">
+              <Icon name="upload" size="sm" />
+            </button>
+          </div>
+          <div class="video-composer__reference-grid">
+            <div v-for="asset in references" :key="asset.id" class="video-composer__reference">
+              <img
+                v-if="asset.kind === 'image'"
+                :src="asset.url"
+                :alt="asset.name"
+              />
+              <span v-else class="video-composer__reference-glyph">
+                <Icon :name="asset.kind === 'video' ? 'play' : 'bell'" size="sm" />
+                <small>{{ kindLabel(asset) }}</small>
+              </span>
               <button
                 type="button"
-                class="count-stepper__button"
-                data-testid="duration-decrement"
-                aria-label="减少时长"
-                :disabled="durationSeconds <= MIN_DURATION"
-                @click="adjustDuration(-1)"
+                :aria-label="`移除 ${asset.name}`"
+                @click="removeReference(asset.id)"
               >
-                <Icon name="minus" size="xs" />
+                <Icon name="x" size="xs" />
               </button>
+            </div>
+            <button
+              type="button"
+              class="video-composer__upload-tile"
+              data-testid="video-reference-trigger"
+              title="添加参考素材"
+              aria-label="添加参考素材"
+              @click="openReferenceDialog"
+            >
+              <Icon name="plus" size="md" />
+            </button>
+          </div>
+          <p class="video-composer__helper">
+            可拖拽或粘贴参考图，也可添加参考视频和音频。参考图最多 {{ MAX_IMAGES }} 张。
+          </p>
+        </section>
+
+        <div class="video-composer__field">
+          <span class="video-composer__field-label">清晰度</span>
+          <div
+            class="video-composer__segmented video-composer__segmented--three"
+            data-testid="video-resolution-control"
+            role="group"
+            aria-label="清晰度"
+          >
+            <button
+              v-for="option in resolutionOptions"
+              :key="option.value"
+              type="button"
+              :class="{ 'is-active': resolution === option.value }"
+              @click="resolution = option.value"
+            >
+              {{ option.label }}
+            </button>
+          </div>
+        </div>
+
+        <div class="video-composer__field">
+          <span class="video-composer__field-label">尺寸</span>
+          <ImageStudioSelect
+            v-model="aspectRatio"
+            class="video-composer__size-picker"
+            data-testid="video-size-select"
+            :options="aspectRatioOptions"
+            direction="up"
+          />
+        </div>
+
+        <div class="video-composer__field">
+          <span class="video-composer__field-label">秒数</span>
+          <div class="video-composer__duration" data-testid="video-duration-control">
+            <div class="video-composer__segmented" role="group" aria-label="时长">
+              <button
+                v-for="duration in durationPresetOptions"
+                :key="duration"
+                type="button"
+                :class="{ 'is-active': durationSeconds === duration }"
+                @click="durationSeconds = duration"
+              >
+                {{ duration }}秒
+              </button>
+            </div>
+            <label class="video-composer__duration-custom">
               <input
                 v-model.number="durationSeconds"
                 type="number"
@@ -301,54 +370,40 @@
                 aria-label="视频时长（秒）"
                 @blur="normalizeDuration"
               />
-              <button
-                type="button"
-                class="count-stepper__button"
-                data-testid="duration-increment"
-                aria-label="增加时长"
-                :disabled="durationSeconds >= MAX_DURATION"
-                @click="adjustDuration(1)"
-              >
-                <Icon name="plus" size="xs" />
-              </button>
-              <span class="count-stepper__suffix">秒</span>
+              <span>秒</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="video-composer__field">
+          <label class="video-composer__inline-field" for="video-task-count">
+            <span class="video-composer__field-label">任务数量</span>
+            <input
+              id="video-task-count"
+              v-model.number="taskCount"
+              data-testid="video-task-count"
+              type="number"
+              :min="1"
+              :max="MAX_TASK_COUNT"
+              aria-label="任务数量"
+              @blur="normalizeTaskCount"
+            />
+          </label>
+          <div class="video-composer__audio-row">
+            <span>生成音频</span>
+            <div :class="{ 'pointer-events-none opacity-45': isGrokVideoProvider }">
+              <Toggle v-model="generateAudio" />
             </div>
           </div>
+          <p v-if="isGrokVideoProvider" class="mt-1 text-xs text-gray-400 dark:text-gray-500">
+            当前 Grok 视频模型不支持单独的音频开关。
+          </p>
+        </div>
 
-          <label class="control-field">
-            <span class="control-field__label">画幅</span>
-            <ImageStudioSelect
-              v-model="aspectRatio"
-              data-testid="video-ratio-select"
-              :options="aspectRatioOptions"
-            />
-          </label>
-
-          <label class="control-field">
-            <span class="control-field__label">画质</span>
-            <ImageStudioSelect
-              v-model="resolution"
-              data-testid="video-resolution-select"
-              :options="resolutionOptions"
-            />
-          </label>
-
-          <button
-            type="button"
-            class="control-toggle"
-            :class="{ 'control-toggle--on': generateAudio }"
-            data-testid="video-audio-toggle"
-            :aria-pressed="generateAudio"
-            @click="generateAudio = !generateAudio"
-          >
-            <Icon name="bell" size="sm" />
-            <span>生成音频</span>
-          </button>
-
-          <div class="video-composer__spacer" />
-          <button type="submit" class="primary-button" data-testid="video-generate" :disabled="!canGenerate">
+        <div class="video-composer__footer">
+          <button type="submit" class="video-composer__generate" data-testid="video-generate" :disabled="!canGenerate">
             <Icon name="sparkles" size="sm" />
-            {{ generating ? '生成中' : '生成视频' }}
+            {{ generating ? '生成中' : '开始生成' }}
           </button>
         </div>
       </form>
@@ -503,15 +558,18 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 
 import AppLayout from '@/components/layout/AppLayout.vue'
+import StudioNav from '@/components/layout/StudioNav.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
+import Toggle from '@/components/common/Toggle.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { authAPI } from '@/api'
 import type { ApiKey } from '@/types'
 import { useClipboard } from '@/composables/useClipboard'
-import { rootRemToPx, useAutoGrowTextarea } from '@/composables/useAutoGrowTextarea'
-import { ensureCreatorKey } from '@/composables/useCreatorKey'
+import { usePromptResize } from '@/composables/usePromptResize'
+import { ensureCreatorKey, isCreationServiceUnavailable } from '@/composables/useCreatorKey'
 import { resolvePlaygroundApiEndpoint } from '@/utils/apiEndpoint'
 import { useAppStore } from '@/stores/app'
+import { useAuthStore } from '@/stores/auth'
 
 import ImageStudioSelect from '../image-studio/ImageStudioSelect.vue'
 import {
@@ -567,6 +625,7 @@ interface StudioTask {
 
 const MIN_DURATION = 1
 const MAX_DURATION = 15
+const MAX_TASK_COUNT = 4
 const MAX_IMAGES = 3
 const MAX_VIDEOS = 1
 const MAX_AUDIOS = 1
@@ -591,6 +650,7 @@ const PROVIDER_STORAGE_KEY = 'sub2api:video-studio:provider'
 
 const route = useRoute()
 const appStore = useAppStore()
+const authStore = useAuthStore()
 const { copyToClipboard } = useClipboard()
 
 const keys = ref<ApiKey[]>([])
@@ -612,24 +672,13 @@ const errorMessage = ref('')
 const inspirationHint = ref('')
 const archiveHint = ref('')
 const prompt = ref('')
-const promptCompact = ref(false)
-const {
-  textareaRef: promptTextareaRef,
-  resize: resizePromptTextarea,
-  contentHeight: promptContentHeight,
-} = useAutoGrowTextarea(prompt, {
-  maxHeight: () => promptCompact.value
-    ? rootRemToPx(4.5)
-    : Math.min(rootRemToPx(12.5), Math.max(rootRemToPx(8), window.innerHeight * 0.28)),
+const promptTextareaRef = ref<HTMLTextAreaElement | null>(null)
+const { height: promptHeight, startResize: startPromptResize } = usePromptResize(promptTextareaRef, {
+  storageKey: 'sub2api:video-studio:prompt-height',
 })
-const promptToggleVisible = computed(() => promptCompact.value || promptContentHeight.value > 72)
-watch(promptCompact, () => {
-  void nextTick(resizePromptTextarea)
-})
-function togglePromptCompact() {
-  promptCompact.value = !promptCompact.value
-}
 const durationSeconds = ref(5)
+const durationPresetOptions = [1, 5, 10, 15]
+const taskCount = ref(1)
 const resolution = ref('720p')
 const aspectRatio = ref('16:9')
 const generateAudio = ref(false)
@@ -678,9 +727,9 @@ const effectiveApiKey = computed(() =>
 const effectiveModel = computed(() =>
   providerMode.value === 'custom' ? customModel.value.trim() : videoModel.value.trim(),
 )
+const isGrokVideoProvider = computed(() => resolveVideoProvider(effectiveModel.value) === 'grok')
 const modelSelectPlaceholder = computed(() => {
   if (loadingModels.value) return '正在加载...'
-  if (!videoModels.value.length) return '未找到视频模型'
   return '选择模型'
 })
 const canGenerate = computed(() =>
@@ -688,8 +737,14 @@ const canGenerate = computed(() =>
 )
 const generating = computed(() => activeGenerations.value > 0)
 
-const aspectRatioOptions = VIDEO_ASPECT_RATIOS.map((item) => ({ value: item.value, label: item.label }))
-const resolutionOptions = VIDEO_RESOLUTIONS.map((item) => ({ value: item, label: item }))
+const aspectRatioOptions = computed(() =>
+  VIDEO_ASPECT_RATIOS.map((item) => ({
+    value: item.value,
+    label: videoSizeLabel(item.value, resolution.value),
+    preview: item.css,
+  })),
+)
+const resolutionOptions = VIDEO_RESOLUTIONS.map((item) => ({ value: item, label: item.toUpperCase() }))
 
 const referenceKindOptions = [
   { value: 'image' as const, label: '参考图', icon: 'grid' },
@@ -817,6 +872,13 @@ function taskMeta(task: StudioTask): string {
   ].filter(Boolean).join(' · ')
 }
 
+function formatTaskTime(timestamp: number): string {
+  if (!timestamp) return '—'
+  const date = new Date(timestamp)
+  const pad = (value: number) => String(value).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+}
+
 async function loadData() {
   errorMessage.value = ''
   const keysPromise = ensureCreatorKey('video')
@@ -825,7 +887,9 @@ async function loadData() {
       selectedKeyId.value = String(result.key.id)
     })
     .catch((error) => {
-      errorMessage.value = errorMessageFrom(error, '视频创作服务暂不可用')
+      if (!isCreationServiceUnavailable(error)) {
+        errorMessage.value = errorMessageFrom(error, '视频创作服务暂不可用')
+      }
     })
   const settingsPromise = authAPI.getPublicSettings()
     .then((settings) => {
@@ -1027,6 +1091,7 @@ function deduplicateModelNames(names: string[]): string[] {
 }
 
 function errorMessageFrom(error: unknown, fallback = '操作失败'): string {
+  if (isCreationServiceUnavailable(error)) return ''
   const message = error instanceof Error
     ? error.message
     : typeof error === 'object' && error !== null && 'message' in error
@@ -1171,15 +1236,34 @@ function onPaste(event: ClipboardEvent) {
   reader.readAsDataURL(file)
 }
 
+function onDropReferences(event: DragEvent) {
+  const files = Array.from(event.dataTransfer?.files || [])
+    .filter((file) => ACCEPTED_TYPES.image.includes(file.type))
+    .slice(0, Math.max(0, MAX_IMAGES - referenceCount('image')))
+  files.forEach((file) => {
+    if (file.size > MAX_IMAGE_BYTES) {
+      errorMessage.value = `单个参考图不能超过 ${referenceSizeLimitLabel('image')}。`
+      return
+    }
+    const reader = new FileReader()
+    reader.onload = () => {
+      addReference({
+        kind: 'image',
+        name: file.name || 'reference.png',
+        url: String(reader.result || ''),
+        role: referenceRole.value,
+        sizeBytes: file.size,
+      })
+    }
+    reader.readAsDataURL(file)
+  })
+}
+
 function removeReference(id: number) {
   references.value = references.value.filter((asset) => asset.id !== id)
 }
 
 /* -------------------------------- 生成流程 -------------------------------- */
-
-function adjustDuration(delta: number) {
-  durationSeconds.value = clampDuration(Number(durationSeconds.value) + delta)
-}
 
 function normalizeDuration() {
   durationSeconds.value = clampDuration(Number(durationSeconds.value))
@@ -1190,52 +1274,90 @@ function clampDuration(value: number): number {
   return Math.min(Math.max(Math.round(value), MIN_DURATION), MAX_DURATION)
 }
 
+function normalizeTaskCount() {
+  taskCount.value = clampTaskCount(Number(taskCount.value))
+}
+
+function clampTaskCount(value: number): number {
+  if (!Number.isFinite(value)) return 1
+  return Math.min(Math.max(Math.round(value), 1), MAX_TASK_COUNT)
+}
+
+function videoSizeLabel(aspectRatioValue: string, resolutionValue: string): string {
+  const ratio = VIDEO_ASPECT_RATIOS.find((item) => item.value === aspectRatioValue) || VIDEO_ASPECT_RATIOS[0]
+  const orientation = ratio.value === '9:16' || ratio.value === '3:4'
+    ? '竖屏'
+    : ratio.value === '1:1'
+      ? '方形'
+      : ratio.value === '21:9'
+        ? '宽屏'
+        : '横屏'
+  const longEdge = resolutionValue === '1080p' ? 1920 : resolutionValue === '720p' ? 1280 : 854
+  const [ratioWidth, ratioHeight] = ratio.value.split(':').map(Number)
+  let width = longEdge
+  let height = longEdge
+  if (ratioWidth >= ratioHeight) {
+    height = Math.round((longEdge * ratioHeight) / ratioWidth)
+  } else {
+    width = Math.round((longEdge * ratioWidth) / ratioHeight)
+  }
+  return `${orientation} ${width}×${height}`
+}
+
 async function generate() {
   if (!canGenerate.value) return
 
-  const localId = createVideoWorkId()
   const model = effectiveModel.value
   const provider = resolveVideoProvider(model)
   const platformKey = providerMode.value === 'platform' ? selectedKey.value : null
   const baseUrl = effectiveBaseUrl.value
   const apiKeyRef = effectiveApiKey.value
-  const task: StudioTask = {
-    localId,
-    provider,
-    requestId: '',
-    keyId: platformKey?.id ?? 0,
-    baseUrl,
-    apiKeyRef,
-    model,
-    prompt: prompt.value.trim(),
-    durationSeconds: clampDuration(durationSeconds.value),
-    resolution: resolution.value,
-    aspectRatio: aspectRatio.value,
-    generateAudio: generateAudio.value,
-    referenceCounts: {
-      images: referenceCount('image'),
-      videos: referenceCount('video'),
-      audios: referenceCount('audio'),
-    },
-    status: 'queued',
-    stageText: '正在提交任务',
-    videoUrl: '',
-    revokeUrl: false,
-    error: '',
-    createdAt: Date.now(),
-  }
-  tasks.value.unshift(task)
-  // 同上：后续状态更新必须打在响应式代理上。
-  const tracked = tasks.value[0]
-  saveVideoWork(recordFromTask(tracked, 'queued', '正在提交任务'))
-  works.value = listVideoWorks()
+  const count = clampTaskCount(Number(taskCount.value))
+  const referencesSnapshot = references.value.slice()
+  const trackedTasks: StudioTask[] = []
+
   errorMessage.value = ''
-  await runTask(tracked, {
-    key: platformKey,
-    baseUrl,
-    apiKey: apiKeyRef,
-    references: references.value.slice(),
-  })
+  for (let index = 0; index < count; index += 1) {
+    const task: StudioTask = {
+      localId: createVideoWorkId(),
+      provider,
+      requestId: '',
+      keyId: platformKey?.id ?? 0,
+      baseUrl,
+      apiKeyRef,
+      model,
+      prompt: prompt.value.trim(),
+      durationSeconds: clampDuration(durationSeconds.value),
+      resolution: resolution.value,
+      aspectRatio: aspectRatio.value,
+      generateAudio: generateAudio.value,
+      referenceCounts: {
+        images: referenceCount('image'),
+        videos: referenceCount('video'),
+        audios: referenceCount('audio'),
+      },
+      status: 'queued',
+      stageText: '正在提交任务',
+      videoUrl: '',
+      revokeUrl: false,
+      error: '',
+      createdAt: Date.now(),
+    }
+    tasks.value.unshift(task)
+    trackedTasks.unshift(tasks.value[0])
+    saveVideoWork(recordFromTask(tasks.value[0], 'queued', '正在提交任务'))
+  }
+  works.value = listVideoWorks()
+  await Promise.all(
+    trackedTasks.map((task) =>
+      runTask(task, {
+        key: platformKey,
+        baseUrl,
+        apiKey: apiKeyRef,
+        references: referencesSnapshot,
+      }),
+    ),
+  )
 }
 
 async function runTask(
@@ -1376,6 +1498,13 @@ async function archiveTaskVideo(task: StudioTask, upstreamUrl: string) {
     const reason = typeof error === 'object' && error !== null && 'reason' in error
       ? String((error as { reason?: unknown }).reason || '')
       : ''
+    if (
+      !authStore.isAdmin &&
+      (reason === 'IMAGE_STORAGE_DISABLED' || reason === 'IMAGE_STORAGE_INCOMPLETE')
+    ) {
+      archiveHint.value = ''
+      return
+    }
     archiveHint.value = isStudioQuotaError(error)
       ? '视频已生成，但你的作品已达上限，请先到「我的作品」删除一些再归档。'
       : reason === 'IMAGE_STORAGE_DISABLED' || reason === 'IMAGE_STORAGE_INCOMPLETE'
@@ -1426,6 +1555,21 @@ async function copyPreviewPrompt() {
   const text = previewTask.value?.prompt
   if (!text) return
   await copyToClipboard(text, '提示词已复制')
+}
+
+async function copyComposerPrompt() {
+  const text = prompt.value.trim()
+  if (!text) return
+  await copyToClipboard(text, '提示词已复制')
+}
+
+async function pasteComposerPrompt() {
+  try {
+    const text = await navigator.clipboard.readText()
+    if (text.trim()) prompt.value = text
+  } catch {
+    errorMessage.value = '无法读取剪贴板，请直接在提示词框中粘贴。'
+  }
 }
 
 function closePreview() {
@@ -1543,6 +1687,11 @@ onBeforeUnmount(() => {
 .toolbar-field--select :deep(.studio-select--open .studio-select__trigger) {
   border: 0;
   box-shadow: none;
+}
+
+.toolbar-field--select :deep(.studio-select__menu) {
+  width: 100%;
+  max-width: 100%;
 }
 
 .toolbar-field__select {
@@ -1861,7 +2010,7 @@ onBeforeUnmount(() => {
   width: 100%;
   min-height: 4.5rem;
   max-height: clamp(8rem, 28vh, 12.5rem);
-  resize: none;
+  resize: vertical;
   border: 0;
   background: transparent;
   padding-right: 2.5rem;
@@ -2295,5 +2444,687 @@ onBeforeUnmount(() => {
   border-color: rgb(232 121 78);
   background: rgb(232 121 78 / 0.12);
   color: rgb(245 161 127);
+}
+
+.video-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  border: 0;
+  border-radius: 0;
+  background: rgb(255 255 255);
+  box-shadow: none;
+}
+
+.video-composer > * {
+  flex-shrink: 0;
+}
+
+.video-composer__prompt-shell {
+  position: relative;
+  z-index: 2;
+  overflow: visible;
+  border: 1px solid rgb(235 235 233);
+  border-radius: 1.2rem;
+  background: rgb(248 248 246);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.8);
+  transition:
+    border-color 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+.video-composer__prompt-shell:focus-within {
+  border-color: rgb(208 208 204);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.9),
+    0 8px 24px rgb(24 24 27 / 0.05);
+}
+
+.video-composer__prompt {
+  display: block;
+  width: 100%;
+  height: 9rem;
+  min-height: 9rem;
+  max-height: min(36rem, 65vh);
+  resize: none;
+  overflow-y: auto;
+  border: 0;
+  background: transparent;
+  padding: 0.75rem 0.85rem 0.25rem;
+  color: rgb(31 31 30);
+  font-size: 0.92rem;
+  line-height: 1.72;
+  outline: none;
+}
+
+.video-composer__prompt::placeholder {
+  color: rgb(156 156 151);
+}
+
+.video-composer__prompt-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.35rem 0.65rem 0.18rem;
+}
+
+.video-composer__model {
+  min-width: 0;
+  max-width: none;
+  flex: 1 1 auto;
+}
+
+.video-composer__model :deep(.studio-select__trigger) {
+  min-width: 0;
+  height: 2.2rem;
+  border-color: rgb(226 226 222);
+  border-radius: 999px;
+  background: rgb(255 255 255);
+  padding: 0 0.75rem;
+  box-shadow: none;
+  font-size: 0.8rem;
+}
+
+.video-composer__model :deep(.studio-select__trigger span) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.video-composer__model :deep(.studio-select__trigger:hover),
+.video-composer__model :deep(.studio-select--open .studio-select__trigger) {
+  border-color: rgb(201 201 196);
+  box-shadow: none;
+}
+
+.video-composer__model-input {
+  min-width: 9.5rem;
+  max-width: calc(100% - 8.25rem);
+  height: 2.2rem;
+  border: 1px solid rgb(226 226 222);
+  border-radius: 999px;
+  background: rgb(255 255 255);
+  padding: 0 0.8rem;
+  color: rgb(42 42 40);
+  font-size: 0.8rem;
+  outline: none;
+}
+
+.video-composer__prompt-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.1rem;
+}
+
+.video-composer__prompt-actions button,
+.video-composer__section-head button {
+  display: inline-flex;
+  height: 2rem;
+  width: 2rem;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 0.55rem;
+  background: transparent;
+  color: rgb(82 82 78);
+  transition:
+    background 0.16s ease,
+    color 0.16s ease;
+}
+
+.video-composer__prompt-actions button:hover,
+.video-composer__section-head button:hover {
+  background: rgb(238 238 235);
+  color: rgb(24 24 23);
+}
+
+.video-composer__prompt-meta {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 0.75rem 0.5rem;
+  font-size: 0.68rem;
+  color: rgb(151 151 144);
+}
+
+.video-composer__references {
+  border-radius: 0.8rem;
+  padding: 0.1rem 0.15rem 0.35rem;
+}
+
+.video-composer__section-head {
+  display: flex;
+  min-height: 1.65rem;
+  align-items: center;
+  justify-content: space-between;
+  color: rgb(42 42 40);
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.video-composer__reference-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(4.9rem, 1fr));
+  gap: 0.55rem;
+  margin-top: 0.4rem;
+}
+
+.video-composer__reference,
+.video-composer__upload-tile {
+  position: relative;
+  aspect-ratio: 1;
+  overflow: hidden;
+  border-radius: 0.8rem;
+}
+
+.video-composer__reference {
+  border: 1px solid rgb(231 231 228);
+  background: rgb(245 245 243);
+}
+
+.video-composer__reference > img {
+  height: 100%;
+  width: 100%;
+  object-fit: cover;
+}
+
+.video-composer__reference-glyph {
+  display: flex;
+  height: 100%;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  color: rgb(82 82 78);
+}
+
+.video-composer__reference-glyph small {
+  font-size: 0.68rem;
+}
+
+.video-composer__reference > button {
+  position: absolute;
+  top: 0.3rem;
+  right: 0.3rem;
+  display: flex;
+  height: 1.5rem;
+  width: 1.5rem;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgb(255 255 255 / 0.4);
+  border-radius: 999px;
+  background: rgb(24 24 27 / 0.72);
+  color: white;
+}
+
+.video-composer__upload-tile {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed rgb(198 198 193);
+  background: rgb(255 255 255);
+  color: rgb(44 44 42);
+  transition:
+    border-color 0.16s ease,
+    background 0.16s ease;
+}
+
+.video-composer__upload-tile:hover {
+  border-color: rgb(109 109 103);
+  background: rgb(249 249 247);
+}
+
+.video-composer__helper {
+  margin-top: 0.4rem;
+  font-size: 0.68rem;
+  line-height: 1.55;
+  color: rgb(142 142 136);
+}
+
+.video-composer__toggle-row {
+  display: flex;
+  min-height: 1.9rem;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  color: rgb(42 42 40);
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.video-composer__field {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.video-composer__field-label {
+  color: rgb(42 42 40);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.video-composer__inline-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.video-composer__inline-field input {
+  width: 5.3rem;
+  height: 2.15rem;
+  border: 1px solid rgb(231 231 228);
+  border-radius: 0.55rem;
+  background: rgb(255 255 255);
+  padding: 0 0.6rem;
+  color: rgb(42 42 40);
+  font-size: 0.82rem;
+  outline: none;
+  text-align: center;
+}
+
+.video-composer__inline-field input:focus {
+  border-color: rgb(201 201 196);
+  box-shadow: 0 0 0 3px rgb(24 24 27 / 0.05);
+}
+
+.video-composer__size-select {
+  position: relative;
+}
+
+.video-composer__size-picker {
+  min-width: 13.5rem;
+}
+
+.video-composer__size-select select {
+  width: 100%;
+  height: 2.35rem;
+  appearance: none;
+  border: 1px solid rgb(231 231 228);
+  border-radius: 0.55rem;
+  background: rgb(255 255 255);
+  padding: 0 2.25rem;
+  color: rgb(54 54 51);
+  font-size: 0.82rem;
+  outline: none;
+}
+
+.video-composer__size-select select:focus {
+  border-color: rgb(201 201 196);
+  box-shadow: 0 0 0 3px rgb(24 24 27 / 0.05);
+}
+
+.video-composer__size-icon,
+.video-composer__size-chevron {
+  position: absolute;
+  top: 50%;
+  pointer-events: none;
+  color: rgb(113 113 107);
+  transform: translateY(-50%);
+}
+
+.video-composer__size-icon {
+  left: 0.75rem;
+}
+
+.video-composer__size-chevron {
+  right: 0.7rem;
+}
+
+.video-composer__audio-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  color: rgb(42 42 40);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.video-composer__label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.video-composer__label {
+  color: rgb(42 42 40);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.video-composer__value-label {
+  color: rgb(113 113 107);
+  font-size: 0.78rem;
+}
+
+.video-composer__segmented {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  overflow: hidden;
+  border-radius: 0.55rem;
+  background: rgb(232 232 229);
+}
+
+.video-composer__segmented--three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.video-composer__segmented button {
+  min-height: 2.15rem;
+  border: 0;
+  border-radius: 0.45rem;
+  background: transparent;
+  color: rgb(113 113 107);
+  font-size: 0.82rem;
+  transition:
+    background 0.16s ease,
+    color 0.16s ease,
+    box-shadow 0.16s ease;
+}
+
+.video-composer__segmented button:hover {
+  color: rgb(31 31 30);
+}
+
+.video-composer__segmented button.is-active {
+  background: rgb(250 250 248);
+  color: rgb(31 31 30);
+  box-shadow:
+    0 1px 2px rgb(24 24 27 / 0.08),
+    0 0 0 1px rgb(24 24 27 / 0.03);
+}
+
+.video-composer__duration {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 5.3rem;
+  gap: 0.55rem;
+}
+
+.video-composer__duration-custom {
+  display: flex;
+  height: 2.15rem;
+  align-items: center;
+  border: 1px solid rgb(231 231 228);
+  border-radius: 0.55rem;
+  background: rgb(255 255 255);
+  padding: 0 0.6rem;
+  color: rgb(113 113 107);
+  font-size: 0.78rem;
+}
+
+.video-composer__duration-custom input {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: rgb(42 42 40);
+  font-size: 0.82rem;
+  outline: none;
+  text-align: right;
+}
+
+.video-composer__footer {
+  margin-top: 0.05rem;
+  border-top: 1px solid rgb(239 239 236);
+  padding-top: 0.7rem;
+}
+
+.video-composer__generate {
+  display: inline-flex;
+  width: 100%;
+  min-height: 2.85rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border: 0;
+  border-radius: 0.9rem;
+  background: rgb(25 25 24);
+  color: white;
+  font-size: 0.92rem;
+  font-weight: 600;
+  transition:
+    background 0.16s ease,
+    transform 0.16s ease,
+    opacity 0.16s ease;
+}
+
+.video-composer__generate:hover:not(:disabled) {
+  background: rgb(45 45 43);
+}
+
+.video-composer__generate:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.video-composer__generate:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+:global(.dark .video-composer) {
+  background: rgb(24 24 27);
+}
+
+:global(.dark .video-composer__prompt-shell) {
+  border-color: rgb(54 54 51);
+  background: rgb(35 35 33);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.04);
+}
+
+:global(.dark .video-composer__prompt-shell:focus-within) {
+  border-color: rgb(82 82 76);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.24);
+}
+
+:global(.dark .video-composer__prompt),
+:global(.dark .video-composer__model-input) {
+  color: rgb(244 244 242);
+}
+
+:global(.dark .video-composer__model-input) {
+  border-color: rgb(64 64 60);
+  background: rgb(46 46 43);
+}
+
+:global(.dark .video-composer__model .studio-select__trigger) {
+  border-color: rgb(64 64 60) !important;
+  background: rgb(46 46 43) !important;
+  color: rgb(239 239 235) !important;
+}
+
+:global(.dark .video-composer__model .studio-select__trigger span) {
+  color: rgb(239 239 235) !important;
+}
+
+:global(.dark .video-composer__prompt-actions button),
+:global(.dark .video-composer__section-head button) {
+  color: rgb(188 188 181);
+}
+
+:global(.dark .video-composer__prompt-actions button:hover),
+:global(.dark .video-composer__section-head button:hover) {
+  background: rgb(48 48 45);
+  color: rgb(247 247 243);
+}
+
+:global(.dark .video-composer__section-head),
+:global(.dark .video-composer__toggle-row),
+:global(.dark .video-composer__label) {
+  color: rgb(236 236 232);
+}
+
+:global(.dark .video-composer__reference) {
+  border-color: rgb(62 62 58);
+  background: rgb(38 38 36);
+}
+
+:global(.dark .video-composer__reference-glyph) {
+  color: rgb(210 210 204);
+}
+
+:global(.dark .video-composer__upload-tile),
+:global(.dark .video-composer__duration-custom),
+:global(.dark .video-composer__size-select select),
+:global(.dark .video-composer__inline-field input) {
+  border-color: rgb(70 70 65);
+  background: rgb(38 38 36);
+  color: rgb(232 232 227);
+}
+
+:global(.dark .video-composer__duration-custom input) {
+  color: rgb(240 240 236);
+}
+
+:global(.dark .video-composer__segmented) {
+  background: rgb(48 48 45);
+}
+
+:global(.dark .video-composer__segmented button) {
+  color: rgb(166 166 159);
+}
+
+:global(.dark .video-composer__segmented button.is-active) {
+  background: rgb(66 66 62);
+  color: rgb(250 250 247);
+}
+
+:global(.dark .video-composer__field-label),
+:global(.dark .video-composer__audio-row) {
+  color: rgb(236 236 232);
+}
+
+:global(.dark .video-composer__size-icon),
+:global(.dark .video-composer__size-chevron) {
+  color: rgb(167 159 148);
+}
+
+:global(.dark .video-composer__footer) {
+  border-color: rgb(54 54 51);
+}
+
+:global(.dark .video-composer__generate) {
+  background: rgb(244 244 241);
+  color: rgb(24 24 23);
+}
+
+:global(.dark .video-composer__generate:hover:not(:disabled)) {
+  background: rgb(226 226 221);
+}
+
+@media (max-width: 480px) {
+  .video-composer {
+    padding-right: 0.65rem;
+    padding-left: 0.65rem;
+  }
+
+  .video-composer__prompt {
+    height: 7.75rem;
+    min-height: 7.75rem;
+    max-height: min(28rem, 60vh);
+    padding: 0.75rem 0.8rem 0.2rem;
+    font-size: 0.88rem;
+  }
+
+  .video-composer__prompt-footer {
+    padding-right: 0.6rem;
+    padding-left: 0.6rem;
+  }
+
+  .video-composer__model,
+  .video-composer__model-input {
+    min-width: 0;
+    max-width: none;
+  }
+
+  .video-composer__prompt-actions button {
+    height: 1.9rem;
+    width: 1.9rem;
+  }
+
+  .video-composer__reference-grid {
+    grid-template-columns: repeat(auto-fill, minmax(4.6rem, 1fr));
+  }
+
+  .video-composer__duration {
+    grid-template-columns: minmax(0, 1fr) 4.8rem;
+  }
+}
+
+.video-studio.studio-page {
+  display: grid;
+  gap: 0;
+  max-width: none;
+  margin: 0;
+}
+
+.video-studio .studio-page__header {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: 0.85rem;
+}
+
+.video-studio .studio-page__header .video-studio__title h1 {
+  font-size: 1.35rem;
+}
+
+.video-studio .studio-page__header .video-studio__title p {
+  font-size: 0.78rem;
+}
+
+.video-studio .studio-page__header .video-studio__toolbar {
+  align-items: stretch;
+}
+
+.video-studio .studio-page__composer {
+  padding: 0 1rem 1rem;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.video-studio .studio-page__results {
+  border: 0;
+  border-radius: 0;
+  margin: 0;
+  padding: 0;
+}
+
+.video-studio .studio-page__results .video-grid {
+  grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr));
+  gap: 1rem;
+}
+
+.video-studio .studio-page__header .toolbar-link {
+  display: none;
+}
+
+.video-studio .studio-page__results .video-card {
+  border-radius: 0.55rem;
+  background: rgb(255 255 255);
+  box-shadow: 0 1px 2px rgb(15 23 42 / 0.03);
+}
+
+.video-studio .studio-page__results .video-studio__empty {
+  min-height: 100%;
+}
+
+@media (max-width: 1024px) {
+  .video-studio.studio-page {
+    display: grid;
+    height: auto;
+  }
+
+  .video-studio .studio-page__header {
+    padding-bottom: 1rem;
+  }
+}
+
+:global(.dark .video-studio .studio-page__results .video-card) {
+  border-color: rgb(63 63 70);
+  background: rgb(24 24 27);
 }
 </style>

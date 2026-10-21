@@ -290,6 +290,7 @@ type SystemSettings struct {
 	PaymentHelpImageURL              string                        `json:"payment_help_image_url"`
 	PaymentHelpText                  string                        `json:"payment_help_text"`
 	PaymentRechargePackages          []service.RechargePackage     `json:"payment_recharge_packages"`
+	PaymentRechargeCardEnabled       bool                          `json:"payment_recharge_card_enabled"`
 	PaymentRechargeCardProducts      []service.RechargeCardProduct `json:"payment_recharge_card_products"`
 	// 充值赠送阶梯与活动文案
 	PaymentRechargeBonusTiers  []RechargeBonusTier `json:"payment_recharge_bonus_tiers"`

@@ -86,4 +86,28 @@ describe('UsageStatsCards', () => {
     expect(tooltip?.classes()).toContain('hidden')
     expect(tooltip?.classes()).not.toContain('opacity-0')
   })
+
+  it('can keep spending and request count while hiding tokens and cost metadata', () => {
+    const wrapper = mount(UsageStatsCards, {
+      props: {
+        stats,
+        showTokens: false,
+        showCost: true,
+        showCostBreakdown: false,
+      },
+      global: {
+        stubs: {
+          Icon: true,
+        },
+      },
+    })
+
+    const text = wrapper.text()
+    expect(text).toContain('Total Requests')
+    expect(text).toContain('Total Cost')
+    expect(text).toContain('¥0.0010')
+    expect(text).not.toContain('Total Tokens')
+    expect(text).not.toContain('Cost ¥0.0010 ·')
+    expect(text).not.toContain('Standard ¥0.0010')
+  })
 })

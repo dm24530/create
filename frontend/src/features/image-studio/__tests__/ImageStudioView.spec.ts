@@ -3,16 +3,21 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { flushPromises, mount } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import ImageStudioView from '../ImageStudioView.vue'
+import { useAppStore } from '@/stores/app'
+import { useAuthStore } from '@/stores/auth'
 
-const { listKeys, getPublicSettings, listGallery, saveGallery, pinGallery, galleryQuota, copyToClipboard } = vi.hoisted(() => ({
+const { listKeys, getPublicSettings, listGallery, saveGallery, pinGallery, deleteGallery, downloadGallery, galleryQuota, copyToClipboard } = vi.hoisted(() => ({
   listKeys: vi.fn(),
   getPublicSettings: vi.fn(),
   listGallery: vi.fn(),
   saveGallery: vi.fn(),
   pinGallery: vi.fn(),
+  deleteGallery: vi.fn(),
+  downloadGallery: vi.fn(),
   galleryQuota: vi.fn(),
   copyToClipboard: vi.fn(),
 }))
@@ -28,6 +33,8 @@ vi.mock('@/api', () => ({
     list: listGallery,
     save: saveGallery,
     pin: pinGallery,
+    delete: deleteGallery,
+    download: downloadGallery,
     quota: galleryQuota,
   },
 }))
@@ -39,6 +46,9 @@ vi.mock('@/composables/useClipboard', () => ({
 }))
 
 vi.mock('@/composables/useCreatorKey', () => ({
+  isCreationServiceUnavailable: (error: unknown) =>
+    String((error as { message?: unknown } | null)?.message ?? error ?? '')
+      .includes('NO_IMAGE_CREATION_SERVICE'),
   ensureCreatorKey: async () => {
     const result = await listKeys()
     const key = result.items.find((item: any) => item.group?.allow_image_generation !== false) || result.items[0]
@@ -49,9 +59,18 @@ vi.mock('@/composables/useCreatorKey', () => ({
 const componentPath = resolve(dirname(fileURLToPath(import.meta.url)), '../ImageStudioView.vue')
 const componentSource = readFileSync(componentPath, 'utf8')
 
-function mountImageStudio() {
+function mountImageStudio(options: { isAdmin?: boolean } = {}) {
+  const pinia = createPinia()
+  setActivePinia(pinia)
+  const authStore = useAuthStore(pinia)
+  authStore.user = {
+    id: options.isAdmin ? 1 : 2,
+    email: options.isAdmin ? 'admin@example.com' : 'user@example.com',
+    role: options.isAdmin ? 'admin' : 'user',
+  } as any
   return mount(ImageStudioView, {
     global: {
+      plugins: [pinia],
       stubs: {
         AppLayout: { template: '<div><slot /></div>' },
         BaseDialog: {
@@ -59,7 +78,13 @@ function mountImageStudio() {
           emits: ['close'],
           template: '<div v-if="show"><button v-if="closeOnClickOutside" data-testid="dialog-backdrop" @click="$emit(\'close\')">backdrop</button><h3>{{ title }}</h3><slot /><slot name="footer" /></div>',
         },
+        ConfirmDialog: {
+          props: ['show', 'title', 'message', 'confirmText', 'cancelText', 'danger'],
+          emits: ['confirm', 'cancel'],
+          template: '<div v-if="show" data-testid="image-delete-confirm"><h3>{{ title }}</h3><p>{{ message }}</p><button data-testid="confirm-delete-image" @click="$emit(\'confirm\')">{{ confirmText }}</button><button data-testid="cancel-delete-image" @click="$emit(\'cancel\')">{{ cancelText }}</button></div>',
+        },
         Icon: { template: '<span />' },
+        RouterLink: { props: ['to'], template: '<a><slot /></a>' },
       },
     },
   })
@@ -71,10 +96,14 @@ function resetCommonMocks() {
   listGallery.mockReset()
   saveGallery.mockReset()
   pinGallery.mockReset()
+  deleteGallery.mockReset()
+  downloadGallery.mockReset()
   galleryQuota.mockReset()
   copyToClipboard.mockReset()
   listGallery.mockResolvedValue([])
   pinGallery.mockResolvedValue(undefined)
+  deleteGallery.mockResolvedValue(undefined)
+  downloadGallery.mockResolvedValue(new Blob(['image'], { type: 'image/png' }))
   galleryQuota.mockResolvedValue({ used: 0, limit: 100 })
   copyToClipboard.mockResolvedValue(true)
   saveGallery.mockResolvedValue({
@@ -307,7 +336,12 @@ describe('ImageStudioView image model loading', () => {
     await flushPromises()
 
     expect(wrapper.get('[data-testid="api-key-select"]').text()).toContain('dd')
-    expect(wrapper.text()).toContain('无法连接到 API 服务，请检查网络或 API 地址。')
+    expect(useAppStore().toasts).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'error',
+        message: '无法连接到 API 服务，请检查网络或 API 地址。',
+      }),
+    ]))
   })
 
   it('shows insufficient balance errors in Chinese', async () => {
@@ -365,12 +399,12 @@ describe('ImageStudioView image model loading', () => {
     await flushPromises()
     await flushPromises()
 
-    expect(wrapper.get('[data-testid="image-model-select"]').text()).toContain('未找到图片模型')
+    expect(wrapper.get('[data-testid="image-model-select"]').text()).toContain('选择模型')
     expect(wrapper.text()).not.toContain('该 API Key 暂无可用图片模型')
   })
 })
 
-describe('ImageStudioView image size dialog', () => {
+describe('ImageStudioView inline image size controls', () => {
   beforeEach(() => {
     resetCommonMocks()
     listKeys.mockResolvedValue({ items: [] })
@@ -378,7 +412,7 @@ describe('ImageStudioView image size dialog', () => {
     vi.stubGlobal('fetch', vi.fn())
   })
 
-  it('opens the size dialog and applies custom dimensions', async () => {
+  it('opens the inline size menu and applies custom dimensions', async () => {
     const wrapper = mountImageStudio()
     await flushPromises()
 
@@ -386,17 +420,42 @@ describe('ImageStudioView image size dialog', () => {
     expect(trigger.text()).toContain('1024x1024')
 
     await trigger.trigger('click')
-    expect(wrapper.text()).toContain('设置图像尺寸')
+    expect(wrapper.find('[data-testid="image-size-menu"]').exists()).toBe(true)
     expect(wrapper.text()).toContain('自动')
-    expect(wrapper.text()).toContain('按比例')
-    expect(wrapper.text()).toContain('自定义宽高')
+    expect(wrapper.text()).toContain('1K')
 
-    await wrapper.get('[data-testid="size-mode-custom"]').trigger('click')
+    await wrapper.get('[data-testid="image-custom-size-toggle"]').trigger('click')
+    expect(wrapper.find('[data-testid="image-custom-size-panel"]').exists()).toBe(true)
+    expect(wrapper.text()).not.toContain('设置图像尺寸')
     await wrapper.get('[data-testid="custom-width"]').setValue('1280')
     await wrapper.get('[data-testid="custom-height"]').setValue('1024')
-    await wrapper.get('[data-testid="confirm-image-size"]').trigger('click')
 
     expect(trigger.text()).toContain('1280x1024')
+    expect(wrapper.get('[data-testid="custom-size-summary"]').text()).toContain('1280×1024')
+  })
+
+  it('opens the size menu upward when there is enough space above the trigger', async () => {
+    const wrapper = mountImageStudio()
+    await flushPromises()
+
+    const trigger = wrapper.get('[data-testid="image-size-trigger"]')
+    Object.defineProperty(trigger.element, 'getBoundingClientRect', {
+      value: () => ({
+        top: 700,
+        bottom: 740,
+        left: 0,
+        right: 240,
+        width: 240,
+        height: 40,
+        x: 0,
+        y: 700,
+        toJSON: () => ({}),
+      }),
+    })
+
+    await trigger.trigger('click')
+
+    expect(wrapper.get('[data-testid="image-size-menu"]').classes()).toContain('is-up')
   })
 
   it('converges an oversized preset into the upstream pixel window', async () => {
@@ -404,16 +463,7 @@ describe('ImageStudioView image size dialog', () => {
     await flushPromises()
 
     await wrapper.get('[data-testid="image-size-trigger"]').trigger('click')
-    await wrapper.get('[data-testid="size-mode-ratio"]').trigger('click')
-    const base4k = wrapper.findAll('.size-base-option').find((button) => button.text() === '4K')
-    expect(base4k).toBeTruthy()
-    await base4k!.trigger('click')
-
-    // 4K 方形原本是 3840x3840 = 14745600 像素，超过上游 8294400 的上限，
-    // 这里必须自动收紧而不是原样提交（否则生成时才被上游 400 拒绝）。
-    expect(wrapper.get('.size-preview').text()).toContain('2880x2880')
-
-    await wrapper.get('[data-testid="confirm-image-size"]').trigger('click')
+    await wrapper.get('[data-testid="size-preset-3840-1:1"]').trigger('click')
 
     expect(wrapper.get('[data-testid="image-size-trigger"]').text()).toContain('2880x2880')
     expect(wrapper.find('[data-testid="image-size-warning"]').exists()).toBe(false)
@@ -424,14 +474,9 @@ describe('ImageStudioView image size dialog', () => {
     await flushPromises()
 
     await wrapper.get('[data-testid="image-size-trigger"]').trigger('click')
-    await wrapper.get('[data-testid="size-mode-ratio"]').trigger('click')
-    const base1k = wrapper.findAll('.size-base-option').find((button) => button.text() === '1K')
-    await base1k!.trigger('click')
-    const wideRatio = wrapper.findAll('.size-ratio-option').find((button) => button.text().includes('21:9'))
-    await wideRatio!.trigger('click')
+    await wrapper.get('[data-testid="size-preset-1024-21:9"]').trigger('click')
 
-    // 1024x432 = 442368 像素，低于下限 655360，必须被抬回区间内。
-    const match = /(\d+)x(\d+)/.exec(wrapper.get('.size-preview').text())
+    const match = /(\d+)x(\d+)/.exec(wrapper.get('[data-testid="image-size-trigger"]').text())
     expect(match).toBeTruthy()
     const pixels = Number(match![1]) * Number(match![2])
     expect(pixels).toBeGreaterThanOrEqual(655_360)
@@ -442,13 +487,12 @@ describe('ImageStudioView image size dialog', () => {
     const wrapper = mountImageStudio()
     await flushPromises()
 
-    await wrapper.get('[data-testid="image-size-trigger"]').trigger('click')
-    await wrapper.get('[data-testid="size-mode-custom"]').trigger('click')
+    await wrapper.get('[data-testid="image-custom-size-toggle"]').trigger('click')
     await wrapper.get('[data-testid="custom-width"]').setValue('3840')
     await wrapper.get('[data-testid="custom-height"]').setValue('3840')
 
     expect(wrapper.get('[data-testid="size-dialog-issue"]').text()).toContain('总像素')
-    expect(wrapper.get('[data-testid="confirm-image-size"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('[data-testid="custom-size-summary"]').text()).toContain('14745600')
   })
 })
 
@@ -476,7 +520,12 @@ describe('ImageStudioView inspiration handoff', () => {
     await flushPromises()
 
     expect(wrapper.get('textarea').element.value).toBe('清晨薄雾中的现代建筑，克制的灰蓝色调。')
-    expect(wrapper.get('[data-testid="inspiration-hint"]').text()).toContain('已带入图片灵感提示词')
+    expect(useAppStore().toasts).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'success',
+        message: '已带入图片灵感提示词，选好模型和尺寸就可以生成。',
+      }),
+    ]))
     expect(sessionStorage.getItem('sub2api:image-studio:pending-prompt')).toBeNull()
   })
 })
@@ -511,6 +560,35 @@ describe('ImageStudioView gallery', () => {
     const image = wrapper.get('img[src="https://cdn.example.com/gallery-1.png"]')
     expect(image.exists()).toBe(true)
     expect(image.attributes('loading')).toBe('lazy')
+    expect(wrapper.get('article').text()).not.toContain('a cat')
+  })
+
+  it('uses a styled delete confirmation without showing the image name', async () => {
+    listGallery.mockResolvedValue([
+      {
+        id: 'gallery-1',
+        url: 'https://cdn.example.com/gallery-1.png',
+        prompt: 'a cat',
+        model: 'gpt-image-1',
+        size: '1024x1024',
+        format: 'png',
+        created_at: 1,
+        expires_at: 9999999999,
+      },
+    ])
+
+    const wrapper = mountImageStudio()
+    await flushPromises()
+
+    await wrapper.get('[data-testid="gallery-image-delete"]').trigger('click')
+    const dialog = wrapper.get('[data-testid="image-delete-confirm"]')
+    expect(dialog.text()).toContain('删除后无法恢复，确定要继续吗？')
+    expect(dialog.text()).not.toContain('历史图片')
+    expect(dialog.text()).not.toContain('gallery-1')
+
+    await wrapper.get('[data-testid="confirm-delete-image"]').trigger('click')
+    await flushPromises()
+    expect(deleteGallery).toHaveBeenCalledWith('gallery-1')
   })
 
   it('saves a temporary gallery image from the detail dialog', async () => {
@@ -776,6 +854,52 @@ describe('ImageStudioView gallery', () => {
     expect(wrapper.html()).not.toContain('upstream.example.com')
   })
 
+  it('shows object-storage configuration errors only to admins', async () => {
+    listKeys.mockResolvedValue({
+      items: [{ id: 1, name: 'dd', key: 'sk-local', status: 'active', group_id: 2 }],
+    })
+    getPublicSettings.mockResolvedValue({ api_base_url: '/v1' })
+    saveGallery.mockRejectedValue({
+      reason: 'IMAGE_STORAGE_DISABLED',
+      message: 'image storage is not enabled',
+    })
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/images/batches/models')) {
+        return { ok: true, json: async () => ({ data: [] }) } as Response
+      }
+      if (url.endsWith('/models')) {
+        return { ok: true, json: async () => ({ data: [{ id: 'gpt-image-1' }] }) } as Response
+      }
+      if (url.endsWith('/images/generations')) {
+        return { ok: true, json: async () => ({ data: [{ b64_json: 'aGVsbG8=' }] }) } as Response
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const userWrapper = mountImageStudio()
+    await flushPromises()
+    await flushPromises()
+    await userWrapper.get('form').trigger('submit')
+    await flushPromises()
+    await vi.waitFor(() => {
+      expect(userWrapper.find('img[alt="生成结果 1"]').exists()).toBe(true)
+    })
+    const userAppStore = useAppStore()
+    expect(userAppStore.toasts.some((toast) => toast.message.includes('图片存储未启用'))).toBe(false)
+    userWrapper.unmount()
+
+    const adminWrapper = mountImageStudio({ isAdmin: true })
+    const adminAppStore = useAppStore()
+    await flushPromises()
+    await flushPromises()
+    await adminWrapper.get('form').trigger('submit')
+    await flushPromises()
+    await vi.waitFor(() => {
+      expect(adminAppStore.toasts.some((toast) => toast.message.includes('图片存储未启用'))).toBe(true)
+    })
+  })
+
   it('points the generated image at the owned storage URL after saving', async () => {
     listKeys.mockResolvedValue({
       items: [{ id: 1, name: 'dd', key: 'sk-local', status: 'active', group_id: 2 }],
@@ -850,13 +974,14 @@ describe('ImageStudioView gallery', () => {
     })
   })
 
-  it('shows and persists a pending image while generation is in flight', async () => {
+  it('keeps the composer editable and accepts another generation while work is in flight', async () => {
     listKeys.mockResolvedValue({
       items: [{ id: 1, name: 'dd', key: 'sk-local', status: 'active', group_id: 2 }],
     })
     getPublicSettings.mockResolvedValue({ api_base_url: '/v1' })
-    let resolveGeneration!: (response: Response) => void
-    vi.mocked(fetch).mockImplementation(async (input) => {
+    const generationBodies: Array<Record<string, unknown>> = []
+    const generationResolvers: Array<(response: Response) => void> = []
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
       const url = String(input)
       if (url.endsWith('/images/batches/models')) {
         return { ok: true, json: async () => ({ data: [] }) } as Response
@@ -865,7 +990,8 @@ describe('ImageStudioView gallery', () => {
         return { ok: true, json: async () => ({ data: [{ id: 'gpt-image-1' }] }) } as Response
       }
       if (url.endsWith('/images/generations')) {
-        return await new Promise<Response>((resolve) => { resolveGeneration = resolve })
+        generationBodies.push(JSON.parse(String(init?.body || '{}')))
+        return await new Promise<Response>((resolve) => { generationResolvers.push(resolve) })
       }
       throw new Error(`Unexpected request: ${url}`)
     })
@@ -878,17 +1004,87 @@ describe('ImageStudioView gallery', () => {
 
     expect(wrapper.text()).toContain('正在生成')
     expect(wrapper.text()).not.toContain('可以切换到其他页面')
+    expect(wrapper.get('[data-testid="image-active-generations"]').text()).toContain('1 个任务进行中')
     expect(localStorage.getItem('sub2api:image-studio:pending')).toContain('"pending":true')
 
-    resolveGeneration({
+    const promptInput = wrapper.get('textarea.image-composer__prompt')
+    const submitButton = wrapper.get('.image-composer__generate')
+    expect(promptInput.attributes('disabled')).toBeUndefined()
+    expect(submitButton.attributes('disabled')).toBeUndefined()
+    expect(submitButton.text()).toContain('继续生成')
+
+    await promptInput.setValue('第二张图片，改为暖色夕阳下的海边')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(generationResolvers).toHaveLength(2)
+    expect(generationBodies[1]).toEqual(expect.objectContaining({
+      prompt: '第二张图片，改为暖色夕阳下的海边',
+    }))
+    expect(wrapper.get('[data-testid="image-active-generations"]').text()).toContain('2 个任务进行中')
+
+    generationResolvers[0]({
       ok: true,
       json: async () => ({ data: [{ b64_json: 'aGVsbG8=' }] }),
+    } as Response)
+    await flushPromises()
+
+    // 第一个任务结束后，另一个任务仍在进行，工作台继续可用。
+    expect(localStorage.getItem('sub2api:image-studio:pending')).not.toBeNull()
+    expect(wrapper.get('.image-composer__generate').text()).toContain('继续生成')
+
+    generationResolvers[1]({
+      ok: true,
+      json: async () => ({ data: [{ b64_json: 'd29ybGQ=' }] }),
     } as Response)
     await flushPromises()
 
     expect(localStorage.getItem('sub2api:image-studio:pending')).toBeNull()
     expect(wrapper.text()).not.toContain('生成结果 1')
     expect(wrapper.find('img[alt="生成结果 1"]').exists()).toBe(true)
+  })
+
+  it('creates one pending card and one request per requested image', async () => {
+    listKeys.mockResolvedValue({
+      items: [{ id: 1, name: 'dd', key: 'sk-local', status: 'active', group_id: 2 }],
+    })
+    getPublicSettings.mockResolvedValue({ api_base_url: '/v1' })
+    const resolvers: Array<(response: Response) => void> = []
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/images/batches/models')) {
+        return { ok: true, json: async () => ({ data: [] }) } as Response
+      }
+      if (url.endsWith('/models')) {
+        return { ok: true, json: async () => ({ data: [{ id: 'gpt-image-1' }] }) } as Response
+      }
+      if (url.endsWith('/images/generations')) {
+        return await new Promise<Response>((resolve) => resolvers.push(resolve))
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountImageStudio()
+    await flushPromises()
+    await flushPromises()
+    await wrapper.get('[data-testid="image-count-control"]').findAll('button')[1].trigger('click')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(resolvers).toHaveLength(2)
+    expect(wrapper.findAll('.image-pending-card')).toHaveLength(2)
+
+    resolvers.forEach((resolve) => {
+      resolve({
+        ok: true,
+        json: async () => ({ data: [{ b64_json: 'aGVsbG8=' }] }),
+      } as Response)
+    })
+    await flushPromises()
+    await flushPromises()
+
+    expect(wrapper.find('img[alt="生成结果 1"]').exists()).toBe(true)
+    expect(wrapper.find('img[alt="生成结果 2"]').exists()).toBe(true)
   })
 
   it('restores pending image placeholders from browser storage on entry', async () => {
@@ -903,7 +1099,7 @@ describe('ImageStudioView gallery', () => {
   })
 })
 
-describe('ImageStudioView composer selects', () => {
+describe('ImageStudioView composer controls', () => {
   beforeEach(() => {
     resetCommonMocks()
     listKeys.mockResolvedValue({ items: [] })
@@ -911,32 +1107,113 @@ describe('ImageStudioView composer selects', () => {
     vi.stubGlobal('fetch', vi.fn())
   })
 
-  it('uses the soft dropdown for image quality', async () => {
+  it('uses segmented controls for image quality in the reference order', async () => {
     const wrapper = mountImageStudio()
     await flushPromises()
 
     const qualitySelect = wrapper.get('[data-testid="quality-select"]')
-    expect(qualitySelect.text()).toContain('auto')
-    expect(qualitySelect.classes()).not.toContain('studio-select--down')
+    const buttons = qualitySelect.findAll('button')
+    expect(buttons.map((button) => button.text())).toEqual(['自动', '高', '中', '低'])
+    expect(buttons[0].classes()).toContain('is-active')
 
-    await qualitySelect.get('button').trigger('click')
-    expect(qualitySelect.text()).toContain('low')
-    expect(qualitySelect.text()).toContain('medium')
-    expect(qualitySelect.text()).toContain('high')
+    await buttons[1].trigger('click')
+    expect(buttons[1].classes()).toContain('is-active')
   })
 
-  it('uses a soft stepper for the image count', async () => {
+  it('lets Gemini image models choose quality and sends the matching image size', async () => {
+    listKeys.mockResolvedValue({
+      items: [{
+        id: 1,
+        name: 'gemini',
+        key: 'sk-gemini',
+        status: 'active',
+        group_id: 2,
+        group: { platform: 'gemini', allow_image_generation: true },
+      }],
+    })
+    getPublicSettings.mockResolvedValue({ api_base_url: '/v1' })
+    let generationBody: Record<string, any> | null = null
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = String(input)
+      if (url.endsWith('/images/batches/models')) {
+        return {
+          ok: true,
+          json: async () => ({ data: [{ id: 'gemini-3.1-flash-image-preview' }] }),
+        } as Response
+      }
+      if (url.includes(':generateContent')) {
+        generationBody = JSON.parse(String(init?.body || '{}'))
+        return {
+          ok: true,
+          json: async () => ({
+            candidates: [{
+              content: {
+                parts: [{ inlineData: { mimeType: 'image/png', data: 'aGVsbG8=' } }],
+              },
+            }],
+          }),
+        } as Response
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountImageStudio()
+    await flushPromises()
+    await flushPromises()
+
+    const qualityButtons = wrapper.get('[data-testid="quality-select"]').findAll('button')
+    expect(qualityButtons[1].attributes('disabled')).toBeUndefined()
+    await qualityButtons[1].trigger('click')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(generationBody?.generationConfig?.imageConfig).toEqual({
+      aspectRatio: '1:1',
+      imageSize: '4K',
+    })
+  })
+
+  it('uses segmented controls for the image count', async () => {
     const wrapper = mountImageStudio()
     await flushPromises()
 
     const countControl = wrapper.get('[data-testid="image-count-control"]')
-    const input = countControl.get('input')
+    const input = wrapper.get('input[aria-label="生成数量"]')
     expect((input.element as HTMLInputElement).value).toBe('1')
 
-    await countControl.get('[data-testid="count-increment"]').trigger('click')
+    const buttons = countControl.findAll('button')
+    expect(buttons.map((button) => button.text())).toEqual(['1', '2', '3', '4'])
+    await buttons[1].trigger('click')
     expect((input.element as HTMLInputElement).value).toBe('2')
 
-    await countControl.get('[data-testid="count-decrement"]').trigger('click')
-    expect((input.element as HTMLInputElement).value).toBe('1')
+    expect(buttons[1].classes()).toContain('is-active')
+  })
+
+  it('closes the size menu when clicking outside or pressing Escape', async () => {
+    const wrapper = mountImageStudio()
+    await flushPromises()
+
+    await wrapper.get('[data-testid="image-size-trigger"]').trigger('click')
+    expect(wrapper.find('[data-testid="image-size-menu"]').exists()).toBe(true)
+
+    document.body.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await flushPromises()
+    expect(wrapper.find('[data-testid="image-size-menu"]').exists()).toBe(false)
+
+    await wrapper.get('[data-testid="image-size-trigger"]').trigger('click')
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    await flushPromises()
+    expect(wrapper.find('[data-testid="image-size-menu"]').exists()).toBe(false)
+  })
+
+  it('restores the saved prompt height after remounting', async () => {
+    localStorage.setItem('sub2api:image-studio:prompt-height', '320')
+    const wrapper = mountImageStudio()
+    await flushPromises()
+
+    expect(wrapper.get('textarea.image-composer__prompt').attributes('style')).toContain('height: 320px')
+
+    wrapper.unmount()
+    localStorage.removeItem('sub2api:image-studio:prompt-height')
   })
 })

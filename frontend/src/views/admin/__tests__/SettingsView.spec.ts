@@ -488,6 +488,7 @@ const baseSettingsResponse = {
   payment_balance_recharge_multiplier: 1,
   payment_subscription_usd_to_cny_rate: 0,
   payment_recharge_fee_rate: 0,
+  payment_recharge_card_enabled: true,
   payment_recharge_card_products: [],
   region_block_enabled: false,
   region_block_blocked_countries: [],
@@ -1232,6 +1233,24 @@ describe("admin SettingsView payment visible method controls", () => {
     await flushPromises();
     expect(updateSettings).toHaveBeenCalledWith(expect.objectContaining({
       payment_recharge_card_products: [],
+    }));
+  });
+
+  it("persists whether recharge cards are visible to users", async () => {
+    const wrapper = mountView();
+
+    await flushPromises();
+    await openPaymentTab(wrapper);
+
+    const toggle = wrapper.get('[data-testid="payment-recharge-card-enabled"]');
+    expect((toggle.element as HTMLInputElement).checked).toBe(true);
+    await toggle.setValue(false);
+
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(updateSettings).toHaveBeenCalledWith(expect.objectContaining({
+      payment_recharge_card_enabled: false,
     }));
   });
 
