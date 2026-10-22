@@ -106,7 +106,10 @@ type gallerySaverStub struct {
 	deleteErr     error
 	deletedObject []string
 	// quota 为 0 时走内置默认值，用来验证后台配置的配额能被读到。
-	quota int
+	quota        int
+	resolvedURLs map[string]string
+	presignCalls int
+	batchCalls   int
 }
 
 func (s *gallerySaverStub) SaveImageWithKey(
@@ -149,6 +152,52 @@ func (s *gallerySaverStub) DeleteObject(_ context.Context, key string) error {
 
 func (s *gallerySaverStub) StudioWorksQuota() int {
 	return s.quota
+}
+
+func (s *gallerySaverStub) PresignImageObject(_ context.Context, objectKey string) (string, error) {
+	s.presignCalls++
+	if resolved := s.resolvedURLs[objectKey]; resolved != "" {
+		return resolved, nil
+	}
+	return "https://cdn.example.com/" + strings.TrimLeft(objectKey, "/"), nil
+}
+
+func (s *gallerySaverStub) PresignImageObjects(
+	_ context.Context,
+	objectKeys []string,
+) (map[string]string, error) {
+	s.batchCalls++
+	resolved := make(map[string]string, len(objectKeys))
+	for _, objectKey := range objectKeys {
+		if value := s.resolvedURLs[objectKey]; value != "" {
+			resolved[objectKey] = value
+		} else {
+			resolved[objectKey] = "https://cdn.example.com/" + strings.TrimLeft(objectKey, "/")
+		}
+	}
+	return resolved, nil
+}
+
+func TestImageStudioGalleryListResolvesStoredObjectsToCurrentPublicURLs(t *testing.T) {
+	store := &galleryStoreStub{entries: []*ImageStudioGalleryEntry{{
+		ID:        "work-1",
+		ObjectKey: "images/work-1.png",
+		URL:       "https://old-r2.example.com/work-1.png?X-Amz-Signature=old",
+		ThumbURL:  "https://old-r2.example.com/thumbs/work-1.jpg?X-Amz-Signature=old",
+	}}}
+	saver := &gallerySaverStub{resolvedURLs: map[string]string{
+		"images/work-1.png":        "https://gen.example.com/images/work-1.png",
+		"images/thumbs/work-1.jpg": "https://gen.example.com/images/thumbs/work-1.jpg",
+	}}
+	svc := NewImageStudioGalleryService(store, saver)
+
+	entries, err := svc.List(context.Background(), 7, 20, nil)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	require.Equal(t, "https://gen.example.com/images/work-1.png", entries[0].URL)
+	require.Equal(t, "https://gen.example.com/images/thumbs/work-1.jpg", entries[0].ThumbURL)
+	require.Equal(t, 1, saver.batchCalls)
+	require.Zero(t, saver.presignCalls)
 }
 
 // 作品记录是永久的：不再写过期时间，但要记下 object_key，删除时才知道删哪个文件。
@@ -408,6 +457,59 @@ func TestImageStudioGalleryTemporaryContentGetsExpiryAndSkipsQuota(t *testing.T)
 	require.NoError(t, err, "临时内容不该被 100 的配额拦住")
 	require.False(t, entry.Saved)
 	require.Equal(t, int64((7*24*time.Hour)/time.Second), entry.ExpiresAt-entry.CreatedAt)
+}
+
+func TestImageStudioGallerySaveUsesPerImageCompletionTimeAndDuration(t *testing.T) {
+	store := &galleryStoreStub{}
+	svc := NewImageStudioGalleryService(store, &gallerySaverStub{retention: 24 * time.Hour})
+	completedAt := time.Now().UTC().Add(-time.Minute).Unix()
+	beforeSave := time.Now().UTC().Unix()
+
+	entry, err := svc.Save(
+		context.Background(),
+		42,
+		"p",
+		"m",
+		"1x1",
+		"png",
+		"image/png",
+		smallPNG(t),
+		false,
+		ImageStudioGallerySaveOptions{CreatedAt: completedAt, DurationMs: 3200},
+	)
+
+	require.NoError(t, err)
+	require.Equal(t, completedAt, entry.CreatedAt)
+	require.Equal(t, 3200, entry.DurationMs)
+	require.InDelta(
+		t,
+		beforeSave+int64((24*time.Hour)/time.Second),
+		entry.ExpiresAt,
+		2,
+	)
+}
+
+func TestImageStudioGalleryRejectsClientTimeForExpiry(t *testing.T) {
+	store := &galleryStoreStub{}
+	svc := NewImageStudioGalleryService(store, &gallerySaverStub{retention: 24 * time.Hour})
+	future := time.Now().UTC().Add(365 * 24 * time.Hour).Unix()
+
+	entry, err := svc.Save(
+		context.Background(),
+		42,
+		"p",
+		"m",
+		"1x1",
+		"png",
+		"image/png",
+		smallPNG(t),
+		false,
+		ImageStudioGallerySaveOptions{CreatedAt: future},
+	)
+
+	require.NoError(t, err)
+	require.LessOrEqual(t, entry.CreatedAt, time.Now().UTC().Unix())
+	require.LessOrEqual(t, entry.ExpiresAt-time.Now().UTC().Unix(), int64((24*time.Hour)/time.Second))
 }
 
 // 把临时内容存进我的作品时，配额满要翻译成图库自己的错误码。

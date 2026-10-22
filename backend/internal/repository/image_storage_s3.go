@@ -59,12 +59,17 @@ func (s *S3ImageStorage) Save(ctx context.Context, key, contentType string, data
 // SaveWithExpiry is Save with an explicit presigned URL lifetime.
 func (s *S3ImageStorage) SaveWithExpiry(ctx context.Context, key, contentType string, data []byte, expiry time.Duration) (string, error) {
 	finish := servertiming.ObserveDependency(ctx, "s3")
-	_, err := s.client.PutObject(ctx, &s3.PutObjectInput{
+	input := &s3.PutObjectInput{
 		Bucket:      &s.bucket,
 		Key:         &key,
 		Body:        bytes.NewReader(data),
 		ContentType: &contentType,
-	})
+	}
+	if s.publicBaseURL != "" {
+		cacheControl := "public, max-age=31536000, immutable"
+		input.CacheControl = &cacheControl
+	}
+	_, err := s.client.PutObject(ctx, input)
 	finish()
 	if err != nil {
 		return "", fmt.Errorf("S3 PutObject: %w", err)

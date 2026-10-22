@@ -14,6 +14,8 @@ export interface ImageGenerationWorkerResponse {
   status: number
   statusText: string
   body: string
+  startedAt?: number
+  completedAt?: number
 }
 
 export type ImageGenerationStoredBody =
@@ -204,6 +206,8 @@ async function taskRecordToResponse(
       status: 0,
       statusText: 'Worker request failed',
       body: record.error || '图片生成任务失败',
+      startedAt: record.request?.createdAt,
+      completedAt: record.updatedAt,
     }
   }
   if (!record.response) {
@@ -212,6 +216,8 @@ async function taskRecordToResponse(
       status: 0,
       statusText: 'Missing response',
       body: '图片生成任务没有返回结果',
+      startedAt: record.request?.createdAt,
+      completedAt: record.updatedAt,
     }
   }
   if (record.response.body != null) {
@@ -220,6 +226,8 @@ async function taskRecordToResponse(
       status: record.response.status,
       statusText: record.response.statusText,
       body: record.response.body,
+      startedAt: record.request?.createdAt,
+      completedAt: record.updatedAt,
     }
   }
   if (!('caches' in window)) {
@@ -237,6 +245,8 @@ async function taskRecordToResponse(
     status: record.response.status,
     statusText: record.response.statusText,
     body: await cached.text(),
+    startedAt: record.request?.createdAt,
+    completedAt: record.updatedAt,
   }
 }
 
@@ -311,6 +321,7 @@ export async function waitForPersistentImageGeneration(
   options: {
     isCancelled?: () => boolean
     heartbeatMs?: number
+    onResponse?: (id: string, response: ImageGenerationWorkerResponse) => void | Promise<void>
   } = {},
 ): Promise<ImageGenerationWorkerResponse[]> {
   if (!canUsePersistentGeneration() || ids.length === 0) {
@@ -340,7 +351,9 @@ export async function waitForPersistentImageGeneration(
       if (responses.has(id)) continue
       const record = await getTaskRecord(id)
       if (record?.status === 'completed' || record?.status === 'failed') {
-        responses.set(id, await taskRecordToResponse(record))
+        const response = await taskRecordToResponse(record)
+        responses.set(id, response)
+        await options.onResponse?.(id, response)
       }
     }
     if (responses.size === ids.length) break

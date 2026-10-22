@@ -68,6 +68,11 @@ type ImageStudioGalleryEntry struct {
 	ExpiresAt int64 `json:"expires_at"`
 }
 
+type ImageStudioGallerySaveOptions struct {
+	DurationMs int
+	CreatedAt  int64
+}
+
 type ImageStudioGalleryStore interface {
 	// Save 落库前会在同一事务里核对配额；超额返回 ErrStudioWorksQuotaExceeded。
 	// 计数与插入必须原子，否则并发提交能越过上限。
@@ -98,6 +103,14 @@ type ImageStudioImageSaver interface {
 	GalleryRetention() time.Duration
 	// FetchImageURL 在服务端下载上游图片，避免浏览器跨域失败导致无法转存。
 	FetchImageURL(ctx context.Context, rawURL string) ([]byte, string, error)
+}
+
+type ImageStudioObjectURLResolver interface {
+	PresignImageObject(ctx context.Context, objectKey string) (string, error)
+}
+
+type ImageStudioObjectURLBatchResolver interface {
+	PresignImageObjects(ctx context.Context, objectKeys []string) (map[string]string, error)
 }
 
 type ImageStudioGalleryService struct {
@@ -146,7 +159,7 @@ func (s *ImageStudioGalleryService) Save(
 	contentType string,
 	data []byte,
 	saved bool,
-	durationMs ...int,
+	options ...ImageStudioGallerySaveOptions,
 ) (*ImageStudioGalleryEntry, error) {
 	if s == nil || s.store == nil || s.storage == nil || userID <= 0 || len(data) == 0 {
 		return nil, ErrImageStudioGalleryUnavailable
@@ -196,14 +209,23 @@ func (s *ImageStudioGalleryService) Save(
 		}
 	}
 
-	now := time.Now().UTC()
+	serverNow := time.Now().UTC()
+	createdAt := serverNow
 	generationDurationMs := 0
-	if len(durationMs) > 0 {
-		generationDurationMs = max(durationMs[0], 0)
+	if len(options) > 0 {
+		generationDurationMs = max(options[0].DurationMs, 0)
+		if options[0].CreatedAt > 0 {
+			candidate := time.Unix(options[0].CreatedAt, 0).UTC()
+			// 客户端时间只用于展示；限制异常时钟值，过期时间始终由服务端决定。
+			if !candidate.After(serverNow.Add(5*time.Minute)) &&
+				!candidate.Before(serverNow.Add(-30*24*time.Hour)) {
+				createdAt = candidate
+			}
+		}
 	}
 	expiresAt := int64(0)
 	if !saved {
-		expiresAt = now.Add(s.tempRetention()).Unix()
+		expiresAt = serverNow.Add(s.tempRetention()).Unix()
 	}
 	entry := &ImageStudioGalleryEntry{
 		ID:     id,
@@ -217,7 +239,7 @@ func (s *ImageStudioGalleryService) Save(
 		Size:       strings.TrimSpace(size),
 		Format:     strings.TrimSpace(format),
 		Saved:      saved,
-		CreatedAt:  now.Unix(),
+		CreatedAt:  createdAt.Unix(),
 		DurationMs: generationDurationMs,
 		ExpiresAt:  expiresAt,
 	}
@@ -249,7 +271,7 @@ func (s *ImageStudioGalleryService) SaveFromURL(
 	format string,
 	rawURL string,
 	saved bool,
-	durationMs ...int,
+	options ...ImageStudioGallerySaveOptions,
 ) (*ImageStudioGalleryEntry, error) {
 	if s == nil || s.store == nil || s.storage == nil || userID <= 0 || strings.TrimSpace(rawURL) == "" {
 		return nil, ErrImageStudioGalleryUnavailable
@@ -258,7 +280,7 @@ func (s *ImageStudioGalleryService) SaveFromURL(
 	if err != nil {
 		return nil, err
 	}
-	return s.Save(ctx, userID, prompt, model, size, format, contentType, data, saved, durationMs...)
+	return s.Save(ctx, userID, prompt, model, size, format, contentType, data, saved, options...)
 }
 
 // List 列出作品。saved 为 nil 时临时与已保存都返回（图片工作台需要同屏展示）。
@@ -279,6 +301,70 @@ func (s *ImageStudioGalleryService) List(
 	}
 	if entries == nil {
 		entries = []*ImageStudioGalleryEntry{}
+	}
+	if batchResolver, ok := s.storage.(ImageStudioObjectURLBatchResolver); ok {
+		keys := make([]string, 0, len(entries)*2)
+		seen := make(map[string]struct{}, len(entries)*2)
+		for _, entry := range entries {
+			if entry == nil {
+				continue
+			}
+			addObjectKey := func(key string) {
+				key = strings.TrimSpace(key)
+				if key == "" {
+					return
+				}
+				if _, exists := seen[key]; exists {
+					return
+				}
+				seen[key] = struct{}{}
+				keys = append(keys, key)
+			}
+			addObjectKey(entry.ObjectKey)
+			if strings.TrimSpace(entry.ThumbURL) != "" {
+				addObjectKey(thumbnailObjectKey(entry.ObjectKey))
+			}
+		}
+		resolved, resolveErr := batchResolver.PresignImageObjects(ctx, keys)
+		if resolveErr == nil {
+			for _, entry := range entries {
+				if entry == nil {
+					continue
+				}
+				objectKey := strings.TrimSpace(entry.ObjectKey)
+				if resolvedURL := resolved[objectKey]; resolvedURL != "" {
+					entry.URL = resolvedURL
+				}
+				if strings.TrimSpace(entry.ThumbURL) != "" {
+					thumbKey := thumbnailObjectKey(objectKey)
+					if resolvedURL := resolved[thumbKey]; resolvedURL != "" {
+						entry.ThumbURL = resolvedURL
+					}
+				}
+			}
+		}
+		// 已经是批量解析器时不要退回逐条解析，否则配置异常时会放大成 2N 次读取。
+		return entries, nil
+	}
+	if resolver, ok := s.storage.(ImageStudioObjectURLResolver); ok {
+		for _, entry := range entries {
+			if entry == nil {
+				continue
+			}
+			objectKey := strings.TrimSpace(entry.ObjectKey)
+			if objectKey != "" {
+				if resolved, resolveErr := resolver.PresignImageObject(ctx, objectKey); resolveErr == nil && resolved != "" {
+					entry.URL = resolved
+				}
+			}
+			if strings.TrimSpace(entry.ThumbURL) != "" {
+				if thumbKey := thumbnailObjectKey(objectKey); thumbKey != "" {
+					if resolved, resolveErr := resolver.PresignImageObject(ctx, thumbKey); resolveErr == nil && resolved != "" {
+						entry.ThumbURL = resolved
+					}
+				}
+			}
+		}
 	}
 	return entries, nil
 }

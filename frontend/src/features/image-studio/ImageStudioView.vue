@@ -65,37 +65,36 @@
           <p class="mt-1 text-sm">支持文生图，也可以上传参考图做图生图。</p>
         </div>
 
-        <div v-else class="image-results-masonry" data-testid="image-results-masonry">
-          <div
-            v-for="(column, columnIndex) in imageResultColumns"
-            :key="`column-${columnIndex}`"
-            class="image-results-masonry__column"
-            :data-testid="`image-results-column-${columnIndex + 1}`"
+        <div v-else class="image-results-grid" data-testid="image-results-grid">
+          <article
+            v-for="image in images"
+            :key="image.id"
+            class="group overflow-hidden rounded-xl border border-gray-200 bg-gray-50 dark:border-dark-700 dark:bg-dark-800"
           >
-            <article
-              v-for="image in column"
-              :key="image.id"
-              class="group overflow-hidden rounded-xl border border-gray-200 bg-gray-50 dark:border-dark-700 dark:bg-dark-800"
+            <button
+              type="button"
+              class="image-result-card__media relative block w-full overflow-hidden"
+              :disabled="image.pending"
+              @click="!image.pending && (previewImage = image)"
             >
-              <button type="button" class="image-result-card__media relative block w-full overflow-hidden" :disabled="image.pending" @click="!image.pending && (previewImage = image)">
-                <div v-if="image.pending" class="image-pending-card">
-                  <span class="image-generation-spinner" aria-hidden="true"></span>
-                  <strong>正在生成</strong>
-                  <small>刷新或切换页面不会中断，完成后将在此显示</small>
-                  <small class="image-pending-card__timer" data-testid="image-pending-timer">
-                    {{ pendingElapsedSeconds(image) }} 秒
-                  </small>
-                </div>
-                <img
-                  v-else
-                  :src="image.thumbSrc || image.src"
-                  :srcset="image.thumbSrcSet"
-                  :alt="image.title"
-                  loading="lazy"
-                  decoding="async"
-                  class="block h-auto w-full object-contain"
-                />
-              </button>
+              <div v-if="image.pending" class="image-pending-card">
+                <span class="image-generation-spinner" aria-hidden="true"></span>
+                <strong>正在生成</strong>
+                <small>刷新或切换页面不会中断，完成后将在此显示</small>
+                <small class="image-pending-card__timer" data-testid="image-pending-timer">
+                  {{ pendingElapsedSeconds(image) }} 秒
+                </small>
+              </div>
+              <img
+                v-else
+                :src="image.thumbSrc || image.src"
+                :srcset="image.thumbSrcSet"
+                :alt="image.title"
+                loading="lazy"
+                decoding="async"
+                class="absolute inset-0 block h-full w-full object-cover"
+              />
+            </button>
               <div class="flex items-center justify-between gap-2 px-3 py-2">
                 <div class="min-w-0">
                   <p class="truncate text-[11px] text-gray-400">
@@ -142,8 +141,7 @@
                   </button>
                 </div>
               </div>
-            </article>
-          </div>
+          </article>
         </div>
         </div>
       </section>
@@ -617,7 +615,13 @@ interface GeneratedImage {
   saved?: boolean
   expiresAt?: number
   createdAt?: number
+  restoredFromSnapshot?: boolean
 }
+
+type GenerationResultHandler = (
+  image: GeneratedImage,
+  result: PromiseSettledResult<any[]>,
+) => Promise<void> | void
 
 interface ReferenceItem {
   id: number
@@ -676,7 +680,6 @@ const activeGenerations = ref(0)
 const errorMessage = ref('')
 const images = ref<GeneratedImage[]>([])
 const generationClockNow = ref(Date.now())
-const imageResultColumnCount = ref(resolveImageResultColumnCount())
 const references = ref<ReferenceItem[]>([])
 const previewImage = ref<GeneratedImage | null>(null)
 const previewDisplaySrc = ref('')
@@ -692,6 +695,12 @@ const authStore = useAuthStore()
 const PENDING_STORAGE_KEY = 'sub2api:image-studio:pending'
 const PENDING_PROMPT_STORAGE_KEY = 'sub2api:image-studio:pending-prompt'
 const STUDIO_PREFERENCES_STORAGE_KEY = 'sub2api:image-studio:preferences'
+const STUDIO_SNAPSHOT_STORAGE_KEY = 'sub2api:image-studio:snapshot-v1'
+let nextImageId = 1
+
+function pendingImageStorageKey(userId: number | string) {
+  return `${PENDING_STORAGE_KEY}:${userId}`
+}
 
 interface ImageStudioPreferences {
   keyId: string
@@ -722,17 +731,83 @@ function writeStudioPreferences(update: Partial<ImageStudioPreferences>) {
   }
 }
 
+interface ImageStudioSnapshot {
+  keys: ApiKey[]
+  selectedKeyId: string
+  imageModels: string[]
+  imageModel: string
+  images: GeneratedImage[]
+}
+
+function studioSnapshotStorageKey(userId: number | string) {
+  return `${STUDIO_SNAPSHOT_STORAGE_KEY}:${userId}`
+}
+
+function readStudioSnapshot(userId: number | string): ImageStudioSnapshot | null {
+  try {
+    // 旧版本共用同一个 key，清掉它可以避免跨账号泄露历史图片。
+    sessionStorage.removeItem(STUDIO_SNAPSHOT_STORAGE_KEY)
+    const parsed = JSON.parse(sessionStorage.getItem(studioSnapshotStorageKey(userId)) || 'null')
+    if (!parsed || typeof parsed !== 'object') return null
+    return {
+      keys: Array.isArray(parsed.keys) ? parsed.keys : [],
+      selectedKeyId: typeof parsed.selectedKeyId === 'string' ? parsed.selectedKeyId : '',
+      imageModels: Array.isArray(parsed.imageModels) ? parsed.imageModels.filter((item: unknown) => typeof item === 'string') : [],
+      imageModel: typeof parsed.imageModel === 'string' ? parsed.imageModel : '',
+      images: Array.isArray(parsed.images) ? parsed.images : [],
+    }
+  } catch {
+    return null
+  }
+}
+
+function restoreStudioSnapshot(userId?: number | string) {
+  if (userId == null) return
+  const snapshot = readStudioSnapshot(userId)
+  if (!snapshot) return
+  keys.value = snapshot.keys.map((key) => ({ ...key, key: '' }))
+  selectedKeyId.value = snapshot.selectedKeyId
+  imageModels.value = snapshot.imageModels
+  imageModel.value = snapshot.imageModel
+  images.value = snapshot.images.map((image) => ({
+    ...image,
+    restoredFromSnapshot: true,
+  }))
+  const numericIds = images.value
+    .map((image) => Number(image.id))
+    .filter((id) => Number.isFinite(id) && id > 0)
+  if (numericIds.length) {
+    nextImageId = Math.max(nextImageId, ...numericIds.map((id) => id + 1))
+  }
+}
+
+function writeStudioSnapshot() {
+  try {
+    const userId = authStore.user?.id
+    if (userId == null) return
+    const snapshot: ImageStudioSnapshot = {
+      keys: keys.value.map((key) => ({ ...key, key: '' })),
+      selectedKeyId: selectedKeyId.value,
+      imageModels: imageModels.value,
+      imageModel: imageModel.value,
+      images: images.value
+        .filter((image) => !image.pending && image.src && !image.src.startsWith('data:'))
+        .slice(0, 48)
+        .map((image) => ({
+          ...image,
+          originalSrc: undefined,
+          thumbSrcSet: undefined,
+        })),
+    }
+    sessionStorage.setItem(studioSnapshotStorageKey(userId), JSON.stringify(snapshot))
+  } catch {
+    // A cached UI snapshot is optional; failed writes must not affect the studio.
+  }
+}
+
+restoreStudioSnapshot(authStore.user?.id)
+
 const size = computed(() => formatSize(appliedSize))
-const imageResultColumns = computed(() => {
-  const columns = Array.from(
-    { length: imageResultColumnCount.value },
-    () => [] as GeneratedImage[],
-  )
-  images.value.forEach((image, index) => {
-    columns[index % imageResultColumnCount.value].push(image)
-  })
-  return columns
-})
 // 上游按"总像素 + 比例"卡尺寸，本地不拦的话只能在生成时吃上游的 400。
 const sizeIssue = computed(() => (
   isGeminiModel(imageModel.value) || (
@@ -941,8 +1016,6 @@ const canRegeneratePreview = computed(() => Boolean(
   !generating.value,
 ))
 const hasReferences = computed(() => references.value.length > 0)
-
-let nextImageId = 1
 
 // 本会话里已保存进图库的条目 id：这些图本地已有可显示的副本，
 // 图库列表里再渲染一次就会出现"生成一张却显示两张"的重复卡片。
@@ -1310,7 +1383,11 @@ async function loadGallery() {
       if (entry?.id) galleryBackedIds.value.add(String(entry.id))
     }
     const pending = images.value.filter((item) => item.pending)
-    const localResults = images.value.filter((item) => !item.pending && typeof item.id === 'number')
+    const localResults = images.value.filter((item) => (
+      !item.pending
+      && !item.restoredFromSnapshot
+      && typeof item.id === 'number'
+    ))
     const seen = new Set<string>()
     const gallery = entries
       // 本会话刚保存进图库的图片，本地已经有一份可显示的数据副本；
@@ -1329,7 +1406,7 @@ async function loadGallery() {
     })
     images.value = [...pending, ...merged]
     for (const entry of entries) {
-      void loadGalleryThumbnail(entry.id)
+      if (!entry.thumb_url) void loadGalleryThumbnail(entry.id)
     }
   } catch {
     // Gallery storage is optional; generation remains available without it.
@@ -1381,7 +1458,11 @@ function formatCreatedAt(timestamp?: number): string {
 
 function restorePendingImages() {
   try {
-    const stored = JSON.parse(localStorage.getItem(PENDING_STORAGE_KEY) || '[]')
+    const userId = authStore.user?.id
+    if (userId == null) return
+    // 旧版本所有账号共用同一个 key，不能让下一位登录用户恢复它。
+    localStorage.removeItem(PENDING_STORAGE_KEY)
+    const stored = JSON.parse(localStorage.getItem(pendingImageStorageKey(userId)) || '[]')
     if (!Array.isArray(stored)) return
     const restoredAll = stored
       .filter((item): item is GeneratedImage => (
@@ -1406,11 +1487,14 @@ function restorePendingImages() {
       appStore.showWarning('有图片任务的提交结果无法确认，为避免重复扣费未自动重试。请确认作品库后重新生成。', 6000)
     }
     if (!restored.length) {
-      localStorage.removeItem(PENDING_STORAGE_KEY)
+      localStorage.removeItem(pendingImageStorageKey(userId))
       return
     }
     nextImageId = Math.max(nextImageId, ...restored.map((item) => Number(item.id) + 1))
-    images.value = restored
+    images.value = [
+      ...restored,
+      ...images.value.filter((item) => !item.pending),
+    ]
     persistPendingImages()
     const serviceWorkerPending = restored.filter((item) => !item.gatewayPollUrl)
     if (serviceWorkerPending.length && 'serviceWorker' in navigator && typeof indexedDB !== 'undefined') {
@@ -1437,9 +1521,11 @@ function applyInspirationFromRoute() {
 
 function persistPendingImages() {
   try {
+    const userId = authStore.user?.id
+    if (userId == null) return
     const pending = images.value.filter((item) => item.pending)
-    if (pending.length) localStorage.setItem(PENDING_STORAGE_KEY, JSON.stringify(pending))
-    else localStorage.removeItem(PENDING_STORAGE_KEY)
+    if (pending.length) localStorage.setItem(pendingImageStorageKey(userId), JSON.stringify(pending))
+    else localStorage.removeItem(pendingImageStorageKey(userId))
   } catch {
     // Browser storage is optional.
   }
@@ -1460,12 +1546,35 @@ async function resumePersistentGeneration(pendingImages: GeneratedImage[]) {
     resumedGenerationBatches.add(batchId)
     activeGenerations.value += 1
     generating.value = true
+    const progress = createGenerationProgress()
     try {
+      const imagesByTaskId = new Map(
+        batch.map((image) => [String(image.taskId), image]),
+      )
       const responses = await waitForPersistentImageGeneration(
         batch.map((image) => image.taskId!).filter(Boolean),
-        { isCancelled: () => componentDisposed },
+        {
+          isCancelled: () => componentDisposed,
+          onResponse: async (id, response) => {
+            const image = imagesByTaskId.get(id)
+            if (!image) return
+            await progress.enqueue(image, workerResponseToSettledResult(response))
+          },
+        },
       )
-      await finishGenerationBatch(batch, responses.map(workerResponseToSettledResult))
+      for (let index = 0; index < responses.length; index += 1) {
+        const image = batch[index]
+        if (!image) continue
+        await progress.enqueue(image, workerResponseToSettledResult(responses[index]))
+      }
+      await progress.drain()
+      removePendingImages(batch.filter((image) => !progress.completedIds.has(image.id)))
+      if (progress.generatedCount === 0) {
+        throw progress.firstError || new Error('上游没有返回图片')
+      }
+      if (progress.firstError) {
+        errorMessage.value = errorMessageFrom(progress.firstError, '部分图片生成失败')
+      }
     } catch (error) {
       if (error instanceof ImageGenerationWaitCancelled) return
       removePendingImages(batch)
@@ -1478,7 +1587,12 @@ async function resumePersistentGeneration(pendingImages: GeneratedImage[]) {
   }
 }
 
-async function persistGeneratedImages(items: GeneratedImage[], prompt: string, model: string) {
+async function persistGeneratedImages(
+  items: GeneratedImage[],
+  prompt: string,
+  model: string,
+  options: { refresh?: boolean } = {},
+) {
   const results = await Promise.allSettled(items.map(async (item) => {
     // data: 前缀直接上传；http(s) 交给服务端下载转存，
     // 避免浏览器抓上游图片时被 CORS 拦掉导致保存失败。
@@ -1492,6 +1606,7 @@ async function persistGeneratedImages(items: GeneratedImage[], prompt: string, m
       size: item.size || size.value,
       format: item.format || format.value,
       duration_ms: item.durationMs || undefined,
+      created_at: item.createdAt || undefined,
       // 生成页的内容先进临时档（到期自动删）；用户点「存到我的作品」才转永久。
       saved: false,
     })
@@ -1512,7 +1627,7 @@ async function persistGeneratedImages(items: GeneratedImage[], prompt: string, m
       result.value.item.thumbSrc = String(result.value.entry.thumb_url || '')
     }
   }
-  if (succeeded > 0) {
+  if (succeeded > 0 && options.refresh !== false) {
     await loadGallery()
     await loadStudioQuota()
   }
@@ -1525,7 +1640,7 @@ async function persistGeneratedImages(items: GeneratedImage[], prompt: string, m
       '请检查对象存储是否已启用并保存配置。',
     )
     if (isImageStorageConfigError(failedResult?.reason) && !authStore.isAdmin) {
-      return
+      return false
     }
     errorMessage.value = quotaReached(results)
       ? `作品已达上限（${studioQuota.value?.limit || 100} 个），请先在下方删除一些作品再保存。`
@@ -1533,6 +1648,7 @@ async function persistGeneratedImages(items: GeneratedImage[], prompt: string, m
         ? `部分图片未能保存到图库：${detail}`
         : `图片已生成，但保存到图库失败：${detail}`
   }
+  return succeeded > 0
 }
 
 // 配额满了后端返回 429 + *_QUOTA_EXCEEDED，单独给一句能指导操作的提示。
@@ -1552,21 +1668,6 @@ function remainingDays(image: GeneratedImage): number {
   const expiresAt = Number(image.expiresAt || 0)
   if (!expiresAt) return 0
   return Math.max(1, Math.ceil((expiresAt * 1000 - Date.now()) / 86_400_000))
-}
-
-function resolveImageResultColumnCount() {
-  if (typeof window === 'undefined') return 1
-  if (window.innerWidth >= 1536) return 4
-  if (window.innerWidth >= 1024) return 3
-  if (window.innerWidth >= 640) return 2
-  return 1
-}
-
-function updateImageResultColumnCount() {
-  const nextCount = resolveImageResultColumnCount()
-  if (nextCount !== imageResultColumnCount.value) {
-    imageResultColumnCount.value = nextCount
-  }
 }
 
 function pendingElapsedSeconds(image: GeneratedImage): number {
@@ -1959,6 +2060,7 @@ async function generate() {
   errorMessage.value = ''
   const geminiModel = isGeminiModel(imageModel.value)
   const grokModel = isGrokImageModel.value
+  const progress = createGenerationProgress()
   try {
     const headers: Record<string, string> = { Authorization: `Bearer ${selectedKey.value.key}` }
     let url = `${apiBaseUrl.value}${hasReferences.value ? '/images/edits' : '/images/generations'}`
@@ -1988,8 +2090,25 @@ async function generate() {
           : {}),
       })
     }
-    const results = await executeGenerationRequests(pendingImages, url, headers, body, geminiModel)
-    await finishGenerationBatch(pendingImages, results)
+    const results = await executeGenerationRequests(
+      pendingImages,
+      url,
+      headers,
+      body,
+      geminiModel,
+      progress.enqueue,
+    )
+    for (const result of results) {
+      if (result.status === 'rejected') progress.recordError(result.reason)
+    }
+    await progress.drain()
+    removePendingImages(pendingImages.filter((image) => !progress.completedIds.has(image.id)))
+    if (progress.generatedCount === 0) {
+      throw progress.firstError || new Error('上游没有返回图片')
+    }
+    if (progress.firstError) {
+      errorMessage.value = errorMessageFrom(progress.firstError, '部分图片生成失败')
+    }
   } catch (error) {
     if (error instanceof ImageGenerationWaitCancelled) return
     removePendingImages(pendingImages)
@@ -1997,6 +2116,82 @@ async function generate() {
   } finally {
     activeGenerations.value -= 1
     generating.value = activeGenerations.value > 0
+  }
+}
+
+function createGenerationProgress() {
+  const completedIds = new Set<GeneratedImage['id']>()
+  const inFlightIds = new Set<GeneratedImage['id']>()
+  let generatedCount = 0
+  let firstError: unknown = null
+  let queue = Promise.resolve()
+  let persistenceQueue = Promise.resolve()
+  let persistenceNeedsRefresh = false
+
+  const recordError = (error: unknown) => {
+    if (!firstError) firstError = error
+  }
+
+  const enqueue: GenerationResultHandler = (image, result) => {
+    if (completedIds.has(image.id) || inFlightIds.has(image.id)) return queue
+    inFlightIds.add(image.id)
+    queue = queue.then(async () => {
+      if (result.status === 'rejected') {
+        recordError(result.reason)
+        return
+      }
+      if (!result.value.length) {
+        recordError(new Error('上游没有返回图片'))
+        return
+      }
+      const generated = await finishGenerationBatch(
+        [image],
+        [result],
+        generatedCount + 1,
+        false,
+      )
+      if (!generated.length) {
+        recordError(new Error('上游没有返回可用图片'))
+        return
+      }
+      completedIds.add(image.id)
+      generatedCount += generated.length
+      persistenceQueue = persistenceQueue
+        .then(async () => {
+          const saved = await persistGeneratedImages(
+            generated,
+            image.prompt || prompt.value.trim(),
+            image.model || imageModel.value,
+            { refresh: false },
+          )
+          if (saved) persistenceNeedsRefresh = true
+        })
+        .catch(recordError)
+    }).catch((error) => {
+      recordError(error)
+    }).finally(() => {
+      inFlightIds.delete(image.id)
+    })
+    return queue
+  }
+
+  return {
+    completedIds,
+    enqueue,
+    recordError,
+    drain: async () => {
+      await queue
+      await persistenceQueue
+      if (persistenceNeedsRefresh) {
+        await Promise.allSettled([loadGallery(), loadStudioQuota()])
+      }
+    },
+    get generatedCount() {
+      return generatedCount
+    },
+    get firstError() {
+      return firstError
+    },
   }
 }
 
@@ -2039,6 +2234,21 @@ async function waitForGatewayPollRetry(delay: number) {
   if (componentDisposed) throw new ImageGenerationWaitCancelled()
   await new Promise((resolve) => window.setTimeout(resolve, delay))
   if (componentDisposed) throw new ImageGenerationWaitCancelled()
+}
+
+function imageResultWithTaskTiming(
+  items: any[],
+  completedAt: number,
+  startedAt?: number,
+) {
+  const durationMs = Number(startedAt || 0) > 0
+    ? Math.max(1, completedAt - Number(startedAt))
+    : undefined
+  return items.map((item) => ({
+    ...(item && typeof item === 'object' ? item : { result: item }),
+    __imageTaskCompletedAt: completedAt,
+    __imageTaskDurationMs: durationMs,
+  }))
 }
 
 async function pollGatewayImageTask(
@@ -2086,6 +2296,7 @@ async function tryExecuteGatewayAsyncRequests(
   headers: Record<string, string>,
   body: string | FormData,
   geminiModel: boolean,
+  onResult?: GenerationResultHandler,
 ): Promise<PromiseSettledResult<any[]>[] | null> {
   const submitUrl = gatewayAsyncSubmitUrl(syncUrl, geminiModel)
   const submitted: Array<{ image: GeneratedImage; pollUrl: string }> = []
@@ -2172,9 +2383,17 @@ async function tryExecuteGatewayAsyncRequests(
   }
 
   const polled = await Promise.allSettled(
-    submitted.map((task) => pollGatewayImageTask(task.pollUrl, headers, {
-      isCancelled: () => componentDisposed,
-    })),
+    submitted.map(async (task) => {
+      const items = await pollGatewayImageTask(task.pollUrl, headers, {
+        isCancelled: () => componentDisposed,
+      })
+      const result = {
+        status: 'fulfilled' as const,
+        value: imageResultWithTaskTiming(items, Date.now(), task.image.startedAt),
+      }
+      await onResult?.(task.image, result)
+      return result.value
+    }),
   )
   for (const image of pendingImages) {
     if (!image.gatewayPollUrl) image.gatewaySubmitPending = false
@@ -2206,6 +2425,7 @@ async function resumeGatewayGeneration(pendingImages: GeneratedImage[]) {
     resumedGatewayBatches.add(batchId)
     activeGenerations.value += 1
     generating.value = true
+    const progress = createGenerationProgress()
     try {
       const apiKeyId = batch[0]?.apiKeyId
       const taskKey = apiKeyId
@@ -2218,11 +2438,29 @@ async function resumeGatewayGeneration(pendingImages: GeneratedImage[]) {
       }
       const headers = { Authorization: `Bearer ${taskKey.key}` }
       const results = await Promise.allSettled(
-        batch.map((image) => pollGatewayImageTask(image.gatewayPollUrl!, headers, {
-          isCancelled: () => componentDisposed,
-        })),
+        batch.map(async (image) => {
+          const items = await pollGatewayImageTask(image.gatewayPollUrl!, headers, {
+            isCancelled: () => componentDisposed,
+          })
+          const result = {
+            status: 'fulfilled' as const,
+            value: imageResultWithTaskTiming(items, Date.now(), image.startedAt),
+          }
+          await progress.enqueue(image, result)
+          return result.value
+        }),
       )
-      await finishGenerationBatch(batch, results)
+      for (const result of results) {
+        if (result.status === 'rejected') progress.recordError(result.reason)
+      }
+      await progress.drain()
+      removePendingImages(batch.filter((image) => !progress.completedIds.has(image.id)))
+      if (progress.generatedCount === 0) {
+        throw progress.firstError || new Error('上游没有返回图片')
+      }
+      if (progress.firstError) {
+        errorMessage.value = errorMessageFrom(progress.firstError, '部分图片生成失败')
+      }
     } catch (error) {
       if (error instanceof ImageGenerationWaitCancelled) return
       removePendingImages(batch)
@@ -2257,7 +2495,14 @@ function workerResponseToSettledResult(
     }
   }
   try {
-    return { status: 'fulfilled', value: extractImages(payload) }
+    return {
+      status: 'fulfilled',
+      value: imageResultWithTaskTiming(
+        extractImages(payload),
+        Number(response.completedAt || 0),
+        Number(response.startedAt || 0),
+      ),
+    }
   } catch (error) {
     return { status: 'rejected', reason: error }
   }
@@ -2269,6 +2514,7 @@ async function executeGenerationRequests(
   headers: Record<string, string>,
   body: string | FormData,
   geminiModel: boolean,
+  onResult?: GenerationResultHandler,
 ): Promise<PromiseSettledResult<any[]>[]> {
   let gatewayResults: PromiseSettledResult<any[]>[] | null = null
   gatewayResults = await tryExecuteGatewayAsyncRequests(
@@ -2277,6 +2523,7 @@ async function executeGenerationRequests(
     headers,
     body,
     geminiModel,
+    onResult,
   )
   if (gatewayResults) return gatewayResults
 
@@ -2290,33 +2537,50 @@ async function executeGenerationRequests(
         headers,
         body,
       },
-      createdAt: Date.now(),
+      createdAt: image.startedAt || Date.now(),
     }))
 
   if (taskRequests.length === pendingImages.length) {
     const started = await tryStartPersistentImageGeneration(taskRequests)
     if (started) {
+      const imagesByTaskId = new Map(
+        pendingImages.map((image) => [String(image.taskId), image]),
+      )
       const responses = await waitForPersistentImageGeneration(
         taskRequests.map((request) => request.id),
-        { isCancelled: () => componentDisposed },
+        {
+          isCancelled: () => componentDisposed,
+          onResponse: async (id, response) => {
+            const image = imagesByTaskId.get(id)
+            if (!image) return
+            await onResult?.(image, workerResponseToSettledResult(response))
+          },
+        },
       )
       return responses.map(workerResponseToSettledResult)
     }
   }
 
-  return Promise.allSettled(pendingImages.map(async () => {
+  return Promise.allSettled(pendingImages.map(async (image) => {
     const response = await fetch(url, { method: 'POST', headers, body })
     const payload = await response.json().catch(() => null)
     if (!response.ok) {
       throw new Error(payload?.error?.message || payload?.message || `${response.status} ${response.statusText}`)
     }
-    return extractImages(payload)
+    const result = {
+      status: 'fulfilled' as const,
+      value: imageResultWithTaskTiming(extractImages(payload), Date.now(), image.startedAt),
+    }
+    await onResult?.(image, result)
+    return result.value
   }))
 }
 
 async function finishGenerationBatch(
   pendingImages: GeneratedImage[],
   results: PromiseSettledResult<any[]>[],
+  titleStart = 1,
+  persist = true,
 ) {
   const items: any[] = []
   let firstError: unknown = null
@@ -2340,7 +2604,7 @@ async function finishGenerationBatch(
   const requestedFormat = firstPending?.format || format.value
   const requestedSize = firstPending?.size || size.value
   const completedAtMs = Date.now()
-  const durationMs = Number(firstPending?.startedAt || 0) > 0
+  const fallbackDurationMs = Number(firstPending?.startedAt || 0) > 0
     ? Math.max(1, completedAtMs - Number(firstPending.startedAt))
     : undefined
   const generated: GeneratedImage[] = []
@@ -2360,9 +2624,11 @@ async function finishGenerationBatch(
       actualFormat = processed.format
       if (processed.error && !localProcessError) localProcessError = processed.error
     }
+    const itemCompletedAt = Number(item.__imageTaskCompletedAt || 0)
+    const itemDurationMs = Number(item.__imageTaskDurationMs || 0)
     generated.push({
       id: nextImageId++,
-      title: `生成结果 ${index + 1}`,
+      title: `生成结果 ${titleStart + index}`,
       src,
       originalSrc: rawSrc,
       prompt: currentPrompt,
@@ -2372,8 +2638,8 @@ async function finishGenerationBatch(
       quality: firstPending?.quality || quality.value,
       background: firstPending?.background || background.value,
       meta: `${actualFormat.toUpperCase()} · ${requestedSize} · ${currentModel}`,
-      createdAt: Date.now() / 1000,
-      durationMs,
+      createdAt: Math.floor((itemCompletedAt > 0 ? itemCompletedAt : completedAtMs) / 1000),
+      durationMs: itemDurationMs > 0 ? itemDurationMs : fallbackDurationMs,
     })
   }
 
@@ -2387,7 +2653,10 @@ async function finishGenerationBatch(
   if (localProcessError) {
     appStore.showWarning('本地尺寸处理失败，已保留并显示上游原图。', 6000)
   }
-  await persistGeneratedImages(generated, currentPrompt, currentModel)
+  if (persist) {
+    await persistGeneratedImages(generated, currentPrompt, currentModel)
+  }
+  return generated
 }
 
 function buildGeminiURL(model: string) {
@@ -2652,6 +2921,12 @@ watch(imageModel, (model, previousModel) => {
 })
 
 watch(
+  [keys, imageModels, selectedKeyId, imageModel, images],
+  writeStudioSnapshot,
+  { deep: true, flush: 'post' },
+)
+
+watch(
   () => activeGenerations.value > 0 || images.value.some((image) => image.pending),
   (hasActiveGeneration) => {
     if (hasActiveGeneration) startGenerationClock()
@@ -2662,7 +2937,6 @@ watch(
 
 onMounted(() => {
   componentDisposed = false
-  window.addEventListener('resize', updateImageResultColumnCount)
   document.addEventListener('click', handleSizeOutside)
   document.addEventListener('keydown', handleSizeEscape)
   applyInspirationFromRoute()
@@ -2670,7 +2944,6 @@ onMounted(() => {
 })
 onActivated(() => {
   componentDisposed = false
-  updateImageResultColumnCount()
   if (activeGenerations.value > 0 || images.value.some((image) => image.pending)) {
     startGenerationClock()
   }
@@ -2686,7 +2959,6 @@ onDeactivated(() => {
 onBeforeUnmount(() => {
   componentDisposed = true
   stopGenerationClock()
-  window.removeEventListener('resize', updateImageResultColumnCount)
   document.removeEventListener('click', handleSizeOutside)
   document.removeEventListener('keydown', handleSizeEscape)
   for (const url of galleryThumbObjectUrls.values()) {
@@ -4125,9 +4397,11 @@ onBeforeUnmount(() => {
 }
 
 .image-pending-card {
+  position: absolute;
+  inset: 0;
   display: flex;
+  height: 100%;
   width: 100%;
-  aspect-ratio: 1;
   flex-direction: column;
   align-items: center;
   justify-content: center;
@@ -4329,27 +4603,20 @@ onBeforeUnmount(() => {
   padding: 0 1rem 1rem;
 }
 
-.image-results-masonry {
-  display: flex;
-  align-items: flex-start;
+.image-results-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  align-items: start;
   gap: 1rem;
 }
 
-.image-results-masonry__column {
-  display: flex;
-  min-width: 0;
-  flex: 1 1 0;
-  flex-direction: column;
-  gap: 1rem;
-}
-
-.image-results-masonry__column > article {
-  width: 100%;
+.image-result-card__media {
+  aspect-ratio: 16 / 10;
 }
 
 .image-result-card__media img {
   width: 100%;
-  height: auto;
+  height: 100%;
 }
 
 .image-studio .studio-page__results article {
@@ -4367,8 +4634,24 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 1024px) {
+  .image-results-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
   .image-studio .studio-page__header {
     padding-bottom: 1rem;
+  }
+}
+
+@media (max-width: 820px) {
+  .image-results-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 560px) {
+  .image-results-grid {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
