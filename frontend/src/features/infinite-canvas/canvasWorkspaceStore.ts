@@ -36,6 +36,7 @@ const VIDEO_DEFAULT_DURATION = 5
 const VIDEO_DEFAULT_RESOLUTION = '720p'
 const VIDEO_DEFAULT_ASPECT_RATIO = '16:9'
 const AUTOSAVE_DELAY_MS = 900
+const IMAGE_STUDIO_PREFERENCES_KEY = 'sub2api:image-studio:preferences'
 
 function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message
@@ -138,7 +139,8 @@ export const useCanvasWorkspaceStore = defineStore('canvas-workspace', () => {
   const imageModels = ref<string[]>([])
   const videoModels = ref<string[]>([])
   const apiBaseUrl = ref('')
-  const creatorKey = ref<ApiKey | null>(null)
+  const availableKeys = ref<ApiKey[]>([])
+  const selectedKeyId = ref('')
   const contextReady = ref(false)
 
   let saveTimer: number | null = null
@@ -156,6 +158,30 @@ export const useCanvasWorkspaceStore = defineStore('canvas-workspace', () => {
   })
   const version = computed(() => project.value?.version || 0)
   const hasModels = computed(() => imageModels.value.length > 0 || videoModels.value.length > 0)
+  const creatorKey = computed(() => (
+    availableKeys.value.find((key) => String(key.id) === selectedKeyId.value) || null
+  ))
+
+  function readImageStudioPreferredKeyId(): string {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(IMAGE_STUDIO_PREFERENCES_KEY) || '{}')
+      return typeof parsed?.keyId === 'string' ? parsed.keyId : ''
+    } catch {
+      return ''
+    }
+  }
+
+  function writeImageStudioPreferredKeyId(keyId: string) {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(IMAGE_STUDIO_PREFERENCES_KEY) || '{}')
+      localStorage.setItem(IMAGE_STUDIO_PREFERENCES_KEY, JSON.stringify({
+        ...parsed,
+        keyId,
+      }))
+    } catch {
+      // Sharing the preference with the image studio is optional.
+    }
+  }
 
   function currentNodes(): CanvasFlowNode[] {
     return nodes.value as unknown as CanvasFlowNode[]
@@ -271,13 +297,31 @@ export const useCanvasWorkspaceStore = defineStore('canvas-workspace', () => {
         settings.api_base_url || '',
         typeof window === 'undefined' ? '' : window.location.hostname,
       )
-      creatorKey.value = creator.key
-      await loadModelCatalog(creator.key)
+      availableKeys.value = creator.keys.filter((key) => (
+        key.status === 'active'
+        && key.group?.allow_image_generation !== false
+      ))
+      const preferredKeyId = readImageStudioPreferredKeyId()
+      const preferred = availableKeys.value.find((key) => String(key.id) === preferredKeyId)
+      const chosen = preferred || creator.key
+      selectedKeyId.value = String(chosen.id)
+      writeImageStudioPreferredKeyId(selectedKeyId.value)
+      await loadModelCatalog(chosen)
+      hydrateNodeModels()
       contextReady.value = true
     } catch (error) {
       generationError.value = errorMessage(error)
       throw error
     }
+  }
+
+  async function selectCreatorKey(keyId: string): Promise<void> {
+    const key = availableKeys.value.find((item) => String(item.id) === keyId && item.status === 'active')
+    if (!key) throw new Error('所选 API Key 不可用')
+    selectedKeyId.value = keyId
+    writeImageStudioPreferredKeyId(keyId)
+    await loadModelCatalog(key)
+    hydrateNodeModels()
   }
 
   async function loadModelCatalog(key: ApiKey): Promise<void> {
@@ -300,6 +344,22 @@ export const useCanvasWorkspaceStore = defineStore('canvas-workspace', () => {
     ]
     imageModels.value = deduplicateModels(imageIDs.filter(isImageGenerationModel))
     videoModels.value = deduplicateModels(generic.filter(isVideoModel))
+    if (!imageModels.value.length && !videoModels.value.length) {
+      throw new Error('当前 API Key 没有可用的图片或视频模型')
+    }
+  }
+
+  function hydrateNodeModels() {
+    for (const node of currentNodes()) {
+      if (node.data.kind === 'text') continue
+      const options = node.data.kind === 'video-generator' ? videoModels.value : imageModels.value
+      if (!options.includes(node.data.model)) {
+        node.data = {
+          ...node.data,
+          model: options[0] || '',
+        }
+      }
+    }
   }
 
   function updateNodeData(id: string, patch: Partial<CanvasNodeData>) {
@@ -730,12 +790,15 @@ export const useCanvasWorkspaceStore = defineStore('canvas-workspace', () => {
     videoModels,
     apiBaseUrl,
     creatorKey,
+    availableKeys,
+    selectedKeyId,
     contextReady,
     projectId,
     title,
     version,
     hasModels,
     loadProject,
+    selectCreatorKey,
     saveProject,
     scheduleSave,
     updateNodeData,

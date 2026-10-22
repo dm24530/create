@@ -21,11 +21,34 @@
         </div>
 
         <div class="flex flex-wrap items-center justify-end gap-2">
-          <button type="button" class="canvas-tool-button" @click="addNode('image-generator')">
+          <label class="canvas-key-select">
+            <span>API Key</span>
+            <select
+              :value="store.selectedKeyId"
+              :disabled="!store.availableKeys.length"
+              @change="changeCreatorKey"
+            >
+              <option v-if="!store.availableKeys.length" value="">暂无可用密钥</option>
+              <option v-for="key in store.availableKeys" :key="key.id" :value="String(key.id)">
+                {{ key.name }} · {{ key.group?.name || '未分组' }}
+              </option>
+            </select>
+          </label>
+          <button
+            type="button"
+            class="canvas-tool-button"
+            :disabled="!store.imageModels.length"
+            @click="addNode('image-generator')"
+          >
             <Icon name="grid" size="xs" />
             图片节点
           </button>
-          <button type="button" class="canvas-tool-button" @click="addNode('video-generator')">
+          <button
+            type="button"
+            class="canvas-tool-button"
+            :disabled="!store.videoModels.length"
+            @click="addNode('video-generator')"
+          >
             <Icon name="play" size="xs" />
             视频节点
           </button>
@@ -87,8 +110,18 @@
             <h2>开始你的第一张创作画布</h2>
             <p>添加图片或视频生成节点，填写提示词后直接调用当前平台模型。</p>
             <div class="mt-5 flex flex-wrap justify-center gap-2">
-              <button type="button" class="canvas-tool-button canvas-tool-button--primary" @click="addNode('image-generator')">生成图片</button>
-              <button type="button" class="canvas-tool-button" @click="addNode('video-generator')">生成视频</button>
+              <button
+                type="button"
+                class="canvas-tool-button canvas-tool-button--primary"
+                :disabled="!store.imageModels.length"
+                @click="addNode('image-generator')"
+              >生成图片</button>
+              <button
+                type="button"
+                class="canvas-tool-button"
+                :disabled="!store.videoModels.length"
+                @click="addNode('video-generator')"
+              >生成视频</button>
             </div>
           </div>
         </VueFlow>
@@ -176,6 +209,16 @@ async function saveNow() {
   else appStore.showError(store.saveError || '画布保存失败')
 }
 
+async function changeCreatorKey(event: Event) {
+  const keyId = (event.target as HTMLSelectElement).value
+  try {
+    await store.selectCreatorKey(keyId)
+    appStore.showSuccess('已切换创作密钥')
+  } catch (error) {
+    appStore.showError(error instanceof Error ? error.message : '切换创作密钥失败')
+  }
+}
+
 onMounted(async () => {
   const id = String(route.params.projectId || '')
   if (!id) {
@@ -238,6 +281,32 @@ onMounted(async () => {
   color: #cbd5e1;
   font-size: 11px;
   transition: 150ms ease;
+}
+
+.canvas-key-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 7px;
+  background: rgba(148, 163, 184, 0.06);
+  padding: 6px 8px;
+  color: #94a3b8;
+  font-size: 10px;
+}
+
+.canvas-key-select select {
+  max-width: 190px;
+  border: 0;
+  background: transparent;
+  color: #e2e8f0;
+  font-size: 11px;
+  outline: none;
+}
+
+.canvas-key-select option {
+  background: #111827;
+  color: #e5e7eb;
 }
 
 .canvas-icon-button {
