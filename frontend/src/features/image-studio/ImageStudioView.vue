@@ -388,7 +388,7 @@
                   data-testid="custom-width"
                   type="number"
                   min="256"
-                  max="3840"
+                  :max="maxImageEdge"
                   step="16"
                   aria-label="宽度"
                 />
@@ -401,15 +401,20 @@
                   data-testid="custom-height"
                   type="number"
                   min="256"
-                  max="3840"
+                  :max="maxImageEdge"
                   step="16"
                   aria-label="高度"
                 />
               </label>
             </div>
             <p class="image-composer__custom-size-help">
-              支持 auto（默认，由模型决定）或自定义分辨率。自定义需满足：最长边不超过
-              3840px，宽高均为 16px 的倍数，长短边比不超过 3:1，总像素 655,360–8,294,400。
+              <template v-if="isGeminiImageModel">
+                支持 auto（默认，由模型决定）或自定义分辨率。超过 3840px 的尺寸会在生成后本地处理，最长边不超过 {{ maxImageEdge }}px。
+              </template>
+              <template v-else>
+                支持 auto（默认，由模型决定）或自定义分辨率。自定义需满足：最长边不超过
+                3840px，宽高均为 16px 的倍数，长短边比不超过 3:1，总像素 655,360–8,294,400。
+              </template>
             </p>
             <p class="image-composer__custom-size-summary" data-testid="custom-size-summary">
               当前 {{ customSizeSummary }}
@@ -464,7 +469,7 @@
     >
       <div v-if="previewImage" class="image-detail-dialog">
         <div class="image-detail-dialog__media">
-          <img :src="previewImage.src" :alt="previewImage.title" />
+          <img :src="previewDisplaySrc || previewImage.thumbSrc || previewImage.src" :alt="previewImage.title" />
         </div>
         <section class="image-detail-dialog__panel">
           <div class="image-detail-dialog__section-head">
@@ -562,6 +567,11 @@ import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Toggle from '@/components/common/Toggle.vue'
 import ImageStudioSelect from './ImageStudioSelect.vue'
+import {
+  imageNeedsLocalResize,
+  LOCAL_IMAGE_MAX_EDGE,
+  processImageForDisplay,
+} from './imagePostProcess'
 import Icon from '@/components/icons/Icon.vue'
 import { useClipboard } from '@/composables/useClipboard'
 import {
@@ -583,6 +593,7 @@ interface GeneratedImage {
   id: number | string
   title: string
   src: string
+  originalSrc?: string
   thumbSrc?: string
   thumbSrcSet?: string
   meta: string
@@ -668,6 +679,7 @@ const generationClockNow = ref(Date.now())
 const imageResultColumnCount = ref(resolveImageResultColumnCount())
 const references = ref<ReferenceItem[]>([])
 const previewImage = ref<GeneratedImage | null>(null)
+const previewDisplaySrc = ref('')
 const pendingDeleteImage = ref<GeneratedImage | null>(null)
 const deletingImage = ref(false)
 const previewPromptDraft = ref('')
@@ -889,6 +901,9 @@ const canGenerate = computed(() => Boolean(apiBaseUrl.value && selectedKey.value
 const isGeminiImageModel = computed(() => isGeminiModel(imageModel.value))
 const isGptImageModel = computed(() => imageModel.value.toLowerCase().includes('gpt-image'))
 const isGrokImageModel = computed(() => isGrokImageModelName(imageModel.value))
+const maxImageEdge = computed(() => (
+  isGeminiImageModel.value ? LOCAL_IMAGE_MAX_EDGE : IMAGE_MAX_EDGE
+))
 const modelSupportsTransparentBackground = computed(() => (
   !isGeminiImageModel.value && !isGrokImageModel.value
 ))
@@ -1248,7 +1263,7 @@ function normalizeDimension(value: number) {
 
 function clampDimension(value: number) {
   const numeric = Number.isFinite(Number(value)) ? Number(value) : 1024
-  return Math.round(Math.min(IMAGE_MAX_EDGE, Math.max(IMAGE_MIN_EDGE, numeric)))
+  return Math.round(Math.min(maxImageEdge.value, Math.max(IMAGE_MIN_EDGE, numeric)))
 }
 
 function parseSize(value: string) {
@@ -1568,6 +1583,34 @@ function formatGenerationDuration(durationMs?: number): string {
   return `${Math.floor(totalSeconds / 60)} 分 ${totalSeconds % 60} 秒`
 }
 
+let previewLoadToken = 0
+
+async function loadPreviewDisplay(image: GeneratedImage) {
+  const token = ++previewLoadToken
+  const thumbnail = image.thumbSrc || image.thumbSrcSet || image.src
+  previewDisplaySrc.value = thumbnail
+  if (!thumbnail || thumbnail === image.src || typeof Image === 'undefined') return
+
+  const loader = new Image()
+  loader.decoding = 'async'
+  loader.src = image.src
+  try {
+    if (typeof loader.decode === 'function') {
+      await loader.decode()
+    } else {
+      await new Promise<void>((resolve, reject) => {
+        loader.onload = () => resolve()
+        loader.onerror = () => reject(new Error('preview image failed to load'))
+      })
+    }
+  } catch {
+    return
+  }
+  if (token === previewLoadToken && previewImage.value?.id === image.id) {
+    previewDisplaySrc.value = image.src
+  }
+}
+
 let generationClockTimer: ReturnType<typeof setInterval> | null = null
 
 function startGenerationClock() {
@@ -1689,138 +1732,21 @@ async function confirmRemoveGalleryImage() {
   }
 }
 
-async function imageSourceToDataURL(src: string) {
-  if (src.startsWith('data:')) return src
-  const response = await fetch(src)
-  if (!response.ok) throw new Error(`Failed to read generated image: ${response.status}`)
-  const blob = await response.blob()
-  return await new Promise<string>((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onerror = () => reject(reader.error || new Error('Failed to read generated image'))
-    reader.onload = () => resolve(String(reader.result || ''))
-    reader.readAsDataURL(blob)
-  })
-}
-
-// 上游有时会忽略 response_format=b64_json，直接返回它自己域名下的图片链接。
-// 这里统一转成自包含的 data URL，避免放大/下载时直接加载、暴露第三方域名。
-async function toSelfHostedImageSrc(src: string) {
-  if (src.startsWith('data:')) return src
-  try {
-    return await imageSourceToDataURL(src)
-  } catch {
-    return src
-  }
-}
-
 function imageFormatFromSource(src: string, fallback: string): string {
   const match = /^data:image\/([^;,]+)/i.exec(src)
   const mime = match?.[1]?.toLowerCase().replace('jpg', 'jpeg')
   return mime && formatOptions.some((option) => option.value === mime) ? mime : fallback
 }
 
-async function ensureImageFormat(src: string, targetFormat: string) {
-  if (!src.startsWith('data:image/')) return src
-  const normalizedFormat = targetFormat === 'jpg' ? 'jpeg' : targetFormat
-  const targetMime = `image/${normalizedFormat}`
-  const sourceMime = /^data:([^;,]+)/i.exec(src)?.[1]?.toLowerCase().replace('image/jpg', 'image/jpeg')
-  if (sourceMime === targetMime) return src
-  if (typeof Image === 'undefined') return src
-
-  const image = new Image()
-  image.decoding = 'async'
-  image.src = src
-  if (typeof image.decode !== 'function') return src
-  try {
-    await image.decode()
-  } catch {
-    return src
-  }
-  if (!image.naturalWidth || !image.naturalHeight) return src
-
-  const canvas = document.createElement('canvas')
-  canvas.width = image.naturalWidth
-  canvas.height = image.naturalHeight
-  const context = canvas.getContext('2d')
-  if (!context) return src
-  if (targetMime === 'image/jpeg') {
-    context.fillStyle = '#ffffff'
-    context.fillRect(0, 0, canvas.width, canvas.height)
-  }
-  context.drawImage(image, 0, 0)
-  try {
-    const converted = canvas.toDataURL(targetMime, 0.92)
-    return converted.startsWith(`data:${targetMime};`) ? converted : src
-  } catch {
-    return src
-  }
-}
-
-async function resizeImageToExactSize(src: string, targetSize: string) {
-  if (!src.startsWith('data:image/')) return src
-  const target = parseSize(targetSize)
-  if (!target?.width || !target?.height) return src
-  if (typeof Image === 'undefined') return src
-
-  const image = new Image()
-  image.decoding = 'async'
-  image.src = src
-  if (typeof image.decode !== 'function') return src
-  try {
-    await image.decode()
-  } catch {
-    return src
-  }
-  const sourceWidth = image.naturalWidth
-  const sourceHeight = image.naturalHeight
-  if (!sourceWidth || !sourceHeight) return src
-  if (sourceWidth === target.width && sourceHeight === target.height) return src
-
-  const sourceRatio = sourceWidth / sourceHeight
-  const targetRatio = target.width / target.height
-  let cropX = 0
-  let cropY = 0
-  let cropWidth = sourceWidth
-  let cropHeight = sourceHeight
-  if (sourceRatio > targetRatio) {
-    cropWidth = Math.round(sourceHeight * targetRatio)
-    cropX = Math.floor((sourceWidth - cropWidth) / 2)
-  } else if (sourceRatio < targetRatio) {
-    cropHeight = Math.round(sourceWidth / targetRatio)
-    cropY = Math.floor((sourceHeight - cropHeight) / 2)
-  }
-  // Never claim a 4K file by enlarging a lower-resolution upstream result.
-  if (cropWidth < target.width || cropHeight < target.height) return src
-
-  const canvas = document.createElement('canvas')
-  canvas.width = target.width
-  canvas.height = target.height
-  const context = canvas.getContext('2d')
-  if (!context) return src
-  const mime = /^data:(image\/[^;,]+)/i.exec(src)?.[1]?.toLowerCase() || 'image/png'
-  if (mime === 'image/jpeg') {
-    context.fillStyle = '#ffffff'
-    context.fillRect(0, 0, target.width, target.height)
-  }
-  context.imageSmoothingEnabled = true
-  context.imageSmoothingQuality = 'high'
-  context.drawImage(
-    image,
-    cropX,
-    cropY,
-    cropWidth,
-    cropHeight,
-    0,
-    0,
-    target.width,
-    target.height,
-  )
-  try {
-    const resized = canvas.toDataURL(mime, 0.94)
-    return resized.startsWith(`data:${mime};`) ? resized : src
-  } catch {
-    return src
-  }
+function imageFormatFromResult(item: any, src: string, fallback: string): string {
+  const mime = String(item?.mimeType || item?.mime_type || '')
+    .trim()
+    .toLowerCase()
+    .replace('image/jpg', 'image/jpeg')
+  const format = mime.startsWith('image/') ? mime.slice('image/'.length) : ''
+  return format && formatOptions.some((option) => option.value === format)
+    ? format
+    : imageFormatFromSource(src, fallback)
 }
 
 async function loadModels() {
@@ -2418,20 +2344,27 @@ async function finishGenerationBatch(
     ? Math.max(1, completedAtMs - Number(firstPending.startedAt))
     : undefined
   const generated: GeneratedImage[] = []
+  let localProcessError = ''
+  const needsLocalResize = imageNeedsLocalResize(requestedSize, IMAGE_MAX_EDGE)
   for (let index = 0; index < items.length; index += 1) {
     const item = items[index]
     const mime = String(item.mimeType || item.mime_type || 'image/png')
     const b64 = String(item.b64_json || item.data || '')
     const rawSrc = b64 ? `data:${mime};base64,${b64}` : String(item.url || '')
     if (!rawSrc) continue
-    const selfHostedSrc = await toSelfHostedImageSrc(rawSrc)
-    const formattedSrc = await ensureImageFormat(selfHostedSrc, requestedFormat)
-    const src = await resizeImageToExactSize(formattedSrc, requestedSize)
-    const actualFormat = imageFormatFromSource(src, requestedFormat)
+    let src = rawSrc
+    let actualFormat = imageFormatFromResult(item, rawSrc, requestedFormat)
+    if (needsLocalResize) {
+      const processed = await processImageForDisplay(rawSrc, requestedSize, requestedFormat)
+      src = processed.src
+      actualFormat = processed.format
+      if (processed.error && !localProcessError) localProcessError = processed.error
+    }
     generated.push({
       id: nextImageId++,
       title: `生成结果 ${index + 1}`,
       src,
+      originalSrc: rawSrc,
       prompt: currentPrompt,
       model: currentModel,
       size: requestedSize,
@@ -2451,6 +2384,9 @@ async function finishGenerationBatch(
     images.value.splice(Math.min(pendingIndex, images.value.length), 0, ...generated)
   }
   persistPendingImages()
+  if (localProcessError) {
+    appStore.showWarning('本地尺寸处理失败，已保留并显示上游原图。', 6000)
+  }
   await persistGeneratedImages(generated, currentPrompt, currentModel)
 }
 
@@ -2685,6 +2621,12 @@ async function regenerateFromPreview() {
 
 watch(previewImage, (image) => {
   previewPromptDraft.value = image?.prompt || ''
+  if (image) {
+    void loadPreviewDisplay(image)
+  } else {
+    previewLoadToken += 1
+    previewDisplaySrc.value = ''
+  }
 })
 
 watch(errorMessage, (message) => {

@@ -24,13 +24,14 @@ import (
 )
 
 type AsyncImageHandler struct {
-	tasks      *service.ImageTaskService
-	openAI     *OpenAIGatewayHandler
-	gateway    *GatewayHandler
-	apiKeys    imageTaskAPIKeyLoader
-	imageLinks service.UsageLogImageLinkStore
-	execute    func(platform string, c *gin.Context)
-	running    sync.Map
+	tasks                *service.ImageTaskService
+	openAI               *OpenAIGatewayHandler
+	gateway              *GatewayHandler
+	apiKeys              imageTaskAPIKeyLoader
+	imageLinks           service.UsageLogImageLinkStore
+	execute              func(platform string, c *gin.Context)
+	imageTaskRetryDelays []time.Duration
+	running              sync.Map
 }
 
 type imageTaskAPIKeyLoader interface {
@@ -42,6 +43,8 @@ const imageTaskLeaseTTL = 2 * time.Minute
 const imageTaskLeaseRenewInterval = 30 * time.Second
 const imageTaskLeaseRenewTimeout = 5 * time.Second
 const imageTaskLeaseRenewFailureLimit = 3
+
+var defaultImageTaskRetryDelays = []time.Duration{10 * time.Second, 30 * time.Second}
 
 type asyncGeminiTaskEnvelope struct {
 	Model   string          `json:"model"`
@@ -582,46 +585,118 @@ func (h *AsyncImageHandler) run(taskID, platform string, taskCtx *gin.Context, r
 		return
 	}
 	usageRequestID := imageTaskUsageRequestID(taskCtx.Request.Context())
-	h.execute(platform, taskCtx)
-	if leaseLost.Load() {
-		// Another worker may own the task now; never let this stale execution
-		// overwrite the authoritative result.
-		return
-	}
-	if !h.renewTaskLease(taskID) {
-		leaseLost.Store(true)
-		return
-	}
-	body := bytes.TrimSpace(recorder.Body.Bytes())
-	if isGeminiAsyncImagePlatform(platform) {
-		normalized, normalizeErr := normalizeGeminiImageTaskResult(body)
-		if normalizeErr != nil {
-			h.failTask(taskID, http.StatusBadGateway, imageTaskErrorPayload("api_error", "invalid Gemini image response"))
+	taskRecord, taskRecordErr := h.tasks.GetRecord(context.Background(), taskID)
+	retryDelays := h.effectiveImageTaskRetryDelays()
+	activeCtx, activeRecorder := taskCtx, recorder
+
+	for attempt := 0; attempt <= len(retryDelays); attempt++ {
+		var retryCancel context.CancelFunc
+		if attempt > 0 {
+			delay := retryDelays[attempt-1]
+			logger.L().Warn("image_task.transient_retry_scheduled",
+				zap.String("task_id", taskID),
+				zap.Int("attempt", attempt+1),
+				zap.Duration("delay", delay),
+			)
+			if !waitForImageTaskRetry(taskCtx.Request.Context(), delay) {
+				return
+			}
+			if taskRecordErr != nil || taskRecord == nil || h.apiKeys == nil {
+				h.failTask(taskID, http.StatusServiceUnavailable, imageTaskErrorPayload(
+					"api_error",
+					"image task retry context is unavailable",
+				))
+				return
+			}
+			retryCtx, retryRecorder, cancelRetry, err := h.contextFromTask(taskRecord)
+			if err != nil {
+				h.failTask(taskID, http.StatusServiceUnavailable, imageTaskErrorPayload("api_error", err.Error()))
+				return
+			}
+			activeCtx, activeRecorder, retryCancel = retryCtx, retryRecorder, cancelRetry
+		}
+
+		h.execute(platform, activeCtx)
+		attemptCtxErr := activeCtx.Request.Context().Err()
+		if retryCancel != nil {
+			retryCancel()
+		}
+		if leaseLost.Load() {
+			// Another worker may own the task now; never let this stale execution
+			// overwrite the authoritative result.
 			return
 		}
-		body = normalized
-	}
-	if err := taskCtx.Request.Context().Err(); err != nil && len(body) == 0 {
-		h.failTask(taskID, http.StatusGatewayTimeout, imageTaskErrorPayload("timeout_error", "image generation task timed out"))
-		return
-	}
-	statusCode := recorder.Code
-	if statusCode == 0 {
-		statusCode = http.StatusOK
-	}
-	if statusCode >= http.StatusOK && statusCode < http.StatusMultipleChoices {
-		if len(body) == 0 || !json.Valid(body) {
-			h.failTask(taskID, http.StatusBadGateway, imageTaskErrorPayload("api_error", "upstream returned an invalid image response"))
+		if !h.renewTaskLease(taskID) {
+			leaseLost.Store(true)
 			return
 		}
-		if err := h.tasks.Complete(context.Background(), taskID, statusCode, json.RawMessage(body)); err != nil {
-			logger.L().Error("image_task.complete_store_failed", zap.String("task_id", taskID), zap.Error(err))
+		body := bytes.TrimSpace(activeRecorder.Body.Bytes())
+		if isGeminiAsyncImagePlatform(platform) {
+			normalized, normalizeErr := normalizeGeminiImageTaskResult(body)
+			if normalizeErr != nil {
+				h.failTask(taskID, http.StatusBadGateway, imageTaskErrorPayload("api_error", "invalid Gemini image response"))
+				return
+			}
+			body = normalized
+		}
+		if attemptCtxErr != nil && len(body) == 0 {
+			h.failTask(taskID, http.StatusGatewayTimeout, imageTaskErrorPayload("timeout_error", "image generation task timed out"))
 			return
 		}
-		h.recordUsageImageLink(taskID, usageRequestID)
+		statusCode := activeRecorder.Code
+		if statusCode == 0 {
+			statusCode = http.StatusOK
+		}
+		if statusCode >= http.StatusOK && statusCode < http.StatusMultipleChoices {
+			if len(body) == 0 || !json.Valid(body) {
+				h.failTask(taskID, http.StatusBadGateway, imageTaskErrorPayload("api_error", "upstream returned an invalid image response"))
+				return
+			}
+			if err := h.tasks.Complete(context.Background(), taskID, statusCode, json.RawMessage(body)); err != nil {
+				logger.L().Error("image_task.complete_store_failed", zap.String("task_id", taskID), zap.Error(err))
+				return
+			}
+			h.recordUsageImageLink(taskID, usageRequestID)
+			return
+		}
+		if attempt < len(retryDelays) && isRetryableImageTaskResponse(statusCode, body) {
+			continue
+		}
+		h.failTask(taskID, statusCode, extractImageTaskError(body))
 		return
 	}
-	h.failTask(taskID, statusCode, extractImageTaskError(body))
+}
+
+func (h *AsyncImageHandler) effectiveImageTaskRetryDelays() []time.Duration {
+	if h != nil && h.imageTaskRetryDelays != nil {
+		return h.imageTaskRetryDelays
+	}
+	return defaultImageTaskRetryDelays
+}
+
+func isRetryableImageTaskResponse(statusCode int, body []byte) bool {
+	switch statusCode {
+	case http.StatusRequestTimeout, http.StatusTooEarly, http.StatusTooManyRequests:
+		return true
+	}
+	if statusCode >= http.StatusInternalServerError {
+		return true
+	}
+	return strings.Contains(strings.ToLower(string(body)), "upstream service temporarily unavailable")
+}
+
+func waitForImageTaskRetry(ctx context.Context, delay time.Duration) bool {
+	if delay <= 0 {
+		return ctx == nil || ctx.Err() == nil
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
 }
 
 func imageTaskUsageRequestID(ctx context.Context) string {

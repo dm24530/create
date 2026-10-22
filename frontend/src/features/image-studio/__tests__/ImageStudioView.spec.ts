@@ -10,7 +10,7 @@ import ImageStudioView from '../ImageStudioView.vue'
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 
-const { listKeys, getPublicSettings, listGallery, saveGallery, pinGallery, deleteGallery, downloadGallery, galleryQuota, copyToClipboard } = vi.hoisted(() => ({
+const { listKeys, getPublicSettings, listGallery, saveGallery, pinGallery, deleteGallery, downloadGallery, galleryQuota, copyToClipboard, imageNeedsLocalResize, processImageForDisplay } = vi.hoisted(() => ({
   listKeys: vi.fn(),
   getPublicSettings: vi.fn(),
   listGallery: vi.fn(),
@@ -20,6 +20,8 @@ const { listKeys, getPublicSettings, listGallery, saveGallery, pinGallery, delet
   downloadGallery: vi.fn(),
   galleryQuota: vi.fn(),
   copyToClipboard: vi.fn(),
+  imageNeedsLocalResize: vi.fn(),
+  processImageForDisplay: vi.fn(),
 }))
 
 vi.mock('@/api', () => ({
@@ -44,6 +46,15 @@ vi.mock('@/composables/useClipboard', () => ({
     copyToClipboard,
   }),
 }))
+
+vi.mock('../imagePostProcess', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../imagePostProcess')>()
+  return {
+    ...actual,
+    imageNeedsLocalResize,
+    processImageForDisplay,
+  }
+})
 
 vi.mock('@/composables/useCreatorKey', () => ({
   isCreationServiceUnavailable: (error: unknown) =>
@@ -100,12 +111,24 @@ function resetCommonMocks() {
   downloadGallery.mockReset()
   galleryQuota.mockReset()
   copyToClipboard.mockReset()
+  imageNeedsLocalResize.mockReset()
+  processImageForDisplay.mockReset()
   listGallery.mockResolvedValue([])
   pinGallery.mockResolvedValue(undefined)
   deleteGallery.mockResolvedValue(undefined)
   downloadGallery.mockResolvedValue(new Blob(['image'], { type: 'image/png' }))
   galleryQuota.mockResolvedValue({ used: 0, limit: 100 })
   copyToClipboard.mockResolvedValue(true)
+  imageNeedsLocalResize.mockImplementation((value: string, upstreamMaxEdge: number) => {
+    const match = /^(\d+)x(\d+)$/i.exec(value.trim())
+    if (!match) return false
+    return Number(match[1]) > upstreamMaxEdge || Number(match[2]) > upstreamMaxEdge
+  })
+  processImageForDisplay.mockImplementation(async (src: string, _targetSize: string, format: string) => ({
+    src,
+    format,
+    processed: false,
+  }))
   saveGallery.mockResolvedValue({
     id: 'gallery-1',
     url: 'https://cdn.example.com/gallery-1.png',
@@ -636,6 +659,48 @@ describe('ImageStudioView inline image size controls', () => {
     expect(wrapper.get('[data-testid="size-dialog-issue"]').text()).toContain('总像素')
     expect(wrapper.get('[data-testid="custom-size-summary"]').text()).toContain('14745600')
   })
+
+  it('allows Gemini custom output up to 4096 for local processing', async () => {
+    listKeys.mockResolvedValue({
+      items: [{ id: 1, name: 'dd', key: 'sk-local', status: 'active', group_id: 2 }],
+    })
+    getPublicSettings.mockResolvedValue({ api_base_url: '/v1' })
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/images/batches/models')) {
+        return {
+          ok: true,
+          json: async () => ({ data: [{ id: 'gemini-3.1-flash-image-preview' }] }),
+        } as Response
+      }
+      if (url.endsWith('/models')) {
+        return {
+          ok: true,
+          json: async () => ({ data: [{ id: 'gemini-3.1-flash-image-preview' }] }),
+        } as Response
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountImageStudio()
+    await flushPromises()
+    await flushPromises()
+    await vi.waitFor(() => {
+      expect(wrapper.get('[data-testid="image-model-select"]').text())
+        .toContain('gemini-3.1-flash-image-preview')
+      expect(wrapper.get('button.image-composer__generate').attributes('disabled')).toBeUndefined()
+    })
+    await wrapper.get('[data-testid="image-size-trigger"]').trigger('click')
+    await wrapper.get('[data-testid="image-custom-size-toggle"]').trigger('click')
+
+    expect(wrapper.get('[data-testid="custom-width"]').attributes('max')).toBe('4096')
+    expect(wrapper.get('[data-testid="custom-height"]').attributes('max')).toBe('4096')
+    await wrapper.get('[data-testid="custom-width"]').setValue('4096')
+    await wrapper.get('[data-testid="custom-height"]').setValue('4096')
+
+    expect(wrapper.get('[data-testid="image-size-trigger"]').text()).toContain('4096x4096')
+    expect(wrapper.find('[data-testid="size-dialog-issue"]').exists()).toBe(false)
+  })
 })
 
 describe('ImageStudioView inspiration handoff', () => {
@@ -732,6 +797,12 @@ describe('ImageStudioView gallery', () => {
     expect(image.classes()).toContain('h-auto')
     expect(image.classes()).toContain('object-contain')
     expect(image.classes()).not.toContain('object-cover')
+
+    await media.trigger('click')
+    await flushPromises()
+    expect(wrapper.get('.image-detail-dialog__media img').attributes('src')).toBe(
+      'https://cdn.example.com/gallery-1-thumb.jpg',
+    )
   })
 
   it('distributes gallery images across masonry columns in display order', async () => {
@@ -993,6 +1064,64 @@ describe('ImageStudioView gallery', () => {
     expect(wrapper.get('[data-testid="image-generation-duration"]').text()).toMatch(/^\d+ 秒$|^\d+ 分 \d+ 秒$/)
   })
 
+  it('uses a completed async image URL directly without downloading and redrawing it', async () => {
+    listKeys.mockResolvedValue({
+      items: [{ id: 1, name: 'dd', key: 'sk-local', status: 'active', group_id: 2 }],
+    })
+    getPublicSettings.mockResolvedValue({ api_base_url: '/v1' })
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/images/batches/models')) {
+        return { ok: true, json: async () => ({ data: [] }) } as Response
+      }
+      if (url.endsWith('/models')) {
+        return { ok: true, json: async () => ({ data: [{ id: 'gpt-image-1' }] }) } as Response
+      }
+      if (url.endsWith('/images/generations/async')) {
+        return {
+          ok: true,
+          status: 202,
+          json: async () => ({
+            task_id: 'imgtask_server_url',
+            status: 'processing',
+            poll_url: '/v1/images/tasks/imgtask_server_url',
+          }),
+        } as Response
+      }
+      if (url.endsWith('/images/tasks/imgtask_server_url')) {
+        return {
+          ok: true,
+          json: async () => ({
+            task_id: 'imgtask_server_url',
+            status: 'completed',
+            result: {
+              data: [{
+                url: 'https://cdn.example.com/generated.png',
+                mime_type: 'image/png',
+              }],
+            },
+          }),
+        } as Response
+      }
+      if (url === 'https://cdn.example.com/generated.png') {
+        return {
+          ok: true,
+          blob: async () => new Blob([new Uint8Array([1, 2, 3])], { type: 'image/png' }),
+        } as Response
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountImageStudio()
+    await flushPromises()
+    await flushPromises()
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(fetchMock).not.toHaveBeenCalledWith('https://cdn.example.com/generated.png')
+  })
+
   it('keeps already submitted async tasks when a later submission loses the network', async () => {
     listKeys.mockResolvedValue({
       items: [{ id: 7, name: 'original', key: 'sk-original', status: 'active', group_id: 2 }],
@@ -1189,7 +1318,7 @@ describe('ImageStudioView gallery', () => {
     expect(wrapper.find('[data-testid="edit-image-prompt"]').exists()).toBe(false)
   })
 
-  it('rewrites upstream image URLs so the enlarged image is not served from the other site', async () => {
+  it('displays upstream image URLs immediately without downloading them locally', async () => {
     listKeys.mockResolvedValue({
       items: [{ id: 1, name: 'dd', key: 'sk-local', status: 'active', group_id: 2 }],
     })
@@ -1226,8 +1355,97 @@ describe('ImageStudioView gallery', () => {
     })
 
     const generatedImage = wrapper.get('img[alt="生成结果 1"]')
-    expect(generatedImage.attributes('src')).toMatch(/^data:image\/png;base64,/)
-    expect(wrapper.html()).not.toContain('upstream.example.com')
+    expect(generatedImage.attributes('src')).toBe('https://upstream.example.com/out.png')
+    expect(fetch).not.toHaveBeenCalledWith('https://upstream.example.com/out.png')
+  })
+
+  it('keeps the pending card visible until required local resizing finishes', async () => {
+    listKeys.mockResolvedValue({
+      items: [{ id: 1, name: 'dd', key: 'sk-local', status: 'active', group_id: 2 }],
+    })
+    getPublicSettings.mockResolvedValue({ api_base_url: '/v1' })
+    saveGallery.mockRejectedValue(new Error('storage unavailable'))
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/images/batches/models')) {
+        return {
+          ok: true,
+          json: async () => ({ data: [{ id: 'gemini-3.1-flash-image-preview' }] }),
+        } as Response
+      }
+      if (url.endsWith('/models')) {
+        return {
+          ok: true,
+          json: async () => ({ data: [{ id: 'gemini-3.1-flash-image-preview' }] }),
+        } as Response
+      }
+      if (url.endsWith('/images/generations/async')) return asyncImageUnavailableResponse()
+      if (url.endsWith('/images/generations')) {
+        return {
+          ok: true,
+          json: async () => ({ data: [{ b64_json: 'c291cmNl', mime_type: 'image/png' }] }),
+        } as Response
+      }
+      if (url.includes('/v1beta/models/gemini-3.1-flash-image-preview:generateContent')) {
+        return {
+          ok: true,
+          json: async () => ({
+            candidates: [{
+              content: {
+                parts: [{
+                  inlineData: { mimeType: 'image/png', data: 'c291cmNl' },
+                }],
+              },
+            }],
+          }),
+        } as Response
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountImageStudio()
+    await flushPromises()
+    await flushPromises()
+    await wrapper.get('[data-testid="image-size-trigger"]').trigger('click')
+    await wrapper.get('[data-testid="image-custom-size-toggle"]').trigger('click')
+    await wrapper.get('[data-testid="custom-width"]').setValue('4096')
+    await wrapper.get('[data-testid="custom-height"]').setValue('4096')
+    expect(wrapper.get('[data-testid="image-size-trigger"]').text()).toContain('4096x4096')
+    expect((wrapper.get('textarea').element as HTMLTextAreaElement).value).not.toBe('')
+    expect(wrapper.get('button.image-composer__generate').attributes('disabled')).toBeUndefined()
+
+    let resolveProcess!: (value: {
+      src: string
+      format: string
+      processed: boolean
+    }) => void
+    processImageForDisplay.mockImplementation(() => new Promise((resolve) => {
+      resolveProcess = resolve
+    }))
+
+    const submitPromise = wrapper.get('form').trigger('submit')
+    await vi.waitFor(() => {
+      expect(imageNeedsLocalResize).toHaveBeenCalled()
+      expect(imageNeedsLocalResize).toHaveBeenCalledWith('4096x4096', 3840)
+      expect(processImageForDisplay).toHaveBeenCalledWith(
+        expect.stringContaining('data:image/png;base64,'),
+        '4096x4096',
+        'png',
+      )
+    })
+    expect(wrapper.find('img[alt="生成结果 1"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('正在生成')
+
+    resolveProcess({
+      src: 'data:image/png;base64,processed',
+      format: 'png',
+      processed: true,
+    })
+    await submitPromise
+    await flushPromises()
+
+    expect(wrapper.get('img[alt="生成结果 1"]').attributes('src'))
+      .toBe('data:image/png;base64,processed')
   })
 
   it('shows object-storage configuration errors only to admins', async () => {
