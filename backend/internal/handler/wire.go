@@ -210,6 +210,7 @@ func ProvideHandlers(
 	batchImageHandler *BatchImageHandler,
 	imageStudioGalleryHandler *ImageStudioGalleryHandler,
 	videoStudioGalleryHandler *VideoStudioGalleryHandler,
+	canvasProjectHandler *CanvasProjectHandler,
 	videoInspirationHandler *VideoInspirationHandler,
 	_ *service.IdempotencyCoordinator,
 	_ *service.IdempotencyCleanupService,
@@ -240,6 +241,7 @@ func ProvideHandlers(
 		BatchImage:         batchImageHandler,
 		ImageStudioGallery: imageStudioGalleryHandler,
 		VideoStudioGallery: videoStudioGalleryHandler,
+		CanvasProject:      canvasProjectHandler,
 		VideoInspiration:   videoInspirationHandler,
 	}
 }
@@ -277,6 +279,7 @@ var ProviderSet = wire.NewSet(
 	ProvideBatchImageHandler,
 	NewImageStudioGalleryHandler,
 	NewVideoStudioGalleryHandler,
+	NewCanvasProjectHandler,
 	NewVideoInspirationHandler,
 
 	// Admin handlers

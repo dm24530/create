@@ -28,6 +28,29 @@ export const userCustomFeatureRoutesAfterKeys: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/canvas',
+    name: 'CanvasProjects',
+    component: () => import('@/features/infinite-canvas/CanvasProjectsView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      title: 'Infinite Canvas',
+      titleKey: 'nav.canvas',
+    }
+  },
+  {
+    path: '/canvas/:projectId',
+    name: 'CanvasWorkspace',
+    component: () => import('@/features/infinite-canvas/CanvasWorkspaceView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      title: 'Infinite Canvas',
+      titleKey: 'nav.canvas',
+      immersive: true,
+    }
+  },
+  {
     path: '/video-studio',
     name: 'VideoStudio',
     component: () => import('@/features/video-studio/VideoStudioView.vue'),

@@ -171,6 +171,7 @@ export default {
     batchImage: 'Batch Images',
     imageStudio: 'Image Studio',
     videoStudio: 'Video Studio',
+    canvas: 'Infinite Canvas',
     imageInspiration: 'Image Inspiration',
     videoInspiration: 'Video Inspiration',
     videoWorks: 'My Video Works',

@@ -52,6 +52,7 @@ const usesHorizontalUserLayout = computed(() =>
 )
 const studioNavPaths = new Set([
   '/image-studio',
+  '/canvas',
   '/video-studio',
   '/image-inspiration',
   '/video-inspiration',

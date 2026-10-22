@@ -25,6 +25,8 @@ describe('custom feature routes', () => {
     expect(userCustomFeatureRoutesAfterKeys.map((route) => route.path)).toEqual([
       '/playground',
       '/image-studio',
+      '/canvas',
+      '/canvas/:projectId',
       '/video-studio',
       '/video-inspiration',
       '/image-inspiration',
