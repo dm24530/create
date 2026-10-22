@@ -16,8 +16,9 @@ creative API key, and loads the React canvas in an iframe.
 The iframe loads `/canvas-app/canvas` without credentials in the URL. The Vue
 host sends a `create-canvas-bootstrap` message after the iframe loads.
 `canvas-app/src/lib/managed-bootstrap.ts` receives credentials from the parent,
-fetches the model catalog, assigns image/video defaults and sets managed mode
-before React renders.
+fetches the model catalog, replaces stale local channels with one managed
+`平台 API` channel, assigns image/video defaults and sets managed mode before
+React renders.
 
 Managed mode:
 

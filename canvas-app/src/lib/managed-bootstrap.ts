@@ -7,6 +7,7 @@ import {
     type ModelChannel,
 } from "@/stores/use-config-store";
 import { setManagedMode } from "@/lib/managed-mode";
+import { useThemeStore, type ThemeName } from "@/stores/use-theme-store";
 
 function normalizeManagedBaseUrl(raw: string) {
     return new URL(raw, window.location.origin).toString().replace(/\/+$/, "");
@@ -17,9 +18,22 @@ type ManagedBootstrapPayload = {
     baseUrl?: string;
     apiKey?: string;
     managed?: boolean;
+    theme?: ThemeName;
 };
 
+type ManagedThemePayload = {
+    type: "create-canvas-theme";
+    theme?: ThemeName;
+};
+
+function applyManagedTheme(theme?: ThemeName) {
+    if (theme === "light" || theme === "dark") {
+        useThemeStore.getState().setTheme(theme);
+    }
+}
+
 async function applyManagedBootstrap(payload: ManagedBootstrapPayload) {
+    applyManagedTheme(payload.theme);
     const baseUrl = payload.baseUrl?.trim() || "";
     const apiKey = payload.apiKey?.trim() || "";
     if (payload.managed) setManagedMode(true);
@@ -37,26 +51,28 @@ async function applyManagedBootstrap(payload: ManagedBootstrapPayload) {
     ));
     if (matchingIndex < 0) return result;
 
-    let models = state.config.channels[matchingIndex]?.models || [];
+    let models: ModelChannel["models"] = [];
     try {
         const names = await fetchImageModels({
             baseUrl: normalizedBaseUrl,
             apiKey: apiKey || "",
             apiFormat: "openai",
         });
-        if (names.length) {
-            models = names.map((name) => ({
-                name,
-                capability: guessCapability(name),
-            }));
-        }
+        models = names.map((name) => ({
+            name,
+            capability: guessCapability(name),
+        }));
     } catch {
-        // Keep the managed channel usable if model discovery is temporarily unavailable.
+        // Keep the managed channel empty rather than showing stale third-party models.
     }
 
     const managedChannel = state.config.channels[matchingIndex];
     if (!managedChannel) return result;
-    const channels: ModelChannel[] = [{ ...managedChannel, models }];
+    const channels: ModelChannel[] = [{
+        ...managedChannel,
+        name: "平台 API",
+        models,
+    }];
     const nextConfig = {
         ...state.config,
         channels,
@@ -72,6 +88,14 @@ async function applyManagedBootstrap(payload: ManagedBootstrapPayload) {
     nextConfig.model = nextConfig.imageModel;
     useConfigStore.setState({ config: nextConfig, isConfigOpen: false });
     return result;
+}
+
+export function listenManagedThemeFromParent() {
+    window.addEventListener("message", (event: MessageEvent<ManagedThemePayload>) => {
+        if (event.source !== window.parent) return;
+        if (event.data?.type !== "create-canvas-theme") return;
+        applyManagedTheme(event.data.theme);
+    });
 }
 
 export function bootstrapManagedConfigFromParent() {
