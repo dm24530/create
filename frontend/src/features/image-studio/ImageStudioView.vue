@@ -85,15 +85,31 @@
                   {{ pendingElapsedSeconds(image) }} 秒
                 </small>
               </div>
-              <img
-                v-else
-                :src="image.thumbSrc || image.src"
-                :srcset="image.thumbSrcSet"
-                :alt="image.title"
-                loading="lazy"
-                decoding="async"
-                class="absolute inset-0 block h-full w-full object-cover"
-              />
+              <template v-else>
+                <div
+                  v-if="!isImageMediaLoaded(image)"
+                  class="image-media-state"
+                  :class="{ 'image-media-state--error': isImageMediaFailed(image) }"
+                  :data-testid="isImageMediaFailed(image) ? 'image-media-error' : 'image-media-loading'"
+                >
+                  <span v-if="!isImageMediaFailed(image)" class="image-generation-spinner" aria-hidden="true"></span>
+                  <strong>{{ isImageMediaFailed(image) ? '图片加载失败' : '图片加载中' }}</strong>
+                  <small>{{ isImageMediaFailed(image) ? '点击查看详情并重试' : '正在加载缩略图' }}</small>
+                </div>
+                <img
+                  v-if="!isImageMediaFailed(image)"
+                  :key="imageMediaRenderKey(image)"
+                  :src="imageMediaDisplaySrc(image)"
+                  :srcset="image.thumbSrcSet"
+                  :alt="image.title"
+                  loading="lazy"
+                  decoding="async"
+                  class="absolute inset-0 block h-full w-full object-cover"
+                  :class="{ 'opacity-0': !isImageMediaLoaded(image) }"
+                  @load="markImageMediaLoaded(image)"
+                  @error="handleImageMediaError(image)"
+                />
+              </template>
             </button>
               <div class="flex items-center justify-between gap-2 px-3 py-2">
                 <div class="min-w-0">
@@ -467,7 +483,33 @@
     >
       <div v-if="previewImage" class="image-detail-dialog">
         <div class="image-detail-dialog__media">
-          <img :src="previewDisplaySrc || previewImage.thumbSrc || previewImage.src" :alt="previewImage.title" />
+          <div
+            v-if="!isImageMediaLoaded(previewImage)"
+            class="image-media-state image-detail-dialog__media-state"
+            :class="{ 'image-media-state--error': isImageMediaFailed(previewImage) }"
+            :data-testid="isImageMediaFailed(previewImage) ? 'preview-image-error' : 'preview-image-loading'"
+          >
+            <span v-if="!isImageMediaFailed(previewImage)" class="image-generation-spinner" aria-hidden="true"></span>
+            <strong>{{ isImageMediaFailed(previewImage) ? '图片加载失败' : '图片加载中' }}</strong>
+            <small>{{ isImageMediaFailed(previewImage) ? '原图暂时无法加载' : '正在加载高清图片' }}</small>
+            <button
+              v-if="isImageMediaFailed(previewImage)"
+              type="button"
+              class="image-media-state__retry"
+              @click.stop="retryImageMedia(previewImage)"
+            >
+              重试
+            </button>
+          </div>
+          <img
+            v-if="!isImageMediaFailed(previewImage)"
+            :key="imageMediaRenderKey(previewImage, 'preview')"
+            :src="imageMediaDisplaySrc(previewImage, previewDisplaySrc)"
+            :alt="previewImage.title"
+            :class="{ 'opacity-0': !isImageMediaLoaded(previewImage) }"
+            @load="markImageMediaLoaded(previewImage)"
+            @error="handleImageMediaError(previewImage)"
+          />
         </div>
         <section class="image-detail-dialog__panel">
           <div class="image-detail-dialog__section-head">
@@ -683,6 +725,9 @@ const generationClockNow = ref(Date.now())
 const references = ref<ReferenceItem[]>([])
 const previewImage = ref<GeneratedImage | null>(null)
 const previewDisplaySrc = ref('')
+const loadedImageMediaIds = ref<Set<string>>(new Set())
+const failedImageMediaIds = ref<Set<string>>(new Set())
+const imageMediaRetryNonce = ref<Map<string, number>>(new Map())
 const pendingDeleteImage = ref<GeneratedImage | null>(null)
 const deletingImage = ref(false)
 const previewPromptDraft = ref('')
@@ -1381,6 +1426,23 @@ async function loadGallery() {
     const entries = await imageStudioGalleryAPI.list()
     for (const entry of entries) {
       if (entry?.id) galleryBackedIds.value.add(String(entry.id))
+      const localImage = images.value.find((item) => (
+        localToGalleryId.value.get(String(item.id)) === String(entry?.id || '')
+      ))
+      if (localImage) {
+        const storedURL = String(entry.url || '')
+        if (storedURL && storedURL !== localImage.src) {
+          localImage.src = storedURL
+          resetImageMediaState(localImage)
+        }
+        const storedThumbURL = String(entry.thumb_url || '')
+        if (storedThumbURL && storedThumbURL !== localImage.thumbSrc) {
+          localImage.thumbSrc = storedThumbURL
+          resetImageMediaState(localImage)
+        }
+        localImage.saved = entry.saved !== false
+        localImage.expiresAt = entry.expires_at || 0
+      }
     }
     const pending = images.value.filter((item) => item.pending)
     const localResults = images.value.filter((item) => (
@@ -1420,8 +1482,14 @@ async function loadGalleryThumbnail(id: string) {
     const previous = galleryThumbObjectUrls.get(id)
     if (previous) URL.revokeObjectURL(previous)
     galleryThumbObjectUrls.set(id, url)
-    const image = images.value.find((item) => String(item.id) === id)
-    if (image) image.thumbSrcSet = url
+    const image = images.value.find((item) => (
+      String(item.id) === id
+      || localToGalleryId.value.get(String(item.id)) === id
+    ))
+    if (image) {
+      image.thumbSrcSet = url
+      resetImageMediaState(image)
+    }
   } catch {
     // Keep the stored thumbnail or original URL as the fallback.
   }
@@ -1623,8 +1691,15 @@ async function persistGeneratedImages(
       result.value.item.saved = result.value.entry.saved !== false
       result.value.item.expiresAt = result.value.entry.expires_at || 0
       const storedURL = String(result.value.entry.url || '')
-      if (storedURL) result.value.item.src = storedURL
-      result.value.item.thumbSrc = String(result.value.entry.thumb_url || '')
+      if (storedURL && storedURL !== result.value.item.src) {
+        result.value.item.src = storedURL
+        resetImageMediaState(result.value.item)
+      }
+      const storedThumbURL = String(result.value.entry.thumb_url || '')
+      if (storedThumbURL) {
+        result.value.item.thumbSrc = storedThumbURL
+        resetImageMediaState(result.value.item)
+      }
     }
   }
   if (succeeded > 0 && options.refresh !== false) {
@@ -1682,6 +1757,80 @@ function formatGenerationDuration(durationMs?: number): string {
   const totalSeconds = Math.floor(duration / 1000)
   if (totalSeconds < 60) return `${totalSeconds} 秒`
   return `${Math.floor(totalSeconds / 60)} 分 ${totalSeconds % 60} 秒`
+}
+
+function imageMediaId(image: GeneratedImage) {
+  return String(image.id)
+}
+
+function imageMediaRenderKey(image: GeneratedImage, scope = 'card') {
+  return `${scope}-${imageMediaId(image)}-${imageMediaRetryNonce.value.get(imageMediaId(image)) || 0}`
+}
+
+function imageMediaDisplaySrc(image: GeneratedImage, preferred?: string) {
+  const source = preferred || image.thumbSrc || image.src
+  const nonce = imageMediaRetryNonce.value.get(imageMediaId(image)) || 0
+  if (!nonce || !/^https?:\/\//i.test(source)) return source
+  try {
+    const url = new URL(source, window.location.origin)
+    url.searchParams.set('_retry', String(nonce))
+    return url.toString()
+  } catch {
+    return source
+  }
+}
+
+function isImageMediaLoaded(image: GeneratedImage) {
+  return loadedImageMediaIds.value.has(imageMediaId(image))
+}
+
+function isImageMediaFailed(image: GeneratedImage) {
+  return failedImageMediaIds.value.has(imageMediaId(image))
+}
+
+function markImageMediaLoaded(image: GeneratedImage) {
+  const id = imageMediaId(image)
+  failedImageMediaIds.value.delete(id)
+  loadedImageMediaIds.value.add(id)
+}
+
+function markImageMediaFailed(image: GeneratedImage) {
+  const id = imageMediaId(image)
+  loadedImageMediaIds.value.delete(id)
+  failedImageMediaIds.value.add(id)
+}
+
+function handleImageMediaError(image: GeneratedImage) {
+  if (previewImage.value?.id === image.id) {
+    previewDisplaySrc.value = image.src
+  }
+  if (image.thumbSrcSet) {
+    image.thumbSrcSet = ''
+    resetImageMediaState(image)
+    return
+  }
+  if (image.thumbSrc && image.thumbSrc !== image.src) {
+    image.thumbSrc = ''
+    resetImageMediaState(image)
+    return
+  }
+  markImageMediaFailed(image)
+}
+
+function resetImageMediaState(image: GeneratedImage, bumpRetry = false) {
+  const id = imageMediaId(image)
+  loadedImageMediaIds.value.delete(id)
+  failedImageMediaIds.value.delete(id)
+  if (bumpRetry) {
+    imageMediaRetryNonce.value.set(id, (imageMediaRetryNonce.value.get(id) || 0) + 1)
+  }
+}
+
+function retryImageMedia(image: GeneratedImage) {
+  resetImageMediaState(image, true)
+  if (previewImage.value?.id === image.id) {
+    void loadPreviewDisplay(image)
+  }
 }
 
 let previewLoadToken = 0
@@ -4418,6 +4567,48 @@ onBeforeUnmount(() => {
   color: rgb(13 148 136) !important;
 }
 
+.image-media-state {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  background: linear-gradient(135deg, rgb(241 245 249), rgb(226 232 240));
+  padding: 1rem;
+  text-align: center;
+  color: rgb(51 65 85);
+}
+
+.image-media-state small {
+  color: rgb(100 116 139);
+}
+
+.image-media-state--error {
+  background: linear-gradient(135deg, rgb(254 242 242), rgb(241 245 249));
+  color: rgb(185 28 28);
+}
+
+.image-media-state__retry {
+  margin-top: 0.35rem;
+  border: 1px solid rgb(248 113 113);
+  border-radius: 0.45rem;
+  padding: 0.3rem 0.75rem;
+  color: rgb(185 28 28);
+  font-size: 0.75rem;
+  font-weight: 650;
+}
+
+.image-detail-dialog__media {
+  position: relative;
+}
+
+.image-detail-dialog__media-state {
+  border-radius: 0.75rem;
+}
+
 .image-generation-spinner {
   width: 1.5rem;
   height: 1.5rem;
@@ -4437,6 +4628,25 @@ onBeforeUnmount(() => {
 :global(.dark .secondary-button) {
   border-color: rgb(63 63 70);
   background: rgb(24 24 27 / 0.9);
+}
+
+:global(.dark .image-media-state) {
+  background: linear-gradient(135deg, rgb(39 39 42), rgb(24 24 27));
+  color: rgb(228 228 231);
+}
+
+:global(.dark .image-media-state small) {
+  color: rgb(161 161 170);
+}
+
+:global(.dark .image-media-state--error) {
+  background: linear-gradient(135deg, rgb(69 26 26), rgb(39 39 42));
+  color: rgb(252 165 165);
+}
+
+:global(.dark .image-media-state__retry) {
+  border-color: rgb(248 113 113);
+  color: rgb(254 202 202);
 }
 
 :global(.dark .toolbar-field--select) {
