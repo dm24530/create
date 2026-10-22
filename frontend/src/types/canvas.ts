@@ -10,6 +10,12 @@ export interface CanvasImageReference {
   name?: string
 }
 
+export interface CanvasWorkspaceSettings {
+  keyId: string
+  imageModel: string
+  videoModel: string
+}
+
 export interface CanvasNodeData {
   kind: CanvasNodeKind
   label: string
@@ -54,6 +60,7 @@ export interface CanvasGraph {
   nodes: CanvasGraphNode[]
   edges: CanvasGraphEdge[]
   viewport?: ViewportTransform
+  settings?: CanvasWorkspaceSettings
 }
 
 export interface CanvasProjectSummary {

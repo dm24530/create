@@ -19,13 +19,9 @@
     </header>
 
     <div class="canvas-node__body">
-      <label class="canvas-field">
-        <span>模型</span>
-        <select v-model="model" class="canvas-field__control nodrag" @change="commitSettings">
-          <option v-if="!model" value="">暂无可用模型</option>
-          <option v-for="item in modelOptions" :key="item" :value="item">{{ item }}</option>
-        </select>
-      </label>
+      <div class="canvas-node__model" :title="data.model || '请先在画布设置中选择模型'">
+        {{ data.model || '未配置模型' }}
+      </div>
 
       <label class="canvas-field">
         <span>提示词</span>
@@ -121,7 +117,6 @@ const props = defineProps<{
 const store = useCanvasWorkspaceStore()
 const label = ref(props.data.label)
 const prompt = ref(props.data.prompt)
-const model = ref(props.data.model)
 const size = ref(props.data.size || '1024x1024')
 const duration = ref(props.data.durationSeconds || 5)
 const aspectRatio = ref(props.data.aspectRatio || '16:9')
@@ -131,7 +126,6 @@ watch(
   (value) => {
     label.value = value.label
     prompt.value = value.prompt
-    model.value = value.model
     size.value = value.size || '1024x1024'
     duration.value = value.durationSeconds || 5
     aspectRatio.value = value.aspectRatio || '16:9'
@@ -139,9 +133,6 @@ watch(
   { deep: true },
 )
 
-const modelOptions = computed(() => (
-  props.data.kind === 'video-generator' ? store.videoModels : store.imageModels
-))
 const statusLabel = computed(() => {
   switch (props.data.status) {
     case 'running': return '生成中'
@@ -163,7 +154,6 @@ function commitPrompt() {
 
 function commitSettings() {
   store.updateNodeData(props.id, {
-    model: model.value,
     size: size.value,
     durationSeconds: Number(duration.value),
     aspectRatio: aspectRatio.value,
@@ -179,8 +169,8 @@ async function generate() {
 
 <style scoped>
 .canvas-node {
-  width: 330px;
-  min-height: 360px;
+  width: 300px;
+  min-height: 320px;
   overflow: hidden;
   border: 1px solid rgba(148, 163, 184, 0.28);
   border-radius: 12px;
@@ -259,6 +249,19 @@ async function generate() {
   flex-direction: column;
   gap: 11px;
   padding: 13px 14px 14px;
+}
+
+.canvas-node__model {
+  overflow: hidden;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 7px;
+  background: rgba(148, 163, 184, 0.06);
+  padding: 7px 9px;
+  color: #cbd5e1;
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .canvas-field {
@@ -355,7 +358,7 @@ async function generate() {
 
 @media (max-width: 640px) {
   .canvas-node {
-    width: 290px;
+    width: 280px;
   }
 }
 </style>

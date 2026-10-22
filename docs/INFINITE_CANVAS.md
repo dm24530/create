@@ -8,8 +8,9 @@ generation nodes on a persistent server-side project.
 - `/canvas` lists the current user's projects.
 - `/canvas/:projectId` opens a Vue Flow workspace.
 - Image and video nodes submit through the existing gateway and creative key.
-- The canvas header can select any active image-capable key; it initially uses
-  the image studio's last selected key and shares that preference.
+- A canvas-level settings panel selects one active image-capable key plus the
+  image and video models inherited by all nodes. It initially uses the image
+  studio's last selected key and is saved with the project graph.
 - Generated outputs are archived through the existing image/video studio
   gallery services so R2 URLs remain durable.
 - The graph, viewport and node task metadata are stored in PostgreSQL.

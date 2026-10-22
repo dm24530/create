@@ -27,6 +27,7 @@ import type {
   CanvasNodeData,
   CanvasNodeKind,
   CanvasProject,
+  CanvasWorkspaceSettings,
 } from '@/types/canvas'
 
 type SaveState = 'idle' | 'saving' | 'saved' | 'error'
@@ -141,6 +142,11 @@ export const useCanvasWorkspaceStore = defineStore('canvas-workspace', () => {
   const apiBaseUrl = ref('')
   const availableKeys = ref<ApiKey[]>([])
   const selectedKeyId = ref('')
+  const workspaceSettings = ref<CanvasWorkspaceSettings>({
+    keyId: '',
+    imageModel: '',
+    videoModel: '',
+  })
   const contextReady = ref(false)
 
   let saveTimer: number | null = null
@@ -238,6 +244,7 @@ export const useCanvasWorkspaceStore = defineStore('canvas-workspace', () => {
       nodes: serializedNodes,
       edges: serializedEdges,
       viewport: { ...viewport.value },
+      settings: { ...workspaceSettings.value },
     }
   }
 
@@ -276,6 +283,11 @@ export const useCanvasWorkspaceStore = defineStore('canvas-workspace', () => {
         : []
       edges.value = Array.isArray(loaded.graph?.edges) ? loaded.graph.edges : []
       viewport.value = loaded.graph?.viewport || { x: 0, y: 0, zoom: 1 }
+      workspaceSettings.value = {
+        keyId: String(loaded.graph?.settings?.keyId || ''),
+        imageModel: String(loaded.graph?.settings?.imageModel || ''),
+        videoModel: String(loaded.graph?.settings?.videoModel || ''),
+      }
       await loadGenerationContext()
       resumePendingTasks()
       saveState.value = 'saved'
@@ -301,12 +313,13 @@ export const useCanvasWorkspaceStore = defineStore('canvas-workspace', () => {
         key.status === 'active'
         && key.group?.allow_image_generation !== false
       ))
-      const preferredKeyId = readImageStudioPreferredKeyId()
+      const preferredKeyId = workspaceSettings.value.keyId || readImageStudioPreferredKeyId()
       const preferred = availableKeys.value.find((key) => String(key.id) === preferredKeyId)
       const chosen = preferred || creator.key
       selectedKeyId.value = String(chosen.id)
       writeImageStudioPreferredKeyId(selectedKeyId.value)
       await loadModelCatalog(chosen)
+      normalizeWorkspaceModels()
       hydrateNodeModels()
       contextReady.value = true
     } catch (error) {
@@ -321,6 +334,7 @@ export const useCanvasWorkspaceStore = defineStore('canvas-workspace', () => {
     selectedKeyId.value = keyId
     writeImageStudioPreferredKeyId(keyId)
     await loadModelCatalog(key)
+    normalizeWorkspaceModels()
     hydrateNodeModels()
   }
 
@@ -352,14 +366,46 @@ export const useCanvasWorkspaceStore = defineStore('canvas-workspace', () => {
   function hydrateNodeModels() {
     for (const node of currentNodes()) {
       if (node.data.kind === 'text') continue
-      const options = node.data.kind === 'video-generator' ? videoModels.value : imageModels.value
-      if (!options.includes(node.data.model)) {
-        node.data = {
-          ...node.data,
-          model: options[0] || '',
-        }
+      const model = node.data.kind === 'video-generator'
+        ? workspaceSettings.value.videoModel
+        : workspaceSettings.value.imageModel
+      if (model && node.data.model !== model) {
+        node.data = { ...node.data, model }
       }
     }
+  }
+
+  function normalizeWorkspaceModels() {
+    const imageModel = imageModels.value.includes(workspaceSettings.value.imageModel)
+      ? workspaceSettings.value.imageModel
+      : imageModels.value[0] || ''
+    const videoModel = videoModels.value.includes(workspaceSettings.value.videoModel)
+      ? workspaceSettings.value.videoModel
+      : videoModels.value[0] || ''
+    workspaceSettings.value = {
+      keyId: selectedKeyId.value,
+      imageModel,
+      videoModel,
+    }
+  }
+
+  async function updateWorkspaceSettings(patch: Partial<CanvasWorkspaceSettings>): Promise<void> {
+    if (patch.keyId && patch.keyId !== selectedKeyId.value) {
+      await selectCreatorKey(patch.keyId)
+    }
+    const nextImage = imageModels.value.includes(String(patch.imageModel || ''))
+      ? String(patch.imageModel)
+      : workspaceSettings.value.imageModel
+    const nextVideo = videoModels.value.includes(String(patch.videoModel || ''))
+      ? String(patch.videoModel)
+      : workspaceSettings.value.videoModel
+    workspaceSettings.value = {
+      keyId: selectedKeyId.value,
+      imageModel: nextImage,
+      videoModel: nextVideo,
+    }
+    hydrateNodeModels()
+    scheduleSave()
   }
 
   function updateNodeData(id: string, patch: Partial<CanvasNodeData>) {
@@ -376,8 +422,8 @@ export const useCanvasWorkspaceStore = defineStore('canvas-workspace', () => {
       type: kind,
       position,
       data: defaults,
-      width: kind === 'text' ? 280 : 330,
-      height: kind === 'text' ? 170 : 410,
+      width: kind === 'text' ? 260 : 300,
+      height: kind === 'text' ? 160 : 350,
     }
     nodes.value = [...currentNodes(), node]
     scheduleSave()
@@ -399,7 +445,7 @@ export const useCanvasWorkspaceStore = defineStore('canvas-workspace', () => {
         kind,
         label: '视频生成',
         prompt: '',
-        model: videoModels.value[0] || '',
+        model: workspaceSettings.value.videoModel,
         status: 'idle',
         durationSeconds: VIDEO_DEFAULT_DURATION,
         aspectRatio: VIDEO_DEFAULT_ASPECT_RATIO,
@@ -409,7 +455,7 @@ export const useCanvasWorkspaceStore = defineStore('canvas-workspace', () => {
       kind,
       label: '图片生成',
       prompt: '',
-      model: imageModels.value[0] || '',
+      model: workspaceSettings.value.imageModel,
       status: 'idle',
       size: IMAGE_DEFAULT_SIZE,
     }
@@ -792,6 +838,7 @@ export const useCanvasWorkspaceStore = defineStore('canvas-workspace', () => {
     creatorKey,
     availableKeys,
     selectedKeyId,
+    workspaceSettings,
     contextReady,
     projectId,
     title,
@@ -799,6 +846,7 @@ export const useCanvasWorkspaceStore = defineStore('canvas-workspace', () => {
     hasModels,
     loadProject,
     selectCreatorKey,
+    updateWorkspaceSettings,
     saveProject,
     scheduleSave,
     updateNodeData,

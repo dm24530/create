@@ -21,19 +21,50 @@
         </div>
 
         <div class="flex flex-wrap items-center justify-end gap-2">
-          <label class="canvas-key-select">
-            <span>API Key</span>
-            <select
-              :value="store.selectedKeyId"
-              :disabled="!store.availableKeys.length"
-              @change="changeCreatorKey"
-            >
-              <option v-if="!store.availableKeys.length" value="">暂无可用密钥</option>
-              <option v-for="key in store.availableKeys" :key="key.id" :value="String(key.id)">
-                {{ key.name }} · {{ key.group?.name || '未分组' }}
-              </option>
-            </select>
-          </label>
+          <div class="relative">
+            <button type="button" class="canvas-tool-button" @click="settingsOpen = !settingsOpen">
+              <Icon name="cog" size="xs" />
+              画布设置
+            </button>
+            <div v-if="settingsOpen" class="canvas-settings-panel">
+              <div class="canvas-settings-panel__head">
+                <div>
+                  <p>画布默认设置</p>
+                  <span>设置一次后，新建节点都会继承</span>
+                </div>
+                <button type="button" @click="settingsOpen = false">×</button>
+              </div>
+              <label class="canvas-settings-field">
+                <span>API Key</span>
+                <ImageStudioSelect
+                  :model-value="store.selectedKeyId"
+                  :options="keyOptions"
+                  direction="down"
+                  @update:model-value="changeCreatorKey"
+                />
+              </label>
+              <label class="canvas-settings-field">
+                <span>图片模型</span>
+                <ImageStudioSelect
+                  :model-value="store.workspaceSettings.imageModel"
+                  :options="imageModelOptions"
+                  :disabled="!store.imageModels.length"
+                  direction="down"
+                  @update:model-value="changeImageModel"
+                />
+              </label>
+              <label class="canvas-settings-field">
+                <span>视频模型</span>
+                <ImageStudioSelect
+                  :model-value="store.workspaceSettings.videoModel"
+                  :options="videoModelOptions"
+                  :disabled="!store.videoModels.length"
+                  direction="down"
+                  @update:model-value="changeVideoModel"
+                />
+              </label>
+            </div>
+          </div>
           <button
             type="button"
             class="canvas-tool-button"
@@ -143,6 +174,7 @@ import Icon from '@/components/icons/Icon.vue'
 import CanvasGeneratorNode from './CanvasGeneratorNode.vue'
 import CanvasTextNode from './CanvasTextNode.vue'
 import { useCanvasWorkspaceStore } from './canvasWorkspaceStore'
+import ImageStudioSelect from '@/features/image-studio/ImageStudioSelect.vue'
 import type { CanvasNodeKind } from '@/types/canvas'
 import { useAppStore } from '@/stores/app'
 
@@ -152,6 +184,7 @@ const appStore = useAppStore()
 const store = useCanvasWorkspaceStore()
 const { screenToFlowCoordinate, fitView } = useVueFlow()
 const selectedNodeId = ref('')
+const settingsOpen = ref(false)
 
 const nodes = computed(() => store.nodes)
 const saveState = computed(() => store.saveState)
@@ -163,6 +196,18 @@ const saveLabel = computed(() => {
     default: return '等待保存'
   }
 })
+const keyOptions = computed(() => store.availableKeys.map((key) => ({
+  value: String(key.id),
+  label: `${key.name} · ${key.group?.name || '未分组'}`,
+})))
+const imageModelOptions = computed(() => store.imageModels.map((model) => ({
+  value: model,
+  label: model,
+})))
+const videoModelOptions = computed(() => store.videoModels.map((model) => ({
+  value: model,
+  label: model,
+})))
 
 watch(
   [() => store.nodes, () => store.edges],
@@ -209,14 +254,21 @@ async function saveNow() {
   else appStore.showError(store.saveError || '画布保存失败')
 }
 
-async function changeCreatorKey(event: Event) {
-  const keyId = (event.target as HTMLSelectElement).value
+async function changeCreatorKey(keyId: string) {
   try {
-    await store.selectCreatorKey(keyId)
+    await store.updateWorkspaceSettings({ keyId })
     appStore.showSuccess('已切换创作密钥')
   } catch (error) {
     appStore.showError(error instanceof Error ? error.message : '切换创作密钥失败')
   }
+}
+
+async function changeImageModel(model: string) {
+  await store.updateWorkspaceSettings({ imageModel: model })
+}
+
+async function changeVideoModel(model: string) {
+  await store.updateWorkspaceSettings({ videoModel: model })
 }
 
 onMounted(async () => {
@@ -283,30 +335,82 @@ onMounted(async () => {
   transition: 150ms ease;
 }
 
-.canvas-key-select {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  border: 1px solid rgba(148, 163, 184, 0.2);
-  border-radius: 7px;
-  background: rgba(148, 163, 184, 0.06);
-  padding: 6px 8px;
+.canvas-settings-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 60;
+  width: 330px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 12px;
+  background: rgba(15, 21, 30, 0.98);
+  padding: 14px;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(18px);
+}
+
+.canvas-settings-panel__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+  color: #f8fafc;
+}
+
+.canvas-settings-panel__head p {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.canvas-settings-panel__head span {
+  display: block;
+  margin-top: 3px;
   color: #94a3b8;
   font-size: 10px;
 }
 
-.canvas-key-select select {
-  max-width: 190px;
+.canvas-settings-panel__head button {
   border: 0;
   background: transparent;
-  color: #e2e8f0;
-  font-size: 11px;
-  outline: none;
+  color: #94a3b8;
+  font-size: 19px;
 }
 
-.canvas-key-select option {
-  background: #111827;
+.canvas-settings-field {
+  display: grid;
+  gap: 6px;
+  margin-top: 11px;
+  color: #94a3b8;
+  font-size: 10px;
+}
+
+.canvas-settings-field :deep(.studio-select__trigger) {
+  height: 32px;
+  border-color: rgba(148, 163, 184, 0.22);
+  border-radius: 8px;
+  background: rgba(9, 13, 20, 0.9);
   color: #e5e7eb;
+  font-size: 11px;
+}
+
+.canvas-settings-field :deep(.studio-select__menu) {
+  z-index: 80;
+  max-height: 220px;
+  border-color: rgba(148, 163, 184, 0.22);
+  background: #111827;
+}
+
+.canvas-settings-field :deep(.studio-select__option) {
+  color: #e5e7eb;
+  font-size: 11px;
+}
+
+.canvas-settings-field :deep(.studio-select__option:hover),
+.canvas-settings-field :deep(.studio-select__option--selected) {
+  background: rgba(251, 146, 60, 0.12);
+  color: #fdba74;
 }
 
 .canvas-icon-button {
