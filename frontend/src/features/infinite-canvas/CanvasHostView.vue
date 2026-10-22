@@ -1,30 +1,33 @@
 <template>
-  <div class="canvas-host">
-    <div v-if="loading" class="canvas-host__loading">
-      <span class="canvas-host__spinner" />
-      <p>正在加载无限画布...</p>
-    </div>
+  <AppLayout>
+    <div class="canvas-host">
+      <div v-if="loading" class="canvas-host__loading">
+        <span class="canvas-host__spinner" />
+        <p>正在加载无限画布...</p>
+      </div>
 
-    <div v-else-if="error" class="canvas-host__error">
-      <h1>画布加载失败</h1>
-      <p>{{ error }}</p>
-      <button type="button" @click="loadContext">重试</button>
-    </div>
+      <div v-else-if="error" class="canvas-host__error">
+        <h1>画布加载失败</h1>
+        <p>{{ error }}</p>
+        <button type="button" @click="loadContext">重试</button>
+      </div>
 
-    <iframe
-      v-else
-      ref="frameRef"
-      :src="frameURL"
-      class="canvas-host__frame"
-      allow="clipboard-read; clipboard-write; fullscreen; downloads"
-      @load="sendBootstrap"
-    />
-  </div>
+      <iframe
+        v-else
+        ref="frameRef"
+        :src="frameURL"
+        class="canvas-host__frame"
+        allow="clipboard-read; clipboard-write; fullscreen; downloads"
+        @load="sendBootstrap"
+      />
+    </div>
+  </AppLayout>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { authAPI } from '@/api'
+import AppLayout from '@/components/layout/AppLayout.vue'
 import { ensureCreatorKey } from '@/composables/useCreatorKey'
 import { resolvePlaygroundApiEndpoint } from '@/utils/apiEndpoint'
 
@@ -89,10 +92,12 @@ onMounted(loadContext)
 
 <style scoped>
 .canvas-host {
-  position: fixed;
-  inset: 0;
-  z-index: 30;
+  position: relative;
+  height: calc(100vh - 8rem);
+  min-height: 620px;
   overflow: hidden;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 12px;
   background: #0c0f14;
 }
 

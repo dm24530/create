@@ -36,7 +36,6 @@ export const userCustomFeatureRoutesAfterKeys: RouteRecordRaw[] = [
       requiresAdmin: false,
       title: 'Infinite Canvas',
       titleKey: 'nav.canvas',
-      immersive: true,
     }
   },
   {

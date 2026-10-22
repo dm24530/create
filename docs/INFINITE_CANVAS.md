@@ -21,10 +21,12 @@ before React renders.
 
 Managed mode:
 
+- hides the upstream top-level navigation and config routes
 - hides the upstream API/channel configuration button
 - prevents the config dialog from opening during credential import
 - keeps requests on the platform gateway
-- preserves the original canvas UI and local-first storage behavior
+- keeps canvas-specific nodes, Agent, plugins, prompts, assets and local-first
+  storage while reusing the host platform's own image/video workbenches
 
 ## Build Order
 

@@ -34,6 +34,8 @@ export function AppTopNav() {
         connectAgent({ silent: true });
     }, [agentConnected, agentEnabled, agentToken, connectAgent]);
 
+    if (isManagedMode()) return null;
+
     return (
         <>
             {!hideHeader ? (
