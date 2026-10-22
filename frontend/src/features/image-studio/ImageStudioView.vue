@@ -42,13 +42,13 @@
           </div>
           <div class="studio-results__actions">
             <span
-              v-if="generating"
+              v-if="activeImageTaskCount > 0"
               class="image-generation-status"
               data-testid="image-active-generations"
               aria-live="polite"
             >
               <Icon name="refresh" size="xs" class="is-spinning" />
-              <span>{{ activeGenerations }} 个任务进行中</span>
+              <span>{{ activeImageTaskCount }} 个任务进行中</span>
             </span>
             <button type="button" class="studio-results__action" :disabled="refreshing" @click="loadGallery">
               <Icon name="refresh" size="sm" :class="{ 'is-spinning': refreshing }" />
@@ -722,6 +722,7 @@ const activeGenerations = ref(0)
 const errorMessage = ref('')
 const images = ref<GeneratedImage[]>([])
 const generationClockNow = ref(Date.now())
+const activeImageTaskCount = computed(() => images.value.filter((image) => image.pending).length)
 const references = ref<ReferenceItem[]>([])
 const previewImage = ref<GeneratedImage | null>(null)
 const previewDisplaySrc = ref('')
@@ -2008,7 +2009,10 @@ async function loadModels() {
   modelLoadError.value = ''
   const key = selectedKey.value
   const endpoint = apiBaseUrl.value
-  if (!key || !endpoint) {
+  if (!key?.key?.trim() || !endpoint) {
+    if (key && !key.key?.trim()) {
+      modelLoadError.value = '当前 API Key 没有可用密钥值，请刷新或重新选择密钥。'
+    }
     loadingModels.value = false
     return
   }
@@ -2136,6 +2140,12 @@ function errorMessageFrom(error: unknown, fallback = '加载图片模型失败')
     normalized.includes('upstream service temporarily unavailable')
   ) {
     return '当前模型暂时不可用，请稍后重试或换一个模型。'
+  }
+  if (
+    normalized.includes('api key is required') ||
+    normalized.includes('authorization header')
+  ) {
+    return '当前 API Key 未正确传给服务，请刷新页面或重新选择可用密钥。'
   }
   return message || fallback
 }

@@ -2341,6 +2341,7 @@ describe('ImageStudioView gallery', () => {
 
     expect(resolvers).toHaveLength(2)
     expect(wrapper.findAll('.image-pending-card')).toHaveLength(2)
+    expect(wrapper.get('[data-testid="image-active-generations"]').text()).toContain('2 个任务进行中')
 
     resolvers.forEach((resolve) => {
       resolve({
