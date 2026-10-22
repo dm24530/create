@@ -374,21 +374,6 @@ const VideoStudioIcon = {
     )
 }
 
-const InfiniteCanvasIcon = {
-  render: () =>
-    h(
-      'svg',
-      { fill: 'none', viewBox: '0 0 24 24', stroke: 'currentColor', 'stroke-width': '1.5' },
-      [
-        h('path', {
-          'stroke-linecap': 'round',
-          'stroke-linejoin': 'round',
-          d: 'M7.5 15.75c-2.486 0-4.5-1.679-4.5-3.75s2.014-3.75 4.5-3.75c3.75 0 5.25 7.5 9 7.5 2.486 0 4.5-1.679 4.5-3.75s-2.014-3.75-4.5-3.75c-3.75 0-5.25 7.5-9 7.5z'
-        })
-      ]
-    )
-}
-
 const InspirationIcon = {
   render: () =>
     h(
@@ -844,7 +829,6 @@ function buildCreativeNavItems(): NavItem[] {
   return [
     { path: '/image-studio', label: t('nav.imageStudio'), icon: ImageStudioIcon, hideInSimpleMode: true },
     { path: '/video-studio', label: t('nav.videoStudio'), icon: VideoStudioIcon, hideInSimpleMode: true },
-    { path: '/canvas', label: t('nav.canvas'), icon: InfiniteCanvasIcon, hideInSimpleMode: true },
     { path: '/video-inspiration', label: t('nav.videoInspiration'), icon: InspirationIcon, hideInSimpleMode: true },
     { path: '/image-inspiration', label: t('nav.imageInspiration'), icon: ImageInspirationIcon, hideInSimpleMode: true },
     { path: '/video-works', label: t('nav.videoWorks'), icon: VideoWorksIcon, hideInSimpleMode: true },

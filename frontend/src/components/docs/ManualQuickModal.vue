@@ -1,7 +1,7 @@
 <template>
   <BaseDialog
     :show="show"
-    title="图片与视频创作手册"
+    title="图片、视频与画布创作手册"
     width="extra-wide"
     body-class="manual-quick-modal-body"
     :close-on-click-outside="true"
@@ -24,6 +24,10 @@
         <RouterLink :to="'/video-studio'" class="manual-quick-modal__action" @click="emit('close')">
           <Icon name="play" size="sm" />
           生视频工作台
+        </RouterLink>
+        <RouterLink :to="'/canvas'" class="manual-quick-modal__action" @click="emit('close')">
+          <Icon name="grid" size="sm" />
+          无限画布
         </RouterLink>
         <RouterLink :to="'/video-works'" class="manual-quick-modal__action" @click="emit('close')">
           <Icon name="bookmark" size="sm" />
@@ -88,6 +92,28 @@ const sections = [
       '可添加参考图、参考视频或参考音频，具体能力以模型为准。',
       '先用较短时长验证动作，再生成正式高清版本。',
       '任务完成后预览、下载或保存，未保存的临时结果会过期。',
+    ],
+  },
+  {
+    title: '无限画布基础操作',
+    description: '把图片、文字、视频和生成配置放到同一张可无限扩展的画布上，连续推演创作流程。',
+    items: [
+      '点击工具栏添加图片、文本、视频、音频、生成配置或组节点。',
+      '拖动节点调整位置，从节点端口拖出连线，组合参考图和生成配置。',
+      '滚轮缩放画布，中键拖动或按住空格再拖动画布，Ctrl/Cmd+Z 撤回、Ctrl/Cmd+Shift+Z 重做。',
+      'Ctrl/Cmd+C 与 Ctrl/Cmd+V 可复制粘贴节点，也可以直接粘贴剪贴板中的文字或图片。',
+      '生成配置节点可选择模型、填写提示词、连接参考素材并触发生成。',
+    ],
+  },
+  {
+    title: '画布资产与 Agent',
+    description: '画布素材、生成结果和本地 Agent 分工使用，适合从单次生成扩展到完整工作流。',
+    items: [
+      '图片节点支持查看大图、复制提示词、局部编辑、裁剪、切图、放大和超分等快捷工具。',
+      '生成结果可以存为资产，也能继续作为后续节点的参考图或参考视频。',
+      '画布项目支持保存、重命名、导出和删除；编码结果会保留节点与连线。',
+      '需要对话式协作时，在画布右侧连接本地 Agent，使用 / 调用 Skill、@ 引用当前画布素材。',
+      '本站打开的托管画布会自动注入接口地址和创作密钥；连接 Agent 后，画布写入可选择手动确认或自动确认。',
     ],
   },
   {

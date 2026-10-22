@@ -7,6 +7,7 @@ import {
     type ModelChannel,
 } from "@/stores/use-config-store";
 import { setManagedMode } from "@/lib/managed-mode";
+import { changeAppLocale, type AppLocale } from "@/i18n";
 import { useThemeStore, type ThemeName } from "@/stores/use-theme-store";
 
 function normalizeManagedBaseUrl(raw: string) {
@@ -19,11 +20,17 @@ type ManagedBootstrapPayload = {
     apiKey?: string;
     managed?: boolean;
     theme?: ThemeName;
+    locale?: AppLocale;
 };
 
 type ManagedThemePayload = {
     type: "create-canvas-theme";
     theme?: ThemeName;
+};
+
+type ManagedLocalePayload = {
+    type: "create-canvas-locale";
+    locale?: AppLocale;
 };
 
 function applyManagedTheme(theme?: ThemeName) {
@@ -32,8 +39,15 @@ function applyManagedTheme(theme?: ThemeName) {
     }
 }
 
+function applyManagedLocale(locale?: AppLocale) {
+    if (locale === "zh-CN" || locale === "en-US") {
+        void changeAppLocale(locale);
+    }
+}
+
 async function applyManagedBootstrap(payload: ManagedBootstrapPayload) {
     applyManagedTheme(payload.theme);
+    applyManagedLocale(payload.locale);
     const baseUrl = payload.baseUrl?.trim() || "";
     const apiKey = payload.apiKey?.trim() || "";
     if (payload.managed) setManagedMode(true);
@@ -95,6 +109,14 @@ export function listenManagedThemeFromParent() {
         if (event.source !== window.parent) return;
         if (event.data?.type !== "create-canvas-theme") return;
         applyManagedTheme(event.data.theme);
+    });
+}
+
+export function listenManagedLocaleFromParent() {
+    window.addEventListener("message", (event: MessageEvent<ManagedLocalePayload>) => {
+        if (event.source !== window.parent) return;
+        if (event.data?.type !== "create-canvas-locale") return;
+        applyManagedLocale(event.data.locale);
     });
 }
 

@@ -8,10 +8,12 @@ import { RouterProvider } from "react-router-dom";
 import { AppProviders } from "@/components/layout/app-providers";
 import "@/i18n";
 import { initAnalytics } from "@/lib/analytics";
-import { bootstrapManagedConfigFromParent } from "@/lib/managed-bootstrap";
+import { bootstrapManagedConfigFromParent, listenManagedLocaleFromParent, listenManagedThemeFromParent } from "@/lib/managed-bootstrap";
 import { router } from "@/router";
 
 initAnalytics();
+listenManagedThemeFromParent();
+listenManagedLocaleFromParent();
 
 document.body.style.fontFamily = '"SF Pro Display","SF Pro Text","PingFang SC","Microsoft YaHei","Helvetica Neue",sans-serif';
 

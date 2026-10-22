@@ -1,6 +1,6 @@
 <template>
   <AppLayout>
-    <div class="canvas-host">
+    <div class="canvas-host" :class="{ 'canvas-host--dark': isDark }">
       <div v-if="loading" class="canvas-host__loading">
         <span class="canvas-host__spinner" />
         <p>正在加载无限画布...</p>
@@ -25,17 +25,24 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { authAPI } from '@/api'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import { ensureCreatorKey } from '@/composables/useCreatorKey'
+import { useTheme } from '@/composables/useTheme'
 import { resolvePlaygroundApiEndpoint } from '@/utils/apiEndpoint'
 
 const loading = ref(true)
 const error = ref('')
 const frameRef = ref<HTMLIFrameElement | null>(null)
-const bootstrapPayload = ref<{ baseUrl: string; apiKey: string } | null>(null)
+const bootstrapPayload = ref<{ baseUrl: string; apiKey: string; locale: 'zh-CN' | 'en-US' } | null>(null)
 const bootstrapTimers: number[] = []
+const { isDark } = useTheme()
+const { locale } = useI18n()
+const canvasLocale = computed<'zh-CN' | 'en-US'>(() => (
+  locale.value.startsWith('zh') ? 'zh-CN' : 'en-US'
+))
 
 const frameURL = computed(() => {
   const base = import.meta.env.DEV
@@ -63,12 +70,31 @@ async function loadContext() {
     bootstrapPayload.value = {
       baseUrl: baseURL,
       apiKey: creator.key.key,
+      locale: canvasLocale.value,
     }
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : '无法准备画布密钥'
   } finally {
     loading.value = false
   }
+}
+
+function postTheme() {
+  if (!frameRef.value?.contentWindow) return
+  const targetOrigin = import.meta.env.DEV ? 'http://localhost:3001' : window.location.origin
+  frameRef.value.contentWindow.postMessage({
+    type: 'create-canvas-theme',
+    theme: isDark.value ? 'dark' : 'light',
+  }, targetOrigin)
+}
+
+function postLocale() {
+  if (!frameRef.value?.contentWindow) return
+  const targetOrigin = import.meta.env.DEV ? 'http://localhost:3001' : window.location.origin
+  frameRef.value.contentWindow.postMessage({
+    type: 'create-canvas-locale',
+    locale: canvasLocale.value,
+  }, targetOrigin)
 }
 
 function sendBootstrap() {
@@ -78,6 +104,7 @@ function sendBootstrap() {
     type: 'create-canvas-bootstrap',
     ...bootstrapPayload.value,
     managed: true,
+    theme: isDark.value ? 'dark' : 'light',
   }
   for (const timer of bootstrapTimers.splice(0)) window.clearTimeout(timer)
   for (const delay of [0, 250, 750, 1500, 3000]) {
@@ -88,15 +115,28 @@ function sendBootstrap() {
 }
 
 onMounted(loadContext)
+watch(isDark, postTheme)
+watch(canvasLocale, postLocale)
 </script>
 
 <style scoped>
 .canvas-host {
+  --canvas-host-bg: #f7f7f5;
+  --canvas-host-text: #292524;
+  --canvas-host-muted: #78716c;
+  --canvas-host-error: #1c1917;
   position: relative;
   height: calc(100vh - 3.5rem);
   min-height: 620px;
   overflow: hidden;
-  background: #0c0f14;
+  background: var(--canvas-host-bg);
+}
+
+.canvas-host--dark {
+  --canvas-host-bg: #0c0f14;
+  --canvas-host-text: #e7e5e4;
+  --canvas-host-muted: #94a3b8;
+  --canvas-host-error: #f8fafc;
 }
 
 .canvas-host__frame {
@@ -104,7 +144,7 @@ onMounted(loadContext)
   width: 100%;
   height: 100%;
   border: 0;
-  background: #0c0f14;
+  background: var(--canvas-host-bg);
 }
 
 .canvas-host__loading,
@@ -115,15 +155,15 @@ onMounted(loadContext)
   align-items: center;
   justify-content: center;
   gap: 12px;
-  background: #0c0f14;
-  color: #cbd5e1;
+  background: var(--canvas-host-bg);
+  color: var(--canvas-host-text);
   text-align: center;
 }
 
 .canvas-host__loading p,
 .canvas-host__error p {
   max-width: 520px;
-  color: #94a3b8;
+  color: var(--canvas-host-muted);
   font-size: 13px;
 }
 
@@ -137,7 +177,7 @@ onMounted(loadContext)
 }
 
 .canvas-host__error h1 {
-  color: #f8fafc;
+  color: var(--canvas-host-error);
   font-size: 18px;
   font-weight: 650;
 }

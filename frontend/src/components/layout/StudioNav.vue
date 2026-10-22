@@ -9,10 +9,6 @@
         <Icon name="play" size="sm" />
         <span>视频工作台</span>
       </RouterLink>
-      <RouterLink to="/canvas" class="studio-nav__item" active-class="studio-nav__item--active" data-tour="nav-canvas">
-        <Icon name="grid" size="sm" />
-        <span>无限画布</span>
-      </RouterLink>
       <RouterLink to="/image-inspiration" class="studio-nav__item" active-class="studio-nav__item--active" data-tour="nav-image-inspiration">
         <Icon name="lightbulb" size="sm" />
         <span>图片灵感</span>

@@ -24,7 +24,10 @@ describe('ManualQuickModal', () => {
       global: { stubs },
     })
 
-    expect(wrapper.text()).toContain('图片与视频创作手册')
+    expect(wrapper.text()).toContain('图片、视频与画布创作手册')
+    expect(wrapper.text()).toContain('无限画布基础操作')
+    expect(wrapper.text()).toContain('Ctrl/Cmd+Z 撤回')
+    expect(wrapper.text()).toContain('连接本地 Agent')
     expect(wrapper.text()).toContain('使用记录')
     expect(wrapper.text()).toContain('只有点击保存到“我的作品”的内容才会长期保留')
     expect(wrapper.text()).not.toContain('/manual')

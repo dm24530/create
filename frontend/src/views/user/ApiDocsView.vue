@@ -55,7 +55,7 @@
             <router-link :to="{ path: '/image-studio', query: { openApiKeys: '1' } }">创建 API 密钥</router-link>
             <router-link :to="{ path: '/image-studio', query: { openModelPlaza: '1' } }">查看模型价格</router-link>
             <button type="button" class="docs-sidebar__manual-link" @click="manualModalOpen = true">
-              查看图片/视频使用手册
+              查看图片、视频与画布使用手册
             </button>
           </div>
         </aside>
