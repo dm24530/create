@@ -679,6 +679,36 @@ const authStore = useAuthStore()
 
 const PENDING_STORAGE_KEY = 'sub2api:image-studio:pending'
 const PENDING_PROMPT_STORAGE_KEY = 'sub2api:image-studio:pending-prompt'
+const STUDIO_PREFERENCES_STORAGE_KEY = 'sub2api:image-studio:preferences'
+
+interface ImageStudioPreferences {
+  keyId: string
+  model: string
+}
+
+function readStudioPreferences(): ImageStudioPreferences {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(STUDIO_PREFERENCES_STORAGE_KEY) || '{}')
+    return {
+      keyId: typeof parsed?.keyId === 'string' ? parsed.keyId : '',
+      model: typeof parsed?.model === 'string' ? parsed.model : '',
+    }
+  } catch {
+    return { keyId: '', model: '' }
+  }
+}
+
+function writeStudioPreferences(update: Partial<ImageStudioPreferences>) {
+  try {
+    const current = readStudioPreferences()
+    localStorage.setItem(STUDIO_PREFERENCES_STORAGE_KEY, JSON.stringify({
+      ...current,
+      ...update,
+    }))
+  } catch {
+    // Persisting UI preferences is optional.
+  }
+}
 
 const size = computed(() => formatSize(appliedSize))
 const imageResultColumns = computed(() => {
@@ -750,6 +780,8 @@ const gptBaseDimensions: Record<string, [number, number]> = {
   '2:3': [1024, 1536],
   '4:3': [1408, 1056],
   '3:4': [1056, 1408],
+  '4:5': [1024, 1280],
+  '5:4': [1280, 1024],
   '16:9': [1536, 864],
   '9:16': [864, 1536],
   '21:9': [1792, 768],
@@ -780,16 +812,16 @@ const geminiDefaultDimensions: Record<string, Record<string, [number, number]>> 
     '21:9': [3072, 1344],
   },
   '4K': {
-    '1:1': [4096, 4096],
-    '2:3': [3392, 5056],
-    '3:2': [5056, 3392],
-    '3:4': [3584, 4800],
-    '4:3': [4800, 3584],
-    '4:5': [3712, 4608],
-    '5:4': [4608, 3712],
-    '9:16': [3072, 5376],
-    '16:9': [5376, 3072],
-    '21:9': [6144, 2688],
+    '1:1': [3840, 3840],
+    '2:3': [2560, 3840],
+    '3:2': [3840, 2560],
+    '3:4': [2880, 3840],
+    '4:3': [3840, 2880],
+    '4:5': [3072, 3840],
+    '5:4': [3840, 3072],
+    '9:16': [2160, 3840],
+    '16:9': [3840, 2160],
+    '21:9': [3840, 1648],
   },
 }
 const allRatioOptions = [
@@ -800,6 +832,8 @@ const allRatioOptions = [
   { value: '9:16', css: '9 / 16' },
   { value: '4:3', css: '4 / 3' },
   { value: '3:4', css: '3 / 4' },
+  { value: '4:5', css: '4 / 5' },
+  { value: '5:4', css: '5 / 4' },
   { value: '21:9', css: '21 / 9' },
 ]
 const gptRatioOptions = allRatioOptions
@@ -1229,7 +1263,13 @@ async function loadData() {
   const keysPromise = ensureCreatorKey('image')
     .then((result) => {
       keys.value = result.keys
-      selectedKeyId.value = String(result.key.id)
+      const preferences = readStudioPreferences()
+      const preferredKey = result.keys.find((key) => (
+        String(key.id) === preferences.keyId
+        && key.status === 'active'
+        && key.group?.allow_image_generation !== false
+      ))
+      selectedKeyId.value = String(preferredKey?.id ?? result.key.id)
     })
     .catch((error) => {
       if (!isCreationServiceUnavailable(error)) {
@@ -1716,8 +1756,76 @@ async function ensureImageFormat(src: string, targetFormat: string) {
   }
 }
 
+async function resizeImageToExactSize(src: string, targetSize: string) {
+  if (!src.startsWith('data:image/')) return src
+  const target = parseSize(targetSize)
+  if (!target?.width || !target?.height) return src
+  if (typeof Image === 'undefined') return src
+
+  const image = new Image()
+  image.decoding = 'async'
+  image.src = src
+  if (typeof image.decode !== 'function') return src
+  try {
+    await image.decode()
+  } catch {
+    return src
+  }
+  const sourceWidth = image.naturalWidth
+  const sourceHeight = image.naturalHeight
+  if (!sourceWidth || !sourceHeight) return src
+  if (sourceWidth === target.width && sourceHeight === target.height) return src
+
+  const sourceRatio = sourceWidth / sourceHeight
+  const targetRatio = target.width / target.height
+  let cropX = 0
+  let cropY = 0
+  let cropWidth = sourceWidth
+  let cropHeight = sourceHeight
+  if (sourceRatio > targetRatio) {
+    cropWidth = Math.round(sourceHeight * targetRatio)
+    cropX = Math.floor((sourceWidth - cropWidth) / 2)
+  } else if (sourceRatio < targetRatio) {
+    cropHeight = Math.round(sourceWidth / targetRatio)
+    cropY = Math.floor((sourceHeight - cropHeight) / 2)
+  }
+  // Never claim a 4K file by enlarging a lower-resolution upstream result.
+  if (cropWidth < target.width || cropHeight < target.height) return src
+
+  const canvas = document.createElement('canvas')
+  canvas.width = target.width
+  canvas.height = target.height
+  const context = canvas.getContext('2d')
+  if (!context) return src
+  const mime = /^data:(image\/[^;,]+)/i.exec(src)?.[1]?.toLowerCase() || 'image/png'
+  if (mime === 'image/jpeg') {
+    context.fillStyle = '#ffffff'
+    context.fillRect(0, 0, target.width, target.height)
+  }
+  context.imageSmoothingEnabled = true
+  context.imageSmoothingQuality = 'high'
+  context.drawImage(
+    image,
+    cropX,
+    cropY,
+    cropWidth,
+    cropHeight,
+    0,
+    0,
+    target.width,
+    target.height,
+  )
+  try {
+    const resized = canvas.toDataURL(mime, 0.94)
+    return resized.startsWith(`data:${mime};`) ? resized : src
+  } catch {
+    return src
+  }
+}
+
 async function loadModels() {
   const requestId = ++modelRequestId
+  const preferredModel = readStudioPreferences().model
   loadingModels.value = true
   imageModels.value = []
   imageModel.value = ''
@@ -1751,7 +1859,9 @@ async function loadModels() {
     }
 
     imageModels.value = deduplicateModelNames(names)
-    imageModel.value = imageModels.value[0] || ''
+    imageModel.value = preferredModel && imageModels.value.includes(preferredModel)
+      ? preferredModel
+      : imageModels.value[0] || ''
 
     if (!imageModels.value.length && (batchError || genericError)) {
       modelLoadError.value = errorMessageFrom(genericError || batchError)
@@ -2302,33 +2412,37 @@ async function finishGenerationBatch(
   const currentPrompt = firstPending?.prompt || prompt.value.trim()
   const currentModel = firstPending?.model || imageModel.value
   const requestedFormat = firstPending?.format || format.value
+  const requestedSize = firstPending?.size || size.value
   const completedAtMs = Date.now()
   const durationMs = Number(firstPending?.startedAt || 0) > 0
     ? Math.max(1, completedAtMs - Number(firstPending.startedAt))
     : undefined
-  const generated = (await Promise.all(items.map(async (item: any, index: number): Promise<GeneratedImage | null> => {
+  const generated: GeneratedImage[] = []
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index]
     const mime = String(item.mimeType || item.mime_type || 'image/png')
     const b64 = String(item.b64_json || item.data || '')
     const rawSrc = b64 ? `data:${mime};base64,${b64}` : String(item.url || '')
-    if (!rawSrc) return null
+    if (!rawSrc) continue
     const selfHostedSrc = await toSelfHostedImageSrc(rawSrc)
-    const src = await ensureImageFormat(selfHostedSrc, requestedFormat)
+    const formattedSrc = await ensureImageFormat(selfHostedSrc, requestedFormat)
+    const src = await resizeImageToExactSize(formattedSrc, requestedSize)
     const actualFormat = imageFormatFromSource(src, requestedFormat)
-    return {
+    generated.push({
       id: nextImageId++,
       title: `生成结果 ${index + 1}`,
       src,
       prompt: currentPrompt,
       model: currentModel,
-      size: firstPending?.size || size.value,
+      size: requestedSize,
       format: actualFormat,
       quality: firstPending?.quality || quality.value,
       background: firstPending?.background || background.value,
-      meta: `${actualFormat.toUpperCase()} · ${firstPending?.size || size.value} · ${currentModel}`,
+      meta: `${actualFormat.toUpperCase()} · ${requestedSize} · ${currentModel}`,
       createdAt: Date.now() / 1000,
       durationMs,
-    }
-  }))).filter((item): item is GeneratedImage => item !== null)
+    })
+  }
 
   const pendingIds = new Set(pendingImages.map((item) => item.id))
   const pendingIndex = images.value.findIndex((item) => pendingIds.has(item.id))
@@ -2579,6 +2693,10 @@ watch(errorMessage, (message) => {
   errorMessage.value = ''
 })
 
+watch(selectedKeyId, (keyId) => {
+  if (keyId) writeStudioPreferences({ keyId })
+})
+
 watch([selectedKeyId, apiBaseUrl], () => {
   void loadModels()
 })
@@ -2586,6 +2704,9 @@ watch([selectedKeyId, apiBaseUrl], () => {
 watch(imageModel, (model, previousModel) => {
   if (!model || model === previousModel) return
   resetParametersForModel(model)
+  if (imageModels.value.includes(model)) {
+    writeStudioPreferences({ model })
+  }
 })
 
 watch(

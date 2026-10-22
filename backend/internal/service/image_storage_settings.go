@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"path"
 	"strings"
 	"sync"
 	"time"
@@ -472,11 +473,9 @@ func (s *ImageStorageSettingService) TestConnection(ctx context.Context, in Imag
 	}
 	if checker, ok := storage.(ImageStorageConnectionChecker); ok {
 		if err := checker.HeadBucket(ctx); err != nil {
-			// R2 tokens scoped to a single bucket often allow Get/Put/Delete
-			// but not HeadBucket (which requires bucket-level metadata access).
-			// The write probe below is the authoritative check for what image
-			// generation actually needs, so do not reject an otherwise usable
-			// object-only credential here.
+			// Some S3-compatible providers deny HeadBucket to object-scoped
+			// credentials even when the bucket accepts PutObject. The write
+			// probe below matches the actual image-save path, so it decides.
 			logger.L().Warn("image_storage.head_bucket_probe_failed",
 				zap.String("bucket", cfg.Bucket),
 				zap.Error(err))
@@ -486,7 +485,7 @@ func (s *ImageStorageSettingService) TestConnection(ctx context.Context, in Imag
 	// commonly scoped read-only, which passes that probe but makes every gallery
 	// upload fail later. Write and remove a tiny probe object so the admin test
 	// reflects what image saving actually needs.
-	probeKey := fmt.Sprintf(".connection-test-%d.txt", time.Now().UnixNano())
+	probeKey := path.Join(cfg.Prefix, fmt.Sprintf(".connection-test-%d.txt", time.Now().UnixNano()))
 	if _, err := storage.Save(ctx, probeKey, "text/plain", []byte("ok")); err != nil {
 		return infraerrors.New(
 			http.StatusServiceUnavailable,

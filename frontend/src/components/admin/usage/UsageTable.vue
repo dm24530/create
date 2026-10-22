@@ -701,7 +701,12 @@ const tokenTooltipVisible = ref(false)
 const tokenTooltipPosition = ref({ x: 0, y: 0 })
 const tokenTooltipData = ref<AdminUsageLog | null>(null)
 
+const isAsyncImageUsage = (row: AdminUsageLog): boolean => (
+  isImageUsage(row) && String(row.image_url || '').trim() !== ''
+)
+
 const getRequestTypeLabel = (row: AdminUsageLog): string => {
+  if (isAsyncImageUsage(row)) return t('usage.async')
   const requestType = resolveUsageRequestType(row)
   if (requestType === 'cyber') return t('usage.cyber')
   if (requestType === 'live') return t('usage.live')
@@ -712,6 +717,7 @@ const getRequestTypeLabel = (row: AdminUsageLog): string => {
 }
 
 const getRequestTypeBadgeClass = (row: AdminUsageLog): string => {
+  if (isAsyncImageUsage(row)) return 'bg-cyan-100 text-cyan-800 dark:bg-cyan-900 dark:text-cyan-200'
   const requestType = resolveUsageRequestType(row)
   if (requestType === 'cyber') return 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'
   if (requestType === 'live') return 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200'

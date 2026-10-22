@@ -206,6 +206,100 @@ func TestAsyncImageHandlerSubmitAndPoll(t *testing.T) {
 	require.Contains(t, pollWriter.Body.String(), "https://example.test/image.png")
 }
 
+func TestAsyncImageHandlerResolvesCompositeOpenAIModel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store := &asyncImageMemoryStore{tasks: make(map[string]*service.ImageTaskRecord)}
+	tasks := service.NewImageTaskServiceWithUploader(store, nil, time.Hour, time.Minute)
+	executed := make(chan string, 1)
+	h := &AsyncImageHandler{tasks: tasks}
+	h.execute = func(platform string, c *gin.Context) {
+		executed <- platform
+		c.JSON(http.StatusOK, gin.H{"data": []gin.H{{"url": "https://example.test/composite.png"}}})
+	}
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		groupID := int64(3)
+		c.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{
+			ID:      9,
+			UserID:  7,
+			GroupID: &groupID,
+			Group:   &service.Group{ID: groupID, Platform: service.PlatformComposite, AllowImageGeneration: true},
+		})
+		c.Next()
+	})
+	router.POST("/v1/images/generations/async", h.Submit)
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/images/generations/async",
+		strings.NewReader(`{"model":"gpt-image-2","prompt":"cat"}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusAccepted, w.Code)
+	require.Eventually(t, func() bool {
+		select {
+		case platform := <-executed:
+			return platform == service.PlatformOpenAI
+		default:
+			return false
+		}
+	}, time.Second, 10*time.Millisecond)
+}
+
+func TestAsyncImageHandlerResolvesCompositeGeminiModel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store := &asyncImageMemoryStore{tasks: make(map[string]*service.ImageTaskRecord)}
+	tasks := service.NewImageTaskServiceWithUploader(store, nil, time.Hour, time.Minute)
+	executed := make(chan string, 1)
+	h := &AsyncImageHandler{tasks: tasks}
+	h.execute = func(platform string, c *gin.Context) {
+		executed <- platform
+		c.JSON(http.StatusOK, gin.H{
+			"candidates": []gin.H{{
+				"content": gin.H{"parts": []gin.H{{
+					"inlineData": gin.H{"mimeType": "image/png", "data": "aGVsbG8="},
+				}}},
+			}},
+		})
+	}
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		groupID := int64(3)
+		c.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{
+			ID:      9,
+			UserID:  7,
+			GroupID: &groupID,
+			Group:   &service.Group{ID: groupID, Platform: service.PlatformComposite, AllowImageGeneration: true},
+		})
+		c.Next()
+	})
+	router.POST("/v1/images/generations/async", h.Submit)
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/images/generations/async",
+		strings.NewReader(`{"model":"gemini-3.1-flash-image-preview","request":{"contents":[{"role":"user","parts":[{"text":"cat"}]}]}}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusAccepted, w.Code)
+	require.Eventually(t, func() bool {
+		select {
+		case platform := <-executed:
+			return platform == service.PlatformGemini
+		default:
+			return false
+		}
+	}, time.Second, 10*time.Millisecond)
+}
+
 func TestAsyncImageHandlerSubmitReplaysIdempotencyKeyWithoutExecutingTwice(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	store := &asyncImageMemoryStore{tasks: make(map[string]*service.ImageTaskRecord)}

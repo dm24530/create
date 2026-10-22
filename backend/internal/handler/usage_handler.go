@@ -93,7 +93,8 @@ func (h *UsageHandler) ImageLink(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
-	if link.UserID != subject.UserID {
+	role, _ := middleware2.GetUserRoleFromContext(c)
+	if link.UserID != subject.UserID && role != service.RoleAdmin {
 		writeExpiredUsageImage(c)
 		return
 	}

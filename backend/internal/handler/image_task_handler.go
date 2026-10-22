@@ -121,10 +121,12 @@ func (h *AsyncImageHandler) Submit(c *gin.Context) {
 	if platform != service.PlatformOpenAI &&
 		platform != service.PlatformGrok &&
 		platform != service.PlatformGemini &&
-		platform != service.PlatformAntigravity {
+		platform != service.PlatformAntigravity &&
+		platform != service.PlatformComposite {
 		imageTaskJSONError(c, http.StatusNotFound, "not_found_error", "Images API is not supported for this platform")
 		return
 	}
+
 	if !service.GroupAllowsImageGeneration(apiKey.Group) {
 		imageTaskJSONError(c, http.StatusForbidden, "permission_error", service.ImageGenerationPermissionMessage())
 		return
@@ -151,16 +153,21 @@ func (h *AsyncImageHandler) Submit(c *gin.Context) {
 		imageTaskJSONError(c, http.StatusBadRequest, "invalid_request_error", "streaming image requests cannot be submitted as asynchronous tasks")
 		return
 	}
-	if err := h.validateRequest(c, platform, body); err != nil {
+	effectivePlatform := h.resolveAsyncImagePlatform(c, platform, body)
+	if effectivePlatform == "" {
+		imageTaskJSONError(c, http.StatusBadRequest, "invalid_request_error", "model is required for composite image tasks")
+		return
+	}
+	if err := h.validateRequest(c, effectivePlatform, body); err != nil {
 		imageTaskJSONError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
 		return
 	}
-	if !h.checkSecurityAuditBeforeSubmit(c, apiKey, platform, body) {
+	if !h.checkSecurityAuditBeforeSubmit(c, apiKey, effectivePlatform, body) {
 		return
 	}
 
 	executionBody := body
-	if isGeminiAsyncImagePlatform(platform) {
+	if isGeminiAsyncImagePlatform(effectivePlatform) {
 		envelope, parseErr := parseGeminiAsyncEnvelope(body)
 		if parseErr != nil {
 			imageTaskJSONError(c, http.StatusBadRequest, "invalid_request_error", parseErr.Error())
@@ -213,7 +220,29 @@ func (h *AsyncImageHandler) Submit(c *gin.Context) {
 
 	writeAcceptedImageTask(c, task, pollURL)
 
-	go h.run(task.ID, platform, taskCtx, recorder, cancel)
+	go h.run(task.ID, effectivePlatform, taskCtx, recorder, cancel)
+}
+
+func (h *AsyncImageHandler) resolveAsyncImagePlatform(c *gin.Context, platform string, body []byte) string {
+	if platform != service.PlatformComposite {
+		return platform
+	}
+	model := ""
+	var payload struct {
+		Model string `json:"model"`
+	}
+	if json.Unmarshal(body, &payload) == nil {
+		model = strings.TrimSpace(payload.Model)
+	}
+	if model == "" && h != nil && h.openAI != nil && h.openAI.gatewayService != nil {
+		if parsed, err := h.openAI.gatewayService.ParseOpenAIImagesRequest(c, body); err == nil {
+			model = strings.TrimSpace(parsed.Model)
+		}
+	}
+	if resolved, ok := service.DetectModelPlatform(model); ok {
+		return resolved
+	}
+	return ""
 }
 
 func writeAcceptedImageTask(c *gin.Context, task *service.ImageTask, pollURL string) {

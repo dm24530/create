@@ -209,6 +209,57 @@ describe('ImageStudioView image model loading', () => {
     expect(wrapper.find('input[placeholder="输入图片模型"]').exists()).toBe(false)
   })
 
+  it('restores the last selected API key and image model after remount', async () => {
+    localStorage.clear()
+    listKeys.mockResolvedValue({
+      items: [
+        { id: 1, name: 'first-key', key: 'sk-first', status: 'active', group_id: 2 },
+        { id: 2, name: 'second-key', key: 'sk-second', status: 'active', group_id: 2 },
+      ],
+    })
+    getPublicSettings.mockResolvedValue({ api_base_url: '/v1' })
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/images/batches/models')) {
+        return {
+          ok: true,
+          json: async () => ({ data: [{ id: 'gpt-image-1' }, { id: 'gpt-image-2' }] }),
+        } as Response
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const firstWrapper = mountImageStudio()
+    await flushPromises()
+    await flushPromises()
+
+    const firstKeySelect = firstWrapper.get('[data-testid="api-key-select"]')
+    await firstKeySelect.get('button').trigger('click')
+    const secondKeyOption = firstKeySelect.findAll('button')
+      .find((button) => button.text().includes('second-key'))
+    expect(secondKeyOption).toBeDefined()
+    await secondKeyOption!.trigger('click')
+    await flushPromises()
+    await flushPromises()
+
+    const firstModelSelect = firstWrapper.get('[data-testid="image-model-select"]')
+    await firstModelSelect.get('button').trigger('click')
+    const secondModelOption = firstModelSelect.findAll('button')
+      .find((button) => button.text().includes('gpt-image-2'))
+    expect(secondModelOption).toBeDefined()
+    await secondModelOption!.trigger('click')
+    await flushPromises()
+
+    firstWrapper.unmount()
+
+    const secondWrapper = mountImageStudio()
+    await flushPromises()
+    await flushPromises()
+
+    expect(secondWrapper.get('[data-testid="api-key-select"]').text()).toContain('second-key')
+    expect(secondWrapper.get('[data-testid="image-model-select"]').text()).toContain('gpt-image-2')
+  })
+
   it('lets users choose an image output format and sends it upstream', async () => {
     listKeys.mockResolvedValue({
       items: [{ id: 1, name: 'dd', key: 'sk-local', status: 'active', group_id: 2 }],
@@ -508,7 +559,10 @@ describe('ImageStudioView inline image size controls', () => {
     expect(menuText).toContain('2:3 1024x1536')
     expect(menuText).toContain('4:3 1408x1056')
     expect(menuText).toContain('3:4 1056x1408')
+    expect(menuText).toContain('4:5 1024x1280')
+    expect(menuText).toContain('5:4 1280x1024')
     expect(menuText).toContain('16:9 1536x864')
+    expect(menuText).toContain('21:9 1792x768')
 
     await wrapper.get('[data-testid="size-preset-1024-3:2"]').trigger('click')
     expect(wrapper.get('[data-testid="image-size-trigger"]').text()).toContain('3:2 1536x1024')
@@ -1718,7 +1772,7 @@ describe('ImageStudioView composer controls', () => {
     expect(qualityButtons.map((button) => button.text())).toEqual(['自动', '4K', '2K', '1K'])
     expect(qualityButtons[1].attributes('disabled')).toBeUndefined()
     await qualityButtons[1].trigger('click')
-    expect(wrapper.get('[data-testid="image-size-trigger"]').text()).toContain('1:1 4096x4096')
+    expect(wrapper.get('[data-testid="image-size-trigger"]').text()).toContain('1:1 3840x3840')
     await wrapper.get('form').trigger('submit')
     await flushPromises()
 
@@ -1833,7 +1887,7 @@ describe('ImageStudioView composer controls', () => {
     }))
   })
 
-  it('shows the official Gemini default dimensions for 1K, 2K, and 4K', async () => {
+  it('shows standard 4K dimensions for the common aspect ratios', async () => {
     listKeys.mockResolvedValue({
       items: [{
         id: 1,
@@ -1863,7 +1917,9 @@ describe('ImageStudioView composer controls', () => {
 
     expect(sizeOptions).toContain('1:1 1024x1024')
     expect(sizeOptions).toContain('1:1 2048x2048')
-    expect(sizeOptions).toContain('1:1 4096x4096')
+    expect(sizeOptions).toContain('1:1 3840x3840')
+    expect(sizeOptions).toContain('16:9 3840x2160')
+    expect(sizeOptions).toContain('9:16 2160x3840')
   })
 
   it('uses segmented controls for the image count', async () => {

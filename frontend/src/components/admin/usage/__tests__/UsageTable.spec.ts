@@ -80,6 +80,7 @@ const messages: Record<string, string> = {
   'usage.imageTotalPrice': 'Image total price',
   'usage.stream': 'Stream',
   'usage.sync': 'Sync',
+  'usage.async': 'Async',
   'usage.nativeCompactionV2': 'Compaction',
   'admin.usage.billingModeToken': 'Token',
   'admin.usage.billingModePerRequest': 'Per request',
@@ -316,6 +317,42 @@ describe('admin UsageTable tooltip', () => {
     expect(requestBadges[1].text()).toBe('Sync')
     expect(wrapper.findAll('[data-testid="native-compaction-badge"]')).toHaveLength(1)
     expect(wrapper.get('[data-testid="native-compaction-badge"]').text()).toBe('Compaction')
+  })
+
+  it('labels a completed async image task as async even when its upstream request used sync mode', () => {
+    const DataTableStreamStub = {
+      props: ['data'],
+      template: `
+        <div>
+          <div v-for="row in data" :key="row.request_id">
+            <slot name="cell-stream" :row="row" />
+          </div>
+        </div>
+      `,
+    }
+    const wrapper = mount(UsageTable, {
+      props: {
+        data: [{
+          ...baseImageRow,
+          request_id: 'req-async-image',
+          request_type: 'sync',
+          stream: false,
+          image_url: '/api/v1/usage/image-links/token',
+        }],
+        loading: false,
+        columns: [],
+      },
+      global: {
+        stubs: {
+          DataTable: DataTableStreamStub,
+          EmptyState: true,
+          Icon: true,
+          Teleport: true,
+        },
+      },
+    })
+
+    expect(wrapper.get('[data-testid="request-type-badge"]').text()).toBe('Async')
   })
 
   it.each([

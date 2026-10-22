@@ -108,6 +108,37 @@ func TestUsageHandlerImageLinkStreamsOwnedObject(t *testing.T) {
 	require.Empty(t, recorder.Header().Get("Location"))
 }
 
+func TestUsageHandlerImageLinkAllowsAdminToOpenAnotherUsersImage(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler := NewUsageHandler(nil, nil, nil, nil)
+	handler.SetImageLinkDeps(
+		&usageImageLinkStoreStub{link: &service.UsageLogImageLink{
+			UserID:    7,
+			ObjectKey: "images/result.png",
+		}},
+		&usageImageStorageStub{
+			exists:      true,
+			presignURL:  "https://storage.example.test/result.png",
+			data:        []byte("admin-visible-image"),
+			contentType: "image/png",
+		},
+	)
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set(string(middleware2.ContextKeyUser), middleware2.AuthSubject{UserID: 1})
+		c.Set(string(middleware2.ContextKeyUserRole), service.RoleAdmin)
+		c.Next()
+	})
+	router.GET("/usage/image-links/:token", handler.ImageLink)
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/usage/image-links/token", nil))
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Equal(t, "image/png", recorder.Header().Get("Content-Type"))
+	require.Equal(t, "admin-visible-image", recorder.Body.String())
+}
+
 func TestUsageHandlerImageLinkHidesOtherUsersAndExpiredLinks(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, tc := range []struct {
