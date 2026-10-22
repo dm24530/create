@@ -1342,6 +1342,16 @@ func (h *GatewayHandler) compositeAvailableModels(ctx context.Context, groupID *
 			}
 		}
 	}
+	if filtered, err := h.gatewayService.FilterCompositeModelsByRoutes(
+		ctx,
+		groupID,
+		endpoint,
+		includeSystemOne,
+		schedulablePlatforms,
+		models,
+	); err == nil {
+		models = filtered
+	}
 	return models
 }
 

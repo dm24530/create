@@ -1571,6 +1571,27 @@ func (s *GatewayService) FilterCompositeCodexModels(ctx context.Context, groupID
 	return s.compositeResolver.FilterCodexModels(ctx, groupID, models)
 }
 
+func (s *GatewayService) FilterCompositeModelsByRoutes(
+	ctx context.Context,
+	groupID *int64,
+	endpoint string,
+	includeSystemOne bool,
+	platforms map[string]struct{},
+	models []string,
+) ([]string, error) {
+	if s == nil || s.compositeResolver == nil || groupID == nil {
+		return models, nil
+	}
+	return s.compositeResolver.FilterModelsByRoutes(
+		ctx,
+		*groupID,
+		endpoint,
+		includeSystemOne,
+		platforms,
+		models,
+	)
+}
+
 // GetSchedulablePlatforms returns the concrete platforms that currently have
 // schedulable accounts in the target group.
 func (s *GatewayService) GetSchedulablePlatforms(ctx context.Context, groupID *int64) map[string]struct{} {

@@ -85,6 +85,82 @@ func (r *CompositeRouteResolver) FilterCodexModels(ctx context.Context, groupID 
 	return filterSystemOneRouteModels(routes, models, CompositeRouteEndpointResponses), nil
 }
 
+// FilterModelsByRoutes keeps catalog entries that are actually routable through
+// an enabled explicit route. When no enabled route exists, the original catalog
+// is returned so account-derived composite groups keep their legacy behavior.
+func (r *CompositeRouteResolver) FilterModelsByRoutes(
+	ctx context.Context,
+	groupID int64,
+	endpoint string,
+	includeSystemOne bool,
+	platforms map[string]struct{},
+	models []string,
+) ([]string, error) {
+	if r == nil || r.repo == nil || groupID <= 0 || len(models) == 0 {
+		return models, nil
+	}
+	routes, err := r.repo.ListByGroup(ctx, groupID, false)
+	if err != nil {
+		return nil, err
+	}
+	usableRoutes := make([]CompositeModelRoute, 0, len(routes))
+	for _, route := range routes {
+		if !route.Enabled {
+			continue
+		}
+		if platforms != nil {
+			if _, ok := platforms[strings.TrimSpace(route.TargetPlatform)]; !ok {
+				continue
+			}
+		}
+		routeEndpoint := normalizeCompositeRouteEndpoint(route.Endpoint)
+		if endpoint != "" && routeEndpoint != CompositeRouteEndpointAny && routeEndpoint != endpoint {
+			continue
+		}
+		usableRoutes = append(usableRoutes, route)
+	}
+	if len(usableRoutes) == 0 {
+		return models, nil
+	}
+
+	filtered := make([]string, 0, len(models))
+	seen := make(map[string]struct{}, len(models))
+	for _, model := range models {
+		model = strings.TrimSpace(model)
+		if model == "" {
+			continue
+		}
+		matched := false
+		for _, route := range usableRoutes {
+			publicModel := strings.TrimSpace(route.PublicModel)
+			if publicModel == "" {
+				continue
+			}
+			switch normalizeCompositeRouteMatchType(route.MatchType) {
+			case CompositeRouteMatchExact:
+				matched = publicModel == model
+			case CompositeRouteMatchPrefix:
+				matched = strings.HasPrefix(model, publicModel)
+			}
+			if matched {
+				break
+			}
+		}
+		if !matched {
+			continue
+		}
+		if _, ok := seen[model]; ok {
+			continue
+		}
+		seen[model] = struct{}{}
+		filtered = append(filtered, model)
+	}
+	if !includeSystemOne {
+		filtered = filterSystemOneRouteModels(usableRoutes, filtered, endpoint)
+	}
+	return filtered, nil
+}
+
 func filterSystemOneRouteModels(routes []CompositeModelRoute, models []string, endpoint string) []string {
 	filtered := make([]string, 0, len(models))
 	for _, model := range models {
