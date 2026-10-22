@@ -106,6 +106,24 @@ func (h *VideoStudioGalleryHandler) Pin(c *gin.Context) {
 	response.Success(c, gin.H{"saved": true})
 }
 
+// Unpin 取消保存；作品按临时保留期已过期时返回 409，由前端确认后删除。
+func (h *VideoStudioGalleryHandler) Unpin(c *gin.Context) {
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not found in context")
+		return
+	}
+	entry, err := h.gallery.Unpin(c.Request.Context(), subject.UserID, strings.TrimSpace(c.Param("id")))
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, gin.H{
+		"saved":      false,
+		"expires_at": entry.ExpiresAt,
+	})
+}
+
 func (h *VideoStudioGalleryHandler) Delete(c *gin.Context) {
 	subject, ok := middleware2.GetAuthSubjectFromContext(c)
 	if !ok {

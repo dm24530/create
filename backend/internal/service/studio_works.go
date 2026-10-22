@@ -27,6 +27,14 @@ var ErrStudioWorksTempLimitExceeded = infraerrors.New(
 	"too many temporary works",
 )
 
+// ErrStudioWorkExpired 表示取消保存时，作品按临时内容保留期计算已经过期。
+// 调用方必须提示用户确认后，再走正式的删除流程清理记录和对象存储。
+var ErrStudioWorkExpired = infraerrors.New(
+	http.StatusConflict,
+	"STUDIO_WORK_EXPIRED",
+	"studio work has expired",
+)
+
 // StudioWorksTempLimit 是每个用户同时保留的临时作品上限（图片 + 视频合计）。
 const StudioWorksTempLimit = 500
 

@@ -61,7 +61,7 @@
             <span class="inspiration-toolbar__hint" data-testid="image-library-summary">{{ librarySummary }}</span>
             <button
               type="button"
-              class="secondary-button"
+              class="secondary-button refresh-button"
               data-testid="image-library-refresh"
               :disabled="libraryLoading"
               @click="loadLibrary({ refresh: true })"
@@ -866,6 +866,13 @@ onMounted(() => {
   flex: 0 0 auto;
   min-width: 4.8rem;
   padding: 0 0.8rem;
+  white-space: nowrap;
+}
+
+.secondary-button.refresh-button {
+  flex: 0 0 auto;
+  min-width: 5.2rem;
+  padding: 0 0.95rem;
   white-space: nowrap;
 }
 

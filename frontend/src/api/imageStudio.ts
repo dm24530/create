@@ -55,6 +55,18 @@ export async function pinImageStudioGallery(id: string): Promise<void> {
   await apiClient.post(`/image-studio/gallery/${encodeURIComponent(id)}/pin`)
 }
 
+export interface UnpinImageStudioGalleryResult {
+  saved: false
+  expires_at: number
+}
+
+export async function unpinImageStudioGallery(id: string): Promise<UnpinImageStudioGalleryResult> {
+  const { data } = await apiClient.post<UnpinImageStudioGalleryResult>(
+    `/image-studio/gallery/${encodeURIComponent(id)}/unpin`,
+  )
+  return data
+}
+
 export async function downloadImageStudioGallery(id: string): Promise<Blob> {
   const { data } = await apiClient.get<Blob>(
     `/image-studio/gallery/${encodeURIComponent(id)}/download`,
@@ -87,6 +99,7 @@ export const imageStudioGalleryAPI = {
   save: saveImageStudioGallery,
   delete: deleteImageStudioGallery,
   pin: pinImageStudioGallery,
+  unpin: unpinImageStudioGallery,
   download: downloadImageStudioGallery,
   thumbnail: thumbnailImageStudioGallery,
   quota: fetchStudioWorksQuota,

@@ -65,19 +65,27 @@
           <p class="mt-1 text-sm">支持文生图，也可以上传参考图做图生图。</p>
         </div>
 
-        <div v-else class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
+        <div v-else class="image-results-masonry" data-testid="image-results-masonry">
           <article
             v-for="image in images"
             :key="image.id"
             class="group overflow-hidden rounded-xl border border-gray-200 bg-gray-50 dark:border-dark-700 dark:bg-dark-800"
           >
-            <button type="button" class="relative block aspect-square w-full overflow-hidden" :disabled="image.pending" @click="!image.pending && (previewImage = image)">
+            <button type="button" class="image-result-card__media relative block w-full overflow-hidden" :disabled="image.pending" @click="!image.pending && (previewImage = image)">
               <div v-if="image.pending" class="image-pending-card">
                 <span class="image-generation-spinner" aria-hidden="true"></span>
                 <strong>正在生成</strong>
-                <small>请稍候，完成后将在此显示</small>
+                <small>刷新或切换页面不会中断，完成后将在此显示</small>
               </div>
-              <img v-else :src="image.thumbSrc || image.src" :alt="image.title" loading="lazy" decoding="async" class="h-full w-full object-cover transition-transform duration-200 group-hover:scale-[1.02]" />
+              <img
+                v-else
+                :src="image.thumbSrc || image.src"
+                :srcset="image.thumbSrcSet"
+                :alt="image.title"
+                loading="lazy"
+                decoding="async"
+                class="block h-auto w-full object-contain"
+              />
             </button>
             <div class="flex items-center justify-between gap-2 px-3 py-2">
               <div class="min-w-0">
@@ -501,6 +509,12 @@ import Toggle from '@/components/common/Toggle.vue'
 import ImageStudioSelect from './ImageStudioSelect.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { useClipboard } from '@/composables/useClipboard'
+import {
+  createImageGenerationTaskId,
+  tryStartPersistentImageGeneration,
+  waitForPersistentImageGeneration,
+  type ImageGenerationWorkerResponse,
+} from '@/utils/imageGenerationWorker'
 import { usePromptResize } from '@/composables/usePromptResize'
 import { ensureCreatorKey, isCreationServiceUnavailable } from '@/composables/useCreatorKey'
 import { authAPI, imageStudioGalleryAPI, type ImageStudioGalleryEntry } from '@/api'
@@ -514,6 +528,7 @@ interface GeneratedImage {
   title: string
   src: string
   thumbSrc?: string
+  thumbSrcSet?: string
   meta: string
   prompt?: string
   model?: string
@@ -522,6 +537,8 @@ interface GeneratedImage {
   quality?: string
   background?: string
   pending?: boolean
+  taskId?: string
+  batchId?: string
   // 服务端状态：saved 为真表示已经存进「我的作品」（永久），
   // 否则是生成页的临时内容，expiresAt 是过期时间（秒）。
   saved?: boolean
@@ -699,7 +716,9 @@ const galleryBackedIds = ref<Set<string>>(new Set())
 // 本会话刚保存进图库的图片，卡片上还是本地数字 id；映射到图库 id 才能立刻删掉，
 // 不用等刷新页面。
 const localToGalleryId = ref<Map<string, string>>(new Map())
+const galleryThumbObjectUrls = new Map<string, string>()
 const studioQuota = ref<{ used: number; limit: number } | null>(null)
+const resumedGenerationBatches = new Set<string>()
 let nextReferenceId = 1
 let modelRequestId = 0
 
@@ -936,8 +955,25 @@ async function loadGallery() {
       return all.findIndex((candidate) => String(candidate.id || candidate.src) === key) === index
     })
     images.value = [...pending, ...merged]
+    for (const entry of entries) {
+      void loadGalleryThumbnail(entry.id)
+    }
   } catch {
     // Gallery storage is optional; generation remains available without it.
+  }
+}
+
+async function loadGalleryThumbnail(id: string) {
+  try {
+    const blob = await imageStudioGalleryAPI.thumbnail(id)
+    const url = URL.createObjectURL(blob)
+    const previous = galleryThumbObjectUrls.get(id)
+    if (previous) URL.revokeObjectURL(previous)
+    galleryThumbObjectUrls.set(id, url)
+    const image = images.value.find((item) => String(item.id) === id)
+    if (image) image.thumbSrcSet = url
+  } catch {
+    // Keep the stored thumbnail or original URL as the fallback.
   }
 }
 
@@ -974,15 +1010,30 @@ function restorePendingImages() {
     const stored = JSON.parse(localStorage.getItem(PENDING_STORAGE_KEY) || '[]')
     if (!Array.isArray(stored)) return
     const restored = stored
-      .filter((item): item is GeneratedImage => item && item.pending && item.id != null)
+      .filter((item): item is GeneratedImage => (
+        item
+        && item.pending
+        && Number.isFinite(Number(item.id))
+        && typeof item.taskId === 'string'
+        && item.taskId.length > 0
+      ))
       .map((item) => ({
-        id: item.id,
+        ...item,
         title: '正在生成',
         src: '',
-        meta: item.meta || '图片生成中',
         pending: true,
       }))
-    if (restored.length) images.value = restored
+    if (!restored.length) {
+      localStorage.removeItem(PENDING_STORAGE_KEY)
+      return
+    }
+    nextImageId = Math.max(nextImageId, ...restored.map((item) => Number(item.id) + 1))
+    images.value = restored
+    persistPendingImages()
+    if ('serviceWorker' in navigator && typeof indexedDB !== 'undefined') {
+      appStore.showSuccess(`已恢复 ${restored.length} 个后台生成任务`, 3000)
+      void resumePersistentGeneration(restored)
+    }
   } catch {
     // Ignore malformed browser storage and continue with an empty gallery.
   }
@@ -1008,6 +1059,36 @@ function persistPendingImages() {
     else localStorage.removeItem(PENDING_STORAGE_KEY)
   } catch {
     // Browser storage is optional.
+  }
+}
+
+async function resumePersistentGeneration(pendingImages: GeneratedImage[]) {
+  const batches = new Map<string, GeneratedImage[]>()
+  for (const image of pendingImages) {
+    if (!image.taskId) continue
+    const batchId = image.batchId || image.taskId
+    if (resumedGenerationBatches.has(batchId)) continue
+    const batch = batches.get(batchId) || []
+    batch.push(image)
+    batches.set(batchId, batch)
+  }
+
+  for (const [batchId, batch] of batches) {
+    resumedGenerationBatches.add(batchId)
+    activeGenerations.value += 1
+    generating.value = true
+    try {
+      const responses = await waitForPersistentImageGeneration(
+        batch.map((image) => image.taskId!).filter(Boolean),
+      )
+      await finishGenerationBatch(batch, responses.map(workerResponseToSettledResult))
+    } catch (error) {
+      removePendingImages(batch)
+      errorMessage.value = errorMessageFrom(error, '恢复图片生成任务失败')
+    } finally {
+      activeGenerations.value = Math.max(0, activeGenerations.value - 1)
+      generating.value = activeGenerations.value > 0
+    }
   }
 }
 
@@ -1391,19 +1472,27 @@ async function generate() {
   if (!canGenerate.value || !selectedKey.value) return
   generating.value = true
   activeGenerations.value += 1
+  const currentPrompt = prompt.value.trim()
   const requestCount = Math.min(Math.max(Number(count.value) || 1, 1), 4)
+  const batchId = createImageGenerationTaskId()
   const pendingImages = Array.from({ length: requestCount }, (_, index): GeneratedImage => ({
     id: nextImageId++,
     title: `正在生成 ${index + 1}`,
     src: '',
     meta: `${format.value.toUpperCase()} · ${size.value} · ${imageModel.value}`,
     pending: true,
+    taskId: createImageGenerationTaskId(),
+    batchId,
+    prompt: currentPrompt,
+    model: imageModel.value,
+    size: size.value,
+    format: format.value,
+    quality: quality.value,
+    background: background.value,
   }))
-  const pendingIds = new Set(pendingImages.map((item) => item.id))
   images.value.unshift(...pendingImages)
   persistPendingImages()
   errorMessage.value = ''
-  const currentPrompt = prompt.value.trim()
   const geminiModel = isGeminiModel(imageModel.value)
   try {
     const headers: Record<string, string> = { Authorization: `Bearer ${selectedKey.value.key}` }
@@ -1428,63 +1517,141 @@ async function generate() {
         response_format: 'b64_json',
       })
     }
-    const results = await Promise.allSettled(Array.from({ length: requestCount }, async () => {
-      const response = await fetch(url, { method: 'POST', headers, body })
-      const payload = await response.json().catch(() => null)
-      if (!response.ok) {
-        throw new Error(payload?.error?.message || payload?.message || `${response.status} ${response.statusText}`)
-      }
-      return extractImages(payload)
-    }))
-    const items: any[] = []
-    let firstError: unknown = null
-    for (const result of results) {
-      if (result.status === 'fulfilled') {
-        items.push(...result.value)
-      } else if (!firstError) {
-        firstError = result.reason
-      }
-    }
-    if (!items.length) {
-      throw firstError || new Error('上游没有返回图片')
-    }
-    if (firstError) {
-      errorMessage.value = errorMessageFrom(firstError, '部分图片生成失败')
-    }
-    const generated = (await Promise.all(items.map(async (item: any, index: number): Promise<GeneratedImage | null> => {
-      const mime = String(item.mimeType || item.mime_type || 'image/png')
-      const b64 = String(item.b64_json || item.data || '')
-      const rawSrc = b64 ? `data:${mime};base64,${b64}` : String(item.url || '')
-      if (!rawSrc) return null
-      return {
-        id: nextImageId++,
-        title: `生成结果 ${index + 1}`,
-        src: await toSelfHostedImageSrc(rawSrc),
-        prompt: currentPrompt,
-        model: imageModel.value,
-        size: size.value,
-        format: format.value,
-        quality: quality.value,
-        background: background.value,
-        meta: `${format.value.toUpperCase()} · ${size.value} · ${imageModel.value}`,
-        createdAt: Date.now() / 1000,
-      }
-    }))).filter((item): item is GeneratedImage => item !== null)
-    const pendingIndex = images.value.findIndex((item) => pendingIds.has(item.id))
-    images.value = images.value.filter((item) => !pendingIds.has(item.id))
-    if (pendingIndex >= 0) {
-      images.value.splice(Math.min(pendingIndex, images.value.length), 0, ...generated)
-    }
-    persistPendingImages()
-    await persistGeneratedImages(generated, currentPrompt, imageModel.value)
+    const results = await executeGenerationRequests(pendingImages, url, headers, body)
+    await finishGenerationBatch(pendingImages, results)
   } catch (error) {
-    images.value = images.value.filter((item) => !pendingIds.has(item.id))
-    persistPendingImages()
+    removePendingImages(pendingImages)
     errorMessage.value = errorMessageFrom(error, '生成失败')
   } finally {
     activeGenerations.value -= 1
     generating.value = activeGenerations.value > 0
   }
+}
+
+function removePendingImages(pendingImages: GeneratedImage[]) {
+  const pendingIds = new Set(pendingImages.map((item) => item.id))
+  images.value = images.value.filter((item) => !pendingIds.has(item.id))
+  persistPendingImages()
+}
+
+function workerResponseToSettledResult(
+  response: ImageGenerationWorkerResponse,
+): PromiseSettledResult<any[]> {
+  let payload: any = null
+  try {
+    payload = response.body ? JSON.parse(response.body) : null
+  } catch {
+    // Non-JSON upstream errors are handled below.
+  }
+  if (!response.ok) {
+    return {
+      status: 'rejected',
+      reason: new Error(
+        payload?.error?.message
+        || payload?.message
+        || payload?.error
+        || response.body
+        || `${response.status} ${response.statusText}`,
+      ),
+    }
+  }
+  try {
+    return { status: 'fulfilled', value: extractImages(payload) }
+  } catch (error) {
+    return { status: 'rejected', reason: error }
+  }
+}
+
+async function executeGenerationRequests(
+  pendingImages: GeneratedImage[],
+  url: string,
+  headers: Record<string, string>,
+  body: string | FormData,
+): Promise<PromiseSettledResult<any[]>[]> {
+  const taskRequests = pendingImages
+    .filter((image): image is GeneratedImage & { taskId: string } => Boolean(image.taskId))
+    .map((image) => ({
+      id: image.taskId,
+      url,
+      init: {
+        method: 'POST' as const,
+        headers,
+        body,
+      },
+      createdAt: Date.now(),
+    }))
+
+  if (taskRequests.length === pendingImages.length) {
+    const started = await tryStartPersistentImageGeneration(taskRequests)
+    if (started) {
+      const responses = await waitForPersistentImageGeneration(
+        taskRequests.map((request) => request.id),
+      )
+      return responses.map(workerResponseToSettledResult)
+    }
+  }
+
+  return Promise.allSettled(pendingImages.map(async () => {
+    const response = await fetch(url, { method: 'POST', headers, body })
+    const payload = await response.json().catch(() => null)
+    if (!response.ok) {
+      throw new Error(payload?.error?.message || payload?.message || `${response.status} ${response.statusText}`)
+    }
+    return extractImages(payload)
+  }))
+}
+
+async function finishGenerationBatch(
+  pendingImages: GeneratedImage[],
+  results: PromiseSettledResult<any[]>[],
+) {
+  const items: any[] = []
+  let firstError: unknown = null
+  for (const result of results) {
+    if (result.status === 'fulfilled') {
+      items.push(...result.value)
+    } else if (!firstError) {
+      firstError = result.reason
+    }
+  }
+  if (!items.length) {
+    throw firstError || new Error('上游没有返回图片')
+  }
+  if (firstError) {
+    errorMessage.value = errorMessageFrom(firstError, '部分图片生成失败')
+  }
+
+  const firstPending = pendingImages[0]
+  const currentPrompt = firstPending?.prompt || prompt.value.trim()
+  const currentModel = firstPending?.model || imageModel.value
+  const generated = (await Promise.all(items.map(async (item: any, index: number): Promise<GeneratedImage | null> => {
+    const mime = String(item.mimeType || item.mime_type || 'image/png')
+    const b64 = String(item.b64_json || item.data || '')
+    const rawSrc = b64 ? `data:${mime};base64,${b64}` : String(item.url || '')
+    if (!rawSrc) return null
+    return {
+      id: nextImageId++,
+      title: `生成结果 ${index + 1}`,
+      src: await toSelfHostedImageSrc(rawSrc),
+      prompt: currentPrompt,
+      model: currentModel,
+      size: firstPending?.size || size.value,
+      format: firstPending?.format || format.value,
+      quality: firstPending?.quality || quality.value,
+      background: firstPending?.background || background.value,
+      meta: firstPending?.meta || `${format.value.toUpperCase()} · ${size.value} · ${imageModel.value}`,
+      createdAt: Date.now() / 1000,
+    }
+  }))).filter((item): item is GeneratedImage => item !== null)
+
+  const pendingIds = new Set(pendingImages.map((item) => item.id))
+  const pendingIndex = images.value.findIndex((item) => pendingIds.has(item.id))
+  images.value = images.value.filter((item) => !pendingIds.has(item.id))
+  if (pendingIndex >= 0) {
+    images.value.splice(Math.min(pendingIndex, images.value.length), 0, ...generated)
+  }
+  persistPendingImages()
+  await persistGeneratedImages(generated, currentPrompt, currentModel)
 }
 
 function buildGeminiURL(model: string) {
@@ -1716,6 +1883,10 @@ onActivated(applyInspirationFromRoute)
 onBeforeUnmount(() => {
   document.removeEventListener('click', handleSizeOutside)
   document.removeEventListener('keydown', handleSizeEscape)
+  for (const url of galleryThumbObjectUrls.values()) {
+    URL.revokeObjectURL(url)
+  }
+  galleryThumbObjectUrls.clear()
 })
 </script>
 
@@ -3087,7 +3258,8 @@ onBeforeUnmount(() => {
 
 .image-pending-card {
   display: flex;
-  height: 100%;
+  width: 100%;
+  aspect-ratio: 1;
   flex-direction: column;
   align-items: center;
   justify-content: center;
@@ -3283,8 +3455,39 @@ onBeforeUnmount(() => {
   padding: 0 1rem 1rem;
 }
 
-.image-studio .studio-page__results .grid {
-  gap: 1rem;
+.image-results-masonry {
+  column-count: 1;
+  column-gap: 1rem;
+}
+
+.image-results-masonry > article {
+  display: inline-block;
+  width: 100%;
+  margin: 0 0 1rem;
+  break-inside: avoid;
+}
+
+.image-result-card__media img {
+  width: 100%;
+  height: auto;
+}
+
+@media (min-width: 640px) {
+  .image-results-masonry {
+    column-count: 2;
+  }
+}
+
+@media (min-width: 1024px) {
+  .image-results-masonry {
+    column-count: 3;
+  }
+}
+
+@media (min-width: 1536px) {
+  .image-results-masonry {
+    column-count: 4;
+  }
 }
 
 .image-studio .studio-page__results article {

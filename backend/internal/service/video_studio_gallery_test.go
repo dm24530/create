@@ -55,6 +55,17 @@ func (s *videoGalleryStoreStub) Pin(_ context.Context, _ int64, id string, _ int
 	return nil
 }
 
+func (s *videoGalleryStoreStub) Unpin(_ context.Context, _ int64, id string, expiresAt int64) error {
+	for _, entry := range s.saved {
+		if entry.ID == id {
+			entry.Saved = false
+			entry.ExpiresAt = expiresAt
+			return nil
+		}
+	}
+	return ErrStudioWorkNotFound
+}
+
 func (s *videoGalleryStoreStub) SweepExpired(context.Context, int) ([]string, error) {
 	return nil, nil
 }
@@ -64,6 +75,24 @@ type videoMediaSaverStub struct {
 	types         []string
 	deletedObject []string
 	quota         int
+}
+
+func TestVideoStudioGalleryUnpinReturnsTemporaryExpiry(t *testing.T) {
+	createdAt := time.Now().UTC().Add(-time.Hour).Unix()
+	store := &videoGalleryStoreStub{saved: []*VideoStudioGalleryEntry{{
+		ID:        "video-unpin",
+		UserID:    42,
+		Saved:     true,
+		CreatedAt: createdAt,
+	}}}
+	svc := NewVideoStudioGalleryService(store, &videoMediaSaverStub{})
+
+	entry, err := svc.Unpin(context.Background(), 42, "video-unpin")
+
+	require.NoError(t, err)
+	require.NotNil(t, entry)
+	require.False(t, entry.Saved)
+	require.Equal(t, createdAt+int64((30*24*time.Hour)/time.Second), entry.ExpiresAt)
 }
 
 func (s *videoMediaSaverStub) SaveVideo(_ context.Context, key, contentType string, _ []byte) (string, error) {

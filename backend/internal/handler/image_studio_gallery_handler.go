@@ -145,7 +145,7 @@ func (h *ImageStudioGalleryHandler) Thumbnail(c *gin.Context) {
 		c.Request.Context(),
 		subject.UserID,
 		strings.TrimSpace(c.Param("id")),
-		360,
+		720,
 	)
 	if err != nil {
 		response.ErrorFrom(c, err)
@@ -182,6 +182,24 @@ func (h *ImageStudioGalleryHandler) Pin(c *gin.Context) {
 		return
 	}
 	response.Success(c, gin.H{"saved": true})
+}
+
+// Unpin 取消保存：未过期内容转为临时内容；过期内容返回 409，等待用户确认删除。
+func (h *ImageStudioGalleryHandler) Unpin(c *gin.Context) {
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not found in context")
+		return
+	}
+	entry, err := h.gallery.Unpin(c.Request.Context(), subject.UserID, strings.TrimSpace(c.Param("id")))
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, gin.H{
+		"saved":      false,
+		"expires_at": entry.ExpiresAt,
+	})
 }
 
 // Delete 删除一条图片作品：记录和对象存储里的文件一起删。

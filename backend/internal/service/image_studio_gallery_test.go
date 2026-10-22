@@ -77,6 +77,17 @@ func (s *galleryStoreStub) Pin(_ context.Context, _ int64, id string, _ int64) e
 	return nil
 }
 
+func (s *galleryStoreStub) Unpin(_ context.Context, _ int64, id string, expiresAt int64) error {
+	for _, entry := range s.entries {
+		if entry.ID == id {
+			entry.Saved = false
+			entry.ExpiresAt = expiresAt
+			return nil
+		}
+	}
+	return ErrStudioWorkNotFound
+}
+
 func (s *galleryStoreStub) SweepExpired(context.Context, int) ([]string, error) {
 	return s.swept, nil
 }
@@ -405,6 +416,41 @@ func TestImageStudioGalleryPinMapsQuotaError(t *testing.T) {
 	svc := NewImageStudioGalleryService(store, &gallerySaverStub{})
 
 	require.ErrorIs(t, svc.Pin(context.Background(), 42, "abc"), ErrImageStudioGalleryQuotaExceeded)
+}
+
+func TestImageStudioGalleryUnpinReturnsTemporaryExpiry(t *testing.T) {
+	createdAt := time.Now().UTC().Add(-time.Hour).Unix()
+	store := &galleryStoreStub{entries: []*ImageStudioGalleryEntry{{
+		ID:        "img-unpin",
+		UserID:    42,
+		Saved:     true,
+		CreatedAt: createdAt,
+	}}}
+	svc := NewImageStudioGalleryService(store, &gallerySaverStub{retention: 7 * 24 * time.Hour})
+
+	entry, err := svc.Unpin(context.Background(), 42, "img-unpin")
+
+	require.NoError(t, err)
+	require.NotNil(t, entry)
+	require.False(t, entry.Saved)
+	require.Equal(t, createdAt+int64((7*24*time.Hour)/time.Second), entry.ExpiresAt)
+	require.False(t, store.entries[0].Saved)
+}
+
+func TestImageStudioGalleryUnpinRejectsExpiredWork(t *testing.T) {
+	store := &galleryStoreStub{entries: []*ImageStudioGalleryEntry{{
+		ID:        "img-expired",
+		UserID:    42,
+		Saved:     true,
+		CreatedAt: time.Now().UTC().Add(-8 * 24 * time.Hour).Unix(),
+	}}}
+	svc := NewImageStudioGalleryService(store, &gallerySaverStub{retention: 7 * 24 * time.Hour})
+
+	entry, err := svc.Unpin(context.Background(), 42, "img-expired")
+
+	require.Nil(t, entry)
+	require.ErrorIs(t, err, ErrStudioWorkExpired)
+	require.Len(t, store.deleted, 0, "expired unpin must wait for the user's delete confirmation")
 }
 
 // 清扫到期内容时，记录删掉之后桶里的对象也要删。

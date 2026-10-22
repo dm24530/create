@@ -54,8 +54,13 @@
             <article
               v-for="entry in images"
               :key="entry.id"
-              class="work-card"
+              class="work-card work-card--image"
               :data-testid="`image-work-${entry.id}`"
+              role="button"
+              tabindex="0"
+              @click="activeImage = entry"
+              @keydown.enter="activeImage = entry"
+              @keydown.space.prevent="activeImage = entry"
             >
               <div class="work-card__media work-card__media--image">
                 <img
@@ -71,7 +76,6 @@
                 </div>
               </div>
               <div class="work-card__body">
-                <p class="work-card__prompt" :title="entry.prompt">{{ entry.prompt || '未填写提示词' }}</p>
                 <p class="work-card__meta">{{ imageMeta(entry) }}</p>
                 <p class="work-card__time">{{ formatTime(entry.created_at * 1000) }}</p>
                 <p v-if="entry.saved" class="work-card__state work-card__state--saved">
@@ -81,7 +85,7 @@
                   临时内容 · 还剩 {{ remainingDays(entry) }} 天
                 </p>
               </div>
-              <div class="work-card__actions">
+              <div class="work-card__actions" @click.stop>
                 <button
                   v-if="!entry.saved"
                   type="button"
@@ -89,6 +93,16 @@
                   data-testid="image-work-pin"
                   title="存到我的作品（长期保留）"
                   @click="pinImageWork(entry)"
+                >
+                  <Icon name="bookmark" size="sm" />
+                </button>
+                <button
+                  v-else
+                  type="button"
+                  class="mini-action"
+                  data-testid="image-work-unpin"
+                  title="取消保存"
+                  @click="unpinImageWork(entry)"
                 >
                   <Icon name="bookmark" size="sm" />
                 </button>
@@ -104,7 +118,7 @@
                 >
                   <Icon name="copy" size="sm" />
                 </button>
-                <button type="button" class="mini-action" title="取消收藏并删除图片" @click="removeImageWork(entry)">
+                <button type="button" class="mini-action" title="彻底删除图片" @click="removeImageWork(entry)">
                   <Icon name="trash" size="sm" />
                 </button>
               </div>
@@ -145,6 +159,16 @@
                 >
                   <Icon name="bookmark" size="sm" />
                 </button>
+                <button
+                  v-else
+                  type="button"
+                  class="mini-action"
+                  data-testid="archived-unpin"
+                  title="取消保存"
+                  @click="unpinArchived(entry)"
+                >
+                  <Icon name="bookmark" size="sm" />
+                </button>
                 <button type="button" class="mini-action" title="下载视频" @click="downloadArchived(entry)">
                   <Icon name="download" size="sm" />
                 </button>
@@ -157,7 +181,7 @@
                 >
                   <Icon name="copy" size="sm" />
                 </button>
-                <button type="button" class="mini-action" title="取消收藏并删除视频" @click="removeArchived(entry)">
+                <button type="button" class="mini-action" title="彻底删除视频" @click="removeArchived(entry)">
                   <Icon name="trash" size="sm" />
                 </button>
               </div>
@@ -233,6 +257,85 @@
         </div>
       </template>
     </BaseDialog>
+
+    <BaseDialog
+      :show="!!activeImage"
+      :title="activeImage?.model || '图片详情'"
+      width="wide"
+      :close-on-click-outside="true"
+      @close="activeImage = null"
+    >
+      <div v-if="activeImage" class="image-work-detail" data-testid="image-work-detail">
+        <div class="image-work-detail__media">
+          <img :src="activeImage.url" :alt="activeImage.prompt || '图片作品'" />
+        </div>
+        <section class="image-work-detail__panel">
+          <div class="image-work-detail__heading">提示词</div>
+          <p class="image-work-detail__prompt">{{ activeImage.prompt || '未填写提示词' }}</p>
+          <dl class="image-work-detail__meta">
+            <div>
+              <dt>模型</dt>
+              <dd>{{ activeImage.model || '未知模型' }}</dd>
+            </div>
+            <div>
+              <dt>尺寸</dt>
+              <dd>{{ activeImage.size || '未知尺寸' }}</dd>
+            </div>
+            <div>
+              <dt>格式</dt>
+              <dd>{{ activeImage.format?.toUpperCase() || '未知格式' }}</dd>
+            </div>
+            <div>
+              <dt>创建时间</dt>
+              <dd>{{ formatTime(activeImage.created_at * 1000) }}</dd>
+            </div>
+            <div>
+              <dt>状态</dt>
+              <dd>{{ activeImage.saved ? '已保存到我的作品' : `临时内容 · 还剩 ${remainingDays(activeImage)} 天` }}</dd>
+            </div>
+          </dl>
+        </section>
+      </div>
+      <template #footer>
+        <div class="image-work-detail__footer">
+          <button
+            type="button"
+            class="secondary-button"
+            :disabled="!activeImage?.prompt"
+            @click="activeImage && copyPromptText(activeImage.prompt)"
+          >
+            <Icon name="copy" size="sm" />
+            <span>复制提示词</span>
+          </button>
+          <button
+            type="button"
+            class="secondary-button"
+            @click="activeImage && downloadImageWork(activeImage)"
+          >
+            <Icon name="download" size="sm" />
+            <span>下载图片</span>
+          </button>
+          <button
+            v-if="activeImage?.saved"
+            type="button"
+            class="secondary-button"
+            data-testid="image-work-unpin-detail"
+            @click="activeImage && unpinImageWork(activeImage)"
+          >
+            <Icon name="bookmark" size="sm" />
+            <span>取消保存</span>
+          </button>
+          <button
+            type="button"
+            class="secondary-button image-work-detail__delete"
+            @click="activeImage && removeImageWork(activeImage)"
+          >
+            <Icon name="trash" size="sm" />
+            <span>彻底删除</span>
+          </button>
+        </div>
+      </template>
+    </BaseDialog>
     </div>
   </AppLayout>
 </template>
@@ -263,9 +366,11 @@ import {
   deleteArchivedVideo,
   fetchStudioWorksQuota,
   isStudioQuotaError,
+  isStudioWorkExpiredError,
   listArchivedVideos,
   pinArchivedVideo,
   type ArchivedVideoEntry,
+  unpinArchivedVideo,
 } from './videoArchiveApi'
 import {
   clearVideoWorks,
@@ -284,6 +389,7 @@ const imageThumbs = ref<Record<string, string>>({})
 const studioQuota = ref<{ used: number; limit: number } | null>(null)
 const playable = ref<Record<string, string>>({})
 const activeRecord = ref<VideoWorkRecord | null>(null)
+const activeImage = ref<ImageStudioGalleryEntry | null>(null)
 const errorMessage = ref('')
 const refreshing = ref(false)
 
@@ -337,9 +443,10 @@ async function loadImages() {
   for (const entry of images.value) {
     if (entry.thumb_url) {
       imageThumbs.value = { ...imageThumbs.value, [entry.id]: entry.thumb_url }
-    } else {
-      void loadImageThumbnail(entry)
     }
+    // Stored thumb_urls may come from the older 360px generator. Upgrade them
+    // in the background so high-DPI cards stay sharp without loading originals.
+    void loadImageThumbnail(entry)
   }
 }
 
@@ -421,19 +528,43 @@ async function downloadImageWork(entry: ImageStudioGalleryEntry) {
 }
 
 async function removeImageWork(entry: ImageStudioGalleryEntry) {
-  const expired = entry.expires_at > 0 && entry.expires_at * 1000 <= Date.now()
   const confirmed = typeof window === 'undefined'
-    || window.confirm(expired
-      ? '这张图片已经过期。取消收藏后会永久删除，无法恢复，确定继续吗？'
-      : '取消收藏并删除这张图片？对象存储里的文件会一起删除，无法恢复。')
+    || window.confirm('彻底删除这张图片？对象存储中的文件也会一起删除，无法恢复。')
   if (!confirmed) return
   errorMessage.value = ''
   try {
     await imageStudioGalleryAPI.delete(entry.id)
     images.value = images.value.filter((item) => item.id !== entry.id)
+    if (activeImage.value?.id === entry.id) activeImage.value = null
     await loadStudioQuota()
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '删除图片失败'
+  }
+}
+
+async function unpinImageWork(entry: ImageStudioGalleryEntry) {
+  errorMessage.value = ''
+  try {
+    await imageStudioGalleryAPI.unpin(entry.id)
+    images.value = images.value.filter((item) => item.id !== entry.id)
+    if (activeImage.value?.id === entry.id) activeImage.value = null
+    await loadStudioQuota()
+  } catch (error) {
+    if (isStudioWorkExpiredError(error)) {
+      const confirmed = typeof window === 'undefined'
+        || window.confirm('这张图片已经超过临时保留期。取消保存会永久删除服务器文件，无法恢复，确定继续吗？')
+      if (!confirmed) return
+      try {
+        await imageStudioGalleryAPI.delete(entry.id)
+        images.value = images.value.filter((item) => item.id !== entry.id)
+        if (activeImage.value?.id === entry.id) activeImage.value = null
+        await loadStudioQuota()
+      } catch (deleteError) {
+        errorMessage.value = deleteError instanceof Error ? deleteError.message : '删除图片失败'
+      }
+      return
+    }
+    errorMessage.value = error instanceof Error ? error.message : '取消保存失败'
   }
 }
 
@@ -442,11 +573,8 @@ async function downloadArchived(entry: ArchivedVideoEntry) {
 }
 
 async function removeArchived(entry: ArchivedVideoEntry) {
-  const expired = entry.expires_at > 0 && entry.expires_at * 1000 <= Date.now()
   const confirmed = typeof window === 'undefined'
-    || window.confirm(expired
-      ? '这段视频已经过期。取消收藏后会永久删除，无法恢复，确定继续吗？'
-      : '取消收藏并删除这段视频？对象存储里的文件会一起删除，无法恢复。')
+    || window.confirm('彻底删除这段视频？对象存储中的文件也会一起删除，无法恢复。')
   if (!confirmed) return
   try {
     await deleteArchivedVideo(entry.id)
@@ -457,6 +585,30 @@ async function removeArchived(entry: ArchivedVideoEntry) {
   archived.value = archived.value.filter((item) => item.id !== entry.id)
   records.value = visibleLocalRecords()
   await loadStudioQuota()
+}
+
+async function unpinArchived(entry: ArchivedVideoEntry) {
+  errorMessage.value = ''
+  try {
+    await unpinArchivedVideo(entry.id)
+    archived.value = archived.value.filter((item) => item.id !== entry.id)
+    await loadStudioQuota()
+  } catch (error) {
+    if (isStudioWorkExpiredError(error)) {
+      const confirmed = typeof window === 'undefined'
+        || window.confirm('这段视频已经超过临时保留期。取消保存会永久删除服务器文件，无法恢复，确定继续吗？')
+      if (!confirmed) return
+      try {
+        await deleteArchivedVideo(entry.id)
+        archived.value = archived.value.filter((item) => item.id !== entry.id)
+        await loadStudioQuota()
+      } catch (deleteError) {
+        errorMessage.value = deleteError instanceof Error ? deleteError.message : '删除视频失败'
+      }
+      return
+    }
+    errorMessage.value = error instanceof Error ? error.message : '取消保存失败'
+  }
 }
 
 // 临时内容的剩余天数：向上取整，最少显示 1 天。
@@ -772,10 +924,10 @@ onBeforeUnmount(() => {
   margin-bottom: 1.25rem;
 }
 
-.works-grid--images {
-  grid-template-columns: repeat(auto-fill, minmax(160px, 220px));
-  justify-content: start;
-  gap: 0.9rem;
+.works-grid.works-grid--images {
+  display: block;
+  columns: 180px;
+  column-gap: 0.9rem;
   margin-bottom: 1.25rem;
 }
 
@@ -811,6 +963,28 @@ onBeforeUnmount(() => {
   background: rgb(249 250 251);
 }
 
+.work-card--image {
+  width: 100%;
+  margin: 0 0 0.9rem;
+  break-inside: avoid;
+  cursor: pointer;
+  transition:
+    border-color 0.16s ease,
+    transform 0.16s ease,
+    box-shadow 0.16s ease;
+}
+
+.work-card--image:hover {
+  border-color: rgb(201 201 196);
+  transform: translateY(-1px);
+  box-shadow: 0 8px 18px rgb(15 23 42 / 0.08);
+}
+
+.work-card--image:focus-visible {
+  outline: 2px solid rgb(232 121 78);
+  outline-offset: 2px;
+}
+
 .work-card__media {
   display: flex;
   aspect-ratio: 16 / 9;
@@ -830,11 +1004,21 @@ onBeforeUnmount(() => {
   aspect-ratio: 1 / 1;
 }
 
+.work-card--image .work-card__media--image {
+  aspect-ratio: auto;
+}
+
 .work-card__image {
   display: block;
   height: 100%;
   width: 100%;
   object-fit: cover;
+}
+
+.work-card--image .work-card__image {
+  height: auto;
+  max-height: 300px;
+  object-fit: contain;
 }
 
 .work-card__thumb-loading {
@@ -1001,15 +1185,124 @@ onBeforeUnmount(() => {
   gap: 0.5rem;
 }
 
+.image-work-detail {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(15rem, 0.8fr);
+  align-items: start;
+  gap: 1rem;
+}
+
+.image-work-detail__media {
+  display: flex;
+  min-height: 0;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: 0.65rem;
+  background: rgb(17 24 39);
+  padding: 0.35rem;
+}
+
+.image-work-detail__media img {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 46vh;
+  object-fit: contain;
+}
+
+.image-work-detail__panel {
+  min-width: 0;
+  border: 1px solid rgb(226 232 240);
+  border-radius: 0.65rem;
+  background: rgb(249 250 251);
+  padding: 0.9rem;
+}
+
+.image-work-detail__heading {
+  color: rgb(17 24 39);
+  font-size: 0.82rem;
+  font-weight: 650;
+}
+
+.image-work-detail__prompt {
+  margin-top: 0.55rem;
+  max-height: 22rem;
+  overflow-y: auto;
+  color: rgb(51 65 85);
+  font-size: 0.82rem;
+  line-height: 1.65;
+  white-space: pre-wrap;
+}
+
+.image-work-detail__meta {
+  display: grid;
+  gap: 0.5rem;
+  margin-top: 0.9rem;
+  border-top: 1px solid rgb(226 232 240);
+  padding-top: 0.75rem;
+}
+
+.image-work-detail__meta div {
+  display: grid;
+  grid-template-columns: 4.5rem minmax(0, 1fr);
+  gap: 0.55rem;
+}
+
+.image-work-detail__meta dt {
+  color: rgb(148 163 184);
+  font-size: 0.72rem;
+}
+
+.image-work-detail__meta dd {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: rgb(30 41 59);
+  font-size: 0.76rem;
+}
+
+.image-work-detail__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.image-work-detail__delete {
+  color: rgb(185 28 28);
+}
+
 @media (min-width: 640px) {
   .works-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .works-grid.works-grid--images {
+    columns: 180px;
   }
 }
 
 @media (min-width: 1280px) {
   .works-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .works-grid.works-grid--images {
+    columns: 180px;
+  }
+}
+
+@media (max-width: 760px) {
+  .image-work-detail {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .image-work-detail__media {
+    max-height: 42vh;
+  }
+
+  .image-work-detail__footer {
+    flex-wrap: wrap;
   }
 }
 
@@ -1049,6 +1342,26 @@ onBeforeUnmount(() => {
 
 :global(.dark .work-card__media) {
   background: rgb(20 19 18);
+}
+
+:global(.dark .work-card--image:hover) {
+  border-color: rgb(100 94 84);
+  box-shadow: 0 8px 18px rgb(0 0 0 / 0.28);
+}
+
+:global(.dark .image-work-detail__panel) {
+  border-color: rgb(66 61 55);
+  background: rgb(35 33 30);
+}
+
+:global(.dark .image-work-detail__heading),
+:global(.dark .image-work-detail__prompt),
+:global(.dark .image-work-detail__meta dd) {
+  color: rgb(242 237 229);
+}
+
+:global(.dark .image-work-detail__meta) {
+  border-color: rgb(66 61 55);
 }
 
 :global(.dark .works__empty-title) {

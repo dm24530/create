@@ -74,6 +74,8 @@ type VideoStudioGalleryStore interface {
 	Count(ctx context.Context, userID int64) (int64, error)
 	// Pin 把临时作品转成长期保存（计入配额）。
 	Pin(ctx context.Context, userID int64, id string, quota int64) error
+	// Unpin 把已保存作品转回临时内容，并写入新的过期时间。
+	Unpin(ctx context.Context, userID int64, id string, expiresAt int64) error
 	// SweepExpired 删掉一批到期未保存的记录，返回它们的对象键。
 	SweepExpired(ctx context.Context, batch int) ([]string, error)
 	// ObjectKey 返回记录的 object_key；记录不存在时返回 ErrStudioWorkNotFound。
@@ -245,6 +247,44 @@ func (s *VideoStudioGalleryService) Pin(ctx context.Context, userID int64, id st
 		return err
 	}
 	return nil
+}
+
+// Unpin 取消保存。未过期的视频转回临时内容；已过期的视频由前端确认后删除。
+func (s *VideoStudioGalleryService) Unpin(
+	ctx context.Context,
+	userID int64,
+	id string,
+) (*VideoStudioGalleryEntry, error) {
+	if s == nil || s.store == nil || userID <= 0 || strings.TrimSpace(id) == "" {
+		return nil, ErrVideoStudioGalleryUnavailable
+	}
+	entries, err := s.List(ctx, userID, 0, nil)
+	if err != nil {
+		return nil, err
+	}
+	var entry *VideoStudioGalleryEntry
+	for _, candidate := range entries {
+		if candidate != nil && candidate.ID == strings.TrimSpace(id) {
+			entry = candidate
+			break
+		}
+	}
+	if entry == nil {
+		return nil, ErrStudioWorkNotFound
+	}
+	if !entry.Saved {
+		return entry, nil
+	}
+	expiresAt := entry.CreatedAt + int64(s.tempRetention().Seconds())
+	if expiresAt <= time.Now().UTC().Unix() {
+		return nil, ErrStudioWorkExpired
+	}
+	if err := s.store.Unpin(ctx, userID, entry.ID, expiresAt); err != nil {
+		return nil, err
+	}
+	entry.Saved = false
+	entry.ExpiresAt = expiresAt
+	return entry, nil
 }
 
 // Delete 删除一条视频作品：先删对象存储里的文件，成功后再删记录。

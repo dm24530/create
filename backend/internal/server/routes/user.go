@@ -106,6 +106,7 @@ func RegisterUserRoutes(
 			imageStudio.GET("/gallery/:id/thumbnail", h.ImageStudioGallery.Thumbnail)
 			imageStudio.GET("/gallery/:id/download", h.ImageStudioGallery.Download)
 			imageStudio.POST("/gallery/:id/pin", h.ImageStudioGallery.Pin)
+			imageStudio.POST("/gallery/:id/unpin", h.ImageStudioGallery.Unpin)
 			imageStudio.DELETE("/gallery/:id", h.ImageStudioGallery.Delete)
 			// 作品配额是图片与视频合起来算的；两个工作台都能查，前端各调各的命名空间。
 			imageStudio.GET("/gallery/quota", h.ImageStudioGallery.Quota)
@@ -117,6 +118,7 @@ func RegisterUserRoutes(
 			videoStudio.GET("/gallery", h.VideoStudioGallery.List)
 			videoStudio.POST("/gallery", h.VideoStudioGallery.Save)
 			videoStudio.POST("/gallery/:id/pin", h.VideoStudioGallery.Pin)
+			videoStudio.POST("/gallery/:id/unpin", h.VideoStudioGallery.Unpin)
 			videoStudio.DELETE("/gallery/:id", h.VideoStudioGallery.Delete)
 			videoStudio.GET("/gallery/quota", h.ImageStudioGallery.Quota)
 		}

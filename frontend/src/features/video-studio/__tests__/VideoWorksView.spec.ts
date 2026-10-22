@@ -12,17 +12,19 @@ const { listKeys, getPublicSettings, copyToClipboard, push } = vi.hoisted(() => 
   push: vi.fn(),
 }))
 
-const { listArchivedVideos, deleteArchivedVideo, pinArchivedVideo, fetchOnlineInspirationFeed, fetchInspirationLibrary } = vi.hoisted(() => ({
+const { listArchivedVideos, deleteArchivedVideo, pinArchivedVideo, unpinArchivedVideo, fetchOnlineInspirationFeed, fetchInspirationLibrary } = vi.hoisted(() => ({
   listArchivedVideos: vi.fn(),
   deleteArchivedVideo: vi.fn(),
   pinArchivedVideo: vi.fn(),
+  unpinArchivedVideo: vi.fn(),
   fetchOnlineInspirationFeed: vi.fn(),
   fetchInspirationLibrary: vi.fn(),
 }))
 
-const { listImages, pinImage, deleteImage, downloadImage, thumbnailImage } = vi.hoisted(() => ({
+const { listImages, pinImage, unpinImage, deleteImage, downloadImage, thumbnailImage } = vi.hoisted(() => ({
   listImages: vi.fn(),
   pinImage: vi.fn(),
+  unpinImage: vi.fn(),
   deleteImage: vi.fn(),
   downloadImage: vi.fn(),
   thumbnailImage: vi.fn(),
@@ -32,8 +34,11 @@ vi.mock('../videoArchiveApi', () => ({
   listArchivedVideos,
   deleteArchivedVideo,
   pinArchivedVideo,
+  unpinArchivedVideo,
   fetchStudioWorksQuota: vi.fn().mockResolvedValue({ used: 2, limit: 100 }),
   isStudioQuotaError: () => false,
+  isStudioWorkExpiredError: (error: unknown) =>
+    String((error as { reason?: unknown } | null)?.reason || '') === 'STUDIO_WORK_EXPIRED',
   fetchOnlineInspirationFeed,
   fetchInspirationLibrary,
   inspirationMediaProxyUrl: (rawUrl: string) =>
@@ -47,6 +52,7 @@ vi.mock('@/api', () => ({
   imageStudioGalleryAPI: {
     list: listImages,
     pin: pinImage,
+    unpin: unpinImage,
     delete: deleteImage,
     download: downloadImage,
     thumbnail: thumbnailImage,
@@ -333,6 +339,10 @@ describe('VideoWorksView', () => {
     listImages.mockResolvedValue([])
     pinImage.mockReset()
     pinImage.mockResolvedValue(undefined)
+    unpinImage.mockReset()
+    unpinImage.mockResolvedValue({ saved: false, expires_at: Math.floor(Date.now() / 1000) + 86400 })
+    unpinArchivedVideo.mockReset()
+    unpinArchivedVideo.mockResolvedValue({ saved: false, expires_at: Math.floor(Date.now() / 1000) + 86400 })
     deleteImage.mockReset()
     deleteImage.mockResolvedValue(undefined)
     downloadImage.mockReset()
@@ -401,10 +411,75 @@ describe('VideoWorksView', () => {
     await flushPromises()
 
     const card = wrapper.get('[data-testid="image-work-image-1"]')
-    expect(card.text()).toContain('一张已保存的海报')
+    expect(card.classes()).toContain('work-card--image')
+    expect(card.text()).not.toContain('一张已保存的海报')
     expect(card.text()).toContain('已保存到我的作品')
-    expect(card.get('img').attributes('src')).toBe('https://cdn.example.com/saved-image-thumb.jpg')
-    expect(thumbnailImage).not.toHaveBeenCalled()
+    expect(thumbnailImage).toHaveBeenCalledWith('image-1')
+    expect(card.get('img').attributes('src')).toBe('blob:image-thumb')
+
+    await card.trigger('click')
+    const detail = wrapper.get('[data-testid="image-work-detail"]')
+    expect(detail.text()).toContain('一张已保存的海报')
+    expect(detail.text()).toContain('gpt-image-2')
+    expect(detail.text()).toContain('1024x1024')
+    expect(detail.get('img').attributes('src')).toBe('https://cdn.example.com/saved-image.png')
+    expect(wrapper.find('[data-testid="image-work-unpin-detail"]').exists()).toBe(true)
+  })
+
+  it('cancels image save without deleting the server file while still in the temporary retention period', async () => {
+    listImages.mockResolvedValue([
+      {
+        id: 'image-unsave',
+        url: 'https://cdn.example.com/saved.png',
+        prompt: '取消保存的图片',
+        model: 'gpt-image-2',
+        size: '1024x1024',
+        format: 'png',
+        saved: true,
+        created_at: Math.floor(Date.now() / 1000),
+        expires_at: 0,
+      },
+    ])
+
+    const wrapper = mount(VideoWorksView, { global: { stubs: globalStubs } })
+    await flushPromises()
+    await wrapper.get('[data-testid="image-work-image-unsave"]').trigger('click')
+    await wrapper.get('[data-testid="image-work-unpin-detail"]').trigger('click')
+    await flushPromises()
+
+    expect(unpinImage).toHaveBeenCalledWith('image-unsave')
+    expect(deleteImage).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-testid="image-work-image-unsave"]').exists()).toBe(false)
+  })
+
+  it('confirms and permanently deletes an expired image when cancelling save', async () => {
+    unpinImage.mockRejectedValueOnce({ reason: 'STUDIO_WORK_EXPIRED' })
+    listImages.mockResolvedValue([
+      {
+        id: 'image-expired',
+        url: 'https://cdn.example.com/expired.png',
+        prompt: '已过期的图片',
+        model: 'gpt-image-2',
+        size: '1024x1024',
+        format: 'png',
+        saved: true,
+        created_at: Math.floor(Date.now() / 1000) - 30 * 86400,
+        expires_at: 0,
+      },
+    ])
+
+    const wrapper = mount(VideoWorksView, { global: { stubs: globalStubs } })
+    await flushPromises()
+    await wrapper.get('[data-testid="image-work-image-expired"]').trigger('click')
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    await wrapper.get('[data-testid="image-work-unpin-detail"]').trigger('click')
+    await flushPromises()
+
+    expect(unpinImage).toHaveBeenCalledWith('image-expired')
+    expect(confirmSpy).toHaveBeenCalled()
+    expect(deleteImage).toHaveBeenCalledWith('image-expired')
+    expect(wrapper.find('[data-testid="image-work-image-expired"]').exists()).toBe(false)
+    confirmSpy.mockRestore()
   })
 
   it('backfills a preview for older images without a stored thumbnail', async () => {
@@ -482,7 +557,7 @@ describe('VideoWorksView', () => {
     await flushPromises()
 
     const card = wrapper.get('[data-testid="archived-arch-2"]')
-    const deleteButton = card.findAll('button').find((button) => button.attributes('title') === '取消收藏并删除视频')
+    const deleteButton = card.findAll('button').find((button) => button.attributes('title') === '彻底删除视频')
     // 删除要连带删对象存储里的文件，所以走一次确认框。
     const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
     await deleteButton!.trigger('click')
@@ -492,6 +567,31 @@ describe('VideoWorksView', () => {
     expect(wrapper.find('[data-testid="archived-arch-2"]').exists()).toBe(false)
     expect(confirmSpy).toHaveBeenCalled()
     confirmSpy.mockRestore()
+  })
+
+  it('cancels archived video save through the unpin API', async () => {
+    listArchivedVideos.mockResolvedValue([
+      {
+        id: 'arch-unpin',
+        url: 'https://cdn.example.com/archived-unpin.mp4',
+        prompt: '取消保存的视频',
+        model: 'seedance-2-720p',
+        format: 'mp4',
+        duration_seconds: 5,
+        saved: true,
+        created_at: Math.floor(Date.now() / 1000),
+        expires_at: 0,
+      },
+    ])
+
+    const wrapper = mount(VideoWorksView, { global: { stubs: globalStubs } })
+    await flushPromises()
+    await wrapper.get('[data-testid="archived-unpin"]').trigger('click')
+    await flushPromises()
+
+    expect(unpinArchivedVideo).toHaveBeenCalledWith('arch-unpin')
+    expect(deleteArchivedVideo).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-testid="archived-arch-unpin"]').exists()).toBe(false)
   })
 
   it('does not render temporary archives in my works', async () => {

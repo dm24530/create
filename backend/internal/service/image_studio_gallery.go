@@ -75,6 +75,8 @@ type ImageStudioGalleryStore interface {
 	Count(ctx context.Context, userID int64) (int64, error)
 	// Pin 把临时作品转成长期保存（计入配额）。
 	Pin(ctx context.Context, userID int64, id string, quota int64) error
+	// Unpin 把已保存作品转回临时内容，并写入新的过期时间。
+	Unpin(ctx context.Context, userID int64, id string, expiresAt int64) error
 	// SweepExpired 删掉一批到期未保存的记录，返回它们的对象键。
 	SweepExpired(ctx context.Context, batch int) ([]string, error)
 	// ObjectKey 返回记录的 object_key；记录不存在时返回 ErrStudioWorkNotFound。
@@ -169,7 +171,7 @@ func (s *ImageStudioGalleryService) Save(
 	}
 	thumbURL := ""
 	thumbObjectKey := ""
-	if thumb, thumbErr := buildThumbnail(data, 360); thumbErr != nil {
+	if thumb, thumbErr := buildThumbnail(data, 720); thumbErr != nil {
 		logger.L().Warn("studio_work.thumbnail_build_failed", zap.String("work_id", id), zap.Error(thumbErr))
 	} else if thumbURL, thumbObjectKey, thumbErr = s.storage.SaveImageWithKey(
 		ctx,
@@ -314,7 +316,7 @@ type thumbnailCacheEntry struct {
 // same preview repeatedly.
 func (s *ImageStudioGalleryService) Thumbnail(ctx context.Context, userID int64, id string, maxEdge int) ([]byte, error) {
 	if maxEdge < 64 {
-		maxEdge = 360
+		maxEdge = 720
 	}
 	if maxEdge > 1024 {
 		maxEdge = 1024
@@ -381,7 +383,7 @@ func buildThumbnail(data []byte, maxEdge int) ([]byte, error) {
 	xdraw.CatmullRom.Scale(dst, dst.Bounds(), img, bounds, xdraw.Over, nil)
 
 	var out bytes.Buffer
-	if err := jpeg.Encode(&out, dst, &jpeg.Options{Quality: 78}); err != nil {
+	if err := jpeg.Encode(&out, dst, &jpeg.Options{Quality: 88}); err != nil {
 		return nil, err
 	}
 	return out.Bytes(), nil
@@ -446,6 +448,35 @@ func (s *ImageStudioGalleryService) Pin(ctx context.Context, userID int64, id st
 		return err
 	}
 	return nil
+}
+
+// Unpin 取消保存。未过期的内容转回临时内容；已超过临时保留期的内容返回
+// ErrStudioWorkExpired，由前端确认后调用 Delete 彻底删除。
+func (s *ImageStudioGalleryService) Unpin(
+	ctx context.Context,
+	userID int64,
+	id string,
+) (*ImageStudioGalleryEntry, error) {
+	if s == nil || s.store == nil || userID <= 0 || strings.TrimSpace(id) == "" {
+		return nil, ErrImageStudioGalleryUnavailable
+	}
+	entry, err := s.Get(ctx, userID, strings.TrimSpace(id))
+	if err != nil {
+		return nil, err
+	}
+	if !entry.Saved {
+		return entry, nil
+	}
+	expiresAt := entry.CreatedAt + int64(s.tempRetention().Seconds())
+	if expiresAt <= time.Now().UTC().Unix() {
+		return nil, ErrStudioWorkExpired
+	}
+	if err := s.store.Unpin(ctx, userID, entry.ID, expiresAt); err != nil {
+		return nil, err
+	}
+	entry.Saved = false
+	entry.ExpiresAt = expiresAt
+	return entry, nil
 }
 
 // SweepExpired 清扫到期未保存的内容：先删记录（store 返回对象键），再删桶里的文件。

@@ -212,6 +212,39 @@ func (s *studioWorksDB) pin(ctx context.Context, userID int64, id string, quota 
 	return nil
 }
 
+// unpin 把已保存作品转回临时内容。作品不存在时返回统一错误；重复调用成功。
+func (s *studioWorksDB) unpin(ctx context.Context, userID int64, id string, expiresAt int64) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("studio works store is unavailable")
+	}
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE studio_works
+		SET saved = FALSE, expires_at = $3
+		WHERE user_id = $1 AND id = $2 AND saved = TRUE`,
+		userID, id, studioWorkExpiry(expiresAt),
+	)
+	if err != nil {
+		return fmt.Errorf("unpin studio work: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("unpin studio work: %w", err)
+	}
+	if affected == 0 {
+		var exists bool
+		if err := s.db.QueryRowContext(ctx,
+			`SELECT EXISTS(SELECT 1 FROM studio_works WHERE user_id = $1 AND id = $2)`,
+			userID, id,
+		).Scan(&exists); err != nil {
+			return fmt.Errorf("check studio work: %w", err)
+		}
+		if !exists {
+			return service.ErrStudioWorkNotFound
+		}
+	}
+	return nil
+}
+
 // sweepExpired 删掉一批到期未保存的记录，并返回它们的 object_key 供调用方删对象。
 func (s *studioWorksDB) sweepExpired(ctx context.Context, batch int) ([]string, error) {
 	if s == nil || s.db == nil {
@@ -404,6 +437,10 @@ func (s *imageStudioGalleryStore) Pin(ctx context.Context, userID int64, id stri
 	return s.pin(ctx, userID, id, quota)
 }
 
+func (s *imageStudioGalleryStore) Unpin(ctx context.Context, userID int64, id string, expiresAt int64) error {
+	return s.unpin(ctx, userID, id, expiresAt)
+}
+
 func (s *imageStudioGalleryStore) SweepExpired(ctx context.Context, batch int) ([]string, error) {
 	return s.sweepExpired(ctx, batch)
 }
@@ -479,6 +516,10 @@ func (s *videoStudioGalleryStore) Delete(ctx context.Context, userID int64, id s
 
 func (s *videoStudioGalleryStore) Pin(ctx context.Context, userID int64, id string, quota int64) error {
 	return s.pin(ctx, userID, id, quota)
+}
+
+func (s *videoStudioGalleryStore) Unpin(ctx context.Context, userID int64, id string, expiresAt int64) error {
+	return s.unpin(ctx, userID, id, expiresAt)
 }
 
 func (s *videoStudioGalleryStore) SweepExpired(ctx context.Context, batch int) ([]string, error) {

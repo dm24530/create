@@ -54,6 +54,18 @@ export async function pinArchivedVideo(id: string): Promise<void> {
   await apiClient.post(`/video-studio/gallery/${encodeURIComponent(id)}/pin`)
 }
 
+export interface UnpinArchivedVideoResult {
+  saved: false
+  expires_at: number
+}
+
+export async function unpinArchivedVideo(id: string): Promise<UnpinArchivedVideoResult> {
+  const { data } = await apiClient.post<UnpinArchivedVideoResult>(
+    `/video-studio/gallery/${encodeURIComponent(id)}/unpin`,
+  )
+  return data
+}
+
 export interface StudioWorksQuota {
   used: number
   limit: number
@@ -71,6 +83,13 @@ export function isStudioQuotaError(error: unknown): boolean {
     ? String((error as { reason?: unknown }).reason || '')
     : ''
   return reason.endsWith('_QUOTA_EXCEEDED')
+}
+
+export function isStudioWorkExpiredError(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false
+  const record = error as { reason?: unknown; code?: unknown }
+  return String(record.reason || '') === 'STUDIO_WORK_EXPIRED'
+    || String(record.code || '') === 'STUDIO_WORK_EXPIRED'
 }
 
 // 远端素材（在线灵感、模板分镜图）统一走本站代理：

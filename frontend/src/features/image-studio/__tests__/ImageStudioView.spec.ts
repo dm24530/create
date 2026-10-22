@@ -563,6 +563,34 @@ describe('ImageStudioView gallery', () => {
     expect(wrapper.get('article').text()).not.toContain('a cat')
   })
 
+  it('renders gallery images in an uncropped masonry layout', async () => {
+    listGallery.mockResolvedValue([
+      {
+        id: 'gallery-1',
+        url: 'https://cdn.example.com/gallery-1.png',
+        thumb_url: 'https://cdn.example.com/gallery-1-thumb.jpg',
+        prompt: 'a wide room',
+        model: 'gpt-image-1',
+        size: '1536x1024',
+        format: 'png',
+        created_at: 1,
+        expires_at: 9999999999,
+      },
+    ])
+
+    const wrapper = mountImageStudio()
+    await flushPromises()
+
+    const masonry = wrapper.get('[data-testid="image-results-masonry"]')
+    const media = masonry.get('article > button')
+    const image = masonry.get('img[alt="历史图片 1"]')
+
+    expect(media.classes()).not.toContain('aspect-square')
+    expect(image.classes()).toContain('h-auto')
+    expect(image.classes()).toContain('object-contain')
+    expect(image.classes()).not.toContain('object-cover')
+  })
+
   it('uses a styled delete confirmation without showing the image name', async () => {
     listGallery.mockResolvedValue([
       {
@@ -1006,6 +1034,8 @@ describe('ImageStudioView gallery', () => {
     expect(wrapper.text()).not.toContain('可以切换到其他页面')
     expect(wrapper.get('[data-testid="image-active-generations"]').text()).toContain('1 个任务进行中')
     expect(localStorage.getItem('sub2api:image-studio:pending')).toContain('"pending":true')
+    expect(localStorage.getItem('sub2api:image-studio:pending')).toContain('"taskId"')
+    expect(localStorage.getItem('sub2api:image-studio:pending')).toContain('"batchId"')
 
     const promptInput = wrapper.get('textarea.image-composer__prompt')
     const submitButton = wrapper.get('.image-composer__generate')
@@ -1089,7 +1119,19 @@ describe('ImageStudioView gallery', () => {
 
   it('restores pending image placeholders from browser storage on entry', async () => {
     localStorage.setItem('sub2api:image-studio:pending', JSON.stringify([
-      { id: 55, title: '正在生成', src: '', meta: 'PNG · 1024x1024 · gpt-image-1', pending: true },
+      {
+        id: 55,
+        title: '正在生成',
+        src: '',
+        meta: 'PNG · 1024x1024 · gpt-image-1',
+        pending: true,
+        taskId: 'imgtask_restore',
+        batchId: 'batch_restore',
+        prompt: '一只猫',
+        model: 'gpt-image-1',
+        size: '1024x1024',
+        format: 'png',
+      },
     ]))
 
     const wrapper = mountImageStudio()
