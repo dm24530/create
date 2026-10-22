@@ -13,7 +13,7 @@
     >
       <!-- Header -->
       <AppHeader :compact="isImmersive || usesHorizontalUserLayout">
-        <template v-if="showStudioNav" #nav>
+        <template v-if="showInlineStudioNav" #nav>
           <StudioNav inline />
         </template>
       </AppHeader>
@@ -59,6 +59,7 @@ const studioNavPaths = new Set([
   '/video-works',
 ])
 const showStudioNav = computed(() => studioNavPaths.has(route.path))
+const showInlineStudioNav = computed(() => showStudioNav.value && !usesHorizontalUserLayout.value)
 
 const { replayTour } = useOnboardingTour({
   storageKey: isAdmin.value ? 'admin_guide' : 'user_guide',
