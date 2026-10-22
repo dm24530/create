@@ -1,9 +1,13 @@
 package service
 
 import (
+	"context"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
+
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 )
 
 const (
@@ -203,6 +207,9 @@ type UsageLog struct {
 	ImageSizeSource    *string
 	ImageSizeBreakdown map[string]int
 	MediaType          *string
+	// ImageURL is the durable generated-image link associated with this usage record.
+	// It is hydrated from usage_log_image_links and is not stored on usage_logs itself.
+	ImageURL *string
 
 	// 视频生成字段（Grok 视频按秒计费；video_count>0 的行不要求 image_size）
 	VideoCount           int
@@ -216,6 +223,30 @@ type UsageLog struct {
 	Account      *Account
 	Group        *Group
 	Subscription *UserSubscription
+}
+
+type UsageLogImageLinkStore interface {
+	Upsert(ctx context.Context, link *UsageLogImageLink) error
+	GetByToken(ctx context.Context, token string) (*UsageLogImageLink, error)
+	DeleteExpired(ctx context.Context, now time.Time, limit int) (int64, error)
+}
+
+const UsageLogImageLinkTTL = 90 * 24 * time.Hour
+
+var ErrUsageLogImageLinkNotFound = infraerrors.New(
+	http.StatusNotFound,
+	"USAGE_LOG_IMAGE_LINK_NOT_FOUND",
+	"image link not found",
+)
+
+type UsageLogImageLink struct {
+	UserID    int64
+	APIKeyID  int64
+	RequestID string
+	LinkToken string
+	ImageURL  string
+	ObjectKey string
+	ExpiresAt time.Time
 }
 
 func (u *UsageLog) TotalTokens() int {

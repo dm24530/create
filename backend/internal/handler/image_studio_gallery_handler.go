@@ -26,6 +26,7 @@ type saveImageStudioGalleryRequest struct {
 	Model        string `json:"model"`
 	Size         string `json:"size"`
 	Format       string `json:"format"`
+	DurationMs   int    `json:"duration_ms"`
 	// Saved 为真表示直接存进「我的作品」（长期有效、计入配额）；
 	// 不传时保持老行为（true），显式传 false 才是"只是生成页的临时内容"。
 	Saved *bool `json:"saved"`
@@ -64,11 +65,11 @@ func (h *ImageStudioGalleryHandler) Save(c *gin.Context) {
 			return
 		}
 		entry, err = h.gallery.Save(
-			ctx, subject.UserID, request.Prompt, request.Model, request.Size, request.Format, contentType, data, saved,
+			ctx, subject.UserID, request.Prompt, request.Model, request.Size, request.Format, contentType, data, saved, request.DurationMs,
 		)
 	case imageURL != "":
 		entry, err = h.gallery.SaveFromURL(
-			ctx, subject.UserID, request.Prompt, request.Model, request.Size, request.Format, imageURL, saved,
+			ctx, subject.UserID, request.Prompt, request.Model, request.Size, request.Format, imageURL, saved, request.DurationMs,
 		)
 	default:
 		response.BadRequest(c, "image_data_url or image_url is required")

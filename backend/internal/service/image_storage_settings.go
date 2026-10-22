@@ -248,6 +248,36 @@ func (s *ImageStorageSettingService) FetchImageURL(ctx context.Context, rawURL s
 	return uploader.download(ctx, rawURL)
 }
 
+func (s *ImageStorageSettingService) PresignImageObject(ctx context.Context, objectKey string) (string, error) {
+	if reason := s.unusableReason(ctx); reason != nil {
+		return "", reason
+	}
+	uploader, enabled := s.resolve()
+	if !enabled || uploader == nil || uploader.storage == nil {
+		return "", ErrImageStorageIncomplete
+	}
+	resolver, ok := uploader.storage.(ImageStorageURLResolver)
+	if !ok {
+		return "", ErrImageStorageIncomplete
+	}
+	return resolver.PresignGet(ctx, objectKey)
+}
+
+func (s *ImageStorageSettingService) ImageObjectExists(ctx context.Context, objectKey string) (bool, error) {
+	if reason := s.unusableReason(ctx); reason != nil {
+		return false, reason
+	}
+	uploader, enabled := s.resolve()
+	if !enabled || uploader == nil || uploader.storage == nil {
+		return false, ErrImageStorageIncomplete
+	}
+	resolver, ok := uploader.storage.(ImageStorageURLResolver)
+	if !ok {
+		return false, ErrImageStorageIncomplete
+	}
+	return resolver.Exists(ctx, objectKey)
+}
+
 func (s *ImageStorageSettingService) resolve() (*ImageResultUploader, bool) {
 	if s == nil {
 		return nil, false

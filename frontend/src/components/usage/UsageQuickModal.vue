@@ -134,6 +134,7 @@ const columns: Column[] = [
   { key: 'stream', label: '类型', sortable: false },
   { key: 'billing_mode', label: '计费模式', sortable: false },
   { key: 'cost', label: '价格', sortable: false },
+  { key: 'image_url', label: '图片', sortable: false },
   { key: 'latency', label: '延迟', sortable: false },
   { key: 'created_at', label: '时间', sortable: false },
 ]

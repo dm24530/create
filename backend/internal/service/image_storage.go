@@ -38,6 +38,11 @@ type ImageStorageDeleter interface {
 	Delete(ctx context.Context, key string) error
 }
 
+type ImageStorageURLResolver interface {
+	PresignGet(ctx context.Context, key string) (string, error)
+	Exists(ctx context.Context, key string) (bool, error)
+}
+
 // ImageResultUploader 是 ImageStorage 的上层编排器（与具体厂商无关）：
 // 把上游生图响应里的每张图片（b64_json 解码 / url 下载）转存到对象存储，
 // 并把响应结果改写为只含短链接的紧凑 JSON，从而避免大 base64 落 Redis。
@@ -106,6 +111,11 @@ func (u *ImageResultUploader) Rewrite(ctx context.Context, taskID string, result
 			return nil, fmt.Errorf("image %d: encode url: %w", i, err)
 		}
 		item["url"] = urlRaw
+		objectKeyRaw, err := json.Marshal(key)
+		if err != nil {
+			return nil, fmt.Errorf("image %d: encode object key: %w", i, err)
+		}
+		item["object_key"] = objectKeyRaw
 		delete(item, "b64_json")
 		items[i] = item
 	}

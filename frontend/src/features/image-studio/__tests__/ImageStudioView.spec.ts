@@ -118,6 +118,15 @@ function resetCommonMocks() {
   })
 }
 
+function asyncImageUnavailableResponse(): Response {
+  return {
+    ok: false,
+    status: 404,
+    statusText: 'Not Found',
+    json: async () => ({ error: { message: 'async image tasks are not enabled' } }),
+  } as Response
+}
+
 describe('ImageStudioView API key selector', () => {
   it('shows only the API key name', () => {
     expect(componentSource).toContain('label: key.name')
@@ -198,6 +207,45 @@ describe('ImageStudioView image model loading', () => {
     expect(modelSelect.text()).toContain('gpt-image-2-5-flare')
     expect(modelSelect.text().match(/gpt-image-2-5-flare/g)).toHaveLength(1)
     expect(wrapper.find('input[placeholder="输入图片模型"]').exists()).toBe(false)
+  })
+
+  it('lets users choose an image output format and sends it upstream', async () => {
+    listKeys.mockResolvedValue({
+      items: [{ id: 1, name: 'dd', key: 'sk-local', status: 'active', group_id: 2 }],
+    })
+    getPublicSettings.mockResolvedValue({ api_base_url: '/v1' })
+    let generationBody: Record<string, any> | null = null
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = String(input)
+      if (url.endsWith('/images/batches/models')) {
+        return { ok: true, json: async () => ({ data: [{ id: 'gpt-image-1' }] }) } as Response
+      }
+      if (url.endsWith('/images/generations/async')) return asyncImageUnavailableResponse()
+      if (url.endsWith('/images/generations')) {
+        generationBody = JSON.parse(String(init?.body || '{}'))
+        return { ok: true, json: async () => ({ data: [{ b64_json: 'aGVsbG8=' }] }) } as Response
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountImageStudio()
+    await flushPromises()
+    await flushPromises()
+
+    const formatControl = wrapper.get('[data-testid="image-format-control"]')
+    const formatButtons = formatControl.findAll('button')
+    expect(formatButtons.map((button) => button.text())).toEqual(['PNG', 'JPEG', 'WEBP'])
+    expect(formatButtons[0].classes()).toContain('is-active')
+
+    await formatButtons[2].trigger('click')
+    expect(formatButtons[2].classes()).toContain('is-active')
+
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(generationBody).toEqual(expect.objectContaining({
+      output_format: 'webp',
+    }))
   })
 
   it('reloads keys and models when the toolbar refresh button is pressed', async () => {
@@ -434,6 +482,34 @@ describe('ImageStudioView inline image size controls', () => {
     expect(wrapper.get('[data-testid="custom-size-summary"]').text()).toContain('1280×1024')
   })
 
+  it('uses the official GPT Image default sizes instead of 1K/2K/4K presets', async () => {
+    listKeys.mockResolvedValue({
+      items: [{ id: 1, name: 'dd', key: 'sk-local', status: 'active', group_id: 2 }],
+    })
+    getPublicSettings.mockResolvedValue({ api_base_url: '/v1' })
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/images/batches/models')) {
+        return { ok: true, json: async () => ({ data: [{ id: 'gpt-image-1' }] }) } as Response
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountImageStudio()
+    await flushPromises()
+    await wrapper.get('[data-testid="image-size-trigger"]').trigger('click')
+
+    const menuText = wrapper.get('[data-testid="image-size-menu"]').text()
+    expect(menuText).toContain('默认')
+    expect(menuText).toContain('1:1 1024x1024')
+    expect(menuText).toContain('3:2 1536x1024')
+    expect(menuText).toContain('2:3 1024x1536')
+    expect(menuText).not.toContain('16:9')
+
+    await wrapper.get('[data-testid="size-preset-1024-3:2"]').trigger('click')
+    expect(wrapper.get('[data-testid="image-size-trigger"]').text()).toContain('3:2 1536x1024')
+  })
+
   it('opens the size menu upward when there is enough space above the trigger', async () => {
     const wrapper = mountImageStudio()
     await flushPromises()
@@ -549,6 +625,7 @@ describe('ImageStudioView gallery', () => {
         size: '1024x1024',
         format: 'png',
         created_at: 1,
+        duration_ms: 1234,
         expires_at: 9999999999,
       },
     ])
@@ -591,6 +668,39 @@ describe('ImageStudioView gallery', () => {
     expect(image.classes()).not.toContain('object-cover')
   })
 
+  it('distributes gallery images across masonry columns in display order', async () => {
+    const originalWidth = window.innerWidth
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1024 })
+    try {
+      listGallery.mockResolvedValue(
+        Array.from({ length: 4 }, (_, index) => ({
+          id: `gallery-${index + 1}`,
+          url: `https://cdn.example.com/gallery-${index + 1}.png`,
+          prompt: `image ${index + 1}`,
+          model: 'gpt-image-1',
+          size: '1024x1024',
+          format: 'png',
+          created_at: index + 1,
+          expires_at: 9999999999,
+        })),
+      )
+
+      const wrapper = mountImageStudio()
+      await flushPromises()
+
+      const firstColumn = wrapper.get('[data-testid="image-results-column-1"]')
+      const secondColumn = wrapper.get('[data-testid="image-results-column-2"]')
+      const thirdColumn = wrapper.get('[data-testid="image-results-column-3"]')
+
+      expect(firstColumn.find('img[alt="历史图片 1"]').exists()).toBe(true)
+      expect(firstColumn.find('img[alt="历史图片 4"]').exists()).toBe(true)
+      expect(secondColumn.find('img[alt="历史图片 2"]').exists()).toBe(true)
+      expect(thirdColumn.find('img[alt="历史图片 3"]').exists()).toBe(true)
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth })
+    }
+  })
+
   it('uses a styled delete confirmation without showing the image name', async () => {
     listGallery.mockResolvedValue([
       {
@@ -601,6 +711,7 @@ describe('ImageStudioView gallery', () => {
         size: '1024x1024',
         format: 'png',
         created_at: 1,
+        duration_ms: 1234,
         expires_at: 9999999999,
       },
     ])
@@ -662,6 +773,7 @@ describe('ImageStudioView gallery', () => {
         size: '1024x1024',
         format: 'png',
         created_at: 1,
+        duration_ms: 1234,
         expires_at: 9999999999,
       },
     ])
@@ -676,6 +788,7 @@ describe('ImageStudioView gallery', () => {
     await imageButton!.trigger('click')
 
     expect(wrapper.text()).toContain('提示词')
+    expect(wrapper.get('[data-testid="image-generation-duration"]').text()).toBe('1 秒')
     expect((wrapper.get('[data-testid="edit-image-prompt"]').element as HTMLTextAreaElement).value)
       .toBe('a cat wearing a spacesuit')
 
@@ -727,6 +840,7 @@ describe('ImageStudioView gallery', () => {
       if (url.endsWith('/models')) {
         return { ok: true, json: async () => ({ data: [{ id: 'gpt-image-1' }] }) } as Response
       }
+      if (url.endsWith('/images/generations/async')) return asyncImageUnavailableResponse()
       if (url.endsWith('/images/generations')) {
         return { ok: true, json: async () => ({ data: [{ b64_json: 'aGVsbG8=' }] }) } as Response
       }
@@ -744,7 +858,172 @@ describe('ImageStudioView gallery', () => {
       model: 'gpt-image-1',
       size: '1024x1024',
       format: 'png',
+      duration_ms: expect.any(Number),
     }))
+  })
+
+  it('uses the server-side image task and polls it until the result is complete', async () => {
+    listKeys.mockResolvedValue({
+      items: [{ id: 1, name: 'dd', key: 'sk-local', status: 'active', group_id: 2 }],
+    })
+    getPublicSettings.mockResolvedValue({ api_base_url: '/v1' })
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/images/batches/models')) {
+        return { ok: true, json: async () => ({ data: [] }) } as Response
+      }
+      if (url.endsWith('/models')) {
+        return { ok: true, json: async () => ({ data: [{ id: 'gpt-image-1' }] }) } as Response
+      }
+      if (url.endsWith('/images/generations/async')) {
+        return {
+          ok: true,
+          status: 202,
+          json: async () => ({
+            task_id: 'imgtask_server',
+            status: 'processing',
+            poll_url: '/v1/images/tasks/imgtask_server',
+          }),
+        } as Response
+      }
+      if (url.endsWith('/images/tasks/imgtask_server')) {
+        return {
+          ok: true,
+          json: async () => ({
+            task_id: 'imgtask_server',
+            status: 'completed',
+            result: { data: [{ b64_json: 'aGVsbG8=', mime_type: 'image/png' }] },
+          }),
+        } as Response
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountImageStudio()
+    await flushPromises()
+    await flushPromises()
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/v1/images/generations/async',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({ 'Idempotency-Key': expect.any(String) }),
+      }),
+    )
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/v1/images/tasks/imgtask_server'),
+      expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer sk-local' }) }),
+    )
+    expect(wrapper.find('img[alt="生成结果 1"]').exists()).toBe(true)
+    expect(localStorage.getItem('sub2api:image-studio:pending')).toBeNull()
+
+    const generatedButton = wrapper.findAll('button').find((button) =>
+      button.find('img[alt="生成结果 1"]').exists(),
+    )
+    await generatedButton!.trigger('click')
+    expect(wrapper.get('[data-testid="image-generation-duration"]').text()).toMatch(/^\d+ 秒$|^\d+ 分 \d+ 秒$/)
+  })
+
+  it('keeps already submitted async tasks when a later submission loses the network', async () => {
+    listKeys.mockResolvedValue({
+      items: [{ id: 7, name: 'original', key: 'sk-original', status: 'active', group_id: 2 }],
+    })
+    getPublicSettings.mockResolvedValue({ api_base_url: '/v1' })
+    let submitCalls = 0
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/images/batches/models')) {
+        return { ok: true, json: async () => ({ data: [] }) } as Response
+      }
+      if (url.endsWith('/models')) {
+        return { ok: true, json: async () => ({ data: [{ id: 'gpt-image-1' }] }) } as Response
+      }
+      if (url.endsWith('/images/generations/async')) {
+        submitCalls += 1
+        if (submitCalls >= 2) throw new TypeError('Failed to fetch')
+        return {
+          ok: true,
+          status: 202,
+          json: async () => ({
+            task_id: 'imgtask_partial',
+            status: 'processing',
+            poll_url: '/v1/images/tasks/imgtask_partial',
+          }),
+        } as Response
+      }
+      if (url.endsWith('/images/tasks/imgtask_partial')) {
+        return {
+          ok: true,
+          json: async () => ({
+            task_id: 'imgtask_partial',
+            status: 'completed',
+            result: { data: [{ b64_json: 'aGVsbG8=', mime_type: 'image/png' }] },
+          }),
+        } as Response
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountImageStudio()
+    await flushPromises()
+    await flushPromises()
+    await wrapper.get('[data-testid="image-count-control"]').findAll('button')[1].trigger('click')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    await new Promise((resolve) => window.setTimeout(resolve, 600))
+    await flushPromises()
+
+    expect(submitCalls).toBe(3)
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/v1/images/tasks/imgtask_partial'),
+      expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer sk-original' }) }),
+    )
+    expect(wrapper.find('img[alt="生成结果 1"]').exists()).toBe(true)
+    expect(localStorage.getItem('sub2api:image-studio:pending')).toBeNull()
+  })
+
+  it('does not fall back to sync generation after an ambiguous async submission', async () => {
+    listKeys.mockResolvedValue({
+      items: [{ id: 1, name: 'dd', key: 'sk-local', status: 'active', group_id: 2 }],
+    })
+    getPublicSettings.mockResolvedValue({ api_base_url: '/v1' })
+    let asyncCalls = 0
+    let syncCalls = 0
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/images/batches/models')) {
+        return { ok: true, json: async () => ({ data: [] }) } as Response
+      }
+      if (url.endsWith('/models')) {
+        return { ok: true, json: async () => ({ data: [{ id: 'gpt-image-1' }] }) } as Response
+      }
+      if (url.endsWith('/images/generations/async')) {
+        asyncCalls += 1
+        if (asyncCalls === 1) throw new TypeError('Failed to fetch')
+        return asyncImageUnavailableResponse()
+      }
+      if (url.endsWith('/images/generations')) {
+        syncCalls += 1
+        return { ok: true, json: async () => ({ data: [{ b64_json: 'aGVsbG8=' }] }) } as Response
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountImageStudio()
+    await flushPromises()
+    await flushPromises()
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    await new Promise((resolve) => window.setTimeout(resolve, 600))
+    await flushPromises()
+
+    expect(asyncCalls).toBe(2)
+    expect(syncCalls).toBe(0)
+    expect(wrapper.findAll('.image-pending-card')).toHaveLength(0)
   })
 
   it('does not show the freshly generated image twice when the gallery lists it', async () => {
@@ -774,6 +1053,7 @@ describe('ImageStudioView gallery', () => {
       if (url.endsWith('/models')) {
         return { ok: true, json: async () => ({ data: [{ id: 'gpt-image-1' }] }) } as Response
       }
+      if (url.endsWith('/images/generations/async')) return asyncImageUnavailableResponse()
       if (url.endsWith('/images/generations')) {
         return { ok: true, json: async () => ({ data: [{ b64_json: 'aGVsbG8=' }] }) } as Response
       }
@@ -807,6 +1087,7 @@ describe('ImageStudioView gallery', () => {
       if (url.endsWith('/models')) {
         return { ok: true, json: async () => ({ data: [{ id: 'gpt-image-1' }] }) } as Response
       }
+      if (url.endsWith('/images/generations/async')) return asyncImageUnavailableResponse()
       if (url.endsWith('/images/generations')) {
         generationBodies.push(JSON.parse(String(init?.body || '{}')))
         return { ok: true, json: async () => ({ data: [{ b64_json: 'aGVsbG8=' }] }) } as Response
@@ -856,6 +1137,7 @@ describe('ImageStudioView gallery', () => {
       if (url.endsWith('/models')) {
         return { ok: true, json: async () => ({ data: [{ id: 'gpt-image-1' }] }) } as Response
       }
+      if (url.endsWith('/images/generations/async')) return asyncImageUnavailableResponse()
       if (url.endsWith('/images/generations')) {
         return { ok: true, json: async () => ({ data: [{ url: 'https://upstream.example.com/out.png' }] }) } as Response
       }
@@ -899,6 +1181,7 @@ describe('ImageStudioView gallery', () => {
       if (url.endsWith('/models')) {
         return { ok: true, json: async () => ({ data: [{ id: 'gpt-image-1' }] }) } as Response
       }
+      if (url.endsWith('/images/generations/async')) return asyncImageUnavailableResponse()
       if (url.endsWith('/images/generations')) {
         return { ok: true, json: async () => ({ data: [{ b64_json: 'aGVsbG8=' }] }) } as Response
       }
@@ -928,6 +1211,41 @@ describe('ImageStudioView gallery', () => {
     })
   })
 
+  it('does not show the async fallback warning after a 404 response', async () => {
+    listKeys.mockResolvedValue({
+      items: [{ id: 1, name: 'dd', key: 'sk-local', status: 'active', group_id: 2 }],
+    })
+    getPublicSettings.mockResolvedValue({ api_base_url: '/v1' })
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/images/batches/models')) {
+        return { ok: true, json: async () => ({ data: [] }) } as Response
+      }
+      if (url.endsWith('/models')) {
+        return { ok: true, json: async () => ({ data: [{ id: 'gpt-image-1' }] }) } as Response
+      }
+      if (url.endsWith('/images/generations/async')) return asyncImageUnavailableResponse()
+      if (url.endsWith('/images/generations')) {
+        return { ok: true, json: async () => ({ data: [{ b64_json: 'aGVsbG8=' }] }) } as Response
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountImageStudio({ isAdmin: true })
+    await flushPromises()
+    await flushPromises()
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    await vi.waitFor(() => {
+      expect(wrapper.find('img[alt="生成结果 1"]').exists()).toBe(true)
+    })
+    expect(useAppStore().toasts.some((toast) => (
+      toast.message.includes('异步生图未生效')
+      || toast.message.includes('检查异步生图对象存储')
+    ))).toBe(false)
+  })
+
   it('points the generated image at the owned storage URL after saving', async () => {
     listKeys.mockResolvedValue({
       items: [{ id: 1, name: 'dd', key: 'sk-local', status: 'active', group_id: 2 }],
@@ -941,6 +1259,7 @@ describe('ImageStudioView gallery', () => {
       if (url.endsWith('/models')) {
         return { ok: true, json: async () => ({ data: [{ id: 'gpt-image-1' }] }) } as Response
       }
+      if (url.endsWith('/images/generations/async')) return asyncImageUnavailableResponse()
       if (url.endsWith('/images/generations')) {
         return { ok: true, json: async () => ({ data: [{ url: 'https://upstream.example.com/out.png' }] }) } as Response
       }
@@ -979,6 +1298,7 @@ describe('ImageStudioView gallery', () => {
       if (url.endsWith('/models')) {
         return { ok: true, json: async () => ({ data: [{ id: 'gpt-image-1' }] }) } as Response
       }
+      if (url.endsWith('/images/generations/async')) return asyncImageUnavailableResponse()
       if (url.endsWith('/images/generations')) {
         return { ok: true, json: async () => ({ data: [{ url: 'https://upstream.example.com/out.png' }] }) } as Response
       }
@@ -1017,6 +1337,7 @@ describe('ImageStudioView gallery', () => {
       if (url.endsWith('/models')) {
         return { ok: true, json: async () => ({ data: [{ id: 'gpt-image-1' }] }) } as Response
       }
+      if (url.endsWith('/images/generations/async')) return asyncImageUnavailableResponse()
       if (url.endsWith('/images/generations')) {
         generationBodies.push(JSON.parse(String(init?.body || '{}')))
         return await new Promise<Response>((resolve) => { generationResolvers.push(resolve) })
@@ -1088,6 +1409,7 @@ describe('ImageStudioView gallery', () => {
       if (url.endsWith('/models')) {
         return { ok: true, json: async () => ({ data: [{ id: 'gpt-image-1' }] }) } as Response
       }
+      if (url.endsWith('/images/generations/async')) return asyncImageUnavailableResponse()
       if (url.endsWith('/images/generations')) {
         return await new Promise<Response>((resolve) => resolvers.push(resolve))
       }
@@ -1117,6 +1439,60 @@ describe('ImageStudioView gallery', () => {
     expect(wrapper.find('img[alt="生成结果 2"]').exists()).toBe(true)
   })
 
+  it('shows elapsed seconds while generating and removes them when finished', async () => {
+    vi.useFakeTimers()
+    try {
+      listKeys.mockResolvedValue({
+        items: [{ id: 1, name: 'dd', key: 'sk-local', status: 'active', group_id: 2 }],
+      })
+      getPublicSettings.mockResolvedValue({ api_base_url: '/v1' })
+      let resolveGeneration: (response: Response) => void = () => {}
+      vi.mocked(fetch).mockImplementation(async (input) => {
+        const url = String(input)
+        if (url.endsWith('/images/batches/models')) {
+          return { ok: true, json: async () => ({ data: [] }) } as Response
+        }
+        if (url.endsWith('/models')) {
+          return { ok: true, json: async () => ({ data: [{ id: 'gpt-image-1' }] }) } as Response
+        }
+        if (url.endsWith('/images/generations/async')) return asyncImageUnavailableResponse()
+        if (url.endsWith('/images/generations')) {
+          return await new Promise<Response>((resolve) => {
+            resolveGeneration = resolve
+          })
+        }
+        throw new Error(`Unexpected request: ${url}`)
+      })
+
+      const wrapper = mountImageStudio()
+      await flushPromises()
+      await flushPromises()
+      await wrapper.get('form').trigger('submit')
+      await flushPromises()
+
+      expect(wrapper.get('[data-testid="image-active-generations"]').text()).toContain('1 个任务进行中')
+      expect(wrapper.get('[data-testid="image-pending-timer"]').text()).toBe('0 秒')
+
+      await vi.advanceTimersByTimeAsync(2100)
+      await flushPromises()
+
+      expect(wrapper.get('[data-testid="image-active-generations"]').text()).toContain('1 个任务进行中')
+      expect(wrapper.get('[data-testid="image-pending-timer"]').text()).toBe('2 秒')
+
+      resolveGeneration({
+        ok: true,
+        json: async () => ({ data: [{ b64_json: 'aGVsbG8=' }] }),
+      } as Response)
+      await flushPromises()
+
+      expect(wrapper.find('[data-testid="image-pending-timer"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="image-active-generations"]').exists()).toBe(false)
+      wrapper.unmount()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('restores pending image placeholders from browser storage on entry', async () => {
     localStorage.setItem('sub2api:image-studio:pending', JSON.stringify([
       {
@@ -1138,6 +1514,97 @@ describe('ImageStudioView gallery', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('正在生成')
+  })
+
+  it('resumes a persisted gateway task with the API key that submitted it', async () => {
+    listKeys.mockResolvedValue({
+      items: [
+        { id: 11, name: 'current', key: 'sk-current', status: 'active', group_id: 2 },
+        { id: 22, name: 'original', key: 'sk-original', status: 'active', group_id: 2 },
+      ],
+    })
+    getPublicSettings.mockResolvedValue({ api_base_url: '/v1' })
+    localStorage.setItem('sub2api:image-studio:pending', JSON.stringify([
+      {
+        id: 77,
+        title: '正在生成',
+        src: '',
+        meta: 'PNG · 1024x1024 · gpt-image-1',
+        pending: true,
+        taskId: 'imgtask_key_restore',
+        gatewayTaskId: 'imgtask_key_restore',
+        gatewayPollUrl: '/v1/images/tasks/imgtask_key_restore',
+        batchId: 'batch_key_restore',
+        apiKeyId: 22,
+        prompt: '一只猫',
+        model: 'gpt-image-1',
+        size: '1024x1024',
+        format: 'png',
+      },
+    ]))
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/images/batches/models')) {
+        return { ok: true, json: async () => ({ data: [] }) } as Response
+      }
+      if (url.endsWith('/models')) {
+        return { ok: true, json: async () => ({ data: [{ id: 'gpt-image-1' }] }) } as Response
+      }
+      if (url.endsWith('/images/tasks/imgtask_key_restore')) {
+        return {
+          ok: true,
+          json: async () => ({
+            task_id: 'imgtask_key_restore',
+            status: 'completed',
+            result: { data: [{ b64_json: 'aGVsbG8=', mime_type: 'image/png' }] },
+          }),
+        } as Response
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountImageStudio()
+    await flushPromises()
+    await flushPromises()
+    await flushPromises()
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/v1/images/tasks/imgtask_key_restore'),
+      expect.objectContaining({ headers: { Authorization: 'Bearer sk-original' } }),
+    )
+    expect(wrapper.find('img[alt="生成结果 1"]').exists()).toBe(true)
+  })
+
+  it('does not retry an ambiguous gateway submission after reload', async () => {
+    localStorage.setItem('sub2api:image-studio:pending', JSON.stringify([
+      {
+        id: 88,
+        title: '正在生成',
+        src: '',
+        meta: 'PNG · 1024x1024 · gpt-image-1',
+        pending: true,
+        taskId: 'ambiguous-client-task',
+        batchId: 'ambiguous-batch',
+        gatewaySubmitPending: true,
+        apiKeyId: 11,
+        prompt: '一只猫',
+        model: 'gpt-image-1',
+        size: '1024x1024',
+        format: 'png',
+      },
+    ]))
+
+    const wrapper = mountImageStudio()
+    await flushPromises()
+    await flushPromises()
+
+    expect(wrapper.findAll('.image-pending-card')).toHaveLength(0)
+    expect(localStorage.getItem('sub2api:image-studio:pending')).toBeNull()
+    expect(vi.mocked(fetch)).not.toHaveBeenCalledWith(
+      expect.stringContaining('/images/generations'),
+      expect.anything(),
+    )
   })
 })
 
@@ -1162,6 +1629,37 @@ describe('ImageStudioView composer controls', () => {
     expect(buttons[1].classes()).toContain('is-active')
   })
 
+  it('numbers uploaded references and inserts the selected image token into the prompt', async () => {
+    const wrapper = mountImageStudio()
+    await flushPromises()
+
+    const fileInput = wrapper.get('input[type="file"]')
+    const files = [
+      new File(['first'], 'first.png', { type: 'image/png' }),
+      new File(['second'], 'second.png', { type: 'image/png' }),
+    ]
+    Object.defineProperty(fileInput.element, 'files', {
+      configurable: true,
+      value: files,
+    })
+    await fileInput.trigger('change')
+
+    await vi.waitFor(() => {
+      expect(wrapper.find('[data-testid="image-reference-2"]').exists()).toBe(true)
+    })
+    expect(wrapper.get('[data-testid="reference-index-1"]').text()).toContain('图片 1')
+    expect(wrapper.get('[data-testid="reference-index-2"]').text()).toContain('图片 2')
+
+    const promptInput = wrapper.get('textarea.image-composer__prompt')
+    await promptInput.setValue('把背景换成')
+    await wrapper.get('[data-testid="reference-index-2"]').trigger('click')
+    expect((promptInput.element as HTMLTextAreaElement).value).toContain('图片2')
+
+    await wrapper.get('[data-testid="image-reference-1"] .image-composer__remove').trigger('click')
+    expect(wrapper.get('[data-testid="reference-index-1"]').text()).toContain('图片 1')
+    expect(wrapper.get('[data-testid="image-reference-1"]').text()).toContain('second.png')
+  })
+
   it('lets Gemini image models choose quality and sends the matching image size', async () => {
     listKeys.mockResolvedValue({
       items: [{
@@ -1183,6 +1681,7 @@ describe('ImageStudioView composer controls', () => {
           json: async () => ({ data: [{ id: 'gemini-3.1-flash-image-preview' }] }),
         } as Response
       }
+      if (url.endsWith('/images/generations/async')) return asyncImageUnavailableResponse()
       if (url.includes(':generateContent')) {
         generationBody = JSON.parse(String(init?.body || '{}'))
         return {
@@ -1204,8 +1703,10 @@ describe('ImageStudioView composer controls', () => {
     await flushPromises()
 
     const qualityButtons = wrapper.get('[data-testid="quality-select"]').findAll('button')
+    expect(qualityButtons.map((button) => button.text())).toEqual(['自动', '4K', '2K', '1K'])
     expect(qualityButtons[1].attributes('disabled')).toBeUndefined()
     await qualityButtons[1].trigger('click')
+    expect(wrapper.get('[data-testid="image-size-trigger"]').text()).toContain('1:1 4096x4096')
     await wrapper.get('form').trigger('submit')
     await flushPromises()
 
@@ -1213,6 +1714,144 @@ describe('ImageStudioView composer controls', () => {
       aspectRatio: '1:1',
       imageSize: '4K',
     })
+  })
+
+  it('resets model-specific size and background controls when switching models', async () => {
+    listKeys.mockResolvedValue({
+      items: [{
+        id: 1,
+        name: 'mixed',
+        key: 'sk-mixed',
+        status: 'active',
+        group_id: 2,
+        group: { platform: 'openai', allow_image_generation: true },
+      }],
+    })
+    getPublicSettings.mockResolvedValue({ api_base_url: '/v1' })
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/images/batches/models')) {
+        return {
+          ok: true,
+          json: async () => ({
+            data: [
+              { id: 'gpt-image-1' },
+              { id: 'gemini-3.1-flash-image-preview' },
+            ],
+          }),
+        } as Response
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountImageStudio()
+    await flushPromises()
+
+    const modelSelect = wrapper.get('[data-testid="image-model-select"]')
+    await modelSelect.get('button').trigger('click')
+    const geminiOption = modelSelect.findAll('button').find((button) => (
+      button.text().includes('gemini-3.1-flash-image-preview')
+    ))
+    await geminiOption!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="quality-select"]').findAll('button').map((button) => button.text()))
+      .toEqual(['自动', '4K', '2K', '1K'])
+    expect(wrapper.find('.image-composer__toggle-row').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="image-size-trigger"]').text()).toContain('1:1 1024x1024')
+
+    await modelSelect.get('button').trigger('click')
+    const gptOption = modelSelect.findAll('button').find((button) => button.text().includes('gpt-image-1'))
+    await gptOption!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="quality-select"]').findAll('button').map((button) => button.text()))
+      .toEqual(['自动', '高', '中', '低'])
+    expect(wrapper.find('.image-composer__toggle-row').exists()).toBe(true)
+    expect(wrapper.get('[data-testid="image-size-trigger"]').text()).toContain('1:1 1024x1024')
+  })
+
+  it('shows Grok-specific resolution and aspect controls without quality or transparency', async () => {
+    listKeys.mockResolvedValue({
+      items: [{
+        id: 1,
+        name: 'grok',
+        key: 'sk-grok',
+        status: 'active',
+        group_id: 2,
+        group: { platform: 'grok', allow_image_generation: true },
+      }],
+    })
+    getPublicSettings.mockResolvedValue({ api_base_url: '/v1' })
+    let generationBody: Record<string, any> | null = null
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = String(input)
+      if (url.endsWith('/images/batches/models')) {
+        return {
+          ok: true,
+          json: async () => ({ data: [{ id: 'grok-imagine' }] }),
+        } as Response
+      }
+      if (url.endsWith('/images/generations/async')) return asyncImageUnavailableResponse()
+      if (url.endsWith('/images/generations')) {
+        generationBody = JSON.parse(String(init?.body || '{}'))
+        return { ok: true, json: async () => ({ data: [{ b64_json: 'aGVsbG8=' }] }) } as Response
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountImageStudio()
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="quality-select"]').exists()).toBe(false)
+    expect(wrapper.find('.image-composer__toggle-row').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="image-size-trigger"]').text()).toContain('1K · 1:1')
+
+    await wrapper.get('[data-testid="image-size-trigger"]').trigger('click')
+    const menuText = wrapper.get('[data-testid="image-size-menu"]').text()
+    expect(menuText).toContain('1K · 16:9')
+    expect(menuText).toContain('2K · 20:9')
+    expect(menuText).not.toContain('4K')
+
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    expect(generationBody).toEqual(expect.objectContaining({
+      resolution: '1k',
+      aspect_ratio: '1:1',
+    }))
+  })
+
+  it('shows the official Gemini default dimensions for 1K, 2K, and 4K', async () => {
+    listKeys.mockResolvedValue({
+      items: [{
+        id: 1,
+        name: 'gemini',
+        key: 'sk-gemini',
+        status: 'active',
+        group_id: 2,
+        group: { platform: 'gemini', allow_image_generation: true },
+      }],
+    })
+    getPublicSettings.mockResolvedValue({ api_base_url: '/v1' })
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/images/batches/models')) {
+        return {
+          ok: true,
+          json: async () => ({ data: [{ id: 'gemini-3.1-flash-image-preview' }] }),
+        } as Response
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountImageStudio()
+    await flushPromises()
+    await wrapper.get('[data-testid="image-size-trigger"]').trigger('click')
+    const sizeOptions = wrapper.findAll('.image-composer__size-option').map((button) => button.text())
+
+    expect(sizeOptions).toContain('1:1 1024x1024')
+    expect(sizeOptions).toContain('1:1 2048x2048')
+    expect(sizeOptions).toContain('1:1 4096x4096')
   })
 
   it('uses segmented controls for the image count', async () => {

@@ -1410,6 +1410,9 @@ async function runTask(
         task.status = progress.status
         task.stageText = statusText(progress.status)
       },
+      onRetry: () => {
+        task.stageText = '网络波动，正在自动重连'
+      },
     })
 
     if (cancelledTasks.has(task.localId)) {

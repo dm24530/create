@@ -16,7 +16,7 @@ import (
 // 两种作品共用一张表，用 kind 区分；配额计数刻意不带 kind 条件，
 // 所以「每人 100 个文件」是图片 + 视频合并计算的。
 const studioWorksColumns = `
-	id, user_id, kind, object_key, url, thumb_url, prompt, model, format, size, duration_seconds, saved,
+	id, user_id, kind, object_key, url, thumb_url, prompt, model, format, size, duration_seconds, duration_ms, saved,
 	EXTRACT(EPOCH FROM created_at)::bigint AS created_at,
 	COALESCE(EXTRACT(EPOCH FROM expires_at)::bigint, 0) AS expires_at`
 
@@ -79,10 +79,10 @@ func (s *studioWorksDB) insert(ctx context.Context, entry *studioWorkRow, quota 
 
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO studio_works (
-			id, user_id, kind, object_key, url, thumb_url, prompt, model, format, size, duration_seconds, saved, expires_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+			id, user_id, kind, object_key, url, thumb_url, prompt, model, format, size, duration_seconds, duration_ms, saved, expires_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
 		entry.ID, entry.UserID, entry.Kind, entry.ObjectKey, entry.URL, entry.ThumbURL, entry.Prompt,
-		entry.Model, entry.Format, entry.Size, entry.DurationSeconds, entry.Saved, studioWorkExpiry(entry.ExpiresAt),
+		entry.Model, entry.Format, entry.Size, entry.DurationSeconds, entry.DurationMs, entry.Saved, studioWorkExpiry(entry.ExpiresAt),
 	); err != nil {
 		return fmt.Errorf("insert studio work: %w", err)
 	}
@@ -130,7 +130,7 @@ func (s *studioWorksDB) list(
 		entry := &studioWorkRow{}
 		if err := rows.Scan(
 			&entry.ID, &entry.UserID, &entry.Kind, &entry.ObjectKey, &entry.URL, &entry.ThumbURL, &entry.Prompt,
-			&entry.Model, &entry.Format, &entry.Size, &entry.DurationSeconds, &entry.Saved,
+			&entry.Model, &entry.Format, &entry.Size, &entry.DurationSeconds, &entry.DurationMs, &entry.Saved,
 			&entry.CreatedAt, &entry.ExpiresAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan studio work: %w", err)
@@ -353,6 +353,7 @@ type studioWorkRow struct {
 	Format          string
 	Size            string
 	DurationSeconds int
+	DurationMs      int
 	Saved           bool
 	ExpiresAt       int64
 	CreatedAt       int64
@@ -375,18 +376,19 @@ func (s *imageStudioGalleryStore) Save(
 		return fmt.Errorf("studio work entry is nil")
 	}
 	return s.insert(ctx, &studioWorkRow{
-		ID:        entry.ID,
-		UserID:    entry.UserID,
-		Kind:      "image",
-		ObjectKey: entry.ObjectKey,
-		URL:       entry.URL,
-		ThumbURL:  entry.ThumbURL,
-		Prompt:    entry.Prompt,
-		Model:     entry.Model,
-		Format:    entry.Format,
-		Size:      entry.Size,
-		Saved:     entry.Saved,
-		ExpiresAt: entry.ExpiresAt,
+		ID:         entry.ID,
+		UserID:     entry.UserID,
+		Kind:       "image",
+		ObjectKey:  entry.ObjectKey,
+		URL:        entry.URL,
+		ThumbURL:   entry.ThumbURL,
+		Prompt:     entry.Prompt,
+		Model:      entry.Model,
+		Format:     entry.Format,
+		Size:       entry.Size,
+		DurationMs: entry.DurationMs,
+		Saved:      entry.Saved,
+		ExpiresAt:  entry.ExpiresAt,
 	}, quota)
 }
 
@@ -400,18 +402,19 @@ func (s *imageStudioGalleryStore) List(
 	entries := make([]*service.ImageStudioGalleryEntry, 0, len(rows))
 	for _, row := range rows {
 		entries = append(entries, &service.ImageStudioGalleryEntry{
-			ID:        row.ID,
-			UserID:    row.UserID,
-			ObjectKey: row.ObjectKey,
-			URL:       row.URL,
-			ThumbURL:  row.ThumbURL,
-			Prompt:    row.Prompt,
-			Model:     row.Model,
-			Size:      row.Size,
-			Format:    row.Format,
-			Saved:     row.Saved,
-			ExpiresAt: row.ExpiresAt,
-			CreatedAt: row.CreatedAt,
+			ID:         row.ID,
+			UserID:     row.UserID,
+			ObjectKey:  row.ObjectKey,
+			URL:        row.URL,
+			ThumbURL:   row.ThumbURL,
+			Prompt:     row.Prompt,
+			Model:      row.Model,
+			Size:       row.Size,
+			Format:     row.Format,
+			DurationMs: row.DurationMs,
+			Saved:      row.Saved,
+			ExpiresAt:  row.ExpiresAt,
+			CreatedAt:  row.CreatedAt,
 		})
 	}
 	return entries, nil

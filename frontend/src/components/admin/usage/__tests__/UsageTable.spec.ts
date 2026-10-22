@@ -107,6 +107,7 @@ const DataTableStub = {
         <slot name="cell-tokens" :row="row" />
         <slot name="cell-latency" :row="row" />
         <slot name="cell-cost" :row="row" />
+        <slot name="cell-image_url" :row="row" />
         <slot name="cell-request_id" :row="row" />
       </div>
     </div>
@@ -142,6 +143,21 @@ const baseImageRow = {
 }
 
 describe('admin UsageTable tooltip', () => {
+  it('renders a durable image link for image usage rows', () => {
+    const wrapper = mount(UsageTable, {
+      props: {
+        data: [{ ...baseImageRow, image_url: 'https://cdn.example.test/image.png' }],
+        loading: false,
+        columns: [{ key: 'image_url', label: 'Image' }],
+      },
+      global: { stubs: { DataTable: DataTableStub, EmptyState: true, Icon: true, Teleport: true } },
+    })
+    const link = wrapper.get('a[href="https://cdn.example.test/image.png"]')
+    expect(link.text()).toContain('打开图片')
+    expect(link.attributes('target')).toBe('_blank')
+    expect(link.attributes('rel')).toBe('noopener noreferrer')
+  })
+
   it('shows output TPS in the latency cell using total duration', () => {
     const row = { ...baseImageRow, image_count: 0, billing_mode: 'token', output_tokens: 1000, duration_ms: 20_000, first_token_ms: 10_000 }
     const wrapper = mount(UsageTable, {

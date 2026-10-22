@@ -277,6 +277,7 @@ func TestUsageLogFromService_IncludesImageBillingMetadataForUserAndAdmin(t *test
 	inputSize := "1024x1024"
 	outputSize := "3840x2160"
 	source := "output"
+	imageURL := "https://cdn.example.test/generated.png"
 	log := &service.UsageLog{
 		RequestID:          "req_image_metadata",
 		Model:              "gpt-image-2",
@@ -286,6 +287,7 @@ func TestUsageLogFromService_IncludesImageBillingMetadataForUserAndAdmin(t *test
 		ImageOutputSize:    &outputSize,
 		ImageSizeSource:    &source,
 		ImageSizeBreakdown: map[string]int{"4K": 2},
+		ImageURL:           &imageURL,
 	}
 
 	userDTO := UsageLogFromService(log)
@@ -302,6 +304,8 @@ func TestUsageLogFromService_IncludesImageBillingMetadataForUserAndAdmin(t *test
 		require.NotNil(t, got.ImageSizeSource)
 		require.Equal(t, source, *got.ImageSizeSource)
 		require.Equal(t, map[string]int{"4K": 2}, got.ImageSizeBreakdown)
+		require.NotNil(t, got.ImageURL)
+		require.Equal(t, imageURL, *got.ImageURL)
 	}
 }
 

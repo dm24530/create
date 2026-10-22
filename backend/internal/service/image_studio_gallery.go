@@ -62,6 +62,8 @@ type ImageStudioGalleryEntry struct {
 	// Saved 为真表示用户已把它存进「我的作品」：长期有效。
 	Saved     bool  `json:"saved"`
 	CreatedAt int64 `json:"created_at"`
+	// DurationMs is the wall-clock image generation time when known.
+	DurationMs int `json:"duration_ms,omitempty"`
 	// ExpiresAt 只在临时内容上非 0：到期后由后台清扫连对象一起删。
 	ExpiresAt int64 `json:"expires_at"`
 }
@@ -144,6 +146,7 @@ func (s *ImageStudioGalleryService) Save(
 	contentType string,
 	data []byte,
 	saved bool,
+	durationMs ...int,
 ) (*ImageStudioGalleryEntry, error) {
 	if s == nil || s.store == nil || s.storage == nil || userID <= 0 || len(data) == 0 {
 		return nil, ErrImageStudioGalleryUnavailable
@@ -194,6 +197,10 @@ func (s *ImageStudioGalleryService) Save(
 	}
 
 	now := time.Now().UTC()
+	generationDurationMs := 0
+	if len(durationMs) > 0 {
+		generationDurationMs = max(durationMs[0], 0)
+	}
 	expiresAt := int64(0)
 	if !saved {
 		expiresAt = now.Add(s.tempRetention()).Unix()
@@ -202,16 +209,17 @@ func (s *ImageStudioGalleryService) Save(
 		ID:     id,
 		UserID: userID,
 		// 存"最终键"（可能带 images/ 之类的前缀），而不是本地拼的那个短键。
-		ObjectKey: objectKey,
-		URL:       url,
-		ThumbURL:  thumbURL,
-		Prompt:    strings.TrimSpace(prompt),
-		Model:     strings.TrimSpace(model),
-		Size:      strings.TrimSpace(size),
-		Format:    strings.TrimSpace(format),
-		Saved:     saved,
-		CreatedAt: now.Unix(),
-		ExpiresAt: expiresAt,
+		ObjectKey:  objectKey,
+		URL:        url,
+		ThumbURL:   thumbURL,
+		Prompt:     strings.TrimSpace(prompt),
+		Model:      strings.TrimSpace(model),
+		Size:       strings.TrimSpace(size),
+		Format:     strings.TrimSpace(format),
+		Saved:      saved,
+		CreatedAt:  now.Unix(),
+		DurationMs: generationDurationMs,
+		ExpiresAt:  expiresAt,
 	}
 	if err := s.store.Save(ctx, entry, resolveStudioQuota(s.storage)); err != nil {
 		if errors.Is(err, ErrStudioWorksQuotaExceeded) {
@@ -241,6 +249,7 @@ func (s *ImageStudioGalleryService) SaveFromURL(
 	format string,
 	rawURL string,
 	saved bool,
+	durationMs ...int,
 ) (*ImageStudioGalleryEntry, error) {
 	if s == nil || s.store == nil || s.storage == nil || userID <= 0 || strings.TrimSpace(rawURL) == "" {
 		return nil, ErrImageStudioGalleryUnavailable
@@ -249,7 +258,7 @@ func (s *ImageStudioGalleryService) SaveFromURL(
 	if err != nil {
 		return nil, err
 	}
-	return s.Save(ctx, userID, prompt, model, size, format, contentType, data, saved)
+	return s.Save(ctx, userID, prompt, model, size, format, contentType, data, saved, durationMs...)
 }
 
 // List 列出作品。saved 为 nil 时临时与已保存都返回（图片工作台需要同屏展示）。

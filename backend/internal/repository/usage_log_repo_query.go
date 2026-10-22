@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -299,6 +300,10 @@ func (r *usageLogRepository) hydrateUsageLogAssociations(ctx context.Context, lo
 	if err != nil {
 		return err
 	}
+	imageURLs, err := r.loadUsageLogImageURLs(ctx, ids.imageLinks)
+	if err != nil {
+		return err
+	}
 
 	for i := range logs {
 		if user, ok := users[logs[i].UserID]; ok {
@@ -320,6 +325,9 @@ func (r *usageLogRepository) hydrateUsageLogAssociations(ctx context.Context, lo
 				logs[i].Subscription = sub
 			}
 		}
+		if imageURL, ok := imageURLs[usageLogImageLinkKeyFromLog(&logs[i])]; ok {
+			logs[i].ImageURL = &imageURL
+		}
 	}
 	return nil
 }
@@ -330,6 +338,24 @@ type usageLogIDs struct {
 	accountIDs      []int64
 	groupIDs        []int64
 	subscriptionIDs []int64
+	imageLinks      []usageLogImageLinkKey
+}
+
+type usageLogImageLinkKey struct {
+	UserID    int64
+	APIKeyID  int64
+	RequestID string
+}
+
+func usageLogImageLinkKeyFromLog(l *service.UsageLog) usageLogImageLinkKey {
+	if l == nil {
+		return usageLogImageLinkKey{}
+	}
+	return usageLogImageLinkKey{
+		UserID:    l.UserID,
+		APIKeyID:  l.APIKeyID,
+		RequestID: strings.TrimSpace(l.RequestID),
+	}
 }
 
 func collectUsageLogIDs(logs []service.UsageLog) usageLogIDs {
@@ -340,6 +366,7 @@ func collectUsageLogIDs(logs []service.UsageLog) usageLogIDs {
 	accountIDs := idSet()
 	groupIDs := idSet()
 	subscriptionIDs := idSet()
+	imageLinks := make(map[usageLogImageLinkKey]struct{})
 
 	for i := range logs {
 		userIDs[logs[i].UserID] = struct{}{}
@@ -351,6 +378,13 @@ func collectUsageLogIDs(logs []service.UsageLog) usageLogIDs {
 		if logs[i].SubscriptionID != nil {
 			subscriptionIDs[*logs[i].SubscriptionID] = struct{}{}
 		}
+		if logs[i].ImageCount > 0 {
+			requestID := strings.TrimSpace(logs[i].RequestID)
+			if requestID == "" {
+				continue
+			}
+			imageLinks[usageLogImageLinkKeyFromLog(&logs[i])] = struct{}{}
+		}
 	}
 
 	return usageLogIDs{
@@ -359,7 +393,64 @@ func collectUsageLogIDs(logs []service.UsageLog) usageLogIDs {
 		accountIDs:      setToSlice(accountIDs),
 		groupIDs:        setToSlice(groupIDs),
 		subscriptionIDs: setToSlice(subscriptionIDs),
+		imageLinks:      setToUsageLogImageLinkKeys(imageLinks),
 	}
+}
+
+func (r *usageLogRepository) loadUsageLogImageURLs(ctx context.Context, links []usageLogImageLinkKey) (map[usageLogImageLinkKey]string, error) {
+	out := make(map[usageLogImageLinkKey]string)
+	if len(links) == 0 {
+		return out, nil
+	}
+	placeholders := make([]string, len(links))
+	args := make([]any, 0, len(links)*3)
+	for i, link := range links {
+		base := i*3 + 1
+		placeholders[i] = fmt.Sprintf("($%d,$%d,$%d)", base, base+1, base+2)
+		args = append(args, link.UserID, link.APIKeyID, link.RequestID)
+	}
+	query := `
+		SELECT user_id, api_key_id, request_id, link_token
+		FROM usage_log_image_links
+		WHERE (user_id, api_key_id, request_id) IN (` + strings.Join(placeholders, ",") + `)
+		  AND expires_at > NOW()
+	`
+	rows, err := r.sql.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var userID int64
+		var apiKeyID int64
+		var requestID string
+		var linkToken string
+		if err := rows.Scan(&userID, &apiKeyID, &requestID, &linkToken); err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(linkToken) != "" {
+			out[usageLogImageLinkKey{UserID: userID, APIKeyID: apiKeyID, RequestID: requestID}] =
+				"/api/v1/usage/image-links/" + linkToken
+		}
+	}
+	return out, rows.Err()
+}
+
+func setToUsageLogImageLinkKeys(values map[usageLogImageLinkKey]struct{}) []usageLogImageLinkKey {
+	out := make([]usageLogImageLinkKey, 0, len(values))
+	for value := range values {
+		out = append(out, value)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].UserID != out[j].UserID {
+			return out[i].UserID < out[j].UserID
+		}
+		if out[i].APIKeyID != out[j].APIKeyID {
+			return out[i].APIKeyID < out[j].APIKeyID
+		}
+		return out[i].RequestID < out[j].RequestID
+	})
+	return out
 }
 
 func (r *usageLogRepository) loadUsers(ctx context.Context, ids []int64) (map[int64]*service.User, error) {

@@ -23,6 +23,7 @@ type S3ImageStorage struct {
 }
 
 var _ service.ImageStorage = (*S3ImageStorage)(nil)
+var _ service.ImageStorageURLResolver = (*S3ImageStorage)(nil)
 
 // NewS3ImageStorage 依据配置构造 S3 图片存储（调用方应先确认 cfg.Active()）。
 func NewS3ImageStorage(ctx context.Context, cfg *config.ImageStorageConfig) (*S3ImageStorage, error) {
@@ -85,6 +86,43 @@ func (s *S3ImageStorage) SaveWithExpiry(ctx context.Context, key, contentType st
 		return "", fmt.Errorf("presign url: %w", err)
 	}
 	return result.URL, nil
+}
+
+func (s *S3ImageStorage) PresignGet(ctx context.Context, key string) (string, error) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return "", fmt.Errorf("S3 object key is required")
+	}
+	if s.publicBaseURL != "" {
+		return s.publicBaseURL + "/" + strings.TrimLeft(key, "/"), nil
+	}
+	presignClient := s3.NewPresignClient(s.client)
+	result, err := presignClient.PresignGetObject(ctx, &s3.GetObjectInput{
+		Bucket: &s.bucket,
+		Key:    &key,
+	}, s3.WithPresignExpires(s.presignExpiry))
+	if err != nil {
+		return "", fmt.Errorf("presign url: %w", err)
+	}
+	return result.URL, nil
+}
+
+func (s *S3ImageStorage) Exists(ctx context.Context, key string) (bool, error) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return false, nil
+	}
+	finish := servertiming.ObserveDependency(ctx, "s3")
+	_, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{
+		Bucket: &s.bucket,
+		Key:    &key,
+	})
+	finish()
+	if err != nil {
+		// A missing object is an expected terminal state for expired works.
+		return false, nil
+	}
+	return true, nil
 }
 
 // HeadBucket verifies that the configured bucket exists and the credentials

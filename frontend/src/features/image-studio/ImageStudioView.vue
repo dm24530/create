@@ -66,74 +66,84 @@
         </div>
 
         <div v-else class="image-results-masonry" data-testid="image-results-masonry">
-          <article
-            v-for="image in images"
-            :key="image.id"
-            class="group overflow-hidden rounded-xl border border-gray-200 bg-gray-50 dark:border-dark-700 dark:bg-dark-800"
+          <div
+            v-for="(column, columnIndex) in imageResultColumns"
+            :key="`column-${columnIndex}`"
+            class="image-results-masonry__column"
+            :data-testid="`image-results-column-${columnIndex + 1}`"
           >
-            <button type="button" class="image-result-card__media relative block w-full overflow-hidden" :disabled="image.pending" @click="!image.pending && (previewImage = image)">
-              <div v-if="image.pending" class="image-pending-card">
-                <span class="image-generation-spinner" aria-hidden="true"></span>
-                <strong>正在生成</strong>
-                <small>刷新或切换页面不会中断，完成后将在此显示</small>
+            <article
+              v-for="image in column"
+              :key="image.id"
+              class="group overflow-hidden rounded-xl border border-gray-200 bg-gray-50 dark:border-dark-700 dark:bg-dark-800"
+            >
+              <button type="button" class="image-result-card__media relative block w-full overflow-hidden" :disabled="image.pending" @click="!image.pending && (previewImage = image)">
+                <div v-if="image.pending" class="image-pending-card">
+                  <span class="image-generation-spinner" aria-hidden="true"></span>
+                  <strong>正在生成</strong>
+                  <small>刷新或切换页面不会中断，完成后将在此显示</small>
+                  <small class="image-pending-card__timer" data-testid="image-pending-timer">
+                    {{ pendingElapsedSeconds(image) }} 秒
+                  </small>
+                </div>
+                <img
+                  v-else
+                  :src="image.thumbSrc || image.src"
+                  :srcset="image.thumbSrcSet"
+                  :alt="image.title"
+                  loading="lazy"
+                  decoding="async"
+                  class="block h-auto w-full object-contain"
+                />
+              </button>
+              <div class="flex items-center justify-between gap-2 px-3 py-2">
+                <div class="min-w-0">
+                  <p class="truncate text-[11px] text-gray-400">
+                    {{ image.createdAt ? `${formatCreatedAt(image.createdAt)} · ${image.meta}` : image.meta }}
+                  </p>
+                  <p
+                    v-if="!image.pending && image.saved"
+                    class="text-xs text-emerald-600 dark:text-emerald-400"
+                    data-testid="image-saved-badge"
+                  >
+                    已保存到我的作品
+                  </p>
+                  <p
+                    v-else-if="!image.pending && image.expiresAt"
+                    class="text-xs text-amber-600 dark:text-amber-400"
+                    data-testid="image-temp-badge"
+                  >
+                    临时内容 · 还剩 {{ remainingDays(image) }} 天
+                  </p>
+                </div>
+                <div v-if="!image.pending" class="flex shrink-0 gap-1">
+                  <button
+                    v-if="!image.saved && galleryBackedIds.has(galleryIdFor(image))"
+                    type="button"
+                    class="mini-action"
+                    data-testid="image-pin"
+                    title="存到我的作品（长期保留）"
+                    @click="pinImage(image)"
+                  >
+                    <Icon name="bookmark" size="sm" />
+                  </button>
+                  <button type="button" class="mini-action" title="下载图片" @click="downloadImage(image)">
+                    <Icon name="download" size="sm" />
+                  </button>
+                  <button
+                    v-if="galleryBackedIds.has(galleryIdFor(image))"
+                    type="button"
+                    class="mini-action"
+                    data-testid="gallery-image-delete"
+                    title="删除作品（同时删除存储里的文件）"
+                    @click="removeGalleryImage(image)"
+                  >
+                    <Icon name="trash" size="sm" />
+                  </button>
+                </div>
               </div>
-              <img
-                v-else
-                :src="image.thumbSrc || image.src"
-                :srcset="image.thumbSrcSet"
-                :alt="image.title"
-                loading="lazy"
-                decoding="async"
-                class="block h-auto w-full object-contain"
-              />
-            </button>
-            <div class="flex items-center justify-between gap-2 px-3 py-2">
-              <div class="min-w-0">
-                <p class="truncate text-[11px] text-gray-400">
-                  {{ image.createdAt ? `${formatCreatedAt(image.createdAt)} · ${image.meta}` : image.meta }}
-                </p>
-                <p
-                  v-if="!image.pending && image.saved"
-                  class="text-xs text-emerald-600 dark:text-emerald-400"
-                  data-testid="image-saved-badge"
-                >
-                  已保存到我的作品
-                </p>
-                <p
-                  v-else-if="!image.pending && image.expiresAt"
-                  class="text-xs text-amber-600 dark:text-amber-400"
-                  data-testid="image-temp-badge"
-                >
-                  临时内容 · 还剩 {{ remainingDays(image) }} 天
-                </p>
-              </div>
-              <div v-if="!image.pending" class="flex shrink-0 gap-1">
-                <button
-                  v-if="!image.saved && galleryBackedIds.has(galleryIdFor(image))"
-                  type="button"
-                  class="mini-action"
-                  data-testid="image-pin"
-                  title="存到我的作品（长期保留）"
-                  @click="pinImage(image)"
-                >
-                  <Icon name="bookmark" size="sm" />
-                </button>
-                <button type="button" class="mini-action" title="下载图片" @click="downloadImage(image)">
-                  <Icon name="download" size="sm" />
-                </button>
-                <button
-                  v-if="galleryBackedIds.has(galleryIdFor(image))"
-                  type="button"
-                  class="mini-action"
-                  data-testid="gallery-image-delete"
-                  title="删除作品（同时删除存储里的文件）"
-                  @click="removeGalleryImage(image)"
-                >
-                  <Icon name="trash" size="sm" />
-                </button>
-              </div>
-            </div>
-          </article>
+            </article>
+          </div>
         </div>
         </div>
       </section>
@@ -196,10 +206,30 @@
               <Icon name="upload" size="sm" />
             </button>
           </div>
-          <div class="image-composer__reference-grid">
-            <div v-for="item in references" :key="item.id" class="image-composer__reference">
+          <div class="image-composer__reference-grid" data-testid="image-reference-grid">
+            <div
+              v-for="(item, index) in references"
+              :key="item.id"
+              class="image-composer__reference"
+              :data-testid="`image-reference-${index + 1}`"
+            >
               <img :src="item.preview" :alt="item.name" />
-              <button type="button" :aria-label="`移除 ${item.name}`" @click="removeReference(item.id)">
+              <button
+                type="button"
+                class="image-composer__reference-index"
+                :data-testid="`reference-index-${index + 1}`"
+                :title="`插入图片${index + 1}引用`"
+                @click.stop="insertReferenceToken(index + 1)"
+              >
+                图片 {{ index + 1 }}
+              </button>
+              <span class="image-composer__reference-name" :title="item.name">{{ item.name }}</span>
+              <button
+                type="button"
+                class="image-composer__remove"
+                :aria-label="`移除 ${item.name}`"
+                @click.stop="removeReference(item.id)"
+              >
                 <Icon name="x" size="xs" />
               </button>
             </div>
@@ -214,7 +244,7 @@
             </button>
           </div>
           <p class="image-composer__helper">
-            可拖拽或粘贴参考图，最多 14 张。参考图会随提示词一起提交。
+            可拖拽或粘贴参考图，最多 14 张。点击图片编号可把「图片1」等引用插入提示词。
           </p>
         </section>
 
@@ -226,38 +256,59 @@
           当前尺寸不可用：{{ sizeIssue }}。点左侧「尺寸」调整后再生成。
         </p>
 
-        <div class="image-composer__toggle-row">
+        <div v-if="modelSupportsTransparentBackground" class="image-composer__toggle-row">
           <span>
             透明背景
-            <span v-if="isGeminiImageModel" class="text-xs font-normal text-gray-400 dark:text-gray-500">
-              （当前模型不支持）
-            </span>
           </span>
           <div
-            :class="{ 'pointer-events-none opacity-45': isGeminiImageModel }"
-            :title="isGeminiImageModel ? 'Gemini 原生图片接口不返回透明通道' : undefined"
+            title="仅模型支持透明通道时生效"
           >
             <Toggle v-model="transparentBackground" />
           </div>
         </div>
 
-        <div class="image-composer__field">
-          <span class="image-composer__label">质量</span>
-          <div class="image-composer__segmented" data-testid="quality-select" role="group" aria-label="质量">
-            <button
-              v-for="option in qualityDisplayOptions"
-              :key="option.value"
-              type="button"
-              :class="{ 'is-active': quality === option.value }"
-              @click="quality = option.value"
-            >
-              {{ option.label }}
-            </button>
+        <div
+          class="image-composer__option-grid"
+          :class="{ 'is-split': qualityDisplayOptions.length }"
+        >
+          <div v-if="qualityDisplayOptions.length" class="image-composer__field">
+            <span class="image-composer__label">质量</span>
+            <div class="image-composer__segmented" data-testid="quality-select" role="group" aria-label="质量">
+              <button
+                v-for="option in qualityDisplayOptions"
+                :key="option.value"
+                type="button"
+                :class="{ 'is-active': quality === option.value }"
+                @click="selectQuality(option.value)"
+              >
+                {{ option.label }}
+              </button>
+            </div>
           </div>
-          <p v-if="isGeminiImageModel" class="mt-2 text-xs text-gray-400 dark:text-gray-500">
-            质量会按高 4K、中 2K、低 1K 发送；透明背景需要模型返回透明通道，当前 Gemini 接口不支持。
-          </p>
+
+          <div class="image-composer__field">
+            <span class="image-composer__label">格式</span>
+            <div
+              class="image-composer__segmented image-composer__segmented--three"
+              data-testid="image-format-control"
+              role="group"
+              aria-label="图片格式"
+            >
+              <button
+                v-for="option in formatOptions"
+                :key="option.value"
+                type="button"
+                :class="{ 'is-active': format === option.value }"
+                @click="format = option.value"
+              >
+                {{ option.label }}
+              </button>
+            </div>
+          </div>
         </div>
+        <p v-if="isGeminiImageModel" class="image-composer__option-note">
+          质量会按高 4K、中 2K、低 1K 发送；透明背景需要模型返回透明通道，当前 Gemini 接口不支持。
+        </p>
 
         <div ref="sizeFieldRef" class="image-composer__field image-composer__size-field">
           <div class="image-composer__label-row">
@@ -318,7 +369,7 @@
                         :style="ratioShapeStyle(ratio.value)"
                       />
                     </span>
-                    <span>{{ ratio.value }} {{ ratioSize(ratio.value, base.value) }}</span>
+                    <span>{{ sizeOptionLabel(ratio.value, base.value) }}</span>
                   </button>
                 </template>
               </div>
@@ -443,6 +494,10 @@
               <dt>模型</dt>
               <dd>{{ previewImage.model }}</dd>
             </div>
+            <div>
+              <dt>生成耗时</dt>
+              <dd data-testid="image-generation-duration">{{ formatGenerationDuration(previewImage.durationMs) }}</dd>
+            </div>
           </dl>
         </section>
       </div>
@@ -500,7 +555,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onActivated, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, reactive, ref, watch } from 'vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import StudioNav from '@/components/layout/StudioNav.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
@@ -511,6 +566,7 @@ import Icon from '@/components/icons/Icon.vue'
 import { useClipboard } from '@/composables/useClipboard'
 import {
   createImageGenerationTaskId,
+  ImageGenerationWaitCancelled,
   tryStartPersistentImageGeneration,
   waitForPersistentImageGeneration,
   type ImageGenerationWorkerResponse,
@@ -539,6 +595,12 @@ interface GeneratedImage {
   pending?: boolean
   taskId?: string
   batchId?: string
+  gatewayTaskId?: string
+  gatewayPollUrl?: string
+  gatewaySubmitPending?: boolean
+  apiKeyId?: number
+  startedAt?: number
+  durationMs?: number
   // 服务端状态：saved 为真表示已经存进「我的作品」（永久），
   // 否则是生成页的临时内容，expiresAt 是过期时间（秒）。
   saved?: boolean
@@ -602,6 +664,8 @@ const generating = ref(false)
 const activeGenerations = ref(0)
 const errorMessage = ref('')
 const images = ref<GeneratedImage[]>([])
+const generationClockNow = ref(Date.now())
+const imageResultColumnCount = ref(resolveImageResultColumnCount())
 const references = ref<ReferenceItem[]>([])
 const previewImage = ref<GeneratedImage | null>(null)
 const pendingDeleteImage = ref<GeneratedImage | null>(null)
@@ -617,10 +681,29 @@ const PENDING_STORAGE_KEY = 'sub2api:image-studio:pending'
 const PENDING_PROMPT_STORAGE_KEY = 'sub2api:image-studio:pending-prompt'
 
 const size = computed(() => formatSize(appliedSize))
+const imageResultColumns = computed(() => {
+  const columns = Array.from(
+    { length: imageResultColumnCount.value },
+    () => [] as GeneratedImage[],
+  )
+  images.value.forEach((image, index) => {
+    columns[index % imageResultColumnCount.value].push(image)
+  })
+  return columns
+})
 // 上游按"总像素 + 比例"卡尺寸，本地不拦的话只能在生成时吃上游的 400。
-const sizeIssue = computed(() => validateSize(size.value))
+const sizeIssue = computed(() => (
+  isGeminiModel(imageModel.value) || (
+    isGrokImageModelName(imageModel.value)
+  )
+    ? ''
+    : validateSize(size.value)
+))
 const sizeDisplayLabel = computed(() => {
   if (appliedSize.mode === 'auto') return '自动（由模型决定）'
+  if (appliedSize.mode === 'ratio' && isGrokImageModel.value) {
+    return `${grokResolutionForBase(appliedSize.aspectBase)} · ${appliedSize.aspectRatio}`
+  }
   if (appliedSize.mode === 'ratio') return `${appliedSize.aspectRatio} ${size.value}`
   const dimensions = parseSize(size.value)
   if (!dimensions) return size.value
@@ -642,12 +725,67 @@ const customSizeSummary = computed(() => {
   const { width, height } = dimensions
   return `${width}×${height}，${width * height} 像素，比例 ${(width / height).toFixed(2)}:1。`
 })
-const aspectBaseOptions = [
+const geminiAspectBaseOptions = [
   { value: 1024, label: '1K' },
   { value: 2048, label: '2K' },
   { value: 3840, label: '4K' },
 ]
-const ratioOptions = [
+const gptAspectBaseOptions = [
+  { value: 1024, label: '默认' },
+]
+const grokAspectBaseOptions = [
+  { value: 1024, label: '1K' },
+  { value: 2048, label: '2K' },
+]
+const genericAspectBaseOptions = [
+  { value: 1024, label: '1K' },
+  { value: 2048, label: '2K' },
+  { value: 3840, label: '4K' },
+]
+const gptDefaultDimensions: Record<string, [number, number]> = {
+  '1:1': [1024, 1024],
+  '3:2': [1536, 1024],
+  '2:3': [1024, 1536],
+}
+const geminiDefaultDimensions: Record<string, Record<string, [number, number]>> = {
+  '1K': {
+    '1:1': [1024, 1024],
+    '2:3': [848, 1264],
+    '3:2': [1264, 848],
+    '3:4': [896, 1200],
+    '4:3': [1200, 896],
+    '4:5': [928, 1152],
+    '5:4': [1152, 928],
+    '9:16': [768, 1344],
+    '16:9': [1344, 768],
+    '21:9': [1536, 672],
+  },
+  '2K': {
+    '1:1': [2048, 2048],
+    '2:3': [1696, 2528],
+    '3:2': [2528, 1696],
+    '3:4': [1792, 2400],
+    '4:3': [2400, 1792],
+    '4:5': [1856, 2304],
+    '5:4': [2304, 1856],
+    '9:16': [1536, 2688],
+    '16:9': [2688, 1536],
+    '21:9': [3072, 1344],
+  },
+  '4K': {
+    '1:1': [4096, 4096],
+    '2:3': [3392, 5056],
+    '3:2': [5056, 3392],
+    '3:4': [3584, 4800],
+    '4:3': [4800, 3584],
+    '4:5': [3712, 4608],
+    '5:4': [4608, 3712],
+    '9:16': [3072, 5376],
+    '16:9': [5376, 3072],
+    '21:9': [6144, 2688],
+  },
+}
+const allRatioOptions = [
   { value: '1:1', css: '1 / 1' },
   { value: '3:2', css: '3 / 2' },
   { value: '2:3', css: '2 / 3' },
@@ -657,17 +795,29 @@ const ratioOptions = [
   { value: '3:4', css: '3 / 4' },
   { value: '21:9', css: '21 / 9' },
 ]
+const gptRatioOptions = allRatioOptions.filter((option) => (
+  option.value === '1:1' || option.value === '3:2' || option.value === '2:3'
+))
+const grokRatioOptions = [
+  { value: '1:1', css: '1 / 1' },
+  { value: '16:9', css: '16 / 9' },
+  { value: '9:16', css: '9 / 16' },
+  { value: '4:3', css: '4 / 3' },
+  { value: '3:4', css: '3 / 4' },
+  { value: '3:2', css: '3 / 2' },
+  { value: '2:3', css: '2 / 3' },
+  { value: '2:1', css: '2 / 1' },
+  { value: '1:2', css: '1 / 2' },
+  { value: '19.5:9', css: '19.5 / 9' },
+  { value: '9:19.5', css: '9 / 19.5' },
+  { value: '20:9', css: '20 / 9' },
+  { value: '9:20', css: '9 / 20' },
+]
 const qualityOptions = [
   { value: 'auto', label: '自动' },
   { value: 'low', label: '低' },
   { value: 'medium', label: '中' },
   { value: 'high', label: '高' },
-]
-const qualityDisplayOptions = [
-  qualityOptions[0],
-  qualityOptions[3],
-  qualityOptions[2],
-  qualityOptions[1],
 ]
 const formatOptions = [
   { value: 'png', label: 'PNG' },
@@ -698,6 +848,38 @@ const apiKeyOptions = computed(() => imageCapableKeys.value.map((key) => ({ valu
 const selectedKey = computed(() => imageCapableKeys.value.find((key) => String(key.id) === selectedKeyId.value) || null)
 const canGenerate = computed(() => Boolean(apiBaseUrl.value && selectedKey.value?.key && imageModel.value.trim() && prompt.value.trim()) && !sizeIssue.value)
 const isGeminiImageModel = computed(() => isGeminiModel(imageModel.value))
+const isGptImageModel = computed(() => imageModel.value.toLowerCase().includes('gpt-image'))
+const isGrokImageModel = computed(() => isGrokImageModelName(imageModel.value))
+const modelSupportsTransparentBackground = computed(() => (
+  !isGeminiImageModel.value && !isGrokImageModel.value
+))
+const qualityDisplayOptions = computed(() => isGeminiImageModel.value
+  ? [
+      qualityOptions[0],
+      { value: 'high', label: '4K' },
+      { value: 'medium', label: '2K' },
+      { value: 'low', label: '1K' },
+    ]
+  : isGrokImageModel.value
+    ? []
+    : [
+      qualityOptions[0],
+      qualityOptions[3],
+      qualityOptions[2],
+      qualityOptions[1],
+    ])
+const aspectBaseOptions = computed(() => {
+  if (isGeminiImageModel.value) return geminiAspectBaseOptions
+  if (isGptImageModel.value) return gptAspectBaseOptions
+  if (isGrokImageModel.value) return grokAspectBaseOptions
+  return genericAspectBaseOptions
+})
+const ratioOptions = computed(() => {
+  if (isGeminiImageModel.value) return allRatioOptions
+  if (isGptImageModel.value) return gptRatioOptions
+  if (isGrokImageModel.value) return grokRatioOptions
+  return allRatioOptions
+})
 const canRegeneratePreview = computed(() => Boolean(
   previewImage.value &&
   previewPromptDraft.value.trim() &&
@@ -719,6 +901,8 @@ const localToGalleryId = ref<Map<string, string>>(new Map())
 const galleryThumbObjectUrls = new Map<string, string>()
 const studioQuota = ref<{ used: number; limit: number } | null>(null)
 const resumedGenerationBatches = new Set<string>()
+const resumedGatewayBatches = new Set<string>()
+let componentDisposed = false
 let nextReferenceId = 1
 let modelRequestId = 0
 
@@ -771,6 +955,7 @@ function toggleCustomSize() {
 
 function applyAutoSize() {
   appliedSize.mode = 'auto'
+  quality.value = 'auto'
   sizeMenuOpen.value = false
   customSizeOpen.value = false
 }
@@ -780,8 +965,109 @@ function applyRatioPreset(base: number, ratio: string) {
   appliedSize.aspectBase = base
   appliedSize.aspectRatio = ratio
   appliedSize.useCustomRatio = false
+  if (isGeminiImageModel.value) {
+    quality.value = qualityForAspectBase(base)
+  }
   sizeMenuOpen.value = false
   customSizeOpen.value = false
+}
+
+function selectQuality(value: string) {
+  quality.value = value
+  if (!isGeminiImageModel.value) return
+  if (value === 'high') appliedSize.aspectBase = 3840
+  else if (value === 'medium') appliedSize.aspectBase = 2048
+  else if (value === 'low') appliedSize.aspectBase = 1024
+}
+
+function resetParametersForModel(model: string) {
+  if (!model) return
+  sizeMenuOpen.value = false
+  customSizeOpen.value = false
+  appliedSize.mode = 'ratio'
+  appliedSize.useCustomRatio = false
+
+  if (isGeminiModel(model)) {
+    background.value = 'auto'
+    const tier = geminiTierForQuality(quality.value) || '1K'
+    appliedSize.aspectBase = tier === '4K' ? 3840 : tier === '2K' ? 2048 : 1024
+    if (!geminiDefaultDimensions[tier]?.[appliedSize.aspectRatio]) {
+      appliedSize.aspectRatio = '1:1'
+    }
+    return
+  }
+
+  if (model.toLowerCase().includes('gpt-image')) {
+    appliedSize.aspectBase = 1024
+    if (!gptDefaultDimensions[appliedSize.aspectRatio]) {
+      appliedSize.aspectRatio = '1:1'
+    }
+    return
+  }
+
+  if (isGrokImageModelName(model)) {
+    background.value = 'auto'
+    quality.value = 'auto'
+    if (!grokAspectBaseOptions.some((option) => option.value === appliedSize.aspectBase)) {
+      appliedSize.aspectBase = 1024
+    }
+    if (!grokRatioOptions.some((option) => option.value === appliedSize.aspectRatio)) {
+      appliedSize.aspectRatio = '1:1'
+    }
+    return
+  }
+
+  if (!genericAspectBaseOptions.some((option) => option.value === appliedSize.aspectBase)) {
+    appliedSize.aspectBase = 1024
+  }
+  if (!allRatioOptions.some((option) => option.value === appliedSize.aspectRatio)) {
+    appliedSize.aspectRatio = '1:1'
+  }
+}
+
+function qualityForAspectBase(base: number) {
+  if (base >= 3840) return 'high'
+  if (base >= 2048) return 'medium'
+  return 'low'
+}
+
+function grokResolutionForBase(base: number) {
+  return base >= 2048 ? '2K' : '1K'
+}
+
+function geminiTierForQuality(value: string) {
+  if (value === 'high') return '4K'
+  if (value === 'medium') return '2K'
+  if (value === 'low') return '1K'
+  return ''
+}
+
+function geminiTierForAspectBase(base: number) {
+  return geminiTierForQuality(qualityForAspectBase(base))
+}
+
+function geminiDimensions(ratio: string, tier: string) {
+  return geminiDefaultDimensions[tier]?.[ratio]
+}
+
+function displayRatioSize(ratio: string, base: number) {
+  if (isGeminiImageModel.value) {
+    const dimensions = geminiDimensions(ratio, geminiTierForAspectBase(base))
+    if (dimensions) return `${dimensions[0]}x${dimensions[1]}`
+  }
+  if (isGptImageModel.value) {
+    const dimensions = gptDefaultDimensions[ratio]
+    if (dimensions) return `${dimensions[0]}x${dimensions[1]}`
+  }
+  if (isGrokImageModel.value) {
+    return `${grokResolutionForBase(base)} · ${ratio}`
+  }
+  return ratioSize(ratio, base)
+}
+
+function sizeOptionLabel(ratio: string, base: number) {
+  if (isGrokImageModel.value) return displayRatioSize(ratio, base)
+  return `${ratio} ${displayRatioSize(ratio, base)}`
 }
 
 function isRatioSelected(base: number, ratio: string) {
@@ -816,6 +1102,21 @@ const IMAGE_MAX_PIXELS = 8_294_400
 
 function formatSize(settings: SizeSettings) {
   if (settings.mode === 'auto') return 'auto'
+  if (isGeminiImageModel.value && settings.mode === 'ratio') {
+    const ratio = settings.useCustomRatio
+      ? `${settings.customRatioWidth}:${settings.customRatioHeight}`
+      : settings.aspectRatio
+    const tier = geminiTierForQuality(quality.value) || geminiTierForAspectBase(settings.aspectBase)
+    const dimensions = geminiDimensions(ratio, tier)
+    if (dimensions) return `${dimensions[0]}x${dimensions[1]}`
+  }
+  if (isGptImageModel.value && settings.mode === 'ratio' && !settings.useCustomRatio) {
+    const dimensions = gptDefaultDimensions[settings.aspectRatio]
+    if (dimensions) return `${dimensions[0]}x${dimensions[1]}`
+  }
+  if (isGrokImageModel.value && settings.mode === 'ratio' && !settings.useCustomRatio) {
+    return ratioSize(settings.aspectRatio, settings.aspectBase)
+  }
   if (settings.mode === 'custom') {
     const formatDimension = snapTo16.value ? normalizeDimension : clampDimension
     return `${formatDimension(settings.width)}x${formatDimension(settings.height)}`
@@ -928,6 +1229,7 @@ async function loadData() {
     })
 
   await Promise.allSettled([keysPromise, settingsPromise, loadGallery(), loadStudioQuota()])
+  void resumeGatewayGeneration(images.value.filter((item) => item.pending && item.gatewayPollUrl))
 }
 
 async function loadGallery() {
@@ -994,6 +1296,7 @@ function galleryEntryToImage(entry: ImageStudioGalleryEntry, index: number): Gen
     ].filter(Boolean).join(' · '),
     saved: entry.saved !== false,
     expiresAt: entry.expires_at || 0,
+    durationMs: Number(entry.duration_ms || 0) || undefined,
     createdAt: entry.created_at || 0,
   }
 }
@@ -1009,7 +1312,7 @@ function restorePendingImages() {
   try {
     const stored = JSON.parse(localStorage.getItem(PENDING_STORAGE_KEY) || '[]')
     if (!Array.isArray(stored)) return
-    const restored = stored
+    const restoredAll = stored
       .filter((item): item is GeneratedImage => (
         item
         && item.pending
@@ -1022,7 +1325,15 @@ function restorePendingImages() {
         title: '正在生成',
         src: '',
         pending: true,
+        startedAt: Number(item.startedAt) > 0 ? Number(item.startedAt) : Date.now(),
       }))
+    const ambiguousGatewaySubmissions = restoredAll.filter((item) => (
+      item.gatewaySubmitPending && !item.gatewayPollUrl
+    ))
+    const restored = restoredAll.filter((item) => !ambiguousGatewaySubmissions.includes(item))
+    if (ambiguousGatewaySubmissions.length) {
+      appStore.showWarning('有图片任务的提交结果无法确认，为避免重复扣费未自动重试。请确认作品库后重新生成。', 6000)
+    }
     if (!restored.length) {
       localStorage.removeItem(PENDING_STORAGE_KEY)
       return
@@ -1030,9 +1341,10 @@ function restorePendingImages() {
     nextImageId = Math.max(nextImageId, ...restored.map((item) => Number(item.id) + 1))
     images.value = restored
     persistPendingImages()
-    if ('serviceWorker' in navigator && typeof indexedDB !== 'undefined') {
+    const serviceWorkerPending = restored.filter((item) => !item.gatewayPollUrl)
+    if (serviceWorkerPending.length && 'serviceWorker' in navigator && typeof indexedDB !== 'undefined') {
       appStore.showSuccess(`已恢复 ${restored.length} 个后台生成任务`, 3000)
-      void resumePersistentGeneration(restored)
+      void resumePersistentGeneration(serviceWorkerPending)
     }
   } catch {
     // Ignore malformed browser storage and continue with an empty gallery.
@@ -1080,12 +1392,15 @@ async function resumePersistentGeneration(pendingImages: GeneratedImage[]) {
     try {
       const responses = await waitForPersistentImageGeneration(
         batch.map((image) => image.taskId!).filter(Boolean),
+        { isCancelled: () => componentDisposed },
       )
       await finishGenerationBatch(batch, responses.map(workerResponseToSettledResult))
     } catch (error) {
+      if (error instanceof ImageGenerationWaitCancelled) return
       removePendingImages(batch)
       errorMessage.value = errorMessageFrom(error, '恢复图片生成任务失败')
     } finally {
+      resumedGenerationBatches.delete(batchId)
       activeGenerations.value = Math.max(0, activeGenerations.value - 1)
       generating.value = activeGenerations.value > 0
     }
@@ -1103,8 +1418,9 @@ async function persistGeneratedImages(items: GeneratedImage[], prompt: string, m
       ...source,
       prompt,
       model,
-      size: size.value,
-      format: format.value,
+      size: item.size || size.value,
+      format: item.format || format.value,
+      duration_ms: item.durationMs || undefined,
       // 生成页的内容先进临时档（到期自动删）；用户点「存到我的作品」才转永久。
       saved: false,
     })
@@ -1165,6 +1481,51 @@ function remainingDays(image: GeneratedImage): number {
   const expiresAt = Number(image.expiresAt || 0)
   if (!expiresAt) return 0
   return Math.max(1, Math.ceil((expiresAt * 1000 - Date.now()) / 86_400_000))
+}
+
+function resolveImageResultColumnCount() {
+  if (typeof window === 'undefined') return 1
+  if (window.innerWidth >= 1536) return 4
+  if (window.innerWidth >= 1024) return 3
+  if (window.innerWidth >= 640) return 2
+  return 1
+}
+
+function updateImageResultColumnCount() {
+  const nextCount = resolveImageResultColumnCount()
+  if (nextCount !== imageResultColumnCount.value) {
+    imageResultColumnCount.value = nextCount
+  }
+}
+
+function pendingElapsedSeconds(image: GeneratedImage): number {
+  const startedAt = Number(image.startedAt || 0)
+  if (!startedAt) return 0
+  return Math.max(0, Math.floor((generationClockNow.value - startedAt) / 1000))
+}
+
+function formatGenerationDuration(durationMs?: number): string {
+  const duration = Number(durationMs || 0)
+  if (!Number.isFinite(duration) || duration <= 0) return '未记录'
+  const totalSeconds = Math.floor(duration / 1000)
+  if (totalSeconds < 60) return `${totalSeconds} 秒`
+  return `${Math.floor(totalSeconds / 60)} 分 ${totalSeconds % 60} 秒`
+}
+
+let generationClockTimer: ReturnType<typeof setInterval> | null = null
+
+function startGenerationClock() {
+  generationClockNow.value = Date.now()
+  if (generationClockTimer) return
+  generationClockTimer = setInterval(() => {
+    generationClockNow.value = Date.now()
+  }, 1000)
+}
+
+function stopGenerationClock() {
+  if (!generationClockTimer) return
+  clearInterval(generationClockTimer)
+  generationClockTimer = null
 }
 
 // 把临时内容存进「我的作品」：之后永久保留，并开始计入配额。
@@ -1291,6 +1652,49 @@ async function toSelfHostedImageSrc(src: string) {
   if (src.startsWith('data:')) return src
   try {
     return await imageSourceToDataURL(src)
+  } catch {
+    return src
+  }
+}
+
+function imageFormatFromSource(src: string, fallback: string): string {
+  const match = /^data:image\/([^;,]+)/i.exec(src)
+  const mime = match?.[1]?.toLowerCase().replace('jpg', 'jpeg')
+  return mime && formatOptions.some((option) => option.value === mime) ? mime : fallback
+}
+
+async function ensureImageFormat(src: string, targetFormat: string) {
+  if (!src.startsWith('data:image/')) return src
+  const normalizedFormat = targetFormat === 'jpg' ? 'jpeg' : targetFormat
+  const targetMime = `image/${normalizedFormat}`
+  const sourceMime = /^data:([^;,]+)/i.exec(src)?.[1]?.toLowerCase().replace('image/jpg', 'image/jpeg')
+  if (sourceMime === targetMime) return src
+  if (typeof Image === 'undefined') return src
+
+  const image = new Image()
+  image.decoding = 'async'
+  image.src = src
+  if (typeof image.decode !== 'function') return src
+  try {
+    await image.decode()
+  } catch {
+    return src
+  }
+  if (!image.naturalWidth || !image.naturalHeight) return src
+
+  const canvas = document.createElement('canvas')
+  canvas.width = image.naturalWidth
+  canvas.height = image.naturalHeight
+  const context = canvas.getContext('2d')
+  if (!context) return src
+  if (targetMime === 'image/jpeg') {
+    context.fillStyle = '#ffffff'
+    context.fillRect(0, 0, canvas.width, canvas.height)
+  }
+  context.drawImage(image, 0, 0)
+  try {
+    const converted = canvas.toDataURL(targetMime, 0.92)
+    return converted.startsWith(`data:${targetMime};`) ? converted : src
   } catch {
     return src
   }
@@ -1451,6 +1855,11 @@ function isImageModel(name: string) {
     value.includes('sdxl')
 }
 
+function isGrokImageModelName(name: string) {
+  const value = name.trim().toLowerCase()
+  return value.includes('grok-imagine') && !value.includes('video')
+}
+
 function deduplicateModelNames(names: string[]): string[] {
   const unique = new Map<string, string>()
   for (const rawName of names) {
@@ -1475,6 +1884,7 @@ async function generate() {
   const currentPrompt = prompt.value.trim()
   const requestCount = Math.min(Math.max(Number(count.value) || 1, 1), 4)
   const batchId = createImageGenerationTaskId()
+  const startedAt = Date.now()
   const pendingImages = Array.from({ length: requestCount }, (_, index): GeneratedImage => ({
     id: nextImageId++,
     title: `正在生成 ${index + 1}`,
@@ -1483,6 +1893,8 @@ async function generate() {
     pending: true,
     taskId: createImageGenerationTaskId(),
     batchId,
+    apiKeyId: selectedKey.value?.id,
+    startedAt,
     prompt: currentPrompt,
     model: imageModel.value,
     size: size.value,
@@ -1494,6 +1906,7 @@ async function generate() {
   persistPendingImages()
   errorMessage.value = ''
   const geminiModel = isGeminiModel(imageModel.value)
+  const grokModel = isGrokImageModel.value
   try {
     const headers: Record<string, string> = { Authorization: `Bearer ${selectedKey.value.key}` }
     let url = `${apiBaseUrl.value}${hasReferences.value ? '/images/edits' : '/images/generations'}`
@@ -1515,11 +1928,18 @@ async function generate() {
         background: background.value,
         n: 1,
         response_format: 'b64_json',
+        ...(grokModel && appliedSize.mode === 'ratio'
+          ? {
+              resolution: grokResolutionForBase(appliedSize.aspectBase).toLowerCase(),
+              aspect_ratio: appliedSize.aspectRatio,
+            }
+          : {}),
       })
     }
-    const results = await executeGenerationRequests(pendingImages, url, headers, body)
+    const results = await executeGenerationRequests(pendingImages, url, headers, body, geminiModel)
     await finishGenerationBatch(pendingImages, results)
   } catch (error) {
+    if (error instanceof ImageGenerationWaitCancelled) return
     removePendingImages(pendingImages)
     errorMessage.value = errorMessageFrom(error, '生成失败')
   } finally {
@@ -1532,6 +1952,235 @@ function removePendingImages(pendingImages: GeneratedImage[]) {
   const pendingIds = new Set(pendingImages.map((item) => item.id))
   images.value = images.value.filter((item) => !pendingIds.has(item.id))
   persistPendingImages()
+}
+
+function gatewayAsyncSubmitUrl(syncUrl: string, geminiModel: boolean) {
+  if (geminiModel) {
+    return `${apiBaseUrl.value.replace(/\/+$/, '')}/images/generations/async`
+  }
+  return syncUrl.replace(/\/images\/(generations|edits)$/, '/images/$1/async')
+}
+
+function gatewayTaskPayload(payload: any) {
+  return payload?.data && !payload?.task_id && !payload?.id ? payload.data : payload
+}
+
+function gatewayTaskError(payload: any): Error {
+  return new Error(
+    payload?.error?.message
+    || payload?.error
+    || payload?.message
+    || '图片生成任务失败',
+  )
+}
+
+function resolveGatewayPollUrl(raw: string) {
+  if (/^https?:\/\//i.test(raw)) return raw
+  const fallbackOrigin = typeof window !== 'undefined' && window.location.origin
+    ? window.location.origin
+    : 'http://localhost'
+  const apiBase = new URL(apiBaseUrl.value || fallbackOrigin, fallbackOrigin)
+  return new URL(raw, apiBase.origin).toString()
+}
+
+async function waitForGatewayPollRetry(delay: number) {
+  if (componentDisposed) throw new ImageGenerationWaitCancelled()
+  await new Promise((resolve) => window.setTimeout(resolve, delay))
+  if (componentDisposed) throw new ImageGenerationWaitCancelled()
+}
+
+async function pollGatewayImageTask(
+  pollUrl: string,
+  headers: Record<string, string>,
+  options: { isCancelled?: () => boolean } = {},
+): Promise<any[]> {
+  const deadline = Date.now() + 30 * 60 * 1000
+  const url = resolveGatewayPollUrl(pollUrl)
+  let retryAttempt = 0
+  while (Date.now() < deadline) {
+    if (options.isCancelled?.()) throw new ImageGenerationWaitCancelled()
+    let response: Response
+    let payload: any
+    try {
+      response = await fetch(url, { headers })
+      payload = await response.json().catch(() => null)
+    } catch {
+      retryAttempt += 1
+      await waitForGatewayPollRetry(Math.min(30_000, 1500 * (2 ** Math.min(retryAttempt - 1, 5))))
+      continue
+    }
+    if (response.status === 429 || response.status >= 500) {
+      retryAttempt += 1
+      await waitForGatewayPollRetry(Math.min(30_000, 1500 * (2 ** Math.min(retryAttempt - 1, 5))))
+      continue
+    }
+    if (!response.ok) throw gatewayTaskError(payload)
+    retryAttempt = 0
+    const task = gatewayTaskPayload(payload)
+    if (task?.status === 'completed') {
+      const result = task.result
+      const normalized = typeof result === 'string' ? JSON.parse(result) : result
+      return extractImages(normalized)
+    }
+    if (task?.status === 'failed') throw gatewayTaskError(task.error || task)
+    await waitForGatewayPollRetry(2000)
+  }
+  throw new Error('图片生成超时，请稍后重试')
+}
+
+async function tryExecuteGatewayAsyncRequests(
+  pendingImages: GeneratedImage[],
+  syncUrl: string,
+  headers: Record<string, string>,
+  body: string | FormData,
+  geminiModel: boolean,
+): Promise<PromiseSettledResult<any[]>[] | null> {
+  const submitUrl = gatewayAsyncSubmitUrl(syncUrl, geminiModel)
+  const submitted: Array<{ image: GeneratedImage; pollUrl: string }> = []
+  const results: PromiseSettledResult<any[]>[] = []
+
+  for (const image of pendingImages) {
+    let requestBody: string | FormData = body
+    if (geminiModel) {
+      if (typeof body !== 'string') throw new Error('Gemini 图片请求格式无效')
+      requestBody = JSON.stringify({
+        model: image.model || imageModel.value,
+        request: JSON.parse(body),
+      })
+    }
+    const requestHeaders = {
+      ...headers,
+      'Idempotency-Key': image.taskId || createImageGenerationTaskId(),
+    }
+    image.gatewaySubmitPending = true
+    persistPendingImages()
+    let response: Response | null = null
+    let payload: any = null
+    let requestError: unknown = null
+    let ambiguousAttempt = false
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      requestError = null
+      try {
+        response = await fetch(submitUrl, {
+          method: 'POST',
+          headers: requestHeaders,
+          body: requestBody,
+        })
+        payload = await response.json().catch(() => null)
+      } catch (error) {
+        response = null
+        requestError = error
+        ambiguousAttempt = true
+      }
+      const retryable = !response || isRetryableGatewaySubmitStatus(response.status)
+      if (!response || isAmbiguousGatewaySubmitStatus(response.status)) {
+        ambiguousAttempt = true
+      }
+      if (!retryable || attempt === 2) break
+      await new Promise((resolve) => window.setTimeout(resolve, 500))
+    }
+    if (!response) {
+      const reason = requestError instanceof Error
+        ? requestError
+        : new Error('提交图片任务失败')
+      if (!submitted.length) throw reason
+      results.push({ status: 'rejected', reason })
+      continue
+    }
+    if (response.status === 404) {
+      if (!submitted.length && !ambiguousAttempt) {
+        for (const pendingImage of pendingImages) {
+          pendingImage.gatewaySubmitPending = false
+        }
+        persistPendingImages()
+        return null
+      }
+      results.push({ status: 'rejected', reason: gatewayTaskError(payload) })
+      continue
+    }
+    if (!response.ok) {
+      const error = gatewayTaskError(payload)
+      if (!submitted.length) throw error
+      results.push({ status: 'rejected', reason: error })
+      continue
+    }
+    const task = gatewayTaskPayload(payload)
+    if (!task?.poll_url) {
+      const error = new Error('服务端没有返回图片任务地址')
+      if (!submitted.length) throw error
+      results.push({ status: 'rejected', reason: error })
+      continue
+    }
+    image.gatewayTaskId = String(task.task_id || task.id || '')
+    image.gatewayPollUrl = String(task.poll_url)
+    image.taskId = image.gatewayTaskId || image.taskId
+    image.gatewaySubmitPending = false
+    submitted.push({ image, pollUrl: String(task.poll_url) })
+    persistPendingImages()
+  }
+
+  const polled = await Promise.allSettled(
+    submitted.map((task) => pollGatewayImageTask(task.pollUrl, headers, {
+      isCancelled: () => componentDisposed,
+    })),
+  )
+  for (const image of pendingImages) {
+    if (!image.gatewayPollUrl) image.gatewaySubmitPending = false
+  }
+  persistPendingImages()
+  return [...results, ...polled]
+}
+
+function isRetryableGatewaySubmitStatus(status: number) {
+  return status === 408 || status === 425 || status === 429 || status >= 500
+}
+
+function isAmbiguousGatewaySubmitStatus(status: number) {
+  return status === 408 || status >= 500
+}
+
+async function resumeGatewayGeneration(pendingImages: GeneratedImage[]) {
+  if (!selectedKey.value?.key) return
+  const batches = new Map<string, GeneratedImage[]>()
+  for (const image of pendingImages) {
+    if (!image.gatewayPollUrl) continue
+    const batchId = image.batchId || image.gatewayTaskId || image.gatewayPollUrl
+    if (resumedGatewayBatches.has(batchId)) continue
+    const batch = batches.get(batchId) || []
+    batch.push(image)
+    batches.set(batchId, batch)
+  }
+  for (const [batchId, batch] of batches) {
+    resumedGatewayBatches.add(batchId)
+    activeGenerations.value += 1
+    generating.value = true
+    try {
+      const apiKeyId = batch[0]?.apiKeyId
+      const taskKey = apiKeyId
+        ? imageCapableKeys.value.find((key) => Number(key.id) === Number(apiKeyId))
+        : selectedKey.value
+      if (!taskKey?.key) {
+        removePendingImages(batch)
+        errorMessage.value = '找不到发起这组图片任务时使用的密钥，请重新生成。'
+        continue
+      }
+      const headers = { Authorization: `Bearer ${taskKey.key}` }
+      const results = await Promise.allSettled(
+        batch.map((image) => pollGatewayImageTask(image.gatewayPollUrl!, headers, {
+          isCancelled: () => componentDisposed,
+        })),
+      )
+      await finishGenerationBatch(batch, results)
+    } catch (error) {
+      if (error instanceof ImageGenerationWaitCancelled) return
+      removePendingImages(batch)
+      errorMessage.value = errorMessageFrom(error, '恢复图片生成任务失败')
+    } finally {
+      resumedGatewayBatches.delete(batchId)
+      activeGenerations.value = Math.max(0, activeGenerations.value - 1)
+      generating.value = activeGenerations.value > 0
+    }
+  }
 }
 
 function workerResponseToSettledResult(
@@ -1567,7 +2216,18 @@ async function executeGenerationRequests(
   url: string,
   headers: Record<string, string>,
   body: string | FormData,
+  geminiModel: boolean,
 ): Promise<PromiseSettledResult<any[]>[]> {
+  let gatewayResults: PromiseSettledResult<any[]>[] | null = null
+  gatewayResults = await tryExecuteGatewayAsyncRequests(
+    pendingImages,
+    url,
+    headers,
+    body,
+    geminiModel,
+  )
+  if (gatewayResults) return gatewayResults
+
   const taskRequests = pendingImages
     .filter((image): image is GeneratedImage & { taskId: string } => Boolean(image.taskId))
     .map((image) => ({
@@ -1586,6 +2246,7 @@ async function executeGenerationRequests(
     if (started) {
       const responses = await waitForPersistentImageGeneration(
         taskRequests.map((request) => request.id),
+        { isCancelled: () => componentDisposed },
       )
       return responses.map(workerResponseToSettledResult)
     }
@@ -1624,23 +2285,32 @@ async function finishGenerationBatch(
   const firstPending = pendingImages[0]
   const currentPrompt = firstPending?.prompt || prompt.value.trim()
   const currentModel = firstPending?.model || imageModel.value
+  const requestedFormat = firstPending?.format || format.value
+  const completedAtMs = Date.now()
+  const durationMs = Number(firstPending?.startedAt || 0) > 0
+    ? Math.max(1, completedAtMs - Number(firstPending.startedAt))
+    : undefined
   const generated = (await Promise.all(items.map(async (item: any, index: number): Promise<GeneratedImage | null> => {
     const mime = String(item.mimeType || item.mime_type || 'image/png')
     const b64 = String(item.b64_json || item.data || '')
     const rawSrc = b64 ? `data:${mime};base64,${b64}` : String(item.url || '')
     if (!rawSrc) return null
+    const selfHostedSrc = await toSelfHostedImageSrc(rawSrc)
+    const src = await ensureImageFormat(selfHostedSrc, requestedFormat)
+    const actualFormat = imageFormatFromSource(src, requestedFormat)
     return {
       id: nextImageId++,
       title: `生成结果 ${index + 1}`,
-      src: await toSelfHostedImageSrc(rawSrc),
+      src,
       prompt: currentPrompt,
       model: currentModel,
       size: firstPending?.size || size.value,
-      format: firstPending?.format || format.value,
+      format: actualFormat,
       quality: firstPending?.quality || quality.value,
       background: firstPending?.background || background.value,
-      meta: firstPending?.meta || `${format.value.toUpperCase()} · ${size.value} · ${imageModel.value}`,
+      meta: `${actualFormat.toUpperCase()} · ${firstPending?.size || size.value} · ${currentModel}`,
       createdAt: Date.now() / 1000,
+      durationMs,
     }
   }))).filter((item): item is GeneratedImage => item !== null)
 
@@ -1661,9 +2331,11 @@ function buildGeminiURL(model: string) {
 }
 
 function buildGeminiPayload(text: string) {
-  const parts = references.value.map((item) => {
+  const parts: any[] = []
+  references.value.forEach((item, index) => {
     const match = /^data:([^;,]+);base64,(.+)$/i.exec(item.preview)
-    return match ? { inlineData: { mimeType: match[1], data: match[2] } } : { text: item.name }
+    parts.push({ text: `图片${index + 1}` })
+    parts.push(match ? { inlineData: { mimeType: match[1], data: match[2] } } : { text: item.name })
   })
   parts.push({ text })
   const imageConfig: Record<string, string> = {
@@ -1791,6 +2463,28 @@ function removeReference(id: number) {
   references.value = references.value.filter((item) => item.id !== id)
 }
 
+function insertReferenceToken(index: number) {
+  const token = `图片${index}`
+  const textarea = promptTextareaRef.value
+  if (!textarea) {
+    prompt.value = `${prompt.value}${prompt.value.trim() ? ' ' : ''}${token}`
+    return
+  }
+  const start = textarea.selectionStart ?? prompt.value.length
+  const end = textarea.selectionEnd ?? start
+  const before = prompt.value.slice(0, start)
+  const after = prompt.value.slice(end)
+  const prefix = before && !/\s$/.test(before) ? ' ' : ''
+  const suffix = after && !/^\s/.test(after) ? ' ' : ''
+  const nextValue = `${before}${prefix}${token}${suffix}${after}`
+  const cursor = before.length + prefix.length + token.length
+  prompt.value = nextValue
+  void nextTick(() => {
+    textarea.focus()
+    textarea.setSelectionRange(cursor, cursor)
+  })
+}
+
 async function downloadImage(image: GeneratedImage) {
   const filename = `${image.title}.${image.format || 'png'}`
   const id = galleryIdFor(image)
@@ -1873,14 +2567,47 @@ watch([selectedKeyId, apiBaseUrl], () => {
   void loadModels()
 })
 
+watch(imageModel, (model, previousModel) => {
+  if (!model || model === previousModel) return
+  resetParametersForModel(model)
+})
+
+watch(
+  () => activeGenerations.value > 0 || images.value.some((image) => image.pending),
+  (hasActiveGeneration) => {
+    if (hasActiveGeneration) startGenerationClock()
+    else stopGenerationClock()
+  },
+  { immediate: true },
+)
+
 onMounted(() => {
+  componentDisposed = false
+  window.addEventListener('resize', updateImageResultColumnCount)
   document.addEventListener('click', handleSizeOutside)
   document.addEventListener('keydown', handleSizeEscape)
   applyInspirationFromRoute()
   void loadData()
 })
-onActivated(applyInspirationFromRoute)
+onActivated(() => {
+  componentDisposed = false
+  updateImageResultColumnCount()
+  if (activeGenerations.value > 0 || images.value.some((image) => image.pending)) {
+    startGenerationClock()
+  }
+  applyInspirationFromRoute()
+  const restored = images.value.filter((item) => item.pending && item.taskId && !item.gatewayPollUrl)
+  if (restored.length) void resumePersistentGeneration(restored)
+  const gatewayPending = images.value.filter((item) => item.pending && item.gatewayPollUrl)
+  if (gatewayPending.length) void resumeGatewayGeneration(gatewayPending)
+})
+onDeactivated(() => {
+  stopGenerationClock()
+})
 onBeforeUnmount(() => {
+  componentDisposed = true
+  stopGenerationClock()
+  window.removeEventListener('resize', updateImageResultColumnCount)
   document.removeEventListener('click', handleSizeOutside)
   document.removeEventListener('keydown', handleSizeEscape)
   for (const url of galleryThumbObjectUrls.values()) {
@@ -2768,7 +3495,7 @@ onBeforeUnmount(() => {
   object-fit: cover;
 }
 
-.image-composer__reference button {
+.image-composer__remove {
   position: absolute;
   top: 0.3rem;
   right: 0.3rem;
@@ -2781,6 +3508,38 @@ onBeforeUnmount(() => {
   border-radius: 999px;
   background: rgb(24 24 27 / 0.72);
   color: white;
+}
+
+.image-composer__reference-index {
+  position: absolute;
+  top: 0.3rem;
+  left: 0.3rem;
+  border: 0;
+  border-radius: 999px;
+  background: rgb(24 24 27 / 0.72);
+  padding: 0.18rem 0.42rem;
+  color: white;
+  font-size: 0.68rem;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.image-composer__reference-index:hover {
+  background: rgb(24 24 27 / 0.9);
+}
+
+.image-composer__reference-name {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  overflow: hidden;
+  background: linear-gradient(transparent, rgb(0 0 0 / 0.72));
+  padding: 1.1rem 0.45rem 0.38rem;
+  color: white;
+  font-size: 0.66rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .image-composer__upload-tile {
@@ -2821,7 +3580,25 @@ onBeforeUnmount(() => {
 
 .image-composer__field {
   display: grid;
+  align-content: start;
   gap: 0.35rem;
+}
+
+.image-composer__option-grid {
+  display: grid;
+  align-items: start;
+  gap: 0.85rem;
+}
+
+.image-composer__option-grid.is-split {
+  grid-template-columns: minmax(0, 1.1fr) minmax(8.75rem, 0.9fr);
+}
+
+.image-composer__option-note {
+  margin-top: -0.15rem;
+  color: rgb(142 142 136);
+  font-size: 0.68rem;
+  line-height: 1.55;
 }
 
 .image-composer__label-row {
@@ -3027,20 +3804,27 @@ onBeforeUnmount(() => {
 .image-composer__segmented {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 0;
+  gap: 0.15rem;
   overflow: hidden;
-  border-radius: 0.55rem;
-  background: rgb(232 232 229);
-  padding: 0;
+  border: 1px solid rgb(229 229 225);
+  border-radius: 0.7rem;
+  background: rgb(242 242 239);
+  padding: 0.2rem;
+}
+
+.image-composer__segmented--three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .image-composer__segmented button {
-  min-height: 2.15rem;
+  min-height: 2rem;
   border: 0;
-  border-radius: 0.45rem;
+  border-radius: 0.5rem;
   background: transparent;
   color: rgb(113 113 107);
-  font-size: 0.82rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  line-height: 1;
   transition:
     background 0.16s ease,
     color 0.16s ease,
@@ -3048,6 +3832,7 @@ onBeforeUnmount(() => {
 }
 
 .image-composer__segmented button:hover {
+  background: rgb(255 255 255 / 0.58);
   color: rgb(31 31 30);
 }
 
@@ -3055,8 +3840,8 @@ onBeforeUnmount(() => {
   background: rgb(250 250 248);
   color: rgb(31 31 30);
   box-shadow:
-    0 1px 2px rgb(24 24 27 / 0.08),
-    0 0 0 1px rgb(24 24 27 / 0.03);
+    0 1px 2px rgb(24 24 27 / 0.12),
+    0 0 0 1px rgb(24 24 27 / 0.04);
 }
 
 .image-composer__select-like {
@@ -3173,6 +3958,10 @@ onBeforeUnmount(() => {
     padding-left: 0.65rem;
   }
 
+  .image-composer__option-grid.is-split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .image-composer__prompt {
     height: 7.75rem;
     min-height: 7.75rem;
@@ -3269,6 +4058,12 @@ onBeforeUnmount(() => {
 }
 
 .image-pending-card small { color: rgb(100 116 139); }
+
+.image-pending-card__timer {
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+  color: rgb(13 148 136) !important;
+}
 
 .image-generation-spinner {
   width: 1.5rem;
@@ -3456,38 +4251,26 @@ onBeforeUnmount(() => {
 }
 
 .image-results-masonry {
-  column-count: 1;
-  column-gap: 1rem;
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
 }
 
-.image-results-masonry > article {
-  display: inline-block;
+.image-results-masonry__column {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 0;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.image-results-masonry__column > article {
   width: 100%;
-  margin: 0 0 1rem;
-  break-inside: avoid;
 }
 
 .image-result-card__media img {
   width: 100%;
   height: auto;
-}
-
-@media (min-width: 640px) {
-  .image-results-masonry {
-    column-count: 2;
-  }
-}
-
-@media (min-width: 1024px) {
-  .image-results-masonry {
-    column-count: 3;
-  }
-}
-
-@media (min-width: 1536px) {
-  .image-results-masonry {
-    column-count: 4;
-  }
 }
 
 .image-studio .studio-page__results article {
@@ -3640,21 +4423,27 @@ onBeforeUnmount(() => {
 }
 
 :global(.dark .image-composer__segmented) {
-  background: rgb(48 48 45);
+  border-color: rgb(64 64 60);
+  background: rgb(41 41 38);
 }
 
 :global(.dark .image-composer__segmented button) {
-  color: rgb(166 166 159);
+  color: rgb(168 168 161);
 }
 
 :global(.dark .image-composer__segmented button:hover) {
+  background: rgb(255 255 255 / 0.06);
   color: rgb(238 238 234);
 }
 
 :global(.dark .image-composer__segmented button.is-active) {
-  background: rgb(66 66 62);
-  color: rgb(250 250 247);
-  box-shadow: 0 1px 2px rgb(0 0 0 / 0.2);
+  background: rgb(241 241 237);
+  color: rgb(30 30 28);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.28);
+}
+
+:global(.dark .image-composer__option-note) {
+  color: rgb(151 151 144);
 }
 
 :global(.dark .image-composer__footer) {

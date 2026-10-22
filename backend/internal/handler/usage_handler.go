@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"errors"
+	"html"
 	"net/http"
 	"strconv"
 	"strings"
@@ -50,6 +52,76 @@ type UsageHandler struct {
 	apiKeyService  *service.APIKeyService
 	opsService     *service.OpsService
 	settingService *service.SettingService
+	imageLinks     service.UsageLogImageLinkStore
+	imageStorage   *service.ImageStorageSettingService
+}
+
+func (h *UsageHandler) SetImageLinkDeps(
+	imageLinks service.UsageLogImageLinkStore,
+	imageStorage *service.ImageStorageSettingService,
+) {
+	if h == nil {
+		return
+	}
+	h.imageLinks = imageLinks
+	h.imageStorage = imageStorage
+}
+
+func (h *UsageHandler) ImageLink(c *gin.Context) {
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not authenticated")
+		return
+	}
+	if h.imageLinks == nil {
+		writeExpiredUsageImage(c)
+		return
+	}
+	link, err := h.imageLinks.GetByToken(c.Request.Context(), strings.TrimSpace(c.Param("token")))
+	if err != nil {
+		if errors.Is(err, service.ErrUsageLogImageLinkNotFound) {
+			writeExpiredUsageImage(c)
+			return
+		}
+		response.ErrorFrom(c, err)
+		return
+	}
+	if link.UserID != subject.UserID {
+		writeExpiredUsageImage(c)
+		return
+	}
+	if h.imageStorage != nil && strings.TrimSpace(link.ObjectKey) != "" {
+		exists, existsErr := h.imageStorage.ImageObjectExists(c.Request.Context(), link.ObjectKey)
+		if existsErr != nil {
+			response.ErrorFrom(c, existsErr)
+			return
+		}
+		if !exists {
+			writeExpiredUsageImage(c)
+			return
+		}
+		url, urlErr := h.imageStorage.PresignImageObject(c.Request.Context(), link.ObjectKey)
+		if urlErr != nil {
+			response.ErrorFrom(c, urlErr)
+			return
+		}
+		c.Redirect(http.StatusFound, url)
+		return
+	}
+	imageURL := strings.TrimSpace(link.ImageURL)
+	if strings.HasPrefix(imageURL, "http://") || strings.HasPrefix(imageURL, "https://") {
+		c.Redirect(http.StatusFound, imageURL)
+		return
+	}
+	writeExpiredUsageImage(c)
+}
+
+func writeExpiredUsageImage(c *gin.Context) {
+	c.Data(http.StatusGone, "text/html; charset=utf-8", []byte(
+		"<html><body style=\"font-family:sans-serif;padding:24px\">"+
+			html.EscapeString("图片已过期或已被删除。")+
+			"</body></html>",
+	))
 }
 
 // NewUsageHandler creates a new UsageHandler

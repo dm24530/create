@@ -84,6 +84,18 @@ func TestMigrationsRunner_IsIdempotent_AndSchemaIsUpToDate(t *testing.T) {
 	requireColumn(t, tx, "usage_logs", "upstream_model_mismatch", "boolean", 0, true)
 	requireIndex(t, tx, "usage_logs", usageLogsUpstreamModelMismatchIndex)
 
+	var usageLogImageLinksRegclass sql.NullString
+	require.NoError(t, tx.QueryRowContext(context.Background(), "SELECT to_regclass('public.usage_log_image_links')").Scan(&usageLogImageLinksRegclass))
+	require.True(t, usageLogImageLinksRegclass.Valid, "expected usage_log_image_links table to exist")
+	requireColumn(t, tx, "usage_log_image_links", "user_id", "bigint", 0, false)
+	requireColumn(t, tx, "usage_log_image_links", "api_key_id", "bigint", 0, false)
+	requireColumn(t, tx, "usage_log_image_links", "request_id", "character varying", 128, false)
+	requireColumn(t, tx, "usage_log_image_links", "link_token", "character varying", 64, false)
+	requireColumn(t, tx, "usage_log_image_links", "image_url", "text", 0, false)
+	requireColumn(t, tx, "usage_log_image_links", "object_key", "text", 0, true)
+	requireColumn(t, tx, "usage_log_image_links", "expires_at", "timestamp with time zone", 0, false)
+	requireColumn(t, tx, "studio_works", "duration_ms", "integer", 0, true)
+
 	var mismatchIndexDef string
 	require.NoError(t, tx.QueryRowContext(context.Background(), `
 SELECT pg_get_indexdef(i.indexrelid)

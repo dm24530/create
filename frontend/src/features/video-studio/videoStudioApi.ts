@@ -45,6 +45,26 @@ export interface VideoGatewayContext {
   apiKey: string
 }
 
+export class VideoTaskRequestError extends Error {
+  status: number
+
+  constructor(message: string, status: number) {
+    super(message)
+    this.name = 'VideoTaskRequestError'
+    this.status = status
+  }
+}
+
+export function isRetryableVideoPollingError(error: unknown): boolean {
+  if (error instanceof VideoTaskRequestError) {
+    return error.status === 408
+      || error.status === 425
+      || error.status === 429
+      || error.status >= 500
+  }
+  return true
+}
+
 // 视频画质档位与后端计费档位一致（480p/720p/1080p）。
 export const VIDEO_RESOLUTIONS = ['480p', '720p', '1080p'] as const
 
@@ -163,7 +183,15 @@ export async function createVideoTask(
     body: JSON.stringify(body),
   })
   const payload = await response.json().catch(() => null)
-  if (!response.ok) throw new Error(await readError(response) || '创建视频任务失败')
+  if (!response.ok) {
+    throw new Error(
+      String(
+        payload?.error?.message
+        || payload?.message
+        || `${response.status} ${response.statusText}`,
+      ),
+    )
+  }
   const requestId = extractRequestId(payload)
   if (!requestId) throw new Error('上游没有返回视频任务 ID')
   return { provider, requestId }
@@ -221,7 +249,16 @@ export async function fetchVideoTask(
     headers: authHeaders(context.apiKey),
   })
   const payload = await response.json().catch(() => null)
-  if (!response.ok) throw new Error(await readError(response) || '查询视频任务失败')
+  if (!response.ok) {
+    throw new VideoTaskRequestError(
+      String(
+        payload?.error?.message
+        || payload?.message
+        || `${response.status} ${response.statusText}`,
+      ),
+      response.status,
+    )
+  }
   return parseVideoTaskSnapshot(provider, payload)
 }
 
@@ -265,13 +302,17 @@ export async function pollVideoTask(
   options: {
     intervalMs?: number
     timeoutMs?: number
+    retryBaseMs?: number
     isCancelled?: () => boolean
     onProgress?: (snapshot: VideoTaskSnapshot) => void
+    onRetry?: (attempt: number, error: unknown) => void
   } = {},
 ): Promise<VideoTaskSnapshot> {
   const intervalMs = options.intervalMs ?? 3000
+  const retryBaseMs = options.retryBaseMs ?? Math.max(intervalMs, 1000)
   const timeoutMs = options.timeoutMs ?? 10 * 60 * 1000
   const deadline = Date.now() + timeoutMs
+  let retryAttempt = 0
   let last: VideoTaskSnapshot = {
     status: 'queued',
     videoUrl: '',
@@ -281,7 +322,18 @@ export async function pollVideoTask(
   }
   for (;;) {
     if (options.isCancelled?.()) return last
-    last = await fetchVideoTask(context, provider, requestId)
+    try {
+      last = await fetchVideoTask(context, provider, requestId)
+      retryAttempt = 0
+    } catch (error) {
+      if (!isRetryableVideoPollingError(error)) throw error
+      retryAttempt += 1
+      options.onRetry?.(retryAttempt, error)
+      if (Date.now() >= deadline) return last
+      const retryDelay = Math.min(30_000, retryBaseMs * (2 ** Math.min(retryAttempt - 1, 5)))
+      await new Promise((resolve) => setTimeout(resolve, retryDelay))
+      continue
+    }
     options.onProgress?.(last)
     if (last.status === 'succeeded' || last.status === 'failed') return last
     if (Date.now() >= deadline) return last
