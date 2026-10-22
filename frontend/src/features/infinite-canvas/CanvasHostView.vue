@@ -93,11 +93,9 @@ onMounted(loadContext)
 <style scoped>
 .canvas-host {
   position: relative;
-  height: calc(100vh - 8rem);
+  height: calc(100vh - 3.5rem);
   min-height: 620px;
   overflow: hidden;
-  border: 1px solid rgba(148, 163, 184, 0.18);
-  border-radius: 12px;
   background: #0c0f14;
 }
 
