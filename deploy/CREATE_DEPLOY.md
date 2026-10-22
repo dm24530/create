@@ -75,7 +75,7 @@ IMAGE=create:local docker compose -f docker-compose.create.yml up -d
 cd frontend; pnpm run build            # 产物落到 backend/internal/web/dist
 cd ../backend
 $env:CGO_ENABLED=0; $env:GOOS="linux"; $env:GOARCH="amd64"
-go build -tags embed -trimpath -ldflags="-s -w -X main.Version=0.2.15" -o ../create-linux-amd64 ./cmd/server
+go build -tags embed -trimpath -ldflags="-s -w -X main.Version=0.2.16" -o ../create-linux-amd64 ./cmd/server
 ```
 
 上传后在服务器上跑（需要自备 PostgreSQL / Redis，并写好 `config.yaml`）：
