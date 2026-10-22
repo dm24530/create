@@ -24,6 +24,7 @@ export interface SaveImageStudioGalleryRequest {
   size: string
   format: string
   duration_ms?: number
+  created_at?: number
   /** 不传时后端按"直接存进我的作品"处理（老行为）；生成页应显式传 false。 */
   saved?: boolean
 }

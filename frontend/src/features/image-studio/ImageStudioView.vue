@@ -42,13 +42,13 @@
           </div>
           <div class="studio-results__actions">
             <span
-              v-if="generating"
+              v-if="activeImageTaskCount > 0"
               class="image-generation-status"
               data-testid="image-active-generations"
               aria-live="polite"
             >
               <Icon name="refresh" size="xs" class="is-spinning" />
-              <span>{{ activeGenerations }} 个任务进行中</span>
+              <span>{{ activeImageTaskCount }} 个任务进行中</span>
             </span>
             <button type="button" class="studio-results__action" :disabled="refreshing" @click="loadGallery">
               <Icon name="refresh" size="sm" :class="{ 'is-spinning': refreshing }" />
@@ -65,37 +65,52 @@
           <p class="mt-1 text-sm">支持文生图，也可以上传参考图做图生图。</p>
         </div>
 
-        <div v-else class="image-results-masonry" data-testid="image-results-masonry">
-          <div
-            v-for="(column, columnIndex) in imageResultColumns"
-            :key="`column-${columnIndex}`"
-            class="image-results-masonry__column"
-            :data-testid="`image-results-column-${columnIndex + 1}`"
+        <div v-else class="image-results-grid" data-testid="image-results-grid">
+          <article
+            v-for="image in images"
+            :key="image.id"
+            class="group overflow-hidden rounded-xl border border-gray-200 bg-gray-50 dark:border-dark-700 dark:bg-dark-800"
           >
-            <article
-              v-for="image in column"
-              :key="image.id"
-              class="group overflow-hidden rounded-xl border border-gray-200 bg-gray-50 dark:border-dark-700 dark:bg-dark-800"
+            <button
+              type="button"
+              class="image-result-card__media relative block w-full overflow-hidden"
+              :disabled="image.pending"
+              @click="!image.pending && (previewImage = image)"
             >
-              <button type="button" class="image-result-card__media relative block w-full overflow-hidden" :disabled="image.pending" @click="!image.pending && (previewImage = image)">
-                <div v-if="image.pending" class="image-pending-card">
-                  <span class="image-generation-spinner" aria-hidden="true"></span>
-                  <strong>正在生成</strong>
-                  <small>刷新或切换页面不会中断，完成后将在此显示</small>
-                  <small class="image-pending-card__timer" data-testid="image-pending-timer">
-                    {{ pendingElapsedSeconds(image) }} 秒
-                  </small>
+              <div v-if="image.pending" class="image-pending-card">
+                <span class="image-generation-spinner" aria-hidden="true"></span>
+                <strong>正在生成</strong>
+                <small>刷新或切换页面不会中断，完成后将在此显示</small>
+                <small class="image-pending-card__timer" data-testid="image-pending-timer">
+                  {{ pendingElapsedSeconds(image) }} 秒
+                </small>
+              </div>
+              <template v-else>
+                <div
+                  v-if="!isImageMediaLoaded(image)"
+                  class="image-media-state"
+                  :class="{ 'image-media-state--error': isImageMediaFailed(image) }"
+                  :data-testid="isImageMediaFailed(image) ? 'image-media-error' : 'image-media-loading'"
+                >
+                  <span v-if="!isImageMediaFailed(image)" class="image-generation-spinner" aria-hidden="true"></span>
+                  <strong>{{ isImageMediaFailed(image) ? '图片加载失败' : '图片加载中' }}</strong>
+                  <small>{{ isImageMediaFailed(image) ? '点击查看详情并重试' : '正在加载缩略图' }}</small>
                 </div>
                 <img
-                  v-else
-                  :src="image.thumbSrc || image.src"
+                  v-if="!isImageMediaFailed(image)"
+                  :key="imageMediaRenderKey(image)"
+                  :src="imageMediaDisplaySrc(image)"
                   :srcset="image.thumbSrcSet"
                   :alt="image.title"
                   loading="lazy"
                   decoding="async"
-                  class="block h-auto w-full object-contain"
+                  class="absolute inset-0 block h-full w-full object-cover"
+                  :class="{ 'opacity-0': !isImageMediaLoaded(image) }"
+                  @load="markImageMediaLoaded(image)"
+                  @error="handleImageMediaError(image)"
                 />
-              </button>
+              </template>
+            </button>
               <div class="flex items-center justify-between gap-2 px-3 py-2">
                 <div class="min-w-0">
                   <p class="truncate text-[11px] text-gray-400">
@@ -142,8 +157,7 @@
                   </button>
                 </div>
               </div>
-            </article>
-          </div>
+          </article>
         </div>
         </div>
       </section>
@@ -388,7 +402,7 @@
                   data-testid="custom-width"
                   type="number"
                   min="256"
-                  max="3840"
+                  :max="maxImageEdge"
                   step="16"
                   aria-label="宽度"
                 />
@@ -401,15 +415,20 @@
                   data-testid="custom-height"
                   type="number"
                   min="256"
-                  max="3840"
+                  :max="maxImageEdge"
                   step="16"
                   aria-label="高度"
                 />
               </label>
             </div>
             <p class="image-composer__custom-size-help">
-              支持 auto（默认，由模型决定）或自定义分辨率。自定义需满足：最长边不超过
-              3840px，宽高均为 16px 的倍数，长短边比不超过 3:1，总像素 655,360–8,294,400。
+              <template v-if="isGeminiImageModel">
+                支持 auto（默认，由模型决定）或自定义分辨率。超过 3840px 的尺寸会在生成后本地处理，最长边不超过 {{ maxImageEdge }}px。
+              </template>
+              <template v-else>
+                支持 auto（默认，由模型决定）或自定义分辨率。自定义需满足：最长边不超过
+                3840px，宽高均为 16px 的倍数，长短边比不超过 3:1，总像素 655,360–8,294,400。
+              </template>
             </p>
             <p class="image-composer__custom-size-summary" data-testid="custom-size-summary">
               当前 {{ customSizeSummary }}
@@ -464,7 +483,33 @@
     >
       <div v-if="previewImage" class="image-detail-dialog">
         <div class="image-detail-dialog__media">
-          <img :src="previewImage.src" :alt="previewImage.title" />
+          <div
+            v-if="!isImageMediaLoaded(previewImage)"
+            class="image-media-state image-detail-dialog__media-state"
+            :class="{ 'image-media-state--error': isImageMediaFailed(previewImage) }"
+            :data-testid="isImageMediaFailed(previewImage) ? 'preview-image-error' : 'preview-image-loading'"
+          >
+            <span v-if="!isImageMediaFailed(previewImage)" class="image-generation-spinner" aria-hidden="true"></span>
+            <strong>{{ isImageMediaFailed(previewImage) ? '图片加载失败' : '图片加载中' }}</strong>
+            <small>{{ isImageMediaFailed(previewImage) ? '原图暂时无法加载' : '正在加载高清图片' }}</small>
+            <button
+              v-if="isImageMediaFailed(previewImage)"
+              type="button"
+              class="image-media-state__retry"
+              @click.stop="retryImageMedia(previewImage)"
+            >
+              重试
+            </button>
+          </div>
+          <img
+            v-if="!isImageMediaFailed(previewImage)"
+            :key="imageMediaRenderKey(previewImage, 'preview')"
+            :src="imageMediaDisplaySrc(previewImage, previewDisplaySrc)"
+            :alt="previewImage.title"
+            :class="{ 'opacity-0': !isImageMediaLoaded(previewImage) }"
+            @load="markImageMediaLoaded(previewImage)"
+            @error="handleImageMediaError(previewImage)"
+          />
         </div>
         <section class="image-detail-dialog__panel">
           <div class="image-detail-dialog__section-head">
@@ -562,6 +607,11 @@ import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Toggle from '@/components/common/Toggle.vue'
 import ImageStudioSelect from './ImageStudioSelect.vue'
+import {
+  imageNeedsLocalResize,
+  LOCAL_IMAGE_MAX_EDGE,
+  processImageForDisplay,
+} from './imagePostProcess'
 import Icon from '@/components/icons/Icon.vue'
 import { useClipboard } from '@/composables/useClipboard'
 import {
@@ -583,6 +633,7 @@ interface GeneratedImage {
   id: number | string
   title: string
   src: string
+  originalSrc?: string
   thumbSrc?: string
   thumbSrcSet?: string
   meta: string
@@ -606,7 +657,13 @@ interface GeneratedImage {
   saved?: boolean
   expiresAt?: number
   createdAt?: number
+  restoredFromSnapshot?: boolean
 }
+
+type GenerationResultHandler = (
+  image: GeneratedImage,
+  result: PromiseSettledResult<any[]>,
+) => Promise<void> | void
 
 interface ReferenceItem {
   id: number
@@ -665,9 +722,13 @@ const activeGenerations = ref(0)
 const errorMessage = ref('')
 const images = ref<GeneratedImage[]>([])
 const generationClockNow = ref(Date.now())
-const imageResultColumnCount = ref(resolveImageResultColumnCount())
+const activeImageTaskCount = computed(() => images.value.filter((image) => image.pending).length)
 const references = ref<ReferenceItem[]>([])
 const previewImage = ref<GeneratedImage | null>(null)
+const previewDisplaySrc = ref('')
+const loadedImageMediaIds = ref<Set<string>>(new Set())
+const failedImageMediaIds = ref<Set<string>>(new Set())
+const imageMediaRetryNonce = ref<Map<string, number>>(new Map())
 const pendingDeleteImage = ref<GeneratedImage | null>(null)
 const deletingImage = ref(false)
 const previewPromptDraft = ref('')
@@ -680,6 +741,12 @@ const authStore = useAuthStore()
 const PENDING_STORAGE_KEY = 'sub2api:image-studio:pending'
 const PENDING_PROMPT_STORAGE_KEY = 'sub2api:image-studio:pending-prompt'
 const STUDIO_PREFERENCES_STORAGE_KEY = 'sub2api:image-studio:preferences'
+const STUDIO_SNAPSHOT_STORAGE_KEY = 'sub2api:image-studio:snapshot-v1'
+let nextImageId = 1
+
+function pendingImageStorageKey(userId: number | string) {
+  return `${PENDING_STORAGE_KEY}:${userId}`
+}
 
 interface ImageStudioPreferences {
   keyId: string
@@ -710,17 +777,83 @@ function writeStudioPreferences(update: Partial<ImageStudioPreferences>) {
   }
 }
 
+interface ImageStudioSnapshot {
+  keys: ApiKey[]
+  selectedKeyId: string
+  imageModels: string[]
+  imageModel: string
+  images: GeneratedImage[]
+}
+
+function studioSnapshotStorageKey(userId: number | string) {
+  return `${STUDIO_SNAPSHOT_STORAGE_KEY}:${userId}`
+}
+
+function readStudioSnapshot(userId: number | string): ImageStudioSnapshot | null {
+  try {
+    // 旧版本共用同一个 key，清掉它可以避免跨账号泄露历史图片。
+    sessionStorage.removeItem(STUDIO_SNAPSHOT_STORAGE_KEY)
+    const parsed = JSON.parse(sessionStorage.getItem(studioSnapshotStorageKey(userId)) || 'null')
+    if (!parsed || typeof parsed !== 'object') return null
+    return {
+      keys: Array.isArray(parsed.keys) ? parsed.keys : [],
+      selectedKeyId: typeof parsed.selectedKeyId === 'string' ? parsed.selectedKeyId : '',
+      imageModels: Array.isArray(parsed.imageModels) ? parsed.imageModels.filter((item: unknown) => typeof item === 'string') : [],
+      imageModel: typeof parsed.imageModel === 'string' ? parsed.imageModel : '',
+      images: Array.isArray(parsed.images) ? parsed.images : [],
+    }
+  } catch {
+    return null
+  }
+}
+
+function restoreStudioSnapshot(userId?: number | string) {
+  if (userId == null) return
+  const snapshot = readStudioSnapshot(userId)
+  if (!snapshot) return
+  keys.value = snapshot.keys.map((key) => ({ ...key, key: '' }))
+  selectedKeyId.value = snapshot.selectedKeyId
+  imageModels.value = snapshot.imageModels
+  imageModel.value = snapshot.imageModel
+  images.value = snapshot.images.map((image) => ({
+    ...image,
+    restoredFromSnapshot: true,
+  }))
+  const numericIds = images.value
+    .map((image) => Number(image.id))
+    .filter((id) => Number.isFinite(id) && id > 0)
+  if (numericIds.length) {
+    nextImageId = Math.max(nextImageId, ...numericIds.map((id) => id + 1))
+  }
+}
+
+function writeStudioSnapshot() {
+  try {
+    const userId = authStore.user?.id
+    if (userId == null) return
+    const snapshot: ImageStudioSnapshot = {
+      keys: keys.value.map((key) => ({ ...key, key: '' })),
+      selectedKeyId: selectedKeyId.value,
+      imageModels: imageModels.value,
+      imageModel: imageModel.value,
+      images: images.value
+        .filter((image) => !image.pending && image.src && !image.src.startsWith('data:'))
+        .slice(0, 48)
+        .map((image) => ({
+          ...image,
+          originalSrc: undefined,
+          thumbSrcSet: undefined,
+        })),
+    }
+    sessionStorage.setItem(studioSnapshotStorageKey(userId), JSON.stringify(snapshot))
+  } catch {
+    // A cached UI snapshot is optional; failed writes must not affect the studio.
+  }
+}
+
+restoreStudioSnapshot(authStore.user?.id)
+
 const size = computed(() => formatSize(appliedSize))
-const imageResultColumns = computed(() => {
-  const columns = Array.from(
-    { length: imageResultColumnCount.value },
-    () => [] as GeneratedImage[],
-  )
-  images.value.forEach((image, index) => {
-    columns[index % imageResultColumnCount.value].push(image)
-  })
-  return columns
-})
 // 上游按"总像素 + 比例"卡尺寸，本地不拦的话只能在生成时吃上游的 400。
 const sizeIssue = computed(() => (
   isGeminiModel(imageModel.value) || (
@@ -889,6 +1022,9 @@ const canGenerate = computed(() => Boolean(apiBaseUrl.value && selectedKey.value
 const isGeminiImageModel = computed(() => isGeminiModel(imageModel.value))
 const isGptImageModel = computed(() => imageModel.value.toLowerCase().includes('gpt-image'))
 const isGrokImageModel = computed(() => isGrokImageModelName(imageModel.value))
+const maxImageEdge = computed(() => (
+  isGeminiImageModel.value ? LOCAL_IMAGE_MAX_EDGE : IMAGE_MAX_EDGE
+))
 const modelSupportsTransparentBackground = computed(() => (
   !isGeminiImageModel.value && !isGrokImageModel.value
 ))
@@ -926,8 +1062,6 @@ const canRegeneratePreview = computed(() => Boolean(
   !generating.value,
 ))
 const hasReferences = computed(() => references.value.length > 0)
-
-let nextImageId = 1
 
 // 本会话里已保存进图库的条目 id：这些图本地已有可显示的副本，
 // 图库列表里再渲染一次就会出现"生成一张却显示两张"的重复卡片。
@@ -1248,7 +1382,7 @@ function normalizeDimension(value: number) {
 
 function clampDimension(value: number) {
   const numeric = Number.isFinite(Number(value)) ? Number(value) : 1024
-  return Math.round(Math.min(IMAGE_MAX_EDGE, Math.max(IMAGE_MIN_EDGE, numeric)))
+  return Math.round(Math.min(maxImageEdge.value, Math.max(IMAGE_MIN_EDGE, numeric)))
 }
 
 function parseSize(value: string) {
@@ -1293,9 +1427,30 @@ async function loadGallery() {
     const entries = await imageStudioGalleryAPI.list()
     for (const entry of entries) {
       if (entry?.id) galleryBackedIds.value.add(String(entry.id))
+      const localImage = images.value.find((item) => (
+        localToGalleryId.value.get(String(item.id)) === String(entry?.id || '')
+      ))
+      if (localImage) {
+        const storedURL = String(entry.url || '')
+        if (storedURL && storedURL !== localImage.src) {
+          localImage.src = storedURL
+          resetImageMediaState(localImage)
+        }
+        const storedThumbURL = String(entry.thumb_url || '')
+        if (storedThumbURL && storedThumbURL !== localImage.thumbSrc) {
+          localImage.thumbSrc = storedThumbURL
+          resetImageMediaState(localImage)
+        }
+        localImage.saved = entry.saved !== false
+        localImage.expiresAt = entry.expires_at || 0
+      }
     }
     const pending = images.value.filter((item) => item.pending)
-    const localResults = images.value.filter((item) => !item.pending && typeof item.id === 'number')
+    const localResults = images.value.filter((item) => (
+      !item.pending
+      && !item.restoredFromSnapshot
+      && typeof item.id === 'number'
+    ))
     const seen = new Set<string>()
     const gallery = entries
       // 本会话刚保存进图库的图片，本地已经有一份可显示的数据副本；
@@ -1314,7 +1469,7 @@ async function loadGallery() {
     })
     images.value = [...pending, ...merged]
     for (const entry of entries) {
-      void loadGalleryThumbnail(entry.id)
+      if (!entry.thumb_url) void loadGalleryThumbnail(entry.id)
     }
   } catch {
     // Gallery storage is optional; generation remains available without it.
@@ -1328,8 +1483,14 @@ async function loadGalleryThumbnail(id: string) {
     const previous = galleryThumbObjectUrls.get(id)
     if (previous) URL.revokeObjectURL(previous)
     galleryThumbObjectUrls.set(id, url)
-    const image = images.value.find((item) => String(item.id) === id)
-    if (image) image.thumbSrcSet = url
+    const image = images.value.find((item) => (
+      String(item.id) === id
+      || localToGalleryId.value.get(String(item.id)) === id
+    ))
+    if (image) {
+      image.thumbSrcSet = url
+      resetImageMediaState(image)
+    }
   } catch {
     // Keep the stored thumbnail or original URL as the fallback.
   }
@@ -1366,7 +1527,11 @@ function formatCreatedAt(timestamp?: number): string {
 
 function restorePendingImages() {
   try {
-    const stored = JSON.parse(localStorage.getItem(PENDING_STORAGE_KEY) || '[]')
+    const userId = authStore.user?.id
+    if (userId == null) return
+    // 旧版本所有账号共用同一个 key，不能让下一位登录用户恢复它。
+    localStorage.removeItem(PENDING_STORAGE_KEY)
+    const stored = JSON.parse(localStorage.getItem(pendingImageStorageKey(userId)) || '[]')
     if (!Array.isArray(stored)) return
     const restoredAll = stored
       .filter((item): item is GeneratedImage => (
@@ -1391,11 +1556,14 @@ function restorePendingImages() {
       appStore.showWarning('有图片任务的提交结果无法确认，为避免重复扣费未自动重试。请确认作品库后重新生成。', 6000)
     }
     if (!restored.length) {
-      localStorage.removeItem(PENDING_STORAGE_KEY)
+      localStorage.removeItem(pendingImageStorageKey(userId))
       return
     }
     nextImageId = Math.max(nextImageId, ...restored.map((item) => Number(item.id) + 1))
-    images.value = restored
+    images.value = [
+      ...restored,
+      ...images.value.filter((item) => !item.pending),
+    ]
     persistPendingImages()
     const serviceWorkerPending = restored.filter((item) => !item.gatewayPollUrl)
     if (serviceWorkerPending.length && 'serviceWorker' in navigator && typeof indexedDB !== 'undefined') {
@@ -1422,9 +1590,11 @@ function applyInspirationFromRoute() {
 
 function persistPendingImages() {
   try {
+    const userId = authStore.user?.id
+    if (userId == null) return
     const pending = images.value.filter((item) => item.pending)
-    if (pending.length) localStorage.setItem(PENDING_STORAGE_KEY, JSON.stringify(pending))
-    else localStorage.removeItem(PENDING_STORAGE_KEY)
+    if (pending.length) localStorage.setItem(pendingImageStorageKey(userId), JSON.stringify(pending))
+    else localStorage.removeItem(pendingImageStorageKey(userId))
   } catch {
     // Browser storage is optional.
   }
@@ -1445,12 +1615,35 @@ async function resumePersistentGeneration(pendingImages: GeneratedImage[]) {
     resumedGenerationBatches.add(batchId)
     activeGenerations.value += 1
     generating.value = true
+    const progress = createGenerationProgress()
     try {
+      const imagesByTaskId = new Map(
+        batch.map((image) => [String(image.taskId), image]),
+      )
       const responses = await waitForPersistentImageGeneration(
         batch.map((image) => image.taskId!).filter(Boolean),
-        { isCancelled: () => componentDisposed },
+        {
+          isCancelled: () => componentDisposed,
+          onResponse: async (id, response) => {
+            const image = imagesByTaskId.get(id)
+            if (!image) return
+            await progress.enqueue(image, workerResponseToSettledResult(response))
+          },
+        },
       )
-      await finishGenerationBatch(batch, responses.map(workerResponseToSettledResult))
+      for (let index = 0; index < responses.length; index += 1) {
+        const image = batch[index]
+        if (!image) continue
+        await progress.enqueue(image, workerResponseToSettledResult(responses[index]))
+      }
+      await progress.drain()
+      removePendingImages(batch.filter((image) => !progress.completedIds.has(image.id)))
+      if (progress.generatedCount === 0) {
+        throw progress.firstError || new Error('上游没有返回图片')
+      }
+      if (progress.firstError) {
+        errorMessage.value = errorMessageFrom(progress.firstError, '部分图片生成失败')
+      }
     } catch (error) {
       if (error instanceof ImageGenerationWaitCancelled) return
       removePendingImages(batch)
@@ -1463,7 +1656,12 @@ async function resumePersistentGeneration(pendingImages: GeneratedImage[]) {
   }
 }
 
-async function persistGeneratedImages(items: GeneratedImage[], prompt: string, model: string) {
+async function persistGeneratedImages(
+  items: GeneratedImage[],
+  prompt: string,
+  model: string,
+  options: { refresh?: boolean } = {},
+) {
   const results = await Promise.allSettled(items.map(async (item) => {
     // data: 前缀直接上传；http(s) 交给服务端下载转存，
     // 避免浏览器抓上游图片时被 CORS 拦掉导致保存失败。
@@ -1477,6 +1675,7 @@ async function persistGeneratedImages(items: GeneratedImage[], prompt: string, m
       size: item.size || size.value,
       format: item.format || format.value,
       duration_ms: item.durationMs || undefined,
+      created_at: item.createdAt || undefined,
       // 生成页的内容先进临时档（到期自动删）；用户点「存到我的作品」才转永久。
       saved: false,
     })
@@ -1493,11 +1692,18 @@ async function persistGeneratedImages(items: GeneratedImage[], prompt: string, m
       result.value.item.saved = result.value.entry.saved !== false
       result.value.item.expiresAt = result.value.entry.expires_at || 0
       const storedURL = String(result.value.entry.url || '')
-      if (storedURL) result.value.item.src = storedURL
-      result.value.item.thumbSrc = String(result.value.entry.thumb_url || '')
+      if (storedURL && storedURL !== result.value.item.src) {
+        result.value.item.src = storedURL
+        resetImageMediaState(result.value.item)
+      }
+      const storedThumbURL = String(result.value.entry.thumb_url || '')
+      if (storedThumbURL) {
+        result.value.item.thumbSrc = storedThumbURL
+        resetImageMediaState(result.value.item)
+      }
     }
   }
-  if (succeeded > 0) {
+  if (succeeded > 0 && options.refresh !== false) {
     await loadGallery()
     await loadStudioQuota()
   }
@@ -1510,7 +1716,7 @@ async function persistGeneratedImages(items: GeneratedImage[], prompt: string, m
       '请检查对象存储是否已启用并保存配置。',
     )
     if (isImageStorageConfigError(failedResult?.reason) && !authStore.isAdmin) {
-      return
+      return false
     }
     errorMessage.value = quotaReached(results)
       ? `作品已达上限（${studioQuota.value?.limit || 100} 个），请先在下方删除一些作品再保存。`
@@ -1518,6 +1724,7 @@ async function persistGeneratedImages(items: GeneratedImage[], prompt: string, m
         ? `部分图片未能保存到图库：${detail}`
         : `图片已生成，但保存到图库失败：${detail}`
   }
+  return succeeded > 0
 }
 
 // 配额满了后端返回 429 + *_QUOTA_EXCEEDED，单独给一句能指导操作的提示。
@@ -1539,21 +1746,6 @@ function remainingDays(image: GeneratedImage): number {
   return Math.max(1, Math.ceil((expiresAt * 1000 - Date.now()) / 86_400_000))
 }
 
-function resolveImageResultColumnCount() {
-  if (typeof window === 'undefined') return 1
-  if (window.innerWidth >= 1536) return 4
-  if (window.innerWidth >= 1024) return 3
-  if (window.innerWidth >= 640) return 2
-  return 1
-}
-
-function updateImageResultColumnCount() {
-  const nextCount = resolveImageResultColumnCount()
-  if (nextCount !== imageResultColumnCount.value) {
-    imageResultColumnCount.value = nextCount
-  }
-}
-
 function pendingElapsedSeconds(image: GeneratedImage): number {
   const startedAt = Number(image.startedAt || 0)
   if (!startedAt) return 0
@@ -1566,6 +1758,108 @@ function formatGenerationDuration(durationMs?: number): string {
   const totalSeconds = Math.floor(duration / 1000)
   if (totalSeconds < 60) return `${totalSeconds} 秒`
   return `${Math.floor(totalSeconds / 60)} 分 ${totalSeconds % 60} 秒`
+}
+
+function imageMediaId(image: GeneratedImage) {
+  return String(image.id)
+}
+
+function imageMediaRenderKey(image: GeneratedImage, scope = 'card') {
+  return `${scope}-${imageMediaId(image)}-${imageMediaRetryNonce.value.get(imageMediaId(image)) || 0}`
+}
+
+function imageMediaDisplaySrc(image: GeneratedImage, preferred?: string) {
+  const source = preferred || image.thumbSrc || image.src
+  const nonce = imageMediaRetryNonce.value.get(imageMediaId(image)) || 0
+  if (!nonce || !/^https?:\/\//i.test(source)) return source
+  try {
+    const url = new URL(source, window.location.origin)
+    url.searchParams.set('_retry', String(nonce))
+    return url.toString()
+  } catch {
+    return source
+  }
+}
+
+function isImageMediaLoaded(image: GeneratedImage) {
+  return loadedImageMediaIds.value.has(imageMediaId(image))
+}
+
+function isImageMediaFailed(image: GeneratedImage) {
+  return failedImageMediaIds.value.has(imageMediaId(image))
+}
+
+function markImageMediaLoaded(image: GeneratedImage) {
+  const id = imageMediaId(image)
+  failedImageMediaIds.value.delete(id)
+  loadedImageMediaIds.value.add(id)
+}
+
+function markImageMediaFailed(image: GeneratedImage) {
+  const id = imageMediaId(image)
+  loadedImageMediaIds.value.delete(id)
+  failedImageMediaIds.value.add(id)
+}
+
+function handleImageMediaError(image: GeneratedImage) {
+  if (previewImage.value?.id === image.id) {
+    previewDisplaySrc.value = image.src
+  }
+  if (image.thumbSrcSet) {
+    image.thumbSrcSet = ''
+    resetImageMediaState(image)
+    return
+  }
+  if (image.thumbSrc && image.thumbSrc !== image.src) {
+    image.thumbSrc = ''
+    resetImageMediaState(image)
+    return
+  }
+  markImageMediaFailed(image)
+}
+
+function resetImageMediaState(image: GeneratedImage, bumpRetry = false) {
+  const id = imageMediaId(image)
+  loadedImageMediaIds.value.delete(id)
+  failedImageMediaIds.value.delete(id)
+  if (bumpRetry) {
+    imageMediaRetryNonce.value.set(id, (imageMediaRetryNonce.value.get(id) || 0) + 1)
+  }
+}
+
+function retryImageMedia(image: GeneratedImage) {
+  resetImageMediaState(image, true)
+  if (previewImage.value?.id === image.id) {
+    void loadPreviewDisplay(image)
+  }
+}
+
+let previewLoadToken = 0
+
+async function loadPreviewDisplay(image: GeneratedImage) {
+  const token = ++previewLoadToken
+  const thumbnail = image.thumbSrc || image.thumbSrcSet || image.src
+  previewDisplaySrc.value = thumbnail
+  if (!thumbnail || thumbnail === image.src || typeof Image === 'undefined') return
+
+  const loader = new Image()
+  loader.decoding = 'async'
+  loader.src = image.src
+  try {
+    if (typeof loader.decode === 'function') {
+      await loader.decode()
+    } else {
+      await new Promise<void>((resolve, reject) => {
+        loader.onload = () => resolve()
+        loader.onerror = () => reject(new Error('preview image failed to load'))
+      })
+    }
+  } catch {
+    return
+  }
+  if (token === previewLoadToken && previewImage.value?.id === image.id) {
+    previewDisplaySrc.value = image.src
+  }
 }
 
 let generationClockTimer: ReturnType<typeof setInterval> | null = null
@@ -1689,138 +1983,21 @@ async function confirmRemoveGalleryImage() {
   }
 }
 
-async function imageSourceToDataURL(src: string) {
-  if (src.startsWith('data:')) return src
-  const response = await fetch(src)
-  if (!response.ok) throw new Error(`Failed to read generated image: ${response.status}`)
-  const blob = await response.blob()
-  return await new Promise<string>((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onerror = () => reject(reader.error || new Error('Failed to read generated image'))
-    reader.onload = () => resolve(String(reader.result || ''))
-    reader.readAsDataURL(blob)
-  })
-}
-
-// 上游有时会忽略 response_format=b64_json，直接返回它自己域名下的图片链接。
-// 这里统一转成自包含的 data URL，避免放大/下载时直接加载、暴露第三方域名。
-async function toSelfHostedImageSrc(src: string) {
-  if (src.startsWith('data:')) return src
-  try {
-    return await imageSourceToDataURL(src)
-  } catch {
-    return src
-  }
-}
-
 function imageFormatFromSource(src: string, fallback: string): string {
   const match = /^data:image\/([^;,]+)/i.exec(src)
   const mime = match?.[1]?.toLowerCase().replace('jpg', 'jpeg')
   return mime && formatOptions.some((option) => option.value === mime) ? mime : fallback
 }
 
-async function ensureImageFormat(src: string, targetFormat: string) {
-  if (!src.startsWith('data:image/')) return src
-  const normalizedFormat = targetFormat === 'jpg' ? 'jpeg' : targetFormat
-  const targetMime = `image/${normalizedFormat}`
-  const sourceMime = /^data:([^;,]+)/i.exec(src)?.[1]?.toLowerCase().replace('image/jpg', 'image/jpeg')
-  if (sourceMime === targetMime) return src
-  if (typeof Image === 'undefined') return src
-
-  const image = new Image()
-  image.decoding = 'async'
-  image.src = src
-  if (typeof image.decode !== 'function') return src
-  try {
-    await image.decode()
-  } catch {
-    return src
-  }
-  if (!image.naturalWidth || !image.naturalHeight) return src
-
-  const canvas = document.createElement('canvas')
-  canvas.width = image.naturalWidth
-  canvas.height = image.naturalHeight
-  const context = canvas.getContext('2d')
-  if (!context) return src
-  if (targetMime === 'image/jpeg') {
-    context.fillStyle = '#ffffff'
-    context.fillRect(0, 0, canvas.width, canvas.height)
-  }
-  context.drawImage(image, 0, 0)
-  try {
-    const converted = canvas.toDataURL(targetMime, 0.92)
-    return converted.startsWith(`data:${targetMime};`) ? converted : src
-  } catch {
-    return src
-  }
-}
-
-async function resizeImageToExactSize(src: string, targetSize: string) {
-  if (!src.startsWith('data:image/')) return src
-  const target = parseSize(targetSize)
-  if (!target?.width || !target?.height) return src
-  if (typeof Image === 'undefined') return src
-
-  const image = new Image()
-  image.decoding = 'async'
-  image.src = src
-  if (typeof image.decode !== 'function') return src
-  try {
-    await image.decode()
-  } catch {
-    return src
-  }
-  const sourceWidth = image.naturalWidth
-  const sourceHeight = image.naturalHeight
-  if (!sourceWidth || !sourceHeight) return src
-  if (sourceWidth === target.width && sourceHeight === target.height) return src
-
-  const sourceRatio = sourceWidth / sourceHeight
-  const targetRatio = target.width / target.height
-  let cropX = 0
-  let cropY = 0
-  let cropWidth = sourceWidth
-  let cropHeight = sourceHeight
-  if (sourceRatio > targetRatio) {
-    cropWidth = Math.round(sourceHeight * targetRatio)
-    cropX = Math.floor((sourceWidth - cropWidth) / 2)
-  } else if (sourceRatio < targetRatio) {
-    cropHeight = Math.round(sourceWidth / targetRatio)
-    cropY = Math.floor((sourceHeight - cropHeight) / 2)
-  }
-  // Never claim a 4K file by enlarging a lower-resolution upstream result.
-  if (cropWidth < target.width || cropHeight < target.height) return src
-
-  const canvas = document.createElement('canvas')
-  canvas.width = target.width
-  canvas.height = target.height
-  const context = canvas.getContext('2d')
-  if (!context) return src
-  const mime = /^data:(image\/[^;,]+)/i.exec(src)?.[1]?.toLowerCase() || 'image/png'
-  if (mime === 'image/jpeg') {
-    context.fillStyle = '#ffffff'
-    context.fillRect(0, 0, target.width, target.height)
-  }
-  context.imageSmoothingEnabled = true
-  context.imageSmoothingQuality = 'high'
-  context.drawImage(
-    image,
-    cropX,
-    cropY,
-    cropWidth,
-    cropHeight,
-    0,
-    0,
-    target.width,
-    target.height,
-  )
-  try {
-    const resized = canvas.toDataURL(mime, 0.94)
-    return resized.startsWith(`data:${mime};`) ? resized : src
-  } catch {
-    return src
-  }
+function imageFormatFromResult(item: any, src: string, fallback: string): string {
+  const mime = String(item?.mimeType || item?.mime_type || '')
+    .trim()
+    .toLowerCase()
+    .replace('image/jpg', 'image/jpeg')
+  const format = mime.startsWith('image/') ? mime.slice('image/'.length) : ''
+  return format && formatOptions.some((option) => option.value === format)
+    ? format
+    : imageFormatFromSource(src, fallback)
 }
 
 async function loadModels() {
@@ -1832,7 +2009,10 @@ async function loadModels() {
   modelLoadError.value = ''
   const key = selectedKey.value
   const endpoint = apiBaseUrl.value
-  if (!key || !endpoint) {
+  if (!key?.key?.trim() || !endpoint) {
+    if (key && !key.key?.trim()) {
+      modelLoadError.value = '当前 API Key 没有可用密钥值，请刷新或重新选择密钥。'
+    }
     loadingModels.value = false
     return
   }
@@ -1961,6 +2141,12 @@ function errorMessageFrom(error: unknown, fallback = '加载图片模型失败')
   ) {
     return '当前模型暂时不可用，请稍后重试或换一个模型。'
   }
+  if (
+    normalized.includes('api key is required') ||
+    normalized.includes('authorization header')
+  ) {
+    return '当前 API Key 未正确传给服务，请刷新页面或重新选择可用密钥。'
+  }
   return message || fallback
 }
 
@@ -2033,6 +2219,7 @@ async function generate() {
   errorMessage.value = ''
   const geminiModel = isGeminiModel(imageModel.value)
   const grokModel = isGrokImageModel.value
+  const progress = createGenerationProgress()
   try {
     const headers: Record<string, string> = { Authorization: `Bearer ${selectedKey.value.key}` }
     let url = `${apiBaseUrl.value}${hasReferences.value ? '/images/edits' : '/images/generations'}`
@@ -2062,8 +2249,25 @@ async function generate() {
           : {}),
       })
     }
-    const results = await executeGenerationRequests(pendingImages, url, headers, body, geminiModel)
-    await finishGenerationBatch(pendingImages, results)
+    const results = await executeGenerationRequests(
+      pendingImages,
+      url,
+      headers,
+      body,
+      geminiModel,
+      progress.enqueue,
+    )
+    for (const result of results) {
+      if (result.status === 'rejected') progress.recordError(result.reason)
+    }
+    await progress.drain()
+    removePendingImages(pendingImages.filter((image) => !progress.completedIds.has(image.id)))
+    if (progress.generatedCount === 0) {
+      throw progress.firstError || new Error('上游没有返回图片')
+    }
+    if (progress.firstError) {
+      errorMessage.value = errorMessageFrom(progress.firstError, '部分图片生成失败')
+    }
   } catch (error) {
     if (error instanceof ImageGenerationWaitCancelled) return
     removePendingImages(pendingImages)
@@ -2071,6 +2275,82 @@ async function generate() {
   } finally {
     activeGenerations.value -= 1
     generating.value = activeGenerations.value > 0
+  }
+}
+
+function createGenerationProgress() {
+  const completedIds = new Set<GeneratedImage['id']>()
+  const inFlightIds = new Set<GeneratedImage['id']>()
+  let generatedCount = 0
+  let firstError: unknown = null
+  let queue = Promise.resolve()
+  let persistenceQueue = Promise.resolve()
+  let persistenceNeedsRefresh = false
+
+  const recordError = (error: unknown) => {
+    if (!firstError) firstError = error
+  }
+
+  const enqueue: GenerationResultHandler = (image, result) => {
+    if (completedIds.has(image.id) || inFlightIds.has(image.id)) return queue
+    inFlightIds.add(image.id)
+    queue = queue.then(async () => {
+      if (result.status === 'rejected') {
+        recordError(result.reason)
+        return
+      }
+      if (!result.value.length) {
+        recordError(new Error('上游没有返回图片'))
+        return
+      }
+      const generated = await finishGenerationBatch(
+        [image],
+        [result],
+        generatedCount + 1,
+        false,
+      )
+      if (!generated.length) {
+        recordError(new Error('上游没有返回可用图片'))
+        return
+      }
+      completedIds.add(image.id)
+      generatedCount += generated.length
+      persistenceQueue = persistenceQueue
+        .then(async () => {
+          const saved = await persistGeneratedImages(
+            generated,
+            image.prompt || prompt.value.trim(),
+            image.model || imageModel.value,
+            { refresh: false },
+          )
+          if (saved) persistenceNeedsRefresh = true
+        })
+        .catch(recordError)
+    }).catch((error) => {
+      recordError(error)
+    }).finally(() => {
+      inFlightIds.delete(image.id)
+    })
+    return queue
+  }
+
+  return {
+    completedIds,
+    enqueue,
+    recordError,
+    drain: async () => {
+      await queue
+      await persistenceQueue
+      if (persistenceNeedsRefresh) {
+        await Promise.allSettled([loadGallery(), loadStudioQuota()])
+      }
+    },
+    get generatedCount() {
+      return generatedCount
+    },
+    get firstError() {
+      return firstError
+    },
   }
 }
 
@@ -2113,6 +2393,21 @@ async function waitForGatewayPollRetry(delay: number) {
   if (componentDisposed) throw new ImageGenerationWaitCancelled()
   await new Promise((resolve) => window.setTimeout(resolve, delay))
   if (componentDisposed) throw new ImageGenerationWaitCancelled()
+}
+
+function imageResultWithTaskTiming(
+  items: any[],
+  completedAt: number,
+  startedAt?: number,
+) {
+  const durationMs = Number(startedAt || 0) > 0
+    ? Math.max(1, completedAt - Number(startedAt))
+    : undefined
+  return items.map((item) => ({
+    ...(item && typeof item === 'object' ? item : { result: item }),
+    __imageTaskCompletedAt: completedAt,
+    __imageTaskDurationMs: durationMs,
+  }))
 }
 
 async function pollGatewayImageTask(
@@ -2160,6 +2455,7 @@ async function tryExecuteGatewayAsyncRequests(
   headers: Record<string, string>,
   body: string | FormData,
   geminiModel: boolean,
+  onResult?: GenerationResultHandler,
 ): Promise<PromiseSettledResult<any[]>[] | null> {
   const submitUrl = gatewayAsyncSubmitUrl(syncUrl, geminiModel)
   const submitted: Array<{ image: GeneratedImage; pollUrl: string }> = []
@@ -2246,9 +2542,17 @@ async function tryExecuteGatewayAsyncRequests(
   }
 
   const polled = await Promise.allSettled(
-    submitted.map((task) => pollGatewayImageTask(task.pollUrl, headers, {
-      isCancelled: () => componentDisposed,
-    })),
+    submitted.map(async (task) => {
+      const items = await pollGatewayImageTask(task.pollUrl, headers, {
+        isCancelled: () => componentDisposed,
+      })
+      const result = {
+        status: 'fulfilled' as const,
+        value: imageResultWithTaskTiming(items, Date.now(), task.image.startedAt),
+      }
+      await onResult?.(task.image, result)
+      return result.value
+    }),
   )
   for (const image of pendingImages) {
     if (!image.gatewayPollUrl) image.gatewaySubmitPending = false
@@ -2280,6 +2584,7 @@ async function resumeGatewayGeneration(pendingImages: GeneratedImage[]) {
     resumedGatewayBatches.add(batchId)
     activeGenerations.value += 1
     generating.value = true
+    const progress = createGenerationProgress()
     try {
       const apiKeyId = batch[0]?.apiKeyId
       const taskKey = apiKeyId
@@ -2292,11 +2597,29 @@ async function resumeGatewayGeneration(pendingImages: GeneratedImage[]) {
       }
       const headers = { Authorization: `Bearer ${taskKey.key}` }
       const results = await Promise.allSettled(
-        batch.map((image) => pollGatewayImageTask(image.gatewayPollUrl!, headers, {
-          isCancelled: () => componentDisposed,
-        })),
+        batch.map(async (image) => {
+          const items = await pollGatewayImageTask(image.gatewayPollUrl!, headers, {
+            isCancelled: () => componentDisposed,
+          })
+          const result = {
+            status: 'fulfilled' as const,
+            value: imageResultWithTaskTiming(items, Date.now(), image.startedAt),
+          }
+          await progress.enqueue(image, result)
+          return result.value
+        }),
       )
-      await finishGenerationBatch(batch, results)
+      for (const result of results) {
+        if (result.status === 'rejected') progress.recordError(result.reason)
+      }
+      await progress.drain()
+      removePendingImages(batch.filter((image) => !progress.completedIds.has(image.id)))
+      if (progress.generatedCount === 0) {
+        throw progress.firstError || new Error('上游没有返回图片')
+      }
+      if (progress.firstError) {
+        errorMessage.value = errorMessageFrom(progress.firstError, '部分图片生成失败')
+      }
     } catch (error) {
       if (error instanceof ImageGenerationWaitCancelled) return
       removePendingImages(batch)
@@ -2331,7 +2654,14 @@ function workerResponseToSettledResult(
     }
   }
   try {
-    return { status: 'fulfilled', value: extractImages(payload) }
+    return {
+      status: 'fulfilled',
+      value: imageResultWithTaskTiming(
+        extractImages(payload),
+        Number(response.completedAt || 0),
+        Number(response.startedAt || 0),
+      ),
+    }
   } catch (error) {
     return { status: 'rejected', reason: error }
   }
@@ -2343,6 +2673,7 @@ async function executeGenerationRequests(
   headers: Record<string, string>,
   body: string | FormData,
   geminiModel: boolean,
+  onResult?: GenerationResultHandler,
 ): Promise<PromiseSettledResult<any[]>[]> {
   let gatewayResults: PromiseSettledResult<any[]>[] | null = null
   gatewayResults = await tryExecuteGatewayAsyncRequests(
@@ -2351,6 +2682,7 @@ async function executeGenerationRequests(
     headers,
     body,
     geminiModel,
+    onResult,
   )
   if (gatewayResults) return gatewayResults
 
@@ -2364,33 +2696,50 @@ async function executeGenerationRequests(
         headers,
         body,
       },
-      createdAt: Date.now(),
+      createdAt: image.startedAt || Date.now(),
     }))
 
   if (taskRequests.length === pendingImages.length) {
     const started = await tryStartPersistentImageGeneration(taskRequests)
     if (started) {
+      const imagesByTaskId = new Map(
+        pendingImages.map((image) => [String(image.taskId), image]),
+      )
       const responses = await waitForPersistentImageGeneration(
         taskRequests.map((request) => request.id),
-        { isCancelled: () => componentDisposed },
+        {
+          isCancelled: () => componentDisposed,
+          onResponse: async (id, response) => {
+            const image = imagesByTaskId.get(id)
+            if (!image) return
+            await onResult?.(image, workerResponseToSettledResult(response))
+          },
+        },
       )
       return responses.map(workerResponseToSettledResult)
     }
   }
 
-  return Promise.allSettled(pendingImages.map(async () => {
+  return Promise.allSettled(pendingImages.map(async (image) => {
     const response = await fetch(url, { method: 'POST', headers, body })
     const payload = await response.json().catch(() => null)
     if (!response.ok) {
       throw new Error(payload?.error?.message || payload?.message || `${response.status} ${response.statusText}`)
     }
-    return extractImages(payload)
+    const result = {
+      status: 'fulfilled' as const,
+      value: imageResultWithTaskTiming(extractImages(payload), Date.now(), image.startedAt),
+    }
+    await onResult?.(image, result)
+    return result.value
   }))
 }
 
 async function finishGenerationBatch(
   pendingImages: GeneratedImage[],
   results: PromiseSettledResult<any[]>[],
+  titleStart = 1,
+  persist = true,
 ) {
   const items: any[] = []
   let firstError: unknown = null
@@ -2414,24 +2763,33 @@ async function finishGenerationBatch(
   const requestedFormat = firstPending?.format || format.value
   const requestedSize = firstPending?.size || size.value
   const completedAtMs = Date.now()
-  const durationMs = Number(firstPending?.startedAt || 0) > 0
+  const fallbackDurationMs = Number(firstPending?.startedAt || 0) > 0
     ? Math.max(1, completedAtMs - Number(firstPending.startedAt))
     : undefined
   const generated: GeneratedImage[] = []
+  let localProcessError = ''
+  const needsLocalResize = imageNeedsLocalResize(requestedSize, IMAGE_MAX_EDGE)
   for (let index = 0; index < items.length; index += 1) {
     const item = items[index]
     const mime = String(item.mimeType || item.mime_type || 'image/png')
     const b64 = String(item.b64_json || item.data || '')
     const rawSrc = b64 ? `data:${mime};base64,${b64}` : String(item.url || '')
     if (!rawSrc) continue
-    const selfHostedSrc = await toSelfHostedImageSrc(rawSrc)
-    const formattedSrc = await ensureImageFormat(selfHostedSrc, requestedFormat)
-    const src = await resizeImageToExactSize(formattedSrc, requestedSize)
-    const actualFormat = imageFormatFromSource(src, requestedFormat)
+    let src = rawSrc
+    let actualFormat = imageFormatFromResult(item, rawSrc, requestedFormat)
+    if (needsLocalResize) {
+      const processed = await processImageForDisplay(rawSrc, requestedSize, requestedFormat)
+      src = processed.src
+      actualFormat = processed.format
+      if (processed.error && !localProcessError) localProcessError = processed.error
+    }
+    const itemCompletedAt = Number(item.__imageTaskCompletedAt || 0)
+    const itemDurationMs = Number(item.__imageTaskDurationMs || 0)
     generated.push({
       id: nextImageId++,
-      title: `生成结果 ${index + 1}`,
+      title: `生成结果 ${titleStart + index}`,
       src,
+      originalSrc: rawSrc,
       prompt: currentPrompt,
       model: currentModel,
       size: requestedSize,
@@ -2439,8 +2797,8 @@ async function finishGenerationBatch(
       quality: firstPending?.quality || quality.value,
       background: firstPending?.background || background.value,
       meta: `${actualFormat.toUpperCase()} · ${requestedSize} · ${currentModel}`,
-      createdAt: Date.now() / 1000,
-      durationMs,
+      createdAt: Math.floor((itemCompletedAt > 0 ? itemCompletedAt : completedAtMs) / 1000),
+      durationMs: itemDurationMs > 0 ? itemDurationMs : fallbackDurationMs,
     })
   }
 
@@ -2451,7 +2809,13 @@ async function finishGenerationBatch(
     images.value.splice(Math.min(pendingIndex, images.value.length), 0, ...generated)
   }
   persistPendingImages()
-  await persistGeneratedImages(generated, currentPrompt, currentModel)
+  if (localProcessError) {
+    appStore.showWarning('本地尺寸处理失败，已保留并显示上游原图。', 6000)
+  }
+  if (persist) {
+    await persistGeneratedImages(generated, currentPrompt, currentModel)
+  }
+  return generated
 }
 
 function buildGeminiURL(model: string) {
@@ -2685,6 +3049,12 @@ async function regenerateFromPreview() {
 
 watch(previewImage, (image) => {
   previewPromptDraft.value = image?.prompt || ''
+  if (image) {
+    void loadPreviewDisplay(image)
+  } else {
+    previewLoadToken += 1
+    previewDisplaySrc.value = ''
+  }
 })
 
 watch(errorMessage, (message) => {
@@ -2710,6 +3080,12 @@ watch(imageModel, (model, previousModel) => {
 })
 
 watch(
+  [keys, imageModels, selectedKeyId, imageModel, images],
+  writeStudioSnapshot,
+  { deep: true, flush: 'post' },
+)
+
+watch(
   () => activeGenerations.value > 0 || images.value.some((image) => image.pending),
   (hasActiveGeneration) => {
     if (hasActiveGeneration) startGenerationClock()
@@ -2720,7 +3096,6 @@ watch(
 
 onMounted(() => {
   componentDisposed = false
-  window.addEventListener('resize', updateImageResultColumnCount)
   document.addEventListener('click', handleSizeOutside)
   document.addEventListener('keydown', handleSizeEscape)
   applyInspirationFromRoute()
@@ -2728,7 +3103,6 @@ onMounted(() => {
 })
 onActivated(() => {
   componentDisposed = false
-  updateImageResultColumnCount()
   if (activeGenerations.value > 0 || images.value.some((image) => image.pending)) {
     startGenerationClock()
   }
@@ -2744,7 +3118,6 @@ onDeactivated(() => {
 onBeforeUnmount(() => {
   componentDisposed = true
   stopGenerationClock()
-  window.removeEventListener('resize', updateImageResultColumnCount)
   document.removeEventListener('click', handleSizeOutside)
   document.removeEventListener('keydown', handleSizeEscape)
   for (const url of galleryThumbObjectUrls.values()) {
@@ -4183,9 +4556,11 @@ onBeforeUnmount(() => {
 }
 
 .image-pending-card {
+  position: absolute;
+  inset: 0;
   display: flex;
+  height: 100%;
   width: 100%;
-  aspect-ratio: 1;
   flex-direction: column;
   align-items: center;
   justify-content: center;
@@ -4200,6 +4575,48 @@ onBeforeUnmount(() => {
   font-variant-numeric: tabular-nums;
   font-weight: 650;
   color: rgb(13 148 136) !important;
+}
+
+.image-media-state {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  background: linear-gradient(135deg, rgb(241 245 249), rgb(226 232 240));
+  padding: 1rem;
+  text-align: center;
+  color: rgb(51 65 85);
+}
+
+.image-media-state small {
+  color: rgb(100 116 139);
+}
+
+.image-media-state--error {
+  background: linear-gradient(135deg, rgb(254 242 242), rgb(241 245 249));
+  color: rgb(185 28 28);
+}
+
+.image-media-state__retry {
+  margin-top: 0.35rem;
+  border: 1px solid rgb(248 113 113);
+  border-radius: 0.45rem;
+  padding: 0.3rem 0.75rem;
+  color: rgb(185 28 28);
+  font-size: 0.75rem;
+  font-weight: 650;
+}
+
+.image-detail-dialog__media {
+  position: relative;
+}
+
+.image-detail-dialog__media-state {
+  border-radius: 0.75rem;
 }
 
 .image-generation-spinner {
@@ -4221,6 +4638,25 @@ onBeforeUnmount(() => {
 :global(.dark .secondary-button) {
   border-color: rgb(63 63 70);
   background: rgb(24 24 27 / 0.9);
+}
+
+:global(.dark .image-media-state) {
+  background: linear-gradient(135deg, rgb(39 39 42), rgb(24 24 27));
+  color: rgb(228 228 231);
+}
+
+:global(.dark .image-media-state small) {
+  color: rgb(161 161 170);
+}
+
+:global(.dark .image-media-state--error) {
+  background: linear-gradient(135deg, rgb(69 26 26), rgb(39 39 42));
+  color: rgb(252 165 165);
+}
+
+:global(.dark .image-media-state__retry) {
+  border-color: rgb(248 113 113);
+  color: rgb(254 202 202);
 }
 
 :global(.dark .toolbar-field--select) {
@@ -4387,27 +4823,20 @@ onBeforeUnmount(() => {
   padding: 0 1rem 1rem;
 }
 
-.image-results-masonry {
-  display: flex;
-  align-items: flex-start;
+.image-results-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  align-items: start;
   gap: 1rem;
 }
 
-.image-results-masonry__column {
-  display: flex;
-  min-width: 0;
-  flex: 1 1 0;
-  flex-direction: column;
-  gap: 1rem;
-}
-
-.image-results-masonry__column > article {
-  width: 100%;
+.image-result-card__media {
+  aspect-ratio: 16 / 10;
 }
 
 .image-result-card__media img {
   width: 100%;
-  height: auto;
+  height: 100%;
 }
 
 .image-studio .studio-page__results article {
@@ -4425,8 +4854,24 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 1024px) {
+  .image-results-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
   .image-studio .studio-page__header {
     padding-bottom: 1rem;
+  }
+}
+
+@media (max-width: 820px) {
+  .image-results-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 560px) {
+  .image-results-grid {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 

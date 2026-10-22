@@ -264,6 +264,36 @@ func (s *ImageStorageSettingService) PresignImageObject(ctx context.Context, obj
 	return resolver.PresignGet(ctx, objectKey)
 }
 
+func (s *ImageStorageSettingService) PresignImageObjects(
+	ctx context.Context,
+	objectKeys []string,
+) (map[string]string, error) {
+	if reason := s.unusableReason(ctx); reason != nil {
+		return nil, reason
+	}
+	uploader, enabled := s.resolve()
+	if !enabled || uploader == nil || uploader.storage == nil {
+		return nil, ErrImageStorageIncomplete
+	}
+	resolver, ok := uploader.storage.(ImageStorageURLResolver)
+	if !ok {
+		return nil, ErrImageStorageIncomplete
+	}
+	resolved := make(map[string]string, len(objectKeys))
+	for _, objectKey := range objectKeys {
+		objectKey = strings.TrimSpace(objectKey)
+		if objectKey == "" {
+			continue
+		}
+		url, err := resolver.PresignGet(ctx, objectKey)
+		if err != nil {
+			continue
+		}
+		resolved[objectKey] = url
+	}
+	return resolved, nil
+}
+
 func (s *ImageStorageSettingService) ImageObjectExists(ctx context.Context, objectKey string) (bool, error) {
 	if reason := s.unusableReason(ctx); reason != nil {
 		return false, reason

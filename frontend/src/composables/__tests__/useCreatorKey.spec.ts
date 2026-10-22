@@ -134,6 +134,38 @@ describe('ensureCreatorKey', () => {
     expect(result.keys).toContain(compositeKey)
   })
 
+  it('ignores a stale key record with no credential and creates a usable composite key', async () => {
+    const composite = group({
+      id: 3,
+      name: '综合创作',
+      platform: 'composite',
+      allow_image_generation: true,
+    })
+    const staleKey = key({
+      id: 9,
+      name: 'gpt',
+      key: '',
+      group_id: 3,
+      group: composite,
+    })
+    const compositeKey = key({
+      id: 10,
+      name: '创作密钥',
+      key: 'sk-composite',
+      group_id: 3,
+      group: composite,
+    })
+    listKeys.mockResolvedValue({ items: [staleKey], total: 1 })
+    getAvailableGroups.mockResolvedValue([composite])
+    createKey.mockResolvedValue(compositeKey)
+
+    const result = await ensureCreatorKey('image')
+
+    expect(result.key).toBe(compositeKey)
+    expect(result.keys).toEqual([compositeKey])
+    expect(createKey).toHaveBeenCalledWith('创作密钥', 3)
+  })
+
   it('uses an existing creative key when no composite group is available', async () => {
     const openai = group({
       id: 2,

@@ -36,9 +36,13 @@ function prefersComposite<T extends { platform?: string }>(item: T): number {
   return item.platform === 'composite' ? 0 : 1
 }
 
+function hasUsableCredential(key: ApiKey): boolean {
+  return typeof key.key === 'string' && key.key.trim().length > 0
+}
+
 async function listActiveKeys(): Promise<ApiKey[]> {
   const response = await keysAPI.list(1, 100, { status: 'active' })
-  return (response.items || []).filter((key) => key.status === 'active')
+  return (response.items || []).filter((key) => key.status === 'active' && hasUsableCredential(key))
 }
 
 function keyName(kind: CreatorKind, group: Group): string {
