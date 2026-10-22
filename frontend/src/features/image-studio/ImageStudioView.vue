@@ -723,6 +723,7 @@ const errorMessage = ref('')
 const images = ref<GeneratedImage[]>([])
 const generationClockNow = ref(Date.now())
 const activeImageTaskCount = computed(() => images.value.filter((image) => image.pending).length)
+const keyCredentialsReady = ref(false)
 const references = ref<ReferenceItem[]>([])
 const previewImage = ref<GeneratedImage | null>(null)
 const previewDisplaySrc = ref('')
@@ -1404,8 +1405,10 @@ async function loadData() {
         && key.group?.allow_image_generation !== false
       ))
       selectedKeyId.value = String(preferredKey?.id ?? result.key.id)
+      keyCredentialsReady.value = true
     })
     .catch((error) => {
+      keyCredentialsReady.value = true
       if (!isCreationServiceUnavailable(error)) {
         errorMessage.value = errorMessageFrom(error, '图片创作服务暂不可用')
       }
@@ -2010,7 +2013,7 @@ async function loadModels() {
   const key = selectedKey.value
   const endpoint = apiBaseUrl.value
   if (!key?.key?.trim() || !endpoint) {
-    if (key && !key.key?.trim()) {
+    if (key && keyCredentialsReady.value && !key.key?.trim()) {
       modelLoadError.value = '当前 API Key 没有可用密钥值，请刷新或重新选择密钥。'
     }
     loadingModels.value = false
@@ -3067,7 +3070,7 @@ watch(selectedKeyId, (keyId) => {
   if (keyId) writeStudioPreferences({ keyId })
 })
 
-watch([selectedKeyId, apiBaseUrl], () => {
+watch([selectedKeyId, apiBaseUrl, () => selectedKey.value?.key], () => {
   void loadModels()
 })
 
