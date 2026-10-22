@@ -353,7 +353,7 @@ type studioWorkRow struct {
 	Format          string
 	Size            string
 	DurationSeconds int
-	DurationMs      int
+	DurationMs      sql.NullInt64
 	Saved           bool
 	ExpiresAt       int64
 	CreatedAt       int64
@@ -376,19 +376,22 @@ func (s *imageStudioGalleryStore) Save(
 		return fmt.Errorf("studio work entry is nil")
 	}
 	return s.insert(ctx, &studioWorkRow{
-		ID:         entry.ID,
-		UserID:     entry.UserID,
-		Kind:       "image",
-		ObjectKey:  entry.ObjectKey,
-		URL:        entry.URL,
-		ThumbURL:   entry.ThumbURL,
-		Prompt:     entry.Prompt,
-		Model:      entry.Model,
-		Format:     entry.Format,
-		Size:       entry.Size,
-		DurationMs: entry.DurationMs,
-		Saved:      entry.Saved,
-		ExpiresAt:  entry.ExpiresAt,
+		ID:        entry.ID,
+		UserID:    entry.UserID,
+		Kind:      "image",
+		ObjectKey: entry.ObjectKey,
+		URL:       entry.URL,
+		ThumbURL:  entry.ThumbURL,
+		Prompt:    entry.Prompt,
+		Model:     entry.Model,
+		Format:    entry.Format,
+		Size:      entry.Size,
+		DurationMs: sql.NullInt64{
+			Int64: int64(entry.DurationMs),
+			Valid: entry.DurationMs > 0,
+		},
+		Saved:     entry.Saved,
+		ExpiresAt: entry.ExpiresAt,
 	}, quota)
 }
 
@@ -411,7 +414,7 @@ func (s *imageStudioGalleryStore) List(
 			Model:      row.Model,
 			Size:       row.Size,
 			Format:     row.Format,
-			DurationMs: row.DurationMs,
+			DurationMs: int(row.DurationMs.Int64),
 			Saved:      row.Saved,
 			ExpiresAt:  row.ExpiresAt,
 			CreatedAt:  row.CreatedAt,

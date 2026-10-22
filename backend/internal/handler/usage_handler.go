@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"errors"
 	"html"
 	"net/http"
@@ -53,12 +54,18 @@ type UsageHandler struct {
 	opsService     *service.OpsService
 	settingService *service.SettingService
 	imageLinks     service.UsageLogImageLinkStore
-	imageStorage   *service.ImageStorageSettingService
+	imageStorage   usageImageStorage
+}
+
+type usageImageStorage interface {
+	ImageObjectExists(ctx context.Context, objectKey string) (bool, error)
+	PresignImageObject(ctx context.Context, objectKey string) (string, error)
+	FetchImageURL(ctx context.Context, rawURL string) ([]byte, string, error)
 }
 
 func (h *UsageHandler) SetImageLinkDeps(
 	imageLinks service.UsageLogImageLinkStore,
-	imageStorage *service.ImageStorageSettingService,
+	imageStorage usageImageStorage,
 ) {
 	if h == nil {
 		return
@@ -105,7 +112,17 @@ func (h *UsageHandler) ImageLink(c *gin.Context) {
 			response.ErrorFrom(c, urlErr)
 			return
 		}
-		c.Redirect(http.StatusFound, url)
+		data, contentType, fetchErr := h.imageStorage.FetchImageURL(c.Request.Context(), url)
+		if fetchErr != nil {
+			response.ErrorFrom(c, fetchErr)
+			return
+		}
+		if !strings.HasPrefix(contentType, "image/") {
+			contentType = "image/png"
+		}
+		c.Header("Cache-Control", "private, max-age=300")
+		c.Header("Content-Disposition", "inline")
+		c.Data(http.StatusOK, contentType, data)
 		return
 	}
 	imageURL := strings.TrimSpace(link.ImageURL)

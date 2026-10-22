@@ -732,6 +732,8 @@ const geminiAspectBaseOptions = [
 ]
 const gptAspectBaseOptions = [
   { value: 1024, label: '默认' },
+  { value: 2048, label: '2K' },
+  { value: 3840, label: '4K' },
 ]
 const grokAspectBaseOptions = [
   { value: 1024, label: '1K' },
@@ -742,10 +744,15 @@ const genericAspectBaseOptions = [
   { value: 2048, label: '2K' },
   { value: 3840, label: '4K' },
 ]
-const gptDefaultDimensions: Record<string, [number, number]> = {
+const gptBaseDimensions: Record<string, [number, number]> = {
   '1:1': [1024, 1024],
   '3:2': [1536, 1024],
   '2:3': [1024, 1536],
+  '4:3': [1408, 1056],
+  '3:4': [1056, 1408],
+  '16:9': [1536, 864],
+  '9:16': [864, 1536],
+  '21:9': [1792, 768],
 }
 const geminiDefaultDimensions: Record<string, Record<string, [number, number]>> = {
   '1K': {
@@ -795,9 +802,7 @@ const allRatioOptions = [
   { value: '3:4', css: '3 / 4' },
   { value: '21:9', css: '21 / 9' },
 ]
-const gptRatioOptions = allRatioOptions.filter((option) => (
-  option.value === '1:1' || option.value === '3:2' || option.value === '2:3'
-))
+const gptRatioOptions = allRatioOptions
 const grokRatioOptions = [
   { value: '1:1', css: '1 / 1' },
   { value: '16:9', css: '16 / 9' },
@@ -999,7 +1004,7 @@ function resetParametersForModel(model: string) {
 
   if (model.toLowerCase().includes('gpt-image')) {
     appliedSize.aspectBase = 1024
-    if (!gptDefaultDimensions[appliedSize.aspectRatio]) {
+    if (!gptBaseDimensions[appliedSize.aspectRatio]) {
       appliedSize.aspectRatio = '1:1'
     }
     return
@@ -1050,13 +1055,21 @@ function geminiDimensions(ratio: string, tier: string) {
   return geminiDefaultDimensions[tier]?.[ratio]
 }
 
+function gptDimensions(ratio: string, base: number): [number, number] | undefined {
+  const dimensions = gptBaseDimensions[ratio]
+  if (!dimensions) return undefined
+  const scale = base >= 3840 ? 4 : base >= 2048 ? 2 : 1
+  const fitted = fitSizeToWindow(dimensions[0] * scale, dimensions[1] * scale)
+  return [fitted.width, fitted.height]
+}
+
 function displayRatioSize(ratio: string, base: number) {
   if (isGeminiImageModel.value) {
     const dimensions = geminiDimensions(ratio, geminiTierForAspectBase(base))
     if (dimensions) return `${dimensions[0]}x${dimensions[1]}`
   }
   if (isGptImageModel.value) {
-    const dimensions = gptDefaultDimensions[ratio]
+    const dimensions = gptDimensions(ratio, base)
     if (dimensions) return `${dimensions[0]}x${dimensions[1]}`
   }
   if (isGrokImageModel.value) {
@@ -1111,7 +1124,7 @@ function formatSize(settings: SizeSettings) {
     if (dimensions) return `${dimensions[0]}x${dimensions[1]}`
   }
   if (isGptImageModel.value && settings.mode === 'ratio' && !settings.useCustomRatio) {
-    const dimensions = gptDefaultDimensions[settings.aspectRatio]
+    const dimensions = gptDimensions(settings.aspectRatio, settings.aspectBase)
     if (dimensions) return `${dimensions[0]}x${dimensions[1]}`
   }
   if (isGrokImageModel.value && settings.mode === 'ratio' && !settings.useCustomRatio) {
@@ -1142,8 +1155,11 @@ function ratioSize(ratio: string, base: number) {
  * 得到 2880x2880，而不是会被拒绝的 3840x3840。
  */
 function fitSizeToWindow(rawWidth: number, rawHeight: number) {
-  let width = normalizeDimension(rawWidth)
-  let height = normalizeDimension(rawHeight)
+  const safeWidth = Math.max(IMAGE_MIN_EDGE, Number(rawWidth) || IMAGE_MIN_EDGE)
+  const safeHeight = Math.max(IMAGE_MIN_EDGE, Number(rawHeight) || IMAGE_MIN_EDGE)
+  const edgeFactor = Math.min(1, IMAGE_MAX_EDGE / Math.max(safeWidth, safeHeight))
+  let width = normalizeDimension(safeWidth * edgeFactor)
+  let height = normalizeDimension(safeHeight * edgeFactor)
 
   for (let guard = 0; guard < 128 && width * height > IMAGE_MAX_PIXELS; guard += 1) {
     const factor = Math.sqrt(IMAGE_MAX_PIXELS / (width * height))

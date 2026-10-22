@@ -18,6 +18,16 @@ type usageImageLinkStoreStub struct {
 	err  error
 }
 
+type usageImageStorageStub struct {
+	exists      bool
+	existsErr   error
+	presignURL  string
+	presignErr  error
+	data        []byte
+	contentType string
+	fetchErr    error
+}
+
 func (s *usageImageLinkStoreStub) Upsert(context.Context, *service.UsageLogImageLink) error {
 	return nil
 }
@@ -31,6 +41,18 @@ func (s *usageImageLinkStoreStub) GetByToken(context.Context, string) (*service.
 
 func (s *usageImageLinkStoreStub) DeleteExpired(context.Context, time.Time, int) (int64, error) {
 	return 0, nil
+}
+
+func (s *usageImageStorageStub) ImageObjectExists(context.Context, string) (bool, error) {
+	return s.exists, s.existsErr
+}
+
+func (s *usageImageStorageStub) PresignImageObject(context.Context, string) (string, error) {
+	return s.presignURL, s.presignErr
+}
+
+func (s *usageImageStorageStub) FetchImageURL(context.Context, string) ([]byte, string, error) {
+	return s.data, s.contentType, s.fetchErr
 }
 
 func TestUsageHandlerImageLinkRedirectsOwnedFallbackURL(t *testing.T) {
@@ -52,6 +74,38 @@ func TestUsageHandlerImageLinkRedirectsOwnedFallbackURL(t *testing.T) {
 
 	require.Equal(t, http.StatusFound, recorder.Code)
 	require.Equal(t, "https://cdn.example.test/image.png", recorder.Header().Get("Location"))
+}
+
+func TestUsageHandlerImageLinkStreamsOwnedObject(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler := NewUsageHandler(nil, nil, nil, nil)
+	handler.SetImageLinkDeps(
+		&usageImageLinkStoreStub{link: &service.UsageLogImageLink{
+			UserID:    7,
+			ObjectKey: "images/result.png",
+		}},
+		&usageImageStorageStub{
+			exists:      true,
+			presignURL:  "https://storage.example.test/result.png",
+			data:        []byte("image-bytes"),
+			contentType: "image/png",
+		},
+	)
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set(string(middleware2.ContextKeyUser), middleware2.AuthSubject{UserID: 7})
+		c.Next()
+	})
+	router.GET("/usage/image-links/:token", handler.ImageLink)
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/usage/image-links/token", nil))
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Equal(t, "image/png", recorder.Header().Get("Content-Type"))
+	require.Equal(t, "private, max-age=300", recorder.Header().Get("Cache-Control"))
+	require.Equal(t, "image-bytes", recorder.Body.String())
+	require.Empty(t, recorder.Header().Get("Location"))
 }
 
 func TestUsageHandlerImageLinkHidesOtherUsersAndExpiredLinks(t *testing.T) {

@@ -347,7 +347,7 @@ func TestImageStorageSaveImageDistinguishesDisabledFromIncomplete(t *testing.T) 
 	require.Contains(t, url, "images/a.png")
 }
 
-func TestImageStorageTestConnectionChecksBucket(t *testing.T) {
+func TestImageStorageTestConnectionAllowsObjectOnlyTokenWhenHeadBucketFails(t *testing.T) {
 	repo := newStubSettingRepo()
 	backup := NewBackupService(repo, &config.Config{
 		Totp: config.TotpConfig{EncryptionKeyConfigured: true},
@@ -371,7 +371,7 @@ func TestImageStorageTestConnectionChecksBucket(t *testing.T) {
 		AccessKeyID:     "ak",
 		SecretAccessKey: "sk",
 	})
-	require.ErrorIs(t, err, headErr)
+	require.NoError(t, err, "an object-only R2 token may reject HeadBucket but still upload successfully")
 }
 
 func TestImageStorageTestConnectionChecksWritePermission(t *testing.T) {

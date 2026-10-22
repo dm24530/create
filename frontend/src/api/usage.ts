@@ -251,6 +251,19 @@ export async function getById(id: number): Promise<UsageLog> {
   return data
 }
 
+/**
+ * Fetch an authenticated usage image through the API client.
+ * The returned blob can be shown from a temporary object URL without
+ * exposing the protected image-link endpoint in a new browser tab.
+ */
+export async function getImageLink(path: string): Promise<Blob> {
+  const { data } = await apiClient.get<Blob>(path, {
+    responseType: 'blob',
+    headers: { Accept: 'image/*' },
+  })
+  return data
+}
+
 // ==================== Dashboard API ====================
 
 /**
@@ -377,6 +390,7 @@ export const usageAPI = {
   getStatsByDateRange,
   getByDateRange,
   getById,
+  getImageLink,
   // Dashboard
   getDashboardStats,
   getDashboardTrend,

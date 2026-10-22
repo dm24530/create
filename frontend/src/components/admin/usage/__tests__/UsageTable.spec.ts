@@ -9,11 +9,20 @@ const appStoreMocks = vi.hoisted(() => ({
   showError: vi.fn(),
 }))
 
+const usageAPIMocks = vi.hoisted(() => ({
+  getImageLink: vi.fn(),
+}))
+
 vi.mock('@/utils/ipGeoLookup', () => ipGeoMocks)
 vi.mock('@/stores/app', () => ({ useAppStore: () => appStoreMocks }))
+vi.mock('@/api/usage', () => ({
+  default: {
+    getImageLink: usageAPIMocks.getImageLink,
+  },
+}))
 
-import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest'
+import { flushPromises, mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 
 import en from '@/i18n/locales/en/admin/resources'
@@ -143,19 +152,42 @@ const baseImageRow = {
 }
 
 describe('admin UsageTable tooltip', () => {
-  it('renders a durable image link for image usage rows', () => {
+  it('opens a protected usage image with authenticated API fetch', async () => {
+    usageAPIMocks.getImageLink.mockReset()
+    usageAPIMocks.getImageLink.mockResolvedValue(new Blob(['image'], { type: 'image/png' }))
+    const popup = {
+      opener: window,
+      close: vi.fn(),
+      location: { replace: vi.fn() },
+    }
+    vi.spyOn(window, 'open').mockReturnValue(popup as unknown as Window)
+    const createObjectURL = vi.fn(() => 'blob:usage-image')
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      value: createObjectURL,
+    })
+    Object.defineProperty(URL, 'revokeObjectURL', {
+      configurable: true,
+      value: vi.fn(),
+    })
+
     const wrapper = mount(UsageTable, {
       props: {
-        data: [{ ...baseImageRow, image_url: 'https://cdn.example.test/image.png' }],
+        data: [{ ...baseImageRow, image_url: '/api/v1/usage/image-links/token' }],
         loading: false,
         columns: [{ key: 'image_url', label: 'Image' }],
       },
       global: { stubs: { DataTable: DataTableStub, EmptyState: true, Icon: true, Teleport: true } },
     })
-    const link = wrapper.get('a[href="https://cdn.example.test/image.png"]')
-    expect(link.text()).toContain('打开图片')
-    expect(link.attributes('target')).toBe('_blank')
-    expect(link.attributes('rel')).toBe('noopener noreferrer')
+    const button = wrapper.get('[data-testid="open-usage-image"]')
+    expect(button.text()).toContain('打开图片')
+
+    await button.trigger('click')
+    await flushPromises()
+
+    expect(usageAPIMocks.getImageLink).toHaveBeenCalledWith('/usage/image-links/token')
+    expect(popup.location.replace).toHaveBeenCalledWith('blob:usage-image')
+    expect(createObjectURL).toHaveBeenCalled()
   })
 
   it('shows output TPS in the latency cell using total duration', () => {
@@ -185,6 +217,10 @@ describe('admin UsageTable tooltip', () => {
       height: 20,
       toJSON: () => ({}),
     } as DOMRect)
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
   })
 
   it.each([

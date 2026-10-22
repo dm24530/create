@@ -472,7 +472,14 @@ func (s *ImageStorageSettingService) TestConnection(ctx context.Context, in Imag
 	}
 	if checker, ok := storage.(ImageStorageConnectionChecker); ok {
 		if err := checker.HeadBucket(ctx); err != nil {
-			return err
+			// R2 tokens scoped to a single bucket often allow Get/Put/Delete
+			// but not HeadBucket (which requires bucket-level metadata access).
+			// The write probe below is the authoritative check for what image
+			// generation actually needs, so do not reject an otherwise usable
+			// object-only credential here.
+			logger.L().Warn("image_storage.head_bucket_probe_failed",
+				zap.String("bucket", cfg.Bucket),
+				zap.Error(err))
 		}
 	}
 	// HeadBucket only proves the bucket exists and is readable. R2/OSS tokens are

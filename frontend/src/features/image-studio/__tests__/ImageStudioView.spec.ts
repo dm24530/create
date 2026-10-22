@@ -482,7 +482,7 @@ describe('ImageStudioView inline image size controls', () => {
     expect(wrapper.get('[data-testid="custom-size-summary"]').text()).toContain('1280×1024')
   })
 
-  it('uses the official GPT Image default sizes instead of 1K/2K/4K presets', async () => {
+  it('offers complete GPT Image tiers and aspect ratios', async () => {
     listKeys.mockResolvedValue({
       items: [{ id: 1, name: 'dd', key: 'sk-local', status: 'active', group_id: 2 }],
     })
@@ -501,13 +501,25 @@ describe('ImageStudioView inline image size controls', () => {
 
     const menuText = wrapper.get('[data-testid="image-size-menu"]').text()
     expect(menuText).toContain('默认')
+    expect(menuText).toContain('2K')
+    expect(menuText).toContain('4K')
     expect(menuText).toContain('1:1 1024x1024')
     expect(menuText).toContain('3:2 1536x1024')
     expect(menuText).toContain('2:3 1024x1536')
-    expect(menuText).not.toContain('16:9')
+    expect(menuText).toContain('4:3 1408x1056')
+    expect(menuText).toContain('3:4 1056x1408')
+    expect(menuText).toContain('16:9 1536x864')
 
     await wrapper.get('[data-testid="size-preset-1024-3:2"]').trigger('click')
     expect(wrapper.get('[data-testid="image-size-trigger"]').text()).toContain('3:2 1536x1024')
+
+    await wrapper.get('[data-testid="image-size-trigger"]').trigger('click')
+    await wrapper.get('[data-testid="size-preset-2048-3:4"]').trigger('click')
+    expect(wrapper.get('[data-testid="image-size-trigger"]').text()).toContain('3:4 2112x2816')
+
+    await wrapper.get('[data-testid="image-size-trigger"]').trigger('click')
+    await wrapper.get('[data-testid="size-preset-3840-4:3"]').trigger('click')
+    expect(wrapper.get('[data-testid="image-size-trigger"]').text()).toContain('4:3 3312x2480')
   })
 
   it('opens the size menu upward when there is enough space above the trigger', async () => {

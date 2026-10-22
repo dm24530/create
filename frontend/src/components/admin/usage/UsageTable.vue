@@ -259,16 +259,21 @@
         </template>
 
         <template #cell-image_url="{ row }">
-          <a
+          <button
             v-if="safeImageURL(row.image_url)"
-            :href="safeImageURL(row.image_url)"
-            target="_blank"
-            rel="noopener noreferrer"
-            class="inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-medium text-primary-600 transition-colors hover:bg-primary-50 dark:text-primary-400 dark:hover:bg-primary-900/30"
+            type="button"
+            data-testid="open-usage-image"
+            class="inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-medium text-primary-600 transition-colors hover:bg-primary-50 disabled:cursor-wait disabled:opacity-60 dark:text-primary-400 dark:hover:bg-primary-900/30"
+            :disabled="openingImageKey === imageRowKey(row)"
+            @click="openUsageImage(row)"
           >
-            <Icon name="externalLink" size="xs" />
-            <span>打开图片</span>
-          </a>
+            <Icon
+              :name="openingImageKey === imageRowKey(row) ? 'refresh' : 'externalLink'"
+              size="xs"
+              :class="{ 'animate-spin': openingImageKey === imageRowKey(row) }"
+            />
+            <span>{{ openingImageKey === imageRowKey(row) ? '加载中' : '打开图片' }}</span>
+          </button>
           <span v-else class="text-sm text-gray-400 dark:text-gray-500">-</span>
         </template>
 
@@ -582,6 +587,7 @@ import DataTable from '@/components/common/DataTable.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import IpGeoCell from '@/components/common/IpGeoCell.vue'
 import Icon from '@/components/icons/Icon.vue'
+import usageAPI from '@/api/usage'
 import { fetchBatch, getEntry } from '@/utils/ipGeoLookup'
 import type { AdminUsageLog } from '@/types'
 import type { Column } from '@/components/common/types'
@@ -616,6 +622,7 @@ const emit = defineEmits<{
 const { t } = useI18n()
 const appStore = useAppStore()
 const copiedRequestId = ref<string | null>(null)
+const openingImageKey = ref('')
 const showAccountBilling = props.showAccountBilling
 const showUpstreamEndpoint = props.showUpstreamEndpoint
 const ipGeoBatchLoading = ref(false)
@@ -728,6 +735,54 @@ const safeImageURL = (value?: string | null): string => {
     return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed.toString() : ''
   } catch {
     return ''
+  }
+}
+
+const imageRowKey = (row: AdminUsageLog): string => row.request_id || row.image_url || ''
+
+const usageImageAPIPath = (value: string): string => {
+  try {
+    const parsed = new URL(value, window.location.origin)
+    if (parsed.origin !== window.location.origin) return ''
+    const prefixes = ['/api/v1/usage/image-links/', '/usage/image-links/']
+    const prefix = prefixes.find((item) => parsed.pathname.startsWith(item))
+    if (!prefix) return ''
+    return `/usage/image-links/${parsed.pathname.slice(prefix.length)}${parsed.search}`
+  } catch {
+    return ''
+  }
+}
+
+const openUsageImage = async (row: AdminUsageLog) => {
+  const sourceURL = safeImageURL(row.image_url)
+  if (!sourceURL) return
+
+  const apiPath = usageImageAPIPath(sourceURL)
+  if (!apiPath) {
+    window.open(sourceURL, '_blank', 'noopener,noreferrer')
+    return
+  }
+
+  const key = imageRowKey(row)
+  if (openingImageKey.value === key) return
+  const popup = window.open('about:blank', '_blank')
+  if (!popup) {
+    appStore.showError('浏览器阻止了图片窗口，请允许弹出窗口后重试')
+    return
+  }
+  popup.opener = null
+  openingImageKey.value = key
+  try {
+    const blob = await usageAPI.getImageLink(apiPath)
+    if (!blob.size) throw new Error('图片内容为空')
+    const objectURL = URL.createObjectURL(blob)
+    popup.location.replace(objectURL)
+    window.setTimeout(() => URL.revokeObjectURL(objectURL), 60_000)
+  } catch (error) {
+    popup.close()
+    appStore.showError(error instanceof Error ? error.message : '打开图片失败')
+  } finally {
+    if (openingImageKey.value === key) openingImageKey.value = ''
   }
 }
 
