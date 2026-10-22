@@ -26,7 +26,6 @@ describe('custom feature routes', () => {
       '/playground',
       '/image-studio',
       '/canvas',
-      '/canvas/:projectId',
       '/video-studio',
       '/video-inspiration',
       '/image-inspiration',

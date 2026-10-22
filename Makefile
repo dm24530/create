@@ -42,6 +42,7 @@ build-backend:
 # 编译前端（需要已安装依赖）
 build-frontend:
 	@pnpm --dir frontend run build
+	@pnpm --dir canvas-app run build
 
 # 运行测试（后端 + 前端）
 test: test-backend test-frontend

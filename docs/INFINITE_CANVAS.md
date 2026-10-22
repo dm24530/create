@@ -1,62 +1,57 @@
 # Infinite Canvas
 
-The infinite canvas is a Vue-native workspace for composing image and video
-generation nodes on a persistent server-side project.
+The platform integrates the original open-source
+[`basketikun/infinite-canvas`](https://github.com/basketikun/infinite-canvas)
+application as a managed sub-application under `/canvas-app/`.
 
-## Scope
+The source is vendored in `canvas-app/` under the upstream MIT license. Its
+original canvas nodes, plugins, prompt library, assets, agent bridge, image and
+video generation flows remain available.
 
-- `/canvas` lists the current user's projects.
-- `/canvas/:projectId` opens a Vue Flow workspace.
-- Image and video nodes submit through the existing gateway and creative key.
-- A canvas-level settings panel selects one active image-capable key plus the
-  image and video models inherited by all nodes. It initially uses the image
-  studio's last selected key and is saved with the project graph.
-- Generated outputs are archived through the existing image/video studio
-  gallery services so R2 URLs remain durable.
-- The graph, viewport and node task metadata are stored in PostgreSQL.
+## Platform Integration
 
-## Persistence
+The Vue application exposes `/canvas`, prepares the current user's platform
+creative API key, and loads the React canvas in an iframe.
 
-`canvas_projects` stores one JSONB graph per project:
+The iframe loads `/canvas-app/canvas` without credentials in the URL. The Vue
+host sends a `create-canvas-bootstrap` message after the iframe loads.
+`canvas-app/src/lib/managed-bootstrap.ts` receives credentials from the parent,
+fetches the model catalog, assigns image/video defaults and sets managed mode
+before React renders.
 
-```text
-id, user_id, title, graph, version, created_at, updated_at
+Managed mode:
+
+- hides the upstream API/channel configuration button
+- prevents the config dialog from opening during credential import
+- keeps requests on the platform gateway
+- preserves the original canvas UI and local-first storage behavior
+
+## Build Order
+
+The Vue build clears `backend/internal/web/dist`, so the canvas sub-application
+must be built afterward:
+
+```powershell
+pnpm --dir frontend run build
+pnpm --dir canvas-app run build
 ```
 
-`graph` contains Vue Flow nodes, edges and viewport. The integer `version`
-implements optimistic locking. Every update uses the version previously read by
-the client and returns `409` when another tab saved first.
+The canvas Vite config emits directly to:
 
-Generated media is not embedded in JSONB. Nodes keep the durable gallery URL
-returned after the generated file is archived in object storage.
+```text
+backend/internal/web/dist/canvas-app
+```
 
-## Generation Flow
+The Go server embeds that directory together with the Vue frontend.
 
-Image nodes:
+## Development
 
-1. Submit to `/images/generations/async` or `/images/edits/async`.
-2. Store the returned task ID and poll URL on the node.
-3. Poll `/images/tasks/:id` until completion.
-4. Archive the result in the image studio gallery.
-5. Save the returned durable URL in the node.
+Run the Vue app on `3000` and the canvas app on `3001`:
 
-Video nodes reuse the existing Seedance/Grok task helpers:
+```powershell
+pnpm --dir frontend run dev
+pnpm --dir canvas-app run dev
+```
 
-1. Create the upstream task.
-2. Persist provider and task ID on the node.
-3. Poll using the existing video task client.
-4. Archive the finished video in the video studio gallery.
-5. Save the durable archive URL in the node.
-
-All model requests continue to use the user's creative API key and the existing
-gateway, so routing, group permissions, model pricing and usage billing are not
-duplicated.
-
-## Current MVP Boundaries
-
-- Text-to-image and text-to-video are supported.
-- Connected upstream image nodes are sent as image references for image edits
-  where the protocol supports them.
-- A connected image is sent as the first frame/reference for video generation.
-- The canvas has not yet added grouping, export, multi-tab presence or a custom
-  canvas asset lifecycle. Generated files use the existing studio works quota.
+The canvas development server proxies `/api` and `/v1` to the backend on
+`8080`. Production uses same-origin assets and API requests.

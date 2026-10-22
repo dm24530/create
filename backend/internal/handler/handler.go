@@ -73,7 +73,6 @@ type Handlers struct {
 	BatchImage         *BatchImageHandler
 	ImageStudioGallery *ImageStudioGalleryHandler
 	VideoStudioGallery *VideoStudioGalleryHandler
-	CanvasProject      *CanvasProjectHandler
 	VideoInspiration   *VideoInspirationHandler
 }
 

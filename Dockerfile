@@ -45,6 +45,16 @@ COPY frontend/ ./
 COPY docs/legal/ /app/docs/legal/
 RUN pnpm run build
 
+# Build the original React canvas as a managed sub-application. Its Vite config
+# writes to backend/internal/web/dist/canvas-app so the Go embed step includes it.
+WORKDIR /app/canvas-app
+COPY canvas-app/package.json canvas-app/pnpm-lock.yaml ./
+RUN --mount=type=cache,id=create-canvas-pnpm-store,target=/root/.local/share/pnpm/store \
+    if [ -n "${NPM_CONFIG_REGISTRY}" ]; then pnpm config set registry "${NPM_CONFIG_REGISTRY}"; fi && \
+    pnpm install --frozen-lockfile --prefer-offline
+COPY canvas-app/ /app/canvas-app/
+RUN pnpm run build
+
 # -----------------------------------------------------------------------------
 # Stage 2: Backend Builder
 # -----------------------------------------------------------------------------

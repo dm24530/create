@@ -891,7 +891,6 @@ var ProviderSet = wire.NewSet(
 	// 用 Provide 版本：除了构造服务，还要起临时作品的过期清扫循环。
 	ProvideImageStudioGalleryService,
 	NewVideoStudioGalleryService,
-	NewCanvasProjectService,
 	ProvideVideoInspirationService,
 	ProvideInspirationLibraryService,
 	// Lets `wire` regenerate cmd/server/wire_gen.go without hand editing:
