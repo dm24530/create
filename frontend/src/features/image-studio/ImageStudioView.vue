@@ -97,10 +97,11 @@
                   <small>{{ isImageMediaFailed(image) ? '点击查看详情并重试' : '正在加载缩略图' }}</small>
                 </div>
                 <img
-                  v-if="!isImageMediaFailed(image)"
+                  v-if="!isImageMediaFailed(image) && imageMediaDisplaySrc(image)"
                   :key="imageMediaRenderKey(image)"
                   :src="imageMediaDisplaySrc(image)"
                   :srcset="image.thumbSrcSet"
+                  :ref="(element) => bindImageMediaElement(image, element)"
                   :alt="image.title"
                   loading="lazy"
                   decoding="async"
@@ -853,10 +854,15 @@ function writeStudioSnapshot() {
       images: images.value
         .filter((image) => !image.pending && image.src && !image.src.startsWith('data:'))
         .slice(0, 48)
-        .map((image) => ({
+        .map((image, index) => ({
           ...image,
           originalSrc: undefined,
           thumbSrcSet: undefined,
+          // Inline previews keep recent cards instant after a refresh. Bound
+          // how many are persisted so sessionStorage quota is not exhausted.
+          thumbSrc: isInlineImageSource(image.thumbSrc)
+            ? (index < 6 ? image.thumbSrc : undefined)
+            : image.thumbSrc,
         })),
     }
     sessionStorage.setItem(studioSnapshotStorageKey(userId), JSON.stringify(snapshot))
@@ -1085,7 +1091,9 @@ const galleryBackedIds = ref<Set<string>>(new Set())
 // 本会话刚保存进图库的图片，卡片上还是本地数字 id；映射到图库 id 才能立刻删掉，
 // 不用等刷新页面。
 const localToGalleryId = ref<Map<string, string>>(new Map())
-const galleryThumbObjectUrls = new Map<string, string>()
+const galleryRemoteThumbUrls = new Map<string, string>()
+const galleryThumbnailDataUrls = new Map<string, string>()
+const imageMediaTimeoutIds = new Map<string, ReturnType<typeof setTimeout>>()
 const studioQuota = ref<{ used: number; limit: number } | null>(null)
 const resumedGenerationBatches = new Set<string>()
 const resumedGatewayBatches = new Set<string>()
@@ -1447,6 +1455,9 @@ async function loadGallery() {
     const entries = await imageStudioGalleryAPI.list()
     for (const entry of entries) {
       if (entry?.id) galleryBackedIds.value.add(String(entry.id))
+      if (entry?.id && entry.thumb_url) {
+        galleryRemoteThumbUrls.set(String(entry.id), String(entry.thumb_url))
+      }
       const localImage = images.value.find((item) => (
         localToGalleryId.value.get(String(item.id)) === String(entry?.id || '')
       ))
@@ -1457,8 +1468,13 @@ async function loadGallery() {
           resetImageMediaState(localImage)
         }
         const storedThumbURL = String(entry.thumb_url || '')
-        if (storedThumbURL && !sameStoredObject(localImage.thumbSrc, storedThumbURL)) {
+        if (
+          storedThumbURL
+          && !isInlineImageSource(localImage.thumbSrc)
+          && !sameStoredObject(localImage.thumbSrc, storedThumbURL)
+        ) {
           localImage.thumbSrc = storedThumbURL
+          localImage.thumbSrcSet = ''
           resetImageMediaState(localImage)
         }
         localImage.saved = entry.saved !== false
@@ -1483,9 +1499,12 @@ async function loadGallery() {
         return {
           ...existing,
           src: sameStoredObject(existing.src, entry.url) ? existing.src : entry.url,
-          thumbSrc: sameStoredObject(existing.thumbSrc, entry.thumb_url)
+          thumbSrc: isInlineImageSource(existing.thumbSrc)
             ? existing.thumbSrc
-            : entry.thumb_url || existing.thumbSrc,
+            : sameStoredObject(existing.thumbSrc, entry.thumb_url)
+              ? existing.thumbSrc
+              : entry.thumb_url || existing.thumbSrc,
+          thumbSrcSet: isInlineImageSource(existing.thumbSrc) ? existing.thumbSrcSet : '',
           prompt: entry.prompt,
           model: entry.model,
           size: entry.size,
@@ -1508,7 +1527,15 @@ async function loadGallery() {
     })
     images.value = [...pending, ...merged]
     for (const entry of entries) {
-      if (!entry.thumb_url && !galleryThumbObjectUrls.has(entry.id)) void loadGalleryThumbnail(entry.id)
+      const localImage = images.value.find((item) => (
+        String(item.id) === String(entry.id)
+        || localToGalleryId.value.get(String(item.id)) === String(entry.id)
+      ))
+      if (
+        !isInlineImageSource(localImage?.thumbSrc)
+      ) {
+        void loadGalleryThumbnail(entry.id)
+      }
     }
   } catch {
     // Gallery storage is optional; generation remains available without it.
@@ -1526,24 +1553,47 @@ function sameStoredObject(current: string | undefined, next: string | undefined)
   }
 }
 
+function isInlineImageSource(value: string | undefined) {
+  return Boolean(value && (/^data:image\//i.test(value) || /^blob:/i.test(value)))
+}
+
 async function loadGalleryThumbnail(id: string) {
+  const image = images.value.find((item) => (
+    String(item.id) === id
+    || localToGalleryId.value.get(String(item.id)) === id
+  ))
+  if (!image || isInlineImageSource(image.thumbSrc)) return
+  const cached = galleryThumbnailDataUrls.get(id)
+  if (cached) {
+    image.thumbSrc = cached
+    image.thumbSrcSet = ''
+    resetImageMediaState(image)
+    return
+  }
   try {
     const blob = await imageStudioGalleryAPI.thumbnail(id)
-    const url = URL.createObjectURL(blob)
-    const previous = galleryThumbObjectUrls.get(id)
-    if (previous) URL.revokeObjectURL(previous)
-    galleryThumbObjectUrls.set(id, url)
-    const image = images.value.find((item) => (
-      String(item.id) === id
-      || localToGalleryId.value.get(String(item.id)) === id
-    ))
-    if (image) {
-      image.thumbSrcSet = url
-      resetImageMediaState(image)
-    }
+    const dataURL = await blobToDataURL(blob)
+    galleryThumbnailDataUrls.set(id, dataURL)
+    image.thumbSrc = dataURL
+    image.thumbSrcSet = ''
+    resetImageMediaState(image)
+    armImageMediaTimeout(image)
+    if (previewImage.value?.id === image.id) void loadPreviewDisplay(image)
   } catch {
-    // Keep the stored thumbnail or original URL as the fallback.
+    image.thumbSrc = galleryRemoteThumbUrls.get(id) || ''
+    image.thumbSrcSet = ''
+    resetImageMediaState(image)
+    armImageMediaTimeout(image)
   }
+}
+
+function blobToDataURL(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result || ''))
+    reader.onerror = () => reject(reader.error || new Error('failed to read thumbnail'))
+    reader.readAsDataURL(blob)
+  })
 }
 
 function galleryEntryToImage(entry: ImageStudioGalleryEntry, index: number): GeneratedImage {
@@ -1552,6 +1602,7 @@ function galleryEntryToImage(entry: ImageStudioGalleryEntry, index: number): Gen
     title: `历史图片 ${index + 1}`,
     src: entry.url,
     thumbSrc: entry.thumb_url || '',
+    thumbSrcSet: '',
     prompt: entry.prompt,
     model: entry.model,
     size: entry.size,
@@ -1747,8 +1798,9 @@ async function persistGeneratedImages(
         resetImageMediaState(result.value.item)
       }
       const storedThumbURL = String(result.value.entry.thumb_url || '')
-      if (storedThumbURL) {
+      if (storedThumbURL && !isInlineImageSource(result.value.item.thumbSrc)) {
         result.value.item.thumbSrc = storedThumbURL
+        result.value.item.thumbSrcSet = ''
         resetImageMediaState(result.value.item)
       }
     }
@@ -1841,14 +1893,25 @@ function isImageMediaFailed(image: GeneratedImage) {
 
 function markImageMediaLoaded(image: GeneratedImage) {
   const id = imageMediaId(image)
+  clearImageMediaTimeout(image)
   failedImageMediaIds.value.delete(id)
   loadedImageMediaIds.value.add(id)
 }
 
 function markImageMediaFailed(image: GeneratedImage) {
   const id = imageMediaId(image)
+  clearImageMediaTimeout(image)
   loadedImageMediaIds.value.delete(id)
   failedImageMediaIds.value.add(id)
+}
+
+function bindImageMediaElement(image: GeneratedImage, element: unknown) {
+  if (!(element instanceof HTMLImageElement) || !element.complete) return
+  if (element.naturalWidth > 0) {
+    markImageMediaLoaded(image)
+  } else {
+    handleImageMediaError(image)
+  }
 }
 
 function handleImageMediaError(image: GeneratedImage) {
@@ -1870,11 +1933,34 @@ function handleImageMediaError(image: GeneratedImage) {
 
 function resetImageMediaState(image: GeneratedImage, bumpRetry = false) {
   const id = imageMediaId(image)
+  clearImageMediaTimeout(image)
   loadedImageMediaIds.value.delete(id)
   failedImageMediaIds.value.delete(id)
   if (bumpRetry) {
     imageMediaRetryNonce.value.set(id, (imageMediaRetryNonce.value.get(id) || 0) + 1)
   }
+}
+
+function clearImageMediaTimeout(image: GeneratedImage) {
+  const id = imageMediaId(image)
+  const timer = imageMediaTimeoutIds.get(id)
+  if (!timer) return
+  clearTimeout(timer)
+  imageMediaTimeoutIds.delete(id)
+}
+
+function armImageMediaTimeout(image: GeneratedImage) {
+  clearImageMediaTimeout(image)
+  if (image.pending || isImageMediaLoaded(image) || isImageMediaFailed(image)) return
+  const id = imageMediaId(image)
+  const timer = setTimeout(() => {
+    imageMediaTimeoutIds.delete(id)
+    if (image.pending || isImageMediaLoaded(image) || isImageMediaFailed(image)) return
+    // Drop the slow thumbnail/source once, which triggers the existing
+    // fallback chain. A second timeout marks the card failed and shows retry.
+    handleImageMediaError(image)
+  }, 15_000)
+  imageMediaTimeoutIds.set(id, timer)
 }
 
 function retryImageMedia(image: GeneratedImage) {
@@ -3154,6 +3240,21 @@ watch(
 )
 
 watch(
+  images,
+  (items) => {
+    const activeIds = new Set(items.map((image) => imageMediaId(image)))
+    for (const id of imageMediaTimeoutIds.keys()) {
+      if (activeIds.has(id)) continue
+      const timer = imageMediaTimeoutIds.get(id)
+      if (timer) clearTimeout(timer)
+      imageMediaTimeoutIds.delete(id)
+    }
+    for (const image of items) armImageMediaTimeout(image)
+  },
+  { deep: true, flush: 'post' },
+)
+
+watch(
   () => activeGenerations.value > 0 || images.value.some((image) => image.pending),
   (hasActiveGeneration) => {
     if (hasActiveGeneration) startGenerationClock()
@@ -3188,10 +3289,10 @@ onBeforeUnmount(() => {
   stopGenerationClock()
   document.removeEventListener('click', handleSizeOutside)
   document.removeEventListener('keydown', handleSizeEscape)
-  for (const url of galleryThumbObjectUrls.values()) {
-    URL.revokeObjectURL(url)
+  for (const timer of imageMediaTimeoutIds.values()) {
+    clearTimeout(timer)
   }
-  galleryThumbObjectUrls.clear()
+  imageMediaTimeoutIds.clear()
 })
 </script>
 
