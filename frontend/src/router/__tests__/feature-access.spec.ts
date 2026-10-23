@@ -26,6 +26,7 @@ const appStore = vi.hoisted(() => ({
     payment_enabled?: boolean
     risk_control_enabled?: boolean
     subscription_enabled?: boolean
+    canvas_admin_only?: boolean
     custom_menu_items?: []
   },
   fetchPublicSettings: vi.fn(),
@@ -208,5 +209,46 @@ describe('subscription route guard (opt-out flag)', () => {
     await navigation
 
     expect(next).toHaveBeenCalledWith('/admin/dashboard')
+  })
+})
+
+describe('infinite canvas administrator preview guard', () => {
+  beforeEach(() => {
+    authStore.isAdmin = false
+    authStore.isSimpleMode = false
+    appStore.publicSettingsLoaded = true
+    appStore.fetchPublicSettings.mockReset()
+  })
+
+  it.each([
+    ['missing key', {}],
+    ['explicit true', { canvas_admin_only: true }],
+  ])('redirects non-admin users when the flag is %s', async (_name, settings) => {
+    appStore.cachedPublicSettings = settings
+
+    const { navigation, next } = runGuard({}, '/canvas')
+    await navigation
+
+    expect(next).toHaveBeenCalledOnce()
+    expect(next).toHaveBeenCalledWith('/image-studio')
+  })
+
+  it('allows non-admin users after the operator opens the canvas', async () => {
+    appStore.cachedPublicSettings = { canvas_admin_only: false }
+
+    const { navigation, next } = runGuard({}, '/canvas')
+    await navigation
+
+    expect(next).toHaveBeenCalledWith()
+  })
+
+  it('always allows administrators during preview', async () => {
+    authStore.isAdmin = true
+    appStore.cachedPublicSettings = { canvas_admin_only: true }
+
+    const { navigation, next } = runGuard({}, '/canvas')
+    await navigation
+
+    expect(next).toHaveBeenCalledWith()
   })
 })

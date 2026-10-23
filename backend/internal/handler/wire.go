@@ -111,6 +111,8 @@ func ProvideGatewayHandler(
 	usageService *service.UsageService,
 	apiKeyService *service.APIKeyService,
 	usageRecordWorkerPool *service.UsageRecordWorkerPool,
+	imageLinks service.UsageLogImageLinkStore,
+	imageStorage *service.ImageStorageSettingService,
 	errorPassthroughService *service.ErrorPassthroughService,
 	contentModerationService *service.ContentModerationService,
 	userMsgQueueService *service.UserMessageQueueService,
@@ -121,6 +123,8 @@ func ProvideGatewayHandler(
 	h := NewGatewayHandler(gatewayService, openAIGatewayService, geminiCompatService, antigravityGatewayService,
 		userService, concurrencyService, billingCacheService, usageService, apiKeyService, usageRecordWorkerPool,
 		errorPassthroughService, contentModerationService, userMsgQueueService, cfg, settingService)
+	h.SetImageLinkStore(imageLinks)
+	h.SetImageStorage(imageStorage)
 	h.securityAuditCoordinator = coordinator
 	return h
 }
@@ -189,6 +193,7 @@ func ProvideHandlers(
 	authHandler *AuthHandler,
 	userHandler *UserHandler,
 	apiKeyHandler *APIKeyHandler,
+	apiKeyService *service.APIKeyService,
 	usageHandler *UsageHandler,
 	redeemHandler *RedeemHandler,
 	subscriptionHandler *SubscriptionHandler,
@@ -211,10 +216,15 @@ func ProvideHandlers(
 	imageStudioGalleryHandler *ImageStudioGalleryHandler,
 	videoStudioGalleryHandler *VideoStudioGalleryHandler,
 	videoInspirationHandler *VideoInspirationHandler,
+	canvasHandler *CanvasHandler,
+	imageLinks service.UsageLogImageLinkStore,
+	imageStorage *service.ImageStorageSettingService,
 	_ *service.IdempotencyCoordinator,
 	_ *service.IdempotencyCleanupService,
 	_ *service.OpenAIQuotaAutoResetService,
 ) *Handlers {
+	usageHandler.SetImageLinkDeps(imageLinks, imageStorage)
+	asyncImageHandler.Configure(gatewayHandler, apiKeyService, imageLinks)
 	return &Handlers{
 		Auth:               authHandler,
 		User:               userHandler,
@@ -241,6 +251,7 @@ func ProvideHandlers(
 		ImageStudioGallery: imageStudioGalleryHandler,
 		VideoStudioGallery: videoStudioGalleryHandler,
 		VideoInspiration:   videoInspirationHandler,
+		Canvas:             canvasHandler,
 	}
 }
 
@@ -278,6 +289,7 @@ var ProviderSet = wire.NewSet(
 	NewImageStudioGalleryHandler,
 	NewVideoStudioGalleryHandler,
 	NewVideoInspirationHandler,
+	NewCanvasHandler,
 
 	// Admin handlers
 	admin.NewDashboardHandler,

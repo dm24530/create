@@ -192,7 +192,7 @@ func (h *AsyncImageHandler) Submit(c *gin.Context) {
 		c.Request.Context(),
 		service.ImageTaskOwner{UserID: apiKey.UserID, APIKeyID: apiKey.ID},
 		&service.ImageTaskExecution{
-			Platform:       platform,
+			Platform:       effectivePlatform,
 			RequestPath:    requestPath,
 			GeminiModel:    geminiModel,
 			ContentType:    c.GetHeader("Content-Type"),
@@ -499,6 +499,7 @@ func newImageTaskContext(
 			path = "/v1beta/models/" + task.Execution.GeminiModel + ":generateContent"
 		}
 	}
+	ctx = context.WithValue(ctx, ctxkey.AsyncImageTask, true)
 	request := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body)).WithContext(ctx)
 	request = request.WithContext(withImageTaskUsageRequestID(request.Context(), task.Execution.UsageRequestID))
 	request.Header.Set("Authorization", "Bearer "+apiKey.Key)
@@ -865,36 +866,24 @@ func extractGeminiPromptBody(body []byte) json.RawMessage {
 }
 
 func normalizeGeminiImageTaskResult(body []byte) ([]byte, error) {
-	var payload struct {
-		Candidates []struct {
-			Content struct {
-				Parts []struct {
-					InlineData struct {
-						MimeType string `json:"mimeType"`
-						Data     string `json:"data"`
-					} `json:"inlineData"`
-				} `json:"parts"`
-			} `json:"content"`
-		} `json:"candidates"`
+	var envelope struct {
 		Error json.RawMessage `json:"error"`
 	}
-	if err := json.Unmarshal(body, &payload); err != nil {
+	if err := json.Unmarshal(body, &envelope); err != nil {
 		return nil, err
 	}
-	if len(payload.Error) > 0 {
+	if len(envelope.Error) > 0 {
 		return body, nil
 	}
 	items := make([]map[string]string, 0)
-	for _, candidate := range payload.Candidates {
-		for _, part := range candidate.Content.Parts {
-			if strings.TrimSpace(part.InlineData.Data) == "" {
-				continue
-			}
-			items = append(items, map[string]string{
-				"b64_json":  part.InlineData.Data,
-				"mime_type": part.InlineData.MimeType,
-			})
+	for _, output := range service.ExtractGeminiImageOutputs(body) {
+		item := map[string]string{"mime_type": output.MIMEType}
+		if output.Base64 != "" {
+			item["b64_json"] = output.Base64
+		} else if output.URL != "" {
+			item["url"] = output.URL
 		}
+		items = append(items, item)
 	}
 	return json.Marshal(map[string]any{
 		"created": time.Now().UTC().Unix(),
@@ -909,7 +898,7 @@ func (h *AsyncImageHandler) failTask(taskID string, statusCode int, taskErr json
 }
 
 func newAsyncImageContext(c *gin.Context, body []byte, timeoutDuration time.Duration) (*gin.Context, *httptest.ResponseRecorder, context.CancelFunc) {
-	base := context.WithoutCancel(c.Request.Context())
+	base := context.WithValue(context.WithoutCancel(c.Request.Context()), ctxkey.AsyncImageTask, true)
 	executionCtx, cancel := context.WithTimeout(base, timeoutDuration)
 	request := c.Request.Clone(executionCtx)
 	request.Body = io.NopCloser(bytes.NewReader(body))

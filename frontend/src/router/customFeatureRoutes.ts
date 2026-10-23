@@ -30,7 +30,7 @@ export const userCustomFeatureRoutesAfterKeys: RouteRecordRaw[] = [
   {
     path: '/canvas',
     name: 'CanvasProjects',
-    component: () => import('@/features/infinite-canvas/CanvasHostView.vue'),
+    component: () => import('@/features/infinite-canvas/CanvasRoutePlaceholder.vue'),
     meta: {
       requiresAuth: true,
       requiresAdmin: false,

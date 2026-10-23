@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import VideoStudioView from '../VideoStudioView.vue'
 import { saveVideoWork } from '../videoWorks'
+import { resetVideoStudioDraft } from '../videoStudioDraft'
 import { useAppStore } from '@/stores/app'
 
 const { listKeys, getPublicSettings, copyToClipboard, routeQuery } = vi.hoisted(() => ({
@@ -84,6 +85,7 @@ function jsonResponse(body: unknown, ok = true): Response {
 }
 
 function resetMocks() {
+  resetVideoStudioDraft()
   listKeys.mockReset()
   getPublicSettings.mockReset()
   copyToClipboard.mockReset()
@@ -460,6 +462,32 @@ describe('VideoStudioView references', () => {
       type: 'video_url',
       video_url: { url: 'https://cdn.example.com/ref.mp4' },
     })
+  })
+
+  it('keeps the prompt and reference assets when the studio remounts', async () => {
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/models')) return jsonResponse({ data: [{ id: 'seedance-2-720p' }] })
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const firstWrapper = mountStudio()
+    await flushPromises()
+    await flushPromises()
+
+    await firstWrapper.get('textarea').setValue('保留这个视频镜头描述')
+    await firstWrapper.get('[data-testid="video-reference-trigger"]').trigger('click')
+    await firstWrapper.get('[data-testid="reference-kind-video"]').trigger('click')
+    await firstWrapper.get('[data-testid="reference-url-input"]').setValue('https://cdn.example.com/keep-ref.mp4')
+    const addButton = firstWrapper.findAll('button').find((button) => button.text() === '添加')
+    await addButton!.trigger('click')
+    await flushPromises()
+    firstWrapper.unmount()
+
+    const secondWrapper = mountStudio()
+    expect((secondWrapper.get('textarea').element as HTMLTextAreaElement).value).toBe('保留这个视频镜头描述')
+    expect(secondWrapper.get('[aria-label="移除 keep-ref.mp4"]').exists()).toBe(true)
   })
 })
 

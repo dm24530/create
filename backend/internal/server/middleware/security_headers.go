@@ -119,6 +119,19 @@ func SecurityHeaders(cfg config.CSPConfig, getFrameSrcOrigins func() []string) g
 
 	return func(c *gin.Context) {
 		finalPolicy := policy
+		canvasApp := isCanvasAppPath(c)
+		if canvasApp {
+			// The canvas is embedded by the main same-origin application.
+			// Keep it isolated from third-party framing while allowing that
+			// single trusted parent.
+			finalPolicy = setCSPDirective(finalPolicy, "frame-ancestors", "'self'")
+			if !directiveHasValue(finalPolicy, "media-src", "https:") {
+				finalPolicy = addToDirective(finalPolicy, "media-src", "https:")
+			}
+			if !directiveHasValue(finalPolicy, "media-src", "blob:") {
+				finalPolicy = addToDirective(finalPolicy, "media-src", "blob:")
+			}
+		}
 		if getFrameSrcOrigins != nil {
 			for _, origin := range getFrameSrcOrigins() {
 				if origin != "" {
@@ -126,9 +139,14 @@ func SecurityHeaders(cfg config.CSPConfig, getFrameSrcOrigins func() []string) g
 				}
 			}
 		}
+		finalPolicy = compactCSPPolicy(finalPolicy)
 
 		c.Header("X-Content-Type-Options", "nosniff")
-		c.Header("X-Frame-Options", "DENY")
+		if canvasApp {
+			c.Header("X-Frame-Options", "SAMEORIGIN")
+		} else {
+			c.Header("X-Frame-Options", "DENY")
+		}
 		c.Header("Referrer-Policy", "strict-origin-when-cross-origin")
 		if isAPIRoutePath(c) {
 			c.Next()
@@ -151,6 +169,14 @@ func SecurityHeaders(cfg config.CSPConfig, getFrameSrcOrigins func() []string) g
 	}
 }
 
+func isCanvasAppPath(c *gin.Context) bool {
+	if c == nil || c.Request == nil || c.Request.URL == nil {
+		return false
+	}
+	path := c.Request.URL.Path
+	return path == "/canvas-app" || strings.HasPrefix(path, "/canvas-app/")
+}
+
 func isAPIRoutePath(c *gin.Context) bool {
 	if c == nil || c.Request == nil || c.Request.URL == nil {
 		return false
@@ -161,6 +187,35 @@ func isAPIRoutePath(c *gin.Context) bool {
 		strings.HasPrefix(path, "/antigravity/") ||
 		strings.HasPrefix(path, "/responses") ||
 		strings.HasPrefix(path, "/images")
+}
+
+func setCSPDirective(policy, directive, value string) string {
+	directives := strings.Split(policy, ";")
+	replaced := false
+	for index, rawDirective := range directives {
+		fields := strings.Fields(strings.TrimSpace(rawDirective))
+		if len(fields) == 0 || fields[0] != directive {
+			continue
+		}
+		directives[index] = newCSPDirective(directive, value)
+		replaced = true
+		break
+	}
+	if !replaced {
+		return addToDirective(policy, directive, value)
+	}
+	return compactCSPPolicy(strings.Join(directives, ";"))
+}
+
+func compactCSPPolicy(policy string) string {
+	directives := strings.Split(policy, ";")
+	normalized := make([]string, 0, len(directives))
+	for _, rawDirective := range directives {
+		if directive := strings.TrimSpace(rawDirective); directive != "" {
+			normalized = append(normalized, directive)
+		}
+	}
+	return strings.Join(normalized, "; ")
 }
 
 // enhanceCSPPolicy 确保 CSP 策略包含 nonce 支持和运行时组件必需域名。

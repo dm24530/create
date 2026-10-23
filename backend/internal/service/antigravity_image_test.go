@@ -19,6 +19,10 @@ func TestIsImageGenerationModel_GeminiProImage(t *testing.T) {
 func TestIsImageGenerationModel_GeminiFlashImage(t *testing.T) {
 	require.True(t, isImageGenerationModel("gemini-2.5-flash-image"))
 	require.True(t, isImageGenerationModel("gemini-2.5-flash-image-preview"))
+	require.True(t, isImageGenerationModel("banana"))
+	require.True(t, isImageGenerationModel("nano-banana"))
+	require.True(t, isImageGenerationModel("nana-banana-2"))
+	require.True(t, isImageGenerationModel("gemini-nano-banana-2.1"))
 }
 
 // TestIsImageGenerationModel_RegularModel 测试普通模型不被识别为图片模型

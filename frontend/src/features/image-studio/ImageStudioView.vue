@@ -607,11 +607,13 @@ import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Toggle from '@/components/common/Toggle.vue'
 import ImageStudioSelect from './ImageStudioSelect.vue'
+import { IMAGE_STUDIO_DEFAULT_PROMPT, imageStudioDraft } from './imageStudioDraft'
 import {
   imageNeedsLocalResize,
   LOCAL_IMAGE_MAX_EDGE,
   processImageForDisplay,
 } from './imagePostProcess'
+import { extractGeminiImageResults } from './geminiImageResults'
 import Icon from '@/components/icons/Icon.vue'
 import { useClipboard } from '@/composables/useClipboard'
 import {
@@ -693,7 +695,7 @@ const imageModels = ref<string[]>([])
 const loadingModels = ref(false)
 const refreshing = ref(false)
 const modelLoadError = ref('')
-const prompt = ref('一只趴在桌上的橙色小猫，柔和窗边自然光，电影感，极简背景')
+const prompt = ref(IMAGE_STUDIO_DEFAULT_PROMPT)
 const promptTextareaRef = ref<HTMLTextAreaElement | null>(null)
 const { height: promptHeight, startResize: startPromptResize } = usePromptResize(promptTextareaRef, {
   storageKey: 'sub2api:image-studio:prompt-height',
@@ -738,6 +740,17 @@ const fileInput = ref<HTMLInputElement | null>(null)
 const { copyToClipboard } = useClipboard()
 const appStore = useAppStore()
 const authStore = useAuthStore()
+
+const draftOwnerId = String(authStore.user?.id || '')
+if (imageStudioDraft.ownerId !== draftOwnerId) {
+  imageStudioDraft.ownerId = draftOwnerId
+  imageStudioDraft.initialized = false
+  imageStudioDraft.prompt = IMAGE_STUDIO_DEFAULT_PROMPT
+  imageStudioDraft.references = []
+} else if (imageStudioDraft.initialized) {
+  prompt.value = imageStudioDraft.prompt
+  references.value = imageStudioDraft.references.map((item) => ({ ...item }))
+}
 
 const PENDING_STORAGE_KEY = 'sub2api:image-studio:pending'
 const PENDING_PROMPT_STORAGE_KEY = 'sub2api:image-studio:pending-prompt'
@@ -1077,7 +1090,7 @@ const studioQuota = ref<{ used: number; limit: number } | null>(null)
 const resumedGenerationBatches = new Set<string>()
 const resumedGatewayBatches = new Set<string>()
 let componentDisposed = false
-let nextReferenceId = 1
+let nextReferenceId = Math.max(1, ...references.value.map((item) => item.id + 1))
 let modelRequestId = 0
 
 function resolveEndpoint(configured: string) {
@@ -1392,9 +1405,7 @@ function parseSize(value: string) {
   return { width: Number(match[1]), height: Number(match[2]) }
 }
 
-async function loadData() {
-  errorMessage.value = ''
-  restorePendingImages()
+async function loadKeysAndSettings() {
   const keysPromise = ensureCreatorKey('image')
     .then((result) => {
       keys.value = result.keys
@@ -1421,7 +1432,13 @@ async function loadData() {
       if (!errorMessage.value) errorMessage.value = errorMessageFrom(error, '加载设置失败')
     })
 
-  await Promise.allSettled([keysPromise, settingsPromise, loadGallery(), loadStudioQuota()])
+  await Promise.allSettled([keysPromise, settingsPromise])
+}
+
+async function loadData() {
+  errorMessage.value = ''
+  restorePendingImages()
+  await Promise.allSettled([loadKeysAndSettings(), loadGallery(), loadStudioQuota()])
   void resumeGatewayGeneration(images.value.filter((item) => item.pending && item.gatewayPollUrl))
 }
 
@@ -1435,12 +1452,12 @@ async function loadGallery() {
       ))
       if (localImage) {
         const storedURL = String(entry.url || '')
-        if (storedURL && storedURL !== localImage.src) {
+        if (storedURL && !sameStoredObject(localImage.src, storedURL)) {
           localImage.src = storedURL
           resetImageMediaState(localImage)
         }
         const storedThumbURL = String(entry.thumb_url || '')
-        if (storedThumbURL && storedThumbURL !== localImage.thumbSrc) {
+        if (storedThumbURL && !sameStoredObject(localImage.thumbSrc, storedThumbURL)) {
           localImage.thumbSrc = storedThumbURL
           resetImageMediaState(localImage)
         }
@@ -1455,11 +1472,30 @@ async function loadGallery() {
       && typeof item.id === 'number'
     ))
     const seen = new Set<string>()
+    const existingById = new Map(images.value.map((item) => [String(item.id), item]))
     const gallery = entries
       // 本会话刚保存进图库的图片，本地已经有一份可显示的数据副本；
       // 再从图库列表渲染一份就会变成"生成一个却显示两个"。
       .filter((entry) => !locallySavedGalleryIds.has(String(entry.id)))
-      .map(galleryEntryToImage)
+      .map((entry, index) => {
+        const existing = existingById.get(String(entry.id))
+        if (!existing) return galleryEntryToImage(entry, index)
+        return {
+          ...existing,
+          src: sameStoredObject(existing.src, entry.url) ? existing.src : entry.url,
+          thumbSrc: sameStoredObject(existing.thumbSrc, entry.thumb_url)
+            ? existing.thumbSrc
+            : entry.thumb_url || existing.thumbSrc,
+          prompt: entry.prompt,
+          model: entry.model,
+          size: entry.size,
+          format: entry.format,
+          saved: entry.saved !== false,
+          expiresAt: entry.expires_at || 0,
+          durationMs: Number(entry.duration_ms || 0) || undefined,
+          createdAt: entry.created_at || 0,
+        }
+      })
       .filter((item) => {
         const key = String(item.id || item.src)
         if (seen.has(key)) return false
@@ -1472,10 +1508,21 @@ async function loadGallery() {
     })
     images.value = [...pending, ...merged]
     for (const entry of entries) {
-      if (!entry.thumb_url) void loadGalleryThumbnail(entry.id)
+      if (!entry.thumb_url && !galleryThumbObjectUrls.has(entry.id)) void loadGalleryThumbnail(entry.id)
     }
   } catch {
     // Gallery storage is optional; generation remains available without it.
+  }
+}
+
+function sameStoredObject(current: string | undefined, next: string | undefined) {
+  if (!current || !next) return false
+  try {
+    const currentURL = new URL(current, window.location.origin)
+    const nextURL = new URL(next, window.location.origin)
+    return currentURL.origin === nextURL.origin && currentURL.pathname === nextURL.pathname
+  } catch {
+    return current === next
   }
 }
 
@@ -2069,8 +2116,8 @@ async function refreshAll() {
   modelLoadError.value = ''
   const previousModel = imageModel.value
   try {
-    await loadData()
-    // 等 loadData 触发的 watch 跑完，避免它的异步 loadModels 覆盖下面的结果。
+    await loadKeysAndSettings()
+    // 等密钥 watch 跑完，避免它的异步 loadModels 覆盖下面的结果。
     await nextTick()
     await loadModels()
     if (previousModel && imageModels.value.includes(previousModel)) {
@@ -2165,6 +2212,8 @@ function isImageModel(name: string) {
   return value.startsWith('gpt-image-') ||
     value.includes('dall-e') ||
     value.includes('image') ||
+    value.includes('nano-banana') ||
+    value.includes('banana') ||
     value.includes('imagen') ||
     value.includes('flux') ||
     value.includes('sdxl')
@@ -2189,7 +2238,8 @@ function deduplicateModelNames(names: string[]): string[] {
 }
 
 function isGeminiModel(name: string) {
-  return name.toLowerCase().includes('gemini') && isImageModel(name)
+  const value = name.toLowerCase()
+  return value.includes('banana') || (value.includes('gemini') && isImageModel(name))
 }
 
 async function generate() {
@@ -2398,6 +2448,12 @@ async function waitForGatewayPollRetry(delay: number) {
   if (componentDisposed) throw new ImageGenerationWaitCancelled()
 }
 
+function gatewayPollInterval(elapsedMs: number) {
+  if (elapsedMs < 10_000) return 500
+  if (elapsedMs < 60_000) return 1500
+  return 2000
+}
+
 function imageResultWithTaskTiming(
   items: any[],
   completedAt: number,
@@ -2419,6 +2475,7 @@ async function pollGatewayImageTask(
   options: { isCancelled?: () => boolean } = {},
 ): Promise<any[]> {
   const deadline = Date.now() + 30 * 60 * 1000
+  const pollStartedAt = Date.now()
   const url = resolveGatewayPollUrl(pollUrl)
   let retryAttempt = 0
   while (Date.now() < deadline) {
@@ -2447,7 +2504,7 @@ async function pollGatewayImageTask(
       return extractImages(normalized)
     }
     if (task?.status === 'failed') throw gatewayTaskError(task.error || task)
-    await waitForGatewayPollRetry(2000)
+    await waitForGatewayPollRetry(gatewayPollInterval(Date.now() - pollStartedAt))
   }
   throw new Error('图片生成超时，请稍后重试')
 }
@@ -2778,6 +2835,7 @@ async function finishGenerationBatch(
     const b64 = String(item.b64_json || item.data || '')
     const rawSrc = b64 ? `data:${mime};base64,${b64}` : String(item.url || '')
     if (!rawSrc) continue
+    const previewSrc = String(item.preview_data_url || '')
     let src = rawSrc
     let actualFormat = imageFormatFromResult(item, rawSrc, requestedFormat)
     if (needsLocalResize) {
@@ -2793,6 +2851,7 @@ async function finishGenerationBatch(
       title: `生成结果 ${titleStart + index}`,
       src,
       originalSrc: rawSrc,
+      thumbSrc: previewSrc || undefined,
       prompt: currentPrompt,
       model: currentModel,
       size: requestedSize,
@@ -2890,16 +2949,8 @@ function buildEditForm(text: string) {
 function extractImages(payload: any): any[] {
   if (!payload) return []
   if (Array.isArray(payload.data)) return payload.data.flatMap(extractImages)
-  if (Array.isArray(payload.candidates)) {
-    return payload.candidates.flatMap((candidate: any) =>
-      (candidate?.content?.parts || [])
-        .filter((part: any) => part?.inlineData?.data)
-        .map((part: any) => ({
-          b64_json: part.inlineData.data,
-          mimeType: part.inlineData.mimeType || 'image/png',
-        })),
-    )
-  }
+  const geminiResults = extractGeminiImageResults(payload)
+  if (geminiResults.length) return geminiResults
   if (Array.isArray(payload.response?.output)) return payload.response.output
   if (Array.isArray(payload.output)) return payload.output
   if (payload.b64_json || payload.url || payload.result) return [payload]
@@ -3059,6 +3110,20 @@ watch(previewImage, (image) => {
     previewDisplaySrc.value = ''
   }
 })
+
+watch(prompt, (value) => {
+  imageStudioDraft.initialized = true
+  imageStudioDraft.prompt = value
+})
+
+watch(
+  references,
+  (value) => {
+    imageStudioDraft.initialized = true
+    imageStudioDraft.references = value.map((item) => ({ ...item }))
+  },
+  { deep: true, flush: 'post' },
+)
 
 watch(errorMessage, (message) => {
   if (!message) return

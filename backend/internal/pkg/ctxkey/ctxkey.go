@@ -56,6 +56,10 @@ const (
 	// 用于区分"用错端点"与"端点用对了但账号没能力"。
 	OpenAIImagesEndpoint Key = "ctx_openai_images_endpoint"
 
+	// AsyncImageTask marks a request that is executing from the durable image
+	// task worker rather than directly in the client request.
+	AsyncImageTask Key = "ctx_async_image_task"
+
 	// Group 认证后的分组信息，由 API Key 认证中间件设置
 	Group Key = "ctx_group"
 

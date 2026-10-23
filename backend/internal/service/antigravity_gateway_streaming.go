@@ -1235,7 +1235,8 @@ func isImageGenerationModel(model string) bool {
 	modelLower = strings.TrimPrefix(modelLower, "models/")
 
 	// 精确匹配或前缀匹配
-	return modelLower == "gemini-3.1-flash-image" ||
+	return strings.Contains(modelLower, "banana") ||
+		modelLower == "gemini-3.1-flash-image" ||
 		modelLower == "gemini-3.1-flash-image-preview" ||
 		strings.HasPrefix(modelLower, "gemini-3.1-flash-image-") ||
 		modelLower == "gemini-3-pro-image" ||

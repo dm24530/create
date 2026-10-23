@@ -1,75 +1,123 @@
 <template>
   <AppLayout>
     <div class="canvas-host" :class="{ 'canvas-host--dark': isDark }">
-      <div v-if="loading" class="canvas-host__loading">
-        <span class="canvas-host__spinner" />
-        <p>正在加载无限画布...</p>
-      </div>
-
-      <div v-else-if="error" class="canvas-host__error">
+      <div v-if="error" class="canvas-host__error">
         <h1>画布加载失败</h1>
         <p>{{ error }}</p>
         <button type="button" @click="loadContext">重试</button>
       </div>
 
-      <iframe
-        v-else
-        ref="frameRef"
-        :src="frameURL"
-        class="canvas-host__frame"
-        allow="clipboard-read; clipboard-write; fullscreen; downloads"
-        @load="sendBootstrap"
-      />
+      <template v-else>
+        <iframe
+          v-if="frameURL"
+          ref="frameRef"
+          :src="frameURL"
+          class="canvas-host__frame"
+          allow="clipboard-read; clipboard-write; fullscreen"
+          @load="handleFrameLoad"
+        />
+        <div v-if="!frameURL || loading || !frameReady" class="canvas-host__loading canvas-host__loading--overlay">
+          <span class="canvas-host__spinner" />
+          <p>{{ loading ? '正在加载无限画布...' : '正在启动无限画布...' }}</p>
+        </div>
+      </template>
     </div>
   </AppLayout>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { authAPI } from '@/api'
+import { authAPI, keysAPI } from '@/api'
 import AppLayout from '@/components/layout/AppLayout.vue'
-import { ensureCreatorKey } from '@/composables/useCreatorKey'
 import { useTheme } from '@/composables/useTheme'
 import { resolvePlaygroundApiEndpoint } from '@/utils/apiEndpoint'
+import { useAuthStore } from '@/stores/auth'
+import { canvasChannelName, selectCanvasCreatorKey } from './creatorKeySelection'
 
 const loading = ref(true)
 const error = ref('')
 const frameRef = ref<HTMLIFrameElement | null>(null)
-const bootstrapPayload = ref<{ baseUrl: string; apiKey: string; locale: 'zh-CN' | 'en-US' } | null>(null)
+const frameLoaded = ref(false)
+const frameReady = ref(false)
+const frameBaseURL = ref('')
+const bootstrapPayload = ref<{
+  baseUrl: string
+  apiKey: string
+  accessToken: string
+  channelName: string
+  locale: 'zh-CN' | 'en-US'
+} | null>(null)
 const bootstrapTimers: number[] = []
+let frameReadyFallbackTimer: number | undefined
 const { isDark } = useTheme()
 const { locale } = useI18n()
+const authStore = useAuthStore()
+const frameURL = computed(() => {
+  const userID = String(authStore.user?.id || '').trim()
+  if (!frameBaseURL.value || !userID) return frameBaseURL.value
+  const separator = frameBaseURL.value.includes('?') ? '&' : '?'
+  return `${frameBaseURL.value}${separator}user=${encodeURIComponent(userID)}`
+})
 const canvasLocale = computed<'zh-CN' | 'en-US'>(() => (
   locale.value.startsWith('zh') ? 'zh-CN' : 'en-US'
 ))
 
-const frameURL = computed(() => {
-  const base = import.meta.env.DEV
-    ? 'http://localhost:3001'
-    : '/canvas-app'
-  return `${base}/canvas`
-})
+const frameOrigin = computed(() => (
+  frameURL.value ? new URL(frameURL.value, window.location.origin).origin : window.location.origin
+))
+
+async function resolveFrameURL() {
+  if (!import.meta.env.DEV) {
+    frameBaseURL.value = '/canvas-app/canvas?embed=1'
+    return
+  }
+
+  if (import.meta.env.VITE_CANVAS_SOURCE_DEV === '1') {
+    frameBaseURL.value = 'http://localhost:3001/canvas?embed=1'
+    return
+  }
+
+  try {
+    const response = await fetch('http://localhost:3001/canvas-app/index.html', {
+      method: 'HEAD',
+      cache: 'no-store',
+    })
+    frameBaseURL.value = response.ok
+      ? 'http://localhost:3001/canvas-app/canvas?embed=1'
+      : 'http://localhost:3001/canvas?embed=1'
+  } catch {
+    frameBaseURL.value = 'http://localhost:3001/canvas?embed=1'
+  }
+}
 
 async function loadContext() {
   loading.value = true
   error.value = ''
+  frameLoaded.value = false
+  frameReady.value = false
   bootstrapPayload.value = null
   try {
-    const [settings, creator] = await Promise.all([
+    const [settings, keyResponse] = await Promise.all([
       authAPI.getPublicSettings(),
-      ensureCreatorKey('image'),
+      keysAPI.list(1, 100, { status: 'active' }),
     ])
     const resolved = resolvePlaygroundApiEndpoint(
       settings.api_base_url || '',
       window.location.hostname,
     )
+    const creatorKey = selectCanvasCreatorKey(keyResponse.items || [])
+    if (!creatorKey) {
+      throw new Error('请先在生图工作台选择一个可用的 API Key')
+    }
     const baseURL = import.meta.env.DEV
       ? '/v1'
       : new URL(resolved, window.location.origin).toString().replace(/\/+$/, '')
     bootstrapPayload.value = {
       baseUrl: baseURL,
-      apiKey: creator.key.key,
+      apiKey: creatorKey.key,
+      accessToken: authStore.token || '',
+      channelName: canvasChannelName(creatorKey),
       locale: canvasLocale.value,
     }
   } catch (cause) {
@@ -81,25 +129,22 @@ async function loadContext() {
 
 function postTheme() {
   if (!frameRef.value?.contentWindow) return
-  const targetOrigin = import.meta.env.DEV ? 'http://localhost:3001' : window.location.origin
   frameRef.value.contentWindow.postMessage({
     type: 'create-canvas-theme',
     theme: isDark.value ? 'dark' : 'light',
-  }, targetOrigin)
+  }, frameOrigin.value)
 }
 
 function postLocale() {
   if (!frameRef.value?.contentWindow) return
-  const targetOrigin = import.meta.env.DEV ? 'http://localhost:3001' : window.location.origin
   frameRef.value.contentWindow.postMessage({
     type: 'create-canvas-locale',
     locale: canvasLocale.value,
-  }, targetOrigin)
+  }, frameOrigin.value)
 }
 
 function sendBootstrap() {
-  if (!bootstrapPayload.value || !frameRef.value?.contentWindow) return
-  const targetOrigin = import.meta.env.DEV ? 'http://localhost:3001' : window.location.origin
+  if (!frameLoaded.value || !bootstrapPayload.value || !frameRef.value?.contentWindow) return
   const payload = {
     type: 'create-canvas-bootstrap',
     ...bootstrapPayload.value,
@@ -109,14 +154,47 @@ function sendBootstrap() {
   for (const timer of bootstrapTimers.splice(0)) window.clearTimeout(timer)
   for (const delay of [0, 250, 750, 1500, 3000]) {
     bootstrapTimers.push(window.setTimeout(() => {
-      frameRef.value?.contentWindow?.postMessage(payload, targetOrigin)
+      frameRef.value?.contentWindow?.postMessage(payload, frameOrigin.value)
     }, delay))
   }
 }
 
-onMounted(loadContext)
+function handleFrameLoad() {
+  frameLoaded.value = true
+  frameReady.value = false
+  if (frameReadyFallbackTimer) window.clearTimeout(frameReadyFallbackTimer)
+  frameReadyFallbackTimer = window.setTimeout(() => {
+    frameReady.value = true
+  }, 1800)
+  sendBootstrap()
+}
+
+function handleFrameMessage(event: MessageEvent<{ type?: string }>) {
+  if (event.source !== frameRef.value?.contentWindow) return
+  if (event.data?.type !== 'create-canvas-ready') return
+  if (frameReadyFallbackTimer) window.clearTimeout(frameReadyFallbackTimer)
+  frameReady.value = true
+}
+
+onMounted(() => {
+  window.addEventListener('message', handleFrameMessage)
+  void Promise.all([resolveFrameURL(), loadContext()])
+})
+onUnmounted(() => {
+  window.removeEventListener('message', handleFrameMessage)
+  if (frameReadyFallbackTimer) window.clearTimeout(frameReadyFallbackTimer)
+  for (const timer of bootstrapTimers.splice(0)) window.clearTimeout(timer)
+})
 watch(isDark, postTheme)
 watch(canvasLocale, postLocale)
+watch(bootstrapPayload, sendBootstrap)
+watch(() => authStore.token, (token) => {
+  if (!bootstrapPayload.value || !token) return
+  bootstrapPayload.value = {
+    ...bootstrapPayload.value,
+    accessToken: token,
+  }
+})
 </script>
 
 <style scoped>
@@ -158,6 +236,12 @@ watch(canvasLocale, postLocale)
   background: var(--canvas-host-bg);
   color: var(--canvas-host-text);
   text-align: center;
+}
+
+.canvas-host__loading--overlay {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
 }
 
 .canvas-host__loading p,

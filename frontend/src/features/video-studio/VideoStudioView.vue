@@ -598,6 +598,7 @@ import {
   updateVideoWork,
   type VideoWorkRecord,
 } from './videoWorks'
+import { videoStudioDraft } from './videoStudioDraft'
 import { findVideoInspiration } from './videoInspiration'
 
 interface StudioTask {
@@ -691,6 +692,17 @@ const referenceUrlDraft = ref('')
 const referenceDialogError = ref('')
 const referenceFileInput = ref<HTMLInputElement | null>(null)
 
+const draftOwnerId = String(authStore.user?.id || '')
+if (videoStudioDraft.ownerId !== draftOwnerId) {
+  videoStudioDraft.ownerId = draftOwnerId
+  videoStudioDraft.initialized = false
+  videoStudioDraft.prompt = ''
+  videoStudioDraft.references = []
+} else if (videoStudioDraft.initialized) {
+  prompt.value = videoStudioDraft.prompt
+  references.value = videoStudioDraft.references.map((item) => ({ ...item }))
+}
+
 const tasks = ref<StudioTask[]>([])
 const works = ref<VideoWorkRecord[]>([])
 const previewTask = ref<StudioTask | null>(null)
@@ -699,7 +711,7 @@ const cancelledTasks = new Set<string>()
 // 换成归档地址后退役的 blob URL：等离开页面再统一释放。
 const retiredObjectURLs: string[] = []
 
-let nextReferenceId = 1
+let nextReferenceId = Math.max(1, ...references.value.map((item) => item.id + 1))
 let modelRequestId = 0
 
 const activeKeys = computed(() => keys.value.filter((key) => key.status === 'active'))
@@ -1586,6 +1598,20 @@ watch([selectedKeyId, apiBaseUrl], () => {
 watch([customBaseUrl, customModel], () => {
   if (providerMode.value === 'custom') persistProviderSettings()
 })
+
+watch(prompt, (value) => {
+  videoStudioDraft.initialized = true
+  videoStudioDraft.prompt = value
+})
+
+watch(
+  references,
+  (value) => {
+    videoStudioDraft.initialized = true
+    videoStudioDraft.references = value.map((item) => ({ ...item }))
+  },
+  { deep: true, flush: 'post' },
+)
 
 // 灵感参数与未完成任务只在进入页面时处理一次：刷新密钥/模型不能覆盖用户
 // 已经改过的提示词，也不能把同一份未完成任务重复挂起来。

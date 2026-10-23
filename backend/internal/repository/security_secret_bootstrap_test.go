@@ -75,6 +75,45 @@ func TestEnsureBootstrapSecretsLoadExistingJWTSecret(t *testing.T) {
 	require.Equal(t, "existing-jwt-secret-32bytes-long!!!!", cfg.JWT.Secret)
 }
 
+func TestEnsureBootstrapSecretsGeneratesDurableEncryptionKey(t *testing.T) {
+	client := newSecuritySecretTestClient(t)
+	first := &config.Config{}
+	require.NoError(t, ensureBootstrapSecrets(context.Background(), client, first))
+	require.NotEmpty(t, first.Totp.EncryptionKey)
+	require.True(t, first.Totp.EncryptionKeyConfigured)
+
+	stored, err := client.SecuritySecret.Query().
+		Where(securitysecret.KeyEQ(securitySecretKeyTOTPEncryption)).
+		Only(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, first.Totp.EncryptionKey, stored.Value)
+
+	second := &config.Config{}
+	require.NoError(t, ensureBootstrapSecrets(context.Background(), client, second))
+	require.Equal(t, first.Totp.EncryptionKey, second.Totp.EncryptionKey)
+	require.True(t, second.Totp.EncryptionKeyConfigured)
+}
+
+func TestEnsureBootstrapSecretsUsesPersistedConfiguredEncryptionKey(t *testing.T) {
+	client := newSecuritySecretTestClient(t)
+	const existingKey = "existing-encryption-key-32bytes-long!"
+	_, err := client.SecuritySecret.Create().
+		SetKey(securitySecretKeyTOTPEncryption).
+		SetValue(existingKey).
+		Save(context.Background())
+	require.NoError(t, err)
+
+	cfg := &config.Config{
+		Totp: config.TotpConfig{
+			EncryptionKey:           "another-encryption-key-32bytes-long!!",
+			EncryptionKeyConfigured: true,
+		},
+	}
+	require.NoError(t, ensureBootstrapSecrets(context.Background(), client, cfg))
+	require.Equal(t, existingKey, cfg.Totp.EncryptionKey)
+	require.True(t, cfg.Totp.EncryptionKeyConfigured)
+}
+
 func TestEnsureBootstrapSecretsRejectInvalidStoredSecret(t *testing.T) {
 	client := newSecuritySecretTestClient(t)
 	_, err := client.SecuritySecret.Create().SetKey(securitySecretKeyJWT).SetValue("too-short").Save(context.Background())

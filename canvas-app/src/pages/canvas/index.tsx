@@ -14,6 +14,14 @@ import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { useCanvasUiStore } from "@/stores/canvas/use-canvas-ui-store";
 import { exportCanvasProjects } from "@/lib/canvas/canvas-export";
 import { hasAgentUrlBootstrap } from "@/lib/agent/agent-url-bootstrap";
+import {
+    deleteCloudCanvasProject,
+    getCloudCanvasProject,
+    hydrateCloudProject,
+    isCanvasCloudReady,
+    listCloudCanvasProjects,
+    subscribeCanvasCloud,
+} from "@/services/canvas-cloud";
 
 export default function CanvasPage() {
     const { message } = App.useApp();
@@ -68,6 +76,69 @@ export default function CanvasPage() {
         autoOpenRef.current = true;
         enterProject(mode === "new" ? createProject(t("canvas.defaultTitle", { count: projects.length + 1 })) : projects[0]?.id || createProject(t("canvas.defaultTitle", { count: projects.length + 1 })));
     }, [createProject, hydrated, mode, projects, t]);
+
+    useEffect(() => {
+        if (!hydrated) return;
+        let cancelled = false;
+        let syncing = false;
+        const syncCloudProjects = async () => {
+            if (!isCanvasCloudReady() || syncing) return;
+            syncing = true;
+            try {
+                const summaries = await listCloudCanvasProjects();
+                const cloudProjects = await Promise.all(
+                    summaries.map(async (summary) => {
+                        const record = await getCloudCanvasProject(summary.id);
+                        return hydrateCloudProject(record);
+                    }),
+                );
+                if (cancelled) return;
+                const currentState = useCanvasStore.getState();
+                const current = currentState.projects;
+                const deletedIds = new Set(currentState.deletedProjects.map((item) => item.id));
+                const cloudIds = new Set(cloudProjects.map((project) => project.id));
+                const byID = new Map(current.map((project) => [project.id, project]));
+                for (const cloudProject of cloudProjects) {
+                    if (deletedIds.has(cloudProject.id)) {
+                        void deleteCloudCanvasProject(cloudProject.id);
+                        continue;
+                    }
+                    const localProject = byID.get(cloudProject.id);
+                    if (!localProject) {
+                        byID.set(cloudProject.id, cloudProject);
+                        continue;
+                    }
+                    const localUpdated = Date.parse(localProject.updatedAt || "") || 0;
+                    const cloudUpdated = Date.parse(cloudProject.updatedAt || "") || 0;
+                    byID.set(
+                        cloudProject.id,
+                        cloudUpdated > localUpdated
+                            ? cloudProject
+                            : { ...localProject, cloudVersion: cloudProject.cloudVersion },
+                    );
+                }
+                for (const [id, project] of byID) {
+                    if (project.cloudVersion && !cloudIds.has(id)) byID.delete(id);
+                }
+                currentState.replaceProjects(
+                    Array.from(byID.values()).sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt)),
+                    currentState.deletedProjects,
+                );
+            } catch (error) {
+                console.warn("Failed to sync cloud canvas projects", error);
+            } finally {
+                syncing = false;
+            }
+        };
+        void syncCloudProjects();
+        const unsubscribe = subscribeCanvasCloud(() => {
+            void syncCloudProjects();
+        });
+        return () => {
+            cancelled = true;
+            unsubscribe();
+        };
+    }, [hydrated]);
 
     if (hydrated && (mode === "new" || mode === "recent")) return <main className="flex h-full items-center justify-center bg-background text-sm text-stone-500">{t("canvas.opening")}</main>;
 

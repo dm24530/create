@@ -481,7 +481,11 @@ func (s *ImageTaskService) Complete(ctx context.Context, id string, statusCode i
 		))
 	}
 	if uploader != nil {
-		rewritten, err := uploader.Rewrite(ctx, id, result)
+		task, err := s.GetRecord(ctx, id)
+		if err != nil {
+			return err
+		}
+		rewritten, err := uploader.Rewrite(ctx, task.UserID, id, result)
 		if err != nil {
 			// 转存失败不回退存 base64，避免大 blob 撑爆 Redis：直接把任务标记为失败。
 			logger.L().Error("image_task.offload_failed", zap.String("task_id", id), zap.Error(err))

@@ -284,6 +284,7 @@ export default {
         typeInternal: 'Internal',
         endpoint: 'Endpoint',
         requestType: 'Type',
+        requestTypeAsync: 'Async',
         requestTypeSync: 'Sync',
         requestTypeStream: 'Stream',
         requestTypeWs: 'WS'
@@ -377,6 +378,7 @@ export default {
         upstreamModel: 'Upstream Model',
         requestType: 'Request Type',
         requestTypeUnknown: 'Unknown',
+        requestTypeAsync: 'Async',
         requestTypeSync: 'Sync',
         requestTypeStream: 'Stream',
         requestTypeWs: 'WebSocket',

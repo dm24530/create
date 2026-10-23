@@ -7,6 +7,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import ImageStudioView from '../ImageStudioView.vue'
+import { resetImageStudioDraft } from '../imageStudioDraft'
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 
@@ -119,6 +120,7 @@ function mountImageStudio(options: { isAdmin?: boolean; userId?: number } = {}) 
 }
 
 function resetCommonMocks() {
+  resetImageStudioDraft()
   sessionStorage.clear()
   listKeys.mockReset()
   getPublicSettings.mockReset()
@@ -216,6 +218,7 @@ describe('ImageStudioView image model loading', () => {
               { id: ' gpt-image-2-5-flare ' },
               { id: 'GPT-IMAGE-2-5-FLARE' },
               { id: 'gpt-image-2-5-flare' },
+              { id: 'gemini-nano-banana-2.1' },
             ],
           }),
         } as Response
@@ -240,9 +243,9 @@ describe('ImageStudioView image model loading', () => {
     expect(apiKeySelect.classes()).toContain('studio-select--down')
 
     const modelSelect = wrapper.get('[data-testid="image-model-select"]')
-    expect(modelSelect.text()).toContain('gpt-image-1')
+    expect(modelSelect.text()).toContain('gemini-nano-banana-2.1')
     expect(modelSelect.classes()).toContain('studio-select--down')
-    expect(modelSelect.text()).not.toContain('nano-banana-2')
+    expect(modelSelect.text()).toContain('gemini-nano-banana-2.1')
     expect(modelSelect.text()).not.toContain('gpt-5')
 
     await apiKeySelect.get('button').trigger('click')
@@ -369,6 +372,7 @@ describe('ImageStudioView image model loading', () => {
     const modelCallsBefore = fetchMock.mock.calls
       .filter((call) => String(call[0]).endsWith('/images/batches/models')).length
     const keyCallsBefore = listKeys.mock.calls.length
+    const galleryCallsBefore = listGallery.mock.calls.length
     expect(modelCallsBefore).toBeGreaterThan(0)
 
     await wrapper.get('[data-testid="image-refresh"]').trigger('click')
@@ -376,6 +380,7 @@ describe('ImageStudioView image model loading', () => {
     await flushPromises()
 
     expect(listKeys.mock.calls.length).toBeGreaterThan(keyCallsBefore)
+    expect(listGallery.mock.calls.length).toBe(galleryCallsBefore)
     expect(
       fetchMock.mock.calls.filter((call) => String(call[0]).endsWith('/images/batches/models')).length,
     ).toBeGreaterThan(modelCallsBefore)
@@ -2629,6 +2634,28 @@ describe('ImageStudioView composer controls', () => {
     await wrapper.get('[data-testid="image-reference-1"] .image-composer__remove').trigger('click')
     expect(wrapper.get('[data-testid="reference-index-1"]').text()).toContain('图片 1')
     expect(wrapper.get('[data-testid="image-reference-1"]').text()).toContain('second.png')
+  })
+
+  it('keeps the prompt and reference files when the studio remounts', async () => {
+    const firstWrapper = mountImageStudio()
+    await flushPromises()
+
+    await firstWrapper.get('textarea.image-composer__prompt').setValue('保留这段提示词和参考图')
+    const fileInput = firstWrapper.get('input[type="file"]')
+    Object.defineProperty(fileInput.element, 'files', {
+      configurable: true,
+      value: [new File(['reference'], 'keep-me.png', { type: 'image/png' })],
+    })
+    await fileInput.trigger('change')
+    await vi.waitFor(() => {
+      expect(firstWrapper.find('[data-testid="image-reference-1"]').exists()).toBe(true)
+    })
+    await flushPromises()
+    firstWrapper.unmount()
+
+    const secondWrapper = mountImageStudio()
+    expect(secondWrapper.get('textarea.image-composer__prompt').element.value).toBe('保留这段提示词和参考图')
+    expect(secondWrapper.get('[data-testid="image-reference-1"]').text()).toContain('keep-me.png')
   })
 
   it('lets Gemini image models choose quality and sends the matching image size', async () => {

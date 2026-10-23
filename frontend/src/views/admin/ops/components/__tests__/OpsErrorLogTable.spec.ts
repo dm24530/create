@@ -73,6 +73,16 @@ describe('OpsErrorLogTable user/api-key/account columns', () => {
     expect(wrapper.text()).toContain('old-key')
     expect(wrapper.text()).toContain('admin.ops.errorLog.keyDeletedBadge')
   })
+
+  it('labels request type 6 as async', () => {
+    const wrapper = mountTable({
+      phase: 'request',
+      error_owner: 'client',
+      request_type: 6,
+    })
+
+    expect(wrapper.text()).toContain('admin.ops.errorLog.requestTypeAsync')
+  })
 })
 
 describe('OpsErrorLogTable column order', () => {
@@ -119,6 +129,7 @@ describe('OpsErrorLogTable i18n keys exist in the errorLog namespace', () => {
       const errorLog = msgs?.admin?.ops?.errorLog
       expect(errorLog?.apiKey).toBeTruthy()
       expect(errorLog?.keyDeletedBadge).toBeTruthy()
+      expect(errorLog?.requestTypeAsync).toBeTruthy()
     })
   }
 })

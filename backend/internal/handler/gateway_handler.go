@@ -49,6 +49,8 @@ type GatewayHandler struct {
 	usageService              *service.UsageService
 	apiKeyService             *service.APIKeyService
 	usageRecordWorkerPool     *service.UsageRecordWorkerPool
+	imageLinks                service.UsageLogImageLinkStore
+	imageStorage              *service.ImageStorageSettingService
 	errorPassthroughService   *service.ErrorPassthroughService
 	contentModerationService  *service.ContentModerationService
 	securityAuditCoordinator  *securityaudit.Coordinator
@@ -58,6 +60,18 @@ type GatewayHandler struct {
 	maxAccountSwitchesGemini  int
 	cfg                       *config.Config
 	settingService            *service.SettingService
+}
+
+func (h *GatewayHandler) SetImageLinkStore(store service.UsageLogImageLinkStore) {
+	if h != nil {
+		h.imageLinks = store
+	}
+}
+
+func (h *GatewayHandler) SetImageStorage(storage *service.ImageStorageSettingService) {
+	if h != nil {
+		h.imageStorage = storage
+	}
 }
 
 // NewGatewayHandler creates a new GatewayHandler
@@ -1325,6 +1339,11 @@ func (h *GatewayHandler) compositeAvailableModels(ctx context.Context, groupID *
 			models = append(models, model)
 		}
 	}
+	// Account-derived models are still routable even when an explicit composite
+	// route points the same public ID at another platform. Keep them alongside
+	// route-derived models instead of letting the route filter erase account
+	// ownership from the catalog.
+	accountModels := append([]string(nil), models...)
 	// A route can expose a public ID that no account model mapping contains,
 	// but it must not advertise a target platform with no schedulable account.
 	// On lookup failure, retain the existing account-derived catalog only.
@@ -1351,6 +1370,17 @@ func (h *GatewayHandler) compositeAvailableModels(ctx context.Context, groupID *
 		models,
 	); err == nil {
 		models = filtered
+	}
+	filteredSeen := make(map[string]struct{}, len(models))
+	for _, model := range models {
+		filteredSeen[model] = struct{}{}
+	}
+	for _, model := range accountModels {
+		if _, ok := filteredSeen[model]; ok {
+			continue
+		}
+		filteredSeen[model] = struct{}{}
+		models = append(models, model)
 	}
 	return models
 }

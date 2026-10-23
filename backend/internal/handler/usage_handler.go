@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"html"
 	"net/http"
@@ -99,15 +100,6 @@ func (h *UsageHandler) ImageLink(c *gin.Context) {
 		return
 	}
 	if h.imageStorage != nil && strings.TrimSpace(link.ObjectKey) != "" {
-		exists, existsErr := h.imageStorage.ImageObjectExists(c.Request.Context(), link.ObjectKey)
-		if existsErr != nil {
-			response.ErrorFrom(c, existsErr)
-			return
-		}
-		if !exists {
-			writeExpiredUsageImage(c)
-			return
-		}
 		url, urlErr := h.imageStorage.PresignImageObject(c.Request.Context(), link.ObjectKey)
 		if urlErr != nil {
 			response.ErrorFrom(c, urlErr)
@@ -130,6 +122,23 @@ func (h *UsageHandler) ImageLink(c *gin.Context) {
 	if strings.HasPrefix(imageURL, "http://") || strings.HasPrefix(imageURL, "https://") {
 		c.Redirect(http.StatusFound, imageURL)
 		return
+	}
+	if strings.HasPrefix(imageURL, "data:image/") {
+		comma := strings.IndexByte(imageURL, ',')
+		header := ""
+		if comma > len("data:") {
+			header = imageURL[len("data:"):comma]
+		}
+		if strings.HasSuffix(strings.ToLower(header), ";base64") {
+			contentType := strings.TrimSpace(strings.SplitN(header, ";", 2)[0])
+			data, err := base64.StdEncoding.DecodeString(imageURL[comma+1:])
+			if err == nil && len(data) > 0 && strings.HasPrefix(strings.ToLower(contentType), "image/") {
+				c.Header("Cache-Control", "private, max-age=300")
+				c.Header("Content-Disposition", "inline")
+				c.Data(http.StatusOK, contentType, data)
+				return
+			}
+		}
 	}
 	writeExpiredUsageImage(c)
 }

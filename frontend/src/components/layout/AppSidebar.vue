@@ -214,7 +214,7 @@ import { useAdminSettingsStore, useAppStore, useAuthStore, useOnboardingStore } 
 import VersionBadge from '@/components/common/VersionBadge.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { sanitizeSvg } from '@/utils/sanitize'
-import { FeatureFlags, makeSidebarFlag } from '@/utils/featureFlags'
+import { FeatureFlags, isFeatureFlagEnabled, makeSidebarFlag } from '@/utils/featureFlags'
 import { resolveSiteBillingMode } from '@/utils/siteBillingMode'
 import { useBatchImageAccess } from '@/composables/useBatchImageAccess'
 import { useTheme } from '@/composables/useTheme'
@@ -369,6 +369,26 @@ const VideoStudioIcon = {
           'stroke-linecap': 'round',
           'stroke-linejoin': 'round',
           d: 'M2.25 6.75A2.25 2.25 0 014.5 4.5h7.5a2.25 2.25 0 012.25 2.25v10.5A2.25 2.25 0 0112 19.5H4.5a2.25 2.25 0 01-2.25-2.25V6.75z'
+        })
+      ]
+    )
+}
+
+const InfiniteCanvasIcon = {
+  render: () =>
+    h(
+      'svg',
+      { fill: 'none', viewBox: '0 0 24 24', stroke: 'currentColor', 'stroke-width': '1.5' },
+      [
+        h('path', {
+          'stroke-linecap': 'round',
+          'stroke-linejoin': 'round',
+          d: 'M3.25 5.25h17.5v13.5H3.25z'
+        }),
+        h('path', {
+          'stroke-linecap': 'round',
+          'stroke-linejoin': 'round',
+          d: 'M7.5 9h9M7.5 12h6M7.5 15h8'
         })
       ]
     )
@@ -804,6 +824,7 @@ const ChevronDownIcon = {
 const flagChannelMonitor = makeSidebarFlag(FeatureFlags.channelMonitor)
 const flagPayment = makeSidebarFlag(FeatureFlags.payment)
 const flagAvailableChannels = makeSidebarFlag(FeatureFlags.availableChannels)
+const flagCanvasVisible = () => isAdmin.value || !isFeatureFlagEnabled(FeatureFlags.canvasAdminOnly)
 const flagSubscription = makeSidebarFlag(FeatureFlags.subscription)
 
 // 购买入口文案随站点计费模式切换：仅充值 → 「充值」，仅订阅 → 「订阅」，否则「充值/订阅」。
@@ -829,6 +850,7 @@ function buildCreativeNavItems(): NavItem[] {
   return [
     { path: '/image-studio', label: t('nav.imageStudio'), icon: ImageStudioIcon, hideInSimpleMode: true },
     { path: '/video-studio', label: t('nav.videoStudio'), icon: VideoStudioIcon, hideInSimpleMode: true },
+    { path: '/canvas', label: t('nav.canvas'), icon: InfiniteCanvasIcon, hideInSimpleMode: true, featureFlag: flagCanvasVisible },
     { path: '/video-inspiration', label: t('nav.videoInspiration'), icon: InspirationIcon, hideInSimpleMode: true },
     { path: '/image-inspiration', label: t('nav.imageInspiration'), icon: ImageInspirationIcon, hideInSimpleMode: true },
     { path: '/video-works', label: t('nav.videoWorks'), icon: VideoWorksIcon, hideInSimpleMode: true },

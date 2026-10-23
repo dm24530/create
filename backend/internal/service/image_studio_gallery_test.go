@@ -115,7 +115,7 @@ type gallerySaverStub struct {
 func (s *gallerySaverStub) SaveImageWithKey(
 	_ context.Context, key, contentType string, data []byte,
 ) (string, string, error) {
-	if strings.HasPrefix(key, "thumbs/") {
+	if strings.Contains(key, "/thumbs/") || strings.HasPrefix(key, "thumbs/") {
 		s.thumbKey = key
 		return "https://cdn.example.com/" + key, "images/" + key, nil
 	}
@@ -219,13 +219,12 @@ func TestImageStudioGallerySaveKeepsWorkPermanently(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.Equal(t, int64(42), entry.UserID)
-	require.Equal(t, entry.ID+".png", saver.key)
-	require.NotContains(t, saver.key, "42/", "object key must not include the user id as a path segment")
+	require.Equal(t, "users/42/"+entry.ID+".png", saver.key)
 	require.Equal(t, "image/png", saver.contentType)
 	require.Len(t, saver.data, len(smallPNG(t)))
 	require.Equal(t, int64(0), entry.ExpiresAt, "作品不再有过期时间")
-	require.Equal(t, "images/"+entry.ID+".png", entry.ObjectKey, "记录里必须存最终对象键（带前缀）")
-	require.Equal(t, "https://cdn.example.com/thumbs/"+entry.ID+".jpg", entry.ThumbURL)
+	require.Equal(t, "images/users/42/"+entry.ID+".png", entry.ObjectKey, "记录里必须存最终对象键（带前缀）")
+	require.Equal(t, "https://cdn.example.com/users/42/thumbs/"+entry.ID+".jpg", entry.ThumbURL)
 	require.Len(t, store.entries, 1)
 }
 
@@ -246,7 +245,7 @@ func TestImageStudioGallerySaveFromURLStoresServerFetchedBytes(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.Equal(t, "https://upstream.example.com/out.png", saver.fetchedURL)
-	require.Equal(t, entry.ID+".png", saver.key)
+	require.Equal(t, "users/42/"+entry.ID+".png", saver.key)
 	require.Equal(t, "image/png", saver.contentType)
 	require.Len(t, saver.data, len(smallPNG(t)))
 }
@@ -310,8 +309,8 @@ func TestImageStudioGalleryDeleteRemovesObjectThenRecord(t *testing.T) {
 
 	require.NoError(t, svc.Delete(context.Background(), 42, entry.ID))
 	require.Equal(t, []string{
-		"images/thumbs/" + entry.ID + ".jpg",
-		"images/" + entry.ID + ".png",
+		"images/users/42/thumbs/" + entry.ID + ".jpg",
+		"images/users/42/" + entry.ID + ".png",
 	}, saver.deletedObject, "删记录前必须先删缩略图和原图")
 	require.Equal(t, []string{entry.ID}, store.deleted)
 }

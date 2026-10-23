@@ -1,17 +1,28 @@
+import { lazy, Suspense } from "react";
 import { createBrowserRouter, Outlet } from "react-router-dom";
 
 import { AnalyticsTracker } from "@/components/layout/analytics-tracker";
 import UserLayout from "@/layouts/user-layout";
-import AssetsPage from "@/pages/assets";
-import CanvasPage from "@/pages/canvas";
-import CanvasProjectPage from "@/pages/canvas/project";
-import ConfigPage from "@/pages/config";
-import HomePage from "@/pages/home";
-import ImagePage from "@/pages/image";
-import NotFound from "@/pages/not-found";
-import PromptsPage from "@/pages/prompts";
-import VideoPage from "@/pages/video";
 import { isManagedMode } from "@/lib/managed-mode";
+import RouteErrorPage from "@/pages/route-error";
+
+const AssetsPage = lazy(() => import("@/pages/assets"));
+const CanvasPage = lazy(() => import("@/pages/canvas"));
+const CanvasProjectPage = lazy(() => import("@/pages/canvas/project"));
+const ConfigPage = lazy(() => import("@/pages/config"));
+const HomePage = lazy(() => import("@/pages/home"));
+const ImagePage = lazy(() => import("@/pages/image"));
+const NotFound = lazy(() => import("@/pages/not-found"));
+const PromptsPage = lazy(() => import("@/pages/prompts"));
+const VideoPage = lazy(() => import("@/pages/video"));
+
+function RouteLoading() {
+    return (
+        <main className="flex h-dvh items-center justify-center bg-background text-foreground">
+            <span className="size-5 animate-spin rounded-full border-2 border-stone-500/20 border-t-orange-400" />
+        </main>
+    );
+}
 
 function ConfigRoute() {
     return isManagedMode() ? <NotFound /> : <ConfigPage />;
@@ -19,10 +30,13 @@ function ConfigRoute() {
 
 export const router = createBrowserRouter([
     {
+        errorElement: <RouteErrorPage />,
         element: (
             <UserLayout>
                 <AnalyticsTracker />
-                <Outlet />
+                <Suspense fallback={<RouteLoading />}>
+                    <Outlet />
+                </Suspense>
             </UserLayout>
         ),
         children: [
@@ -36,7 +50,15 @@ export const router = createBrowserRouter([
             { path: "/config", element: <ConfigRoute /> },
         ],
     },
-    { path: "*", element: <NotFound /> },
+    {
+        path: "*",
+        errorElement: <RouteErrorPage />,
+        element: (
+            <Suspense fallback={<RouteLoading />}>
+                <NotFound />
+            </Suspense>
+        ),
+    },
 ], {
     basename: import.meta.env.BASE_URL,
 });

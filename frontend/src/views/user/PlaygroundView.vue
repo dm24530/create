@@ -580,6 +580,8 @@ function isImageModelOption(name: string): boolean {
     normalized.includes('midjourney') ||
     normalized.includes('stable-diffusion') ||
     normalized.includes('sdxl') ||
+    normalized.includes('nano-banana') ||
+    normalized.includes('banana') ||
     normalized.includes('image')
   )
 }
@@ -823,7 +825,7 @@ function buildImageEditFormData(prompt: string) {
 
 function isGeminiImageModelOption(name: string): boolean {
   const normalized = name.trim().toLowerCase()
-  return normalized.includes('gemini') && isImageModelOption(normalized)
+  return normalized.includes('banana') || (normalized.includes('gemini') && isImageModelOption(normalized))
 }
 
 function buildGeminiImageEndpoint(model: string, stream: boolean): string {

@@ -458,6 +458,11 @@ func setOpsEndpointContext(c *gin.Context, upstreamModel string, requestType int
 	if c == nil {
 		return
 	}
+	if c.Request != nil {
+		if async, _ := c.Request.Context().Value(ctxkey.AsyncImageTask).(bool); async {
+			requestType = int16(service.RequestTypeAsync)
+		}
+	}
 	if upstreamModel = strings.TrimSpace(upstreamModel); upstreamModel != "" {
 		c.Set(opsUpstreamModelKey, upstreamModel)
 	}

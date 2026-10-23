@@ -111,6 +111,20 @@ func (s *FrontendServer) Middleware() gin.HandlerFunc {
 			cleanPath = "index.html"
 		}
 
+		// The canvas is a separate Vite application mounted below /canvas-app.
+		// Its client-side routes must fall back to the canvas index, not the
+		// main Vue application's index.
+		if isCanvasAppRequestPath(cleanPath) {
+			if cleanPath == "canvas-app" || cleanPath == "canvas-app/" || !s.fileExists(cleanPath) {
+				s.serveCanvasAppIndex(c)
+				return
+			}
+			applyStaticAssetCacheHeaders(c.Writer.Header(), cleanPath)
+			s.fileServer.ServeHTTP(c.Writer, c.Request)
+			c.Abort()
+			return
+		}
+
 		// For index.html or SPA routes, serve with injected settings
 		if cleanPath == "index.html" || !s.fileExists(cleanPath) {
 			s.serveIndexHTML(c)
@@ -132,6 +146,22 @@ func (s *FrontendServer) Middleware() gin.HandlerFunc {
 		s.fileServer.ServeHTTP(c.Writer, c.Request)
 		c.Abort()
 	}
+}
+
+func isCanvasAppRequestPath(cleanPath string) bool {
+	return cleanPath == "canvas-app" || strings.HasPrefix(cleanPath, "canvas-app/")
+}
+
+func (s *FrontendServer) serveCanvasAppIndex(c *gin.Context) {
+	content, err := fs.ReadFile(s.distFS, "canvas-app/index.html")
+	if err != nil {
+		c.Status(http.StatusNotFound)
+		c.Abort()
+		return
+	}
+	c.Header("Cache-Control", "no-cache")
+	c.Data(http.StatusOK, "text/html; charset=utf-8", content)
+	c.Abort()
 }
 
 func (s *FrontendServer) fileExists(path string) bool {

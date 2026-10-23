@@ -11,6 +11,7 @@ import { useAdminComplianceStore } from '@/stores/adminCompliance'
 import { useNavigationLoadingState } from '@/composables/useNavigationLoading'
 import { useRoutePrefetch } from '@/composables/useRoutePrefetch'
 import { getSetupStatus } from '@/api/setup'
+import { FeatureFlags, isFeatureFlagEnabled } from '@/utils/featureFlags'
 import { resolveCompletedSetupRedirectPath } from './setupRedirect'
 import { resolveRouteDocumentTitle } from './title'
 import {
@@ -932,6 +933,20 @@ router.beforeEach(async (to, _from, next) => {
     // User is authenticated but not admin, redirect to user dashboard
     next(authStore.isAdmin ? '/admin/dashboard' : '/image-studio')
     return
+  }
+
+  if (to.path === '/canvas' && !authStore.isAdmin) {
+    if (!appStore.publicSettingsLoaded) {
+      try {
+        await appStore.fetchPublicSettings()
+      } catch (error) {
+        console.warn('Failed to load public settings in canvas route guard', error)
+      }
+    }
+    if (isFeatureFlagEnabled(FeatureFlags.canvasAdminOnly)) {
+      next('/image-studio')
+      return
+    }
   }
 
   if (requiresAdmin && authStore.isAdmin) {

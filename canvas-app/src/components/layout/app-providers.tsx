@@ -1,6 +1,5 @@
 import type { ReactNode } from "react";
-import { useEffect } from "react";
-import { ProConfigProvider } from "@ant-design/pro-components";
+import { lazy, Suspense, useEffect } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { App, ConfigProvider } from "antd";
 import enUS from "antd/es/locale/en_US";
@@ -12,7 +11,12 @@ import { useTranslation } from "react-i18next";
 import { ClientRootInit } from "@/components/layout/client-root-init";
 import type { AppLocale } from "@/i18n";
 import { getAntThemeConfig } from "@/lib/app-theme";
+import { isManagedMode } from "@/lib/managed-mode";
 import { useThemeStore } from "@/stores/use-theme-store";
+
+const ProConfigProvider = lazy(() => import("@ant-design/pro-components").then((module) => ({
+    default: module.ProConfigProvider,
+})));
 
 const queryClient = new QueryClient({
     defaultOptions: {
@@ -42,15 +46,21 @@ export function AppProviders({ children }: { children: ReactNode }) {
         dayjs.locale(locale === "zh-CN" ? "zh-cn" : "en");
     }, [locale, t]);
 
+    const content = (
+        <App>
+            <QueryClientProvider client={queryClient}>
+                <ClientRootInit>{children}</ClientRootInit>
+            </QueryClientProvider>
+        </App>
+    );
+
     return (
         <ConfigProvider locale={locale === "zh-CN" ? zhCN : enUS} theme={getAntThemeConfig(dark)}>
-            <ProConfigProvider dark={dark}>
-                <App>
-                    <QueryClientProvider client={queryClient}>
-                        <ClientRootInit>{children}</ClientRootInit>
-                    </QueryClientProvider>
-                </App>
-            </ProConfigProvider>
+            {isManagedMode() ? content : (
+                <Suspense fallback={content}>
+                    <ProConfigProvider dark={dark}>{content}</ProConfigProvider>
+                </Suspense>
+            )}
         </ConfigProvider>
     );
 }

@@ -123,6 +123,17 @@ func RegisterUserRoutes(
 			videoStudio.GET("/gallery/quota", h.ImageStudioGallery.Quota)
 		}
 
+		canvas := authenticated.Group("/canvas")
+		canvas.Use(middleware.CanvasAdminOnlyGuard(settingService))
+		{
+			canvas.GET("/projects", h.Canvas.ListProjects)
+			canvas.GET("/projects/:id", h.Canvas.GetProject)
+			canvas.PUT("/projects/:id", h.Canvas.PutProject)
+			canvas.DELETE("/projects/:id", h.Canvas.DeleteProject)
+			canvas.POST("/assets", h.Canvas.UploadAsset)
+			canvas.DELETE("/assets/:id", h.Canvas.DeleteAsset)
+		}
+
 		// 在线灵感：由服务端拉取并缓存，媒体通过 /public/video-inspiration/media 代理。
 		accessibleInspiration := authenticated.Group("/video-inspiration")
 		{

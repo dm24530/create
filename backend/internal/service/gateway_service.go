@@ -645,6 +645,7 @@ type ForwardResult struct {
 	ImageInputSize     string // 请求中的原始图片尺寸
 	ImageOutputSize    string // 上游响应中的图片尺寸
 	ImageOutputSizes   []string
+	ImageOutputs       []GeminiImageOutput
 	ImageSizeSource    string
 	ImageSizeBreakdown map[string]int
 	SearchCount        int

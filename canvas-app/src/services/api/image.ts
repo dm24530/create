@@ -8,6 +8,7 @@ import { dataUrlToFile } from "@/lib/image-utils";
 import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
 import { imageToDataUrl } from "@/services/image-storage";
 import { imageSizePresets, inferMediaScale } from "@/lib/media-size";
+import { isGeminiImageModel } from "@/lib/image-model";
 import type { ReferenceImage } from "@/types/image";
 
 const apiText = (key: string, options?: Record<string, unknown>) => i18n.t(`apiErrors.${key}`, options);
@@ -324,7 +325,11 @@ function aiHeaders(config: AiConfig, contentType?: string) {
 function geminiBaseUrl(config: Pick<AiConfig, "baseUrl">) {
     const normalizedBaseUrl = config.baseUrl.trim().replace(/\/+$/, "");
     const lowerBaseUrl = normalizedBaseUrl.toLowerCase();
-    return lowerBaseUrl.endsWith("/v1") || lowerBaseUrl.endsWith("/v1beta") ? normalizedBaseUrl : `${normalizedBaseUrl}/v1beta`;
+    if (lowerBaseUrl.endsWith("/v1beta")) return normalizedBaseUrl;
+    if (lowerBaseUrl.endsWith("/v1")) {
+        return `${normalizedBaseUrl.slice(0, -3)}/v1beta`;
+    }
+    return `${normalizedBaseUrl}/v1beta`;
 }
 
 function geminiModelName(model: string) {
@@ -664,15 +669,120 @@ async function requestGeminiImagesOnce(config: AiConfig, prompt: string, referen
     for (const image of references) {
         parts.push(toGeminiImagePart(await imageToDataUrl(image)));
     }
-    const response = await axios.post<GeminiPayload>(
-        geminiApiUrl(config, "generateContent"),
-        {
-            ...toGeminiBody(config, [{ role: "user", content: prompt }], { generationConfig: { responseModalities: ["TEXT", "IMAGE"], ...resolveGeminiImageConfig(config) } }),
-            contents: [{ role: "user", parts }],
-        },
-        { headers: geminiHeaders(config), signal: options?.signal, timeout: IMAGE_REQUEST_TIMEOUT_MS },
-    );
-    return parseGeminiImagePayload(response.data);
+    const request = {
+        ...toGeminiBody(config, [{ role: "user", content: prompt }], { generationConfig: { responseModalities: ["TEXT", "IMAGE"], ...resolveGeminiImageConfig(config) } }),
+        contents: [{ role: "user", parts }],
+    };
+    const asyncResult = await requestGeminiImagesAsync(config, request, options);
+    if (asyncResult) return asyncResult;
+    try {
+        const response = await axios.post<GeminiPayload>(
+            geminiApiUrl(config, "generateContent"),
+            request,
+            { headers: geminiHeaders(config), signal: options?.signal, timeout: IMAGE_REQUEST_TIMEOUT_MS },
+        );
+        return parseGeminiImagePayload(response.data);
+    } catch (error) {
+        throw new Error(readAxiosError(error, apiText("requestFailed")));
+    }
+}
+
+type AsyncImageTaskResponse = {
+    id?: string;
+    task_id?: string;
+    poll_url?: string;
+    status?: string;
+    result?: unknown;
+    error?: unknown;
+    message?: string;
+};
+
+async function requestGeminiImagesAsync(
+    config: AiConfig,
+    request: Record<string, unknown>,
+    options?: RequestOptions,
+) {
+    let submit
+    try {
+        submit = await axios.post<AsyncImageTaskResponse>(
+            aiApiUrl(config, "/images/generations/async"),
+            { model: config.model, request },
+            {
+                headers: {
+                    ...aiHeaders(config, "application/json"),
+                    "Idempotency-Key": nanoid(),
+                },
+                signal: options?.signal,
+                timeout: 30_000,
+                validateStatus: () => true,
+            },
+        )
+    } catch (error) {
+        if (axios.isCancel(error)) throw error
+        if (axios.isAxiosError(error)) {
+            const status = error.response?.status
+            if (status === 404 || status === 405 || status === 501) return null
+            throw new Error(readAxiosError(error, apiText("requestFailed")))
+        }
+        throw error
+    }
+    if (submit.status === 404 || submit.status === 405 || submit.status === 501) return null
+    if (submit.status < 200 || submit.status >= 300) {
+        throw new Error(readApiErrorMessage(submit.data) || readStatusError(submit.status, apiText("requestFailed")))
+    }
+    const task = submit.data
+    if (!task?.poll_url) throw new Error(apiText("requestFailed"))
+    return pollGeminiImageTask(config, resolvePollURL(config, task.poll_url), options)
+}
+
+function resolvePollURL(config: AiConfig, pollURL: string) {
+    if (/^https?:\/\//i.test(pollURL)) return withLocalProxy(pollURL)
+    const fallbackOrigin = typeof window !== "undefined" ? window.location.origin : "http://localhost"
+    const apiOrigin = new URL(config.baseUrl || fallbackOrigin, fallbackOrigin).origin
+    return withLocalProxy(new URL(pollURL, apiOrigin).toString())
+}
+
+async function pollGeminiImageTask(
+    config: AiConfig,
+    url: string,
+    options?: RequestOptions,
+) {
+    const deadline = Date.now() + 30 * 60_000
+    const startedAt = Date.now()
+    while (Date.now() < deadline) {
+        if (options?.signal?.aborted) throw new Error(apiText("requestCanceled"))
+        const response = await axios.get<AsyncImageTaskResponse>(url, {
+            headers: aiHeaders(config),
+            signal: options?.signal,
+            timeout: 30_000,
+        })
+        const task = response.data
+        if (task.status === "completed") {
+            const result = typeof task.result === "string" ? JSON.parse(task.result) : task.result
+            if (!result) throw new Error(apiText("noImageReturned"))
+            return parseImagePayload(result as ImageApiResponse)
+        }
+        if (task.status === "failed") {
+            throw new Error(readApiErrorMessage(task.error) || task.message || apiText("requestFailed"))
+        }
+        const elapsed = Date.now() - startedAt
+        await waitForAsyncImagePoll(elapsed < 10_000 ? 500 : elapsed < 60_000 ? 1500 : 2000, options?.signal)
+    }
+    throw new Error(apiText("imageTimeout"))
+}
+
+function waitForAsyncImagePoll(delay: number, signal?: AbortSignal) {
+    return new Promise<void>((resolve, reject) => {
+        if (signal?.aborted) {
+            reject(new Error(apiText("requestCanceled")))
+            return
+        }
+        const timer = window.setTimeout(resolve, delay)
+        signal?.addEventListener("abort", () => {
+            window.clearTimeout(timer)
+            reject(new Error(apiText("requestCanceled")))
+        }, { once: true })
+    })
 }
 
 function parseGeminiImagePayload(payload: GeminiPayload) {
@@ -714,7 +824,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
             throw new Error(readAxiosError(error, apiText("requestFailed")));
         }
     }
-    if (requestConfig.apiFormat === "gemini") {
+    if (requestConfig.apiFormat === "gemini" || isGeminiImageModel(requestConfig.model)) {
         try {
             return await requestGeminiImages(requestConfig, prompt, [], n, options);
         } catch (error) {
@@ -776,7 +886,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
             throw new Error(readAxiosError(error, apiText("requestFailed")));
         }
     }
-    if (requestConfig.apiFormat === "gemini") {
+    if (requestConfig.apiFormat === "gemini" || isGeminiImageModel(requestConfig.model)) {
         try {
             return await requestGeminiImages(requestConfig, requestPrompt, references, n, options);
         } catch (error) {

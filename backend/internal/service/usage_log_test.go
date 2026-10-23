@@ -1,8 +1,10 @@
 package service
 
 import (
+	"context"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/stretchr/testify/require"
 )
 
@@ -19,6 +21,7 @@ func TestParseUsageRequestType(t *testing.T) {
 	cases := []testCase{
 		{name: "unknown", input: "unknown", want: RequestTypeUnknown},
 		{name: "sync", input: "sync", want: RequestTypeSync},
+		{name: "async", input: "async", want: RequestTypeAsync},
 		{name: "stream", input: "stream", want: RequestTypeStream},
 		{name: "ws_v2", input: "ws_v2", want: RequestTypeWSV2},
 		{name: "case_insensitive", input: "WS_V2", want: RequestTypeWSV2},
@@ -47,6 +50,7 @@ func TestRequestTypeNormalizeAndString(t *testing.T) {
 	require.Equal(t, RequestTypeUnknown, RequestType(99).Normalize())
 	require.Equal(t, "unknown", RequestType(99).String())
 	require.Equal(t, "sync", RequestTypeSync.String())
+	require.Equal(t, "async", RequestTypeAsync.String())
 	require.Equal(t, "stream", RequestTypeStream.String())
 	require.Equal(t, "ws_v2", RequestTypeWSV2.String())
 }
@@ -57,6 +61,12 @@ func TestRequestTypeFromLegacy(t *testing.T) {
 	require.Equal(t, RequestTypeWSV2, RequestTypeFromLegacy(false, true))
 	require.Equal(t, RequestTypeStream, RequestTypeFromLegacy(true, false))
 	require.Equal(t, RequestTypeSync, RequestTypeFromLegacy(false, false))
+}
+
+func TestUsageRequestTypeFromAsyncImageContext(t *testing.T) {
+	ctx := context.WithValue(context.Background(), ctxkey.AsyncImageTask, true)
+	require.Equal(t, RequestTypeAsync, usageRequestTypeFromContext(ctx, &ForwardResult{}))
+	require.Equal(t, RequestTypeSync, usageRequestTypeFromContext(context.Background(), &ForwardResult{}))
 }
 
 func TestApplyLegacyRequestFields(t *testing.T) {

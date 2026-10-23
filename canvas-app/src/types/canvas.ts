@@ -31,6 +31,10 @@ export type CanvasNodeImage = {
     errorDetails?: string;
     content: string;
     storageKey?: string;
+    cloudAssetId?: string;
+    cloudURL?: string;
+    cloudPreviewURL?: string;
+    cloudSyncState?: "pending" | "uploading" | "uploaded" | "failed";
     naturalWidth: number;
     naturalHeight: number;
     bytes: number;
@@ -78,6 +82,10 @@ export type CanvasNodeMetadata = {
     images?: CanvasNodeImage[];
     primaryImageId?: string;
     storageKey?: string;
+    cloudAssetId?: string;
+    cloudURL?: string;
+    cloudPreviewURL?: string;
+    cloudSyncState?: "pending" | "uploading" | "uploaded" | "failed";
     mimeType?: string;
     bytes?: number;
     durationMs?: number;

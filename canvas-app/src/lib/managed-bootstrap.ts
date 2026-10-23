@@ -9,6 +9,7 @@ import {
 import { setManagedMode } from "@/lib/managed-mode";
 import { changeAppLocale, type AppLocale } from "@/i18n";
 import { useThemeStore, type ThemeName } from "@/stores/use-theme-store";
+import { configureCanvasCloud } from "@/services/canvas-cloud";
 
 function normalizeManagedBaseUrl(raw: string) {
     return new URL(raw, window.location.origin).toString().replace(/\/+$/, "");
@@ -18,6 +19,8 @@ type ManagedBootstrapPayload = {
     type: "create-canvas-bootstrap";
     baseUrl?: string;
     apiKey?: string;
+    accessToken?: string;
+    channelName?: string;
     managed?: boolean;
     theme?: ThemeName;
     locale?: AppLocale;
@@ -31,6 +34,10 @@ type ManagedThemePayload = {
 type ManagedLocalePayload = {
     type: "create-canvas-locale";
     locale?: AppLocale;
+};
+
+type ManagedReadyPayload = {
+    type: "create-canvas-ready";
 };
 
 function applyManagedTheme(theme?: ThemeName) {
@@ -48,6 +55,7 @@ function applyManagedLocale(locale?: AppLocale) {
 async function applyManagedBootstrap(payload: ManagedBootstrapPayload) {
     applyManagedTheme(payload.theme);
     applyManagedLocale(payload.locale);
+    configureCanvasCloud(payload.accessToken);
     const baseUrl = payload.baseUrl?.trim() || "";
     const apiKey = payload.apiKey?.trim() || "";
     if (payload.managed) setManagedMode(true);
@@ -84,7 +92,7 @@ async function applyManagedBootstrap(payload: ManagedBootstrapPayload) {
     if (!managedChannel) return result;
     const channels: ModelChannel[] = [{
         ...managedChannel,
-        name: "平台 API",
+        name: payload.channelName?.trim() || "平台 API",
         models,
     }];
     const nextConfig = {
@@ -118,6 +126,26 @@ export function listenManagedLocaleFromParent() {
         if (event.data?.type !== "create-canvas-locale") return;
         applyManagedLocale(event.data.locale);
     });
+}
+
+export function listenManagedCloudSessionFromParent() {
+    window.addEventListener("message", (event: MessageEvent<ManagedBootstrapPayload>) => {
+        if (event.source !== window.parent) return;
+        if (event.data?.type !== "create-canvas-bootstrap") return;
+        configureCanvasCloud(event.data.accessToken);
+    });
+}
+
+export function notifyManagedCanvasReady() {
+    if (window.parent === window) return;
+    let targetOrigin = "*";
+    try {
+        if (document.referrer) targetOrigin = new URL(document.referrer).origin;
+    } catch {
+        // The ready signal contains no credentials and is safe as a wildcard fallback.
+    }
+    const payload: ManagedReadyPayload = { type: "create-canvas-ready" };
+    window.parent.postMessage(payload, targetOrigin);
 }
 
 export function bootstrapManagedConfigFromParent() {

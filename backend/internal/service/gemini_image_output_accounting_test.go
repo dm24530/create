@@ -28,7 +28,7 @@ func geminiImageResponse(parts string) string {
 	return `{"candidates":[{"content":{"role":"model","parts":[` + parts + `]},"finishReason":"STOP"}]}`
 }
 
-func TestCountGeminiInlineImageOutputs(t *testing.T) {
+func TestCountGeminiImageOutputs(t *testing.T) {
 	cases := []struct {
 		name    string
 		payload string
@@ -58,6 +58,28 @@ func TestCountGeminiInlineImageOutputs(t *testing.T) {
 			want: 2,
 		},
 		{
+			name:    "fileData image URL",
+			payload: geminiImageResponse(`{"fileData":{"mimeType":"image/jpeg","fileUri":"https://img.example.test/generated.jpg"}}`),
+			want:    1,
+		},
+		{
+			name:    "snake_case file_data image URL",
+			payload: geminiImageResponse(`{"file_data":{"mime_type":"image/webp","file_uri":"https://img.example.test/generated.webp"}}`),
+			want:    1,
+		},
+		{
+			name:    "image URL embedded in text",
+			payload: geminiImageResponse(`{"text":"Generated: https://img.example.test/generated.png"}`),
+			want:    1,
+		},
+		{
+			name: "inline image wins over duplicate file and text references",
+			payload: geminiImageResponse(`{"inlineData":{"mimeType":"image/jpeg","data":"` + geminiTestPNG + `"}},` +
+				`{"fileData":{"mimeType":"image/jpeg","fileUri":"https://img.example.test/generated.jpg"}},` +
+				`{"text":"https://img.example.test/generated.jpg"}`),
+			want: 1,
+		},
+		{
 			name:    "uppercase mime type",
 			payload: geminiImageResponse(`{"inlineData":{"mimeType":"IMAGE/PNG","data":"` + geminiTestPNG + `"}}`),
 			want:    1,
@@ -85,7 +107,7 @@ func TestCountGeminiInlineImageOutputs(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			require.Equal(t, tc.want, countGeminiInlineImageOutputs([]byte(tc.payload)))
+			require.Equal(t, tc.want, len(ExtractGeminiImageOutputs([]byte(tc.payload))))
 		})
 	}
 }
@@ -146,24 +168,24 @@ func TestResolveGeminiImageCount(t *testing.T) {
 		beginGeminiImageOutputObservation(c)
 		observeGeminiImageOutputs(c, oneImage)
 
-		require.False(t, isImageGenerationModel("nana-banana-2"), "前置条件：白名单判不出自定义名")
-		require.Equal(t, 1, resolveGeminiImageCount(c, "nana-banana-2", "nana-banana-2"))
+		require.False(t, isImageGenerationModel("vendor-custom-art"), "前置条件：白名单判不出自定义名")
+		require.Equal(t, 1, resolveGeminiImageCount(c, "vendor-custom-art", "vendor-custom-art"))
 	})
 
-	t.Run("falls back to requested model name", func(t *testing.T) {
+	t.Run("text-only image response is not billed", func(t *testing.T) {
 		c := newGeminiImageTestContext(t)
 		beginGeminiImageOutputObservation(c)
 		observeGeminiImageOutputs(c, textOnly)
 
-		require.Equal(t, 1, resolveGeminiImageCount(c, "gemini-3-pro-image-preview", "gemini-3-pro-image-preview"))
+		require.Equal(t, 0, resolveGeminiImageCount(c, "gemini-3-pro-image-preview", "gemini-3-pro-image-preview"))
 	})
 
-	t.Run("falls back to mapped upstream model name", func(t *testing.T) {
+	t.Run("text-only mapped image response is not billed", func(t *testing.T) {
 		c := newGeminiImageTestContext(t)
 		beginGeminiImageOutputObservation(c)
 		observeGeminiImageOutputs(c, textOnly)
 
-		require.Equal(t, 1, resolveGeminiImageCount(c, "my-image-alias", "gemini-2.5-flash-image"))
+		require.Equal(t, 0, resolveGeminiImageCount(c, "my-image-alias", "gemini-2.5-flash-image"))
 	})
 
 	t.Run("text model stays unbilled", func(t *testing.T) {
@@ -176,7 +198,8 @@ func TestResolveGeminiImageCount(t *testing.T) {
 
 	t.Run("no counter on context degrades to name heuristic", func(t *testing.T) {
 		c := newGeminiImageTestContext(t)
-		require.Equal(t, 0, resolveGeminiImageCount(c, "nana-banana-2", "nana-banana-2"))
+		require.Equal(t, 0, resolveGeminiImageCount(c, "vendor-custom-art", "vendor-custom-art"))
+		require.Equal(t, 1, resolveGeminiImageCount(c, "nana-banana-2", "nana-banana-2"))
 		require.Equal(t, 1, resolveGeminiImageCount(c, "gemini-3-pro-image", "gemini-3-pro-image"))
 	})
 }

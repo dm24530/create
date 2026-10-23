@@ -11,17 +11,21 @@ import (
 func TestSubmitUsageRecordTaskCopiesRequestContext(t *testing.T) {
 	parent := context.WithValue(context.Background(), ctxkey.ClientRequestID, "client-request-123")
 	parent = context.WithValue(parent, ctxkey.RequestID, "request-456")
+	parent = context.WithValue(parent, ctxkey.AsyncImageTask, true)
 
 	var gotClientRequestID string
 	var gotRequestID string
+	var gotAsyncImageTask bool
 	h := &GatewayHandler{}
 	h.submitUsageRecordTask(parent, func(ctx context.Context) {
 		gotClientRequestID, _ = ctx.Value(ctxkey.ClientRequestID).(string)
 		gotRequestID, _ = ctx.Value(ctxkey.RequestID).(string)
+		gotAsyncImageTask, _ = ctx.Value(ctxkey.AsyncImageTask).(bool)
 	})
 
 	require.Equal(t, "client-request-123", gotClientRequestID)
 	require.Equal(t, "request-456", gotRequestID)
+	require.True(t, gotAsyncImageTask)
 }
 
 func TestOpenAISubmitUsageRecordTaskCopiesRequestContext(t *testing.T) {

@@ -76,6 +76,28 @@ func TestUsageHandlerImageLinkRedirectsOwnedFallbackURL(t *testing.T) {
 	require.Equal(t, "https://cdn.example.test/image.png", recorder.Header().Get("Location"))
 }
 
+func TestUsageHandlerImageLinkStreamsInlineDataURL(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler := NewUsageHandler(nil, nil, nil, nil)
+	handler.SetImageLinkDeps(&usageImageLinkStoreStub{link: &service.UsageLogImageLink{
+		UserID:   7,
+		ImageURL: "data:image/png;base64,YWJj",
+	}}, nil)
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set(string(middleware2.ContextKeyUser), middleware2.AuthSubject{UserID: 7})
+		c.Next()
+	})
+	router.GET("/usage/image-links/:token", handler.ImageLink)
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/usage/image-links/token", nil))
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Equal(t, "image/png", recorder.Header().Get("Content-Type"))
+	require.Equal(t, []byte("abc"), recorder.Body.Bytes())
+}
+
 func TestUsageHandlerImageLinkStreamsOwnedObject(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	handler := NewUsageHandler(nil, nil, nil, nil)

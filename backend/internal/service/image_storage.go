@@ -9,7 +9,6 @@ import (
 	"io"
 	"mime"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -76,9 +75,12 @@ func defaultImageDownloadHTTPClient() *http.Client {
 // Rewrite 将 result（上游生图响应 JSON）里的每张图片转存到对象存储，
 // 返回改写后的紧凑结果（data[i].url 指向对象存储，b64_json 被移除）。
 // 任一图片转存失败即返回 error（调用方据此将任务标记为失败，绝不把大 blob 落 Redis）。
-func (u *ImageResultUploader) Rewrite(ctx context.Context, taskID string, result json.RawMessage) (json.RawMessage, error) {
+func (u *ImageResultUploader) Rewrite(ctx context.Context, userID int64, taskID string, result json.RawMessage) (json.RawMessage, error) {
 	if u == nil || u.storage == nil {
 		return result, nil
+	}
+	if userID <= 0 {
+		return nil, fmt.Errorf("image owner user ID is required")
 	}
 	var top map[string]json.RawMessage
 	if err := json.Unmarshal(result, &top); err != nil {
@@ -101,7 +103,7 @@ func (u *ImageResultUploader) Rewrite(ctx context.Context, taskID string, result
 		if err != nil {
 			return nil, fmt.Errorf("image %d: %w", i, err)
 		}
-		key := u.buildKey(taskID, i, contentType)
+		key := u.buildKey(userID, taskID, i, contentType)
 		url, err := u.storage.Save(ctx, key, contentType, data)
 		if err != nil {
 			return nil, fmt.Errorf("image %d: upload to object storage: %w", i, err)
@@ -116,6 +118,13 @@ func (u *ImageResultUploader) Rewrite(ctx context.Context, taskID string, result
 			return nil, fmt.Errorf("image %d: encode object key: %w", i, err)
 		}
 		item["object_key"] = objectKeyRaw
+		if preview, previewErr := buildThumbnail(data, 1024); previewErr == nil && len(preview) > 0 {
+			previewURL := "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(preview)
+			previewRaw, encodeErr := json.Marshal(previewURL)
+			if encodeErr == nil {
+				item["preview_data_url"] = previewRaw
+			}
+		}
 		delete(item, "b64_json")
 		items[i] = item
 	}
@@ -243,8 +252,15 @@ func (u *ImageResultUploader) download(ctx context.Context, rawURL string) ([]by
 	return data, contentType, nil
 }
 
-func (u *ImageResultUploader) buildKey(taskID string, index int, contentType string) string {
-	return u.prefix + taskID + "-" + strconv.Itoa(index) + extensionForContentType(contentType)
+func (u *ImageResultUploader) buildKey(userID int64, taskID string, index int, contentType string) string {
+	return fmt.Sprintf(
+		"%susers/%d/%s-%d%s",
+		u.prefix,
+		userID,
+		taskID,
+		index,
+		extensionForContentType(contentType),
+	)
 }
 
 func detectImageContentType(data []byte) string {

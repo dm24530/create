@@ -1144,6 +1144,7 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 		Duration:                      time.Since(startTime),
 		FirstTokenMs:                  firstTokenMs,
 		ImageCount:                    imageCount,
+		ImageOutputs:                  observedGeminiImageOutputList(c),
 		ImageSize:                     imageSize,
 		ImageInputSize:                imageInputSize,
 	}, nil
@@ -1648,6 +1649,7 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 		Duration:                      time.Since(startTime),
 		FirstTokenMs:                  firstTokenMs,
 		ImageCount:                    imageCount,
+		ImageOutputs:                  observedGeminiImageOutputList(c),
 		ImageSize:                     imageSize,
 		ImageInputSize:                imageInputSize,
 	}, nil

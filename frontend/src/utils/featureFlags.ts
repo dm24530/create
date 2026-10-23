@@ -104,6 +104,11 @@ export const FeatureFlags = {
     mode: 'opt-in',
     label: 'Available Channels',
   }),
+  canvasAdminOnly: defineFlag({
+    key: 'canvas_admin_only',
+    mode: 'opt-out',
+    label: 'Infinite Canvas Admin Only',
+  }),
   subscription: defineFlag({
     key: 'subscription_enabled',
     mode: 'opt-out',

@@ -42,8 +42,14 @@ import { CanvasToolbar } from "@/components/canvas/canvas-toolbar";
 import { AssetPickerModal, type InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
 import { CanvasSidePanel } from "@/components/canvas/canvas-side-panel";
 import { CanvasZoomControls } from "@/components/canvas/canvas-zoom-controls";
-import { useAgentStore } from "@/stores/use-agent-store";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
+import {
+    getCloudCanvasProject,
+    isCanvasCloudReady,
+    putCloudCanvasProject,
+    putCloudCanvasProjectKeepalive,
+    uploadPendingCanvasAssets,
+} from "@/services/canvas-cloud";
 import { useAgentBridge } from "@/pages/canvas/hooks/use-agent-bridge";
 import { usePluginHost } from "@/pages/canvas/hooks/use-plugin-host";
 import { buildNodeMentionReferences, getGroupResourceNodes, isCanvasReferenceNode, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
@@ -166,6 +172,25 @@ function measureFocusFrame(container: HTMLDivElement | null, nodeId: string) {
     return { above, below, bottomInset: dockRect && below > 0 ? Math.max(0, container.getBoundingClientRect().bottom - dockRect.top) : 0 };
 }
 
+function hasPendingCloudAsset(node: CanvasNodeData) {
+    const metadata = node.metadata;
+    if (!metadata) return false;
+    const mediaNode = node.type === CanvasNodeType.Image || node.type === CanvasNodeType.Video || node.type === CanvasNodeType.Audio;
+    if (
+        mediaNode &&
+        metadata.storageKey &&
+        !metadata.cloudAssetId &&
+        metadata.cloudSyncState !== "uploading" &&
+        metadata.cloudSyncState !== "failed"
+    ) return true;
+    return Boolean(metadata.images?.some((image) => (
+        image.storageKey &&
+        !image.cloudAssetId &&
+        image.cloudSyncState !== "uploading" &&
+        image.cloudSyncState !== "failed"
+    )));
+}
+
 function InfiniteCanvasPage() {
     const { message, modal } = App.useApp();
     const { t } = useTranslation();
@@ -175,13 +200,6 @@ function InfiniteCanvasPage() {
     const navigate = useNavigate();
     const [searchParams] = useSearchParams();
     const projectId = params.id || "";
-    const localAgentConnected = useAgentStore((state) => state.connected);
-    const localAgentActivity = useAgentStore((state) => state.activity);
-    const localAgentEnabled = useAgentStore((state) => state.enabled);
-    const fragmentBootstrap = useAgentStore((state) => state.fragmentBootstrap);
-    const agentPanelOpen = useAgentStore((state) => state.panelOpen);
-    const toggleAgentPanel = useAgentStore((state) => state.togglePanel);
-    const openAgentPanel = useAgentStore((state) => state.openPanel);
     const containerRef = useRef<HTMLDivElement>(null);
     const imageInputRef = useRef<HTMLInputElement>(null);
     const uploadTargetRef = useRef<{ nodeId?: string; position?: Position } | null>(null);
@@ -190,8 +208,20 @@ function InfiniteCanvasPage() {
     const lastHistoryRef = useRef<CanvasHistoryEntry | null>(null);
     const historyCommitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const viewportSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const cloudSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const cloudAssetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const cloudSaveInFlightRef = useRef<Promise<void> | null>(null);
+    const cloudSaveQueuedRef = useRef(false);
+    const cloudConflictBlockedRef = useRef(false);
+    const cloudConflictNoticeAtRef = useRef(0);
+    const pendingCloudAssetsRef = useRef(new Set<string>());
     const applyingHistoryRef = useRef(false);
     const historyPausedRef = useRef(false);
+
+    useEffect(() => {
+        cloudConflictBlockedRef.current = false;
+        cloudConflictNoticeAtRef.current = 0;
+    }, [projectId]);
     const rafRef = useRef<number | null>(null);
     const nodeDraggingRef = useRef(false);
     const dragRef = useRef<{
@@ -449,6 +479,20 @@ function InfiniteCanvasPage() {
         const restore = async () => {
             const restoredNodes = await hydrateCanvasImages(resetInterruptedGeneration(project.nodes));
             const restoredSessions = await hydrateAssistantImages(project.chatSessions || []);
+            if (isCanvasCloudReady()) {
+                try {
+                    const cloudProject = await getCloudCanvasProject(projectId);
+                    useCanvasStore.setState((state) => ({
+                        projects: state.projects.map((item) => (
+                            item.id === projectId
+                                ? { ...item, cloudVersion: cloudProject.version }
+                                : item
+                        )),
+                    }));
+                } catch {
+                    // A local-only canvas has no cloud version yet.
+                }
+            }
             setNodes(restoredNodes);
             setConnections(project.connections);
             setChatSessions(restoredSessions);
@@ -481,11 +525,6 @@ function InfiniteCanvasPage() {
         // Resume once after the current canvas is restored, not on later config identity changes.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [projectLoaded]);
-
-    useEffect(() => {
-        if (!projectLoaded || !["new", "recent", "choose"].includes(searchParams.get("mode") || "")) return;
-        if (!searchParams.has("agentUrl") && !localAgentEnabled && !fragmentBootstrap) openAgentPanel();
-    }, [fragmentBootstrap, localAgentEnabled, openAgentPanel, projectLoaded, searchParams]);
 
     useEffect(() => {
         if (!projectLoaded || applyingHistoryRef.current || historyPausedRef.current) return;
@@ -525,6 +564,221 @@ function InfiniteCanvasPage() {
         if (!projectLoaded || historyPausedRef.current) return;
         updateProject(projectId, { nodes, connections, chatSessions, activeChatId, backgroundMode, showImageInfo });
     }, [activeChatId, backgroundMode, chatSessions, connections, nodes, projectId, projectLoaded, showImageInfo, updateProject]);
+
+    useEffect(() => {
+        if (!projectLoaded) return;
+        setNodes((prev) => prev.map((node) => {
+            const metadata = node.metadata;
+            const stalePrimary = metadata?.storageKey
+                && !metadata.cloudAssetId
+                && (metadata.cloudSyncState === "uploading" || metadata.cloudSyncState === "failed");
+            const staleImages = Boolean(metadata?.images?.some((image) => (
+                image.storageKey &&
+                !image.cloudAssetId &&
+                (image.cloudSyncState === "uploading" || image.cloudSyncState === "failed")
+            )));
+            if (!stalePrimary && !staleImages) return node;
+            return {
+                ...node,
+                metadata: {
+                    ...metadata,
+                    cloudSyncState: stalePrimary ? "pending" : metadata?.cloudSyncState,
+                    images: metadata?.images?.map((image) => (
+                        image.storageKey && !image.cloudAssetId &&
+                        (image.cloudSyncState === "uploading" || image.cloudSyncState === "failed")
+                            ? { ...image, cloudSyncState: "pending" }
+                            : image
+                    )),
+                },
+            };
+        }));
+    }, [projectLoaded]);
+
+    const syncCanvasProjectToCloud = useCallback(async () => {
+        if (!isCanvasCloudReady()) return;
+        if (cloudSaveInFlightRef.current) {
+            cloudSaveQueuedRef.current = true;
+            return cloudSaveInFlightRef.current;
+        }
+
+        const run = async () => {
+            do {
+                cloudSaveQueuedRef.current = false;
+                if (cloudConflictBlockedRef.current) return;
+                const project = useCanvasStore.getState().projects.find((item) => item.id === projectId);
+                if (!project) return;
+                try {
+                    const saved = await putCloudCanvasProject(project);
+                    useCanvasStore.setState((state) => ({
+                        projects: state.projects.map((item) => (
+                            item.id === projectId
+                                ? { ...item, cloudVersion: saved.version, cloudSyncedAt: saved.updated_at || new Date().toISOString() }
+                                : item
+                        )),
+                    }));
+                } catch (error) {
+                    if ((error as Error & { status?: number }).status === 409) {
+                        try {
+                            const cloudProject = await getCloudCanvasProject(projectId);
+                            const current = useCanvasStore.getState().projects.find((item) => item.id === projectId);
+                            const localUpdated = Date.parse(current?.updatedAt || "") || 0;
+                            const cloudUpdated = Date.parse(cloudProject.updated_at || "") || 0;
+                            if (current && localUpdated >= cloudUpdated) {
+                                useCanvasStore.setState((state) => ({
+                                    projects: state.projects.map((item) => (
+                                        item.id === projectId
+                                            ? { ...item, cloudVersion: cloudProject.version }
+                                            : item
+                                    )),
+                                }));
+                                cloudSaveQueuedRef.current = true;
+                                continue;
+                            }
+                        } catch {
+                            // Fall through to the one-time conflict notice.
+                        }
+                        cloudConflictBlockedRef.current = true;
+                        const now = Date.now();
+                        if (now - cloudConflictNoticeAtRef.current > 30_000) {
+                            cloudConflictNoticeAtRef.current = now;
+                            message.warning(t("canvas.projectPage.cloudConflict"));
+                        }
+                    } else {
+                        console.warn("Failed to sync canvas project", error);
+                    }
+                    return;
+                }
+            } while (cloudSaveQueuedRef.current);
+        };
+
+        cloudSaveInFlightRef.current = run().finally(() => {
+            cloudSaveInFlightRef.current = null;
+        });
+        return cloudSaveInFlightRef.current;
+    }, [message, projectId, t]);
+
+    useEffect(() => {
+        if (!projectLoaded || !isCanvasCloudReady()) return;
+        if (cloudAssetTimerRef.current) clearTimeout(cloudAssetTimerRef.current);
+        cloudAssetTimerRef.current = setTimeout(() => {
+            void (async () => {
+                await syncCanvasProjectToCloud();
+                if (!isCanvasCloudReady()) return;
+                const candidates = nodes.filter(hasPendingCloudAsset);
+                if (!candidates.length) return;
+                for (const node of candidates) {
+                    pendingCloudAssetsRef.current.add(`${node.id}:primary`);
+                    for (const image of node.metadata?.images || []) {
+                        if (image.storageKey && !image.cloudAssetId && image.cloudSyncState !== "uploading") {
+                            pendingCloudAssetsRef.current.add(`${node.id}:${image.id}`);
+                        }
+                    }
+                }
+                setNodes((prev) => prev.map((node) => {
+                    if (!hasPendingCloudAsset(node)) return node;
+                    return {
+                        ...node,
+                        metadata: {
+                            ...node.metadata,
+                            cloudSyncState: "uploading",
+                            images: node.metadata?.images?.map((image) => (
+                                image.storageKey && !image.cloudAssetId
+                                    ? { ...image, cloudSyncState: "uploading" }
+                                    : image
+                            )),
+                        },
+                    };
+                }));
+                await uploadPendingCanvasAssets(projectId, candidates, (result) => {
+                    pendingCloudAssetsRef.current.delete(`${result.nodeId}:${result.imageId || "primary"}`);
+                    const previewURL = result.asset.thumb_url || result.asset.url;
+                    setNodes((prev) => prev.map((node) => {
+                        if (node.id !== result.nodeId) return node;
+                        const updatePrimary = !result.imageId || !node.metadata?.images?.length || node.metadata.primaryImageId === result.imageId;
+                        return {
+                            ...node,
+                            metadata: {
+                                ...node.metadata,
+                                ...(updatePrimary ? {
+                                    cloudAssetId: result.asset.id,
+                                    cloudURL: result.asset.url,
+                                    cloudPreviewURL: previewURL,
+                                    cloudSyncState: "uploaded" as const,
+                                } : {}),
+                                images: node.metadata?.images?.map((image) => (
+                                    image.id === result.imageId
+                                        ? {
+                                            ...image,
+                                            cloudAssetId: result.asset.id,
+                                            cloudURL: result.asset.url,
+                                            cloudPreviewURL: previewURL,
+                                            cloudSyncState: "uploaded" as const,
+                                        }
+                                        : image
+                                )),
+                            },
+                        };
+                    }));
+                });
+            })().catch((error) => {
+                pendingCloudAssetsRef.current.clear();
+                setNodes((prev) => prev.map((node) => (
+                    hasPendingCloudAsset(node)
+                        ? {
+                            ...node,
+                            metadata: {
+                                ...node.metadata,
+                                cloudSyncState: "failed",
+                                images: node.metadata?.images?.map((image) => (
+                                    image.storageKey && !image.cloudAssetId
+                                        ? { ...image, cloudSyncState: "failed" }
+                                        : image
+                                )),
+                            },
+                        }
+                        : node
+                )));
+                console.warn("Failed to upload canvas assets", error);
+            });
+        }, 700);
+        return () => {
+            if (cloudAssetTimerRef.current) {
+                clearTimeout(cloudAssetTimerRef.current);
+                cloudAssetTimerRef.current = null;
+            }
+        };
+    }, [nodes, projectId, projectLoaded, syncCanvasProjectToCloud]);
+
+    useEffect(() => {
+        if (!projectLoaded || !isCanvasCloudReady()) return;
+        if (cloudSaveTimerRef.current) clearTimeout(cloudSaveTimerRef.current);
+        cloudSaveTimerRef.current = setTimeout(() => {
+            void syncCanvasProjectToCloud();
+        }, 600);
+        return () => {
+            if (cloudSaveTimerRef.current) {
+                clearTimeout(cloudSaveTimerRef.current);
+                cloudSaveTimerRef.current = null;
+            }
+        };
+    }, [activeChatId, backgroundMode, chatSessions, connections, currentProject?.title, nodes, projectId, projectLoaded, showImageInfo, syncCanvasProjectToCloud]);
+
+    useEffect(() => {
+        if (!projectLoaded || !isCanvasCloudReady()) return;
+        const flush = () => {
+            const project = useCanvasStore.getState().projects.find((item) => item.id === projectId);
+            if (project) putCloudCanvasProjectKeepalive(project);
+        };
+        const handleVisibility = () => {
+            if (document.visibilityState === "hidden") flush();
+        };
+        window.addEventListener("pagehide", flush);
+        document.addEventListener("visibilitychange", handleVisibility);
+        return () => {
+            window.removeEventListener("pagehide", flush);
+            document.removeEventListener("visibilitychange", handleVisibility);
+        };
+    }, [projectId, projectLoaded]);
 
     useEffect(() => {
         if (!dialogNodeId) setNodeImageSettingsOpen(false);
@@ -3167,7 +3421,6 @@ function InfiniteCanvasPage() {
                     onCancelTitleEditing={() => setTitleEditing(false)}
                     canUndo={historyState.canUndo}
                     canRedo={historyState.canRedo}
-                    onHome={() => navigate("/")}
                     onProjects={() => navigate("/canvas")}
                     onCreateProject={createAndOpenProject}
                     onDeleteProject={deleteCurrentProject}
@@ -3176,9 +3429,6 @@ function InfiniteCanvasPage() {
                     onOpenPlugins={() => setPluginManagerOpen(true)}
                     onUndo={undoCanvas}
                     onRedo={redoCanvas}
-                    agentOpen={agentPanelOpen}
-                    compactAgentStatus={{ connected: localAgentConnected, enabled: localAgentEnabled, activity: localAgentActivity }}
-                    onToggleAgent={toggleAgentPanel}
                 />
 
                 <InfiniteCanvas

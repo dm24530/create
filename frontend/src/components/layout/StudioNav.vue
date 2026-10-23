@@ -9,6 +9,10 @@
         <Icon name="play" size="sm" />
         <span>视频工作台</span>
       </RouterLink>
+      <RouterLink v-if="showCanvas" to="/canvas" class="studio-nav__item" active-class="studio-nav__item--active" data-tour="nav-canvas">
+        <Icon name="frame" size="sm" />
+        <span>无限画布</span>
+      </RouterLink>
       <RouterLink to="/image-inspiration" class="studio-nav__item" active-class="studio-nav__item--active" data-tour="nav-image-inspiration">
         <Icon name="lightbulb" size="sm" />
         <span>图片灵感</span>
@@ -30,12 +34,20 @@
 
 <script setup lang="ts">
 import Icon from '@/components/icons/Icon.vue'
+import { computed } from 'vue'
+import { useAuthStore } from '@/stores'
+import { FeatureFlags, isFeatureFlagEnabled } from '@/utils/featureFlags'
 
 withDefaults(defineProps<{
   inline?: boolean
 }>(), {
   inline: false,
 })
+
+const authStore = useAuthStore()
+const showCanvas = computed(() => (
+  authStore.isAdmin || !isFeatureFlagEnabled(FeatureFlags.canvasAdminOnly)
+))
 </script>
 
 <style scoped>

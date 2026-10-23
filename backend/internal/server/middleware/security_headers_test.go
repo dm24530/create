@@ -151,6 +151,28 @@ func TestSecurityHeaders(t *testing.T) {
 		assert.Equal(t, "DENY", w.Header().Get("X-Frame-Options"))
 	})
 
+	t.Run("canvas_app_allows_same_origin_embedding_and_remote_media", func(t *testing.T) {
+		cfg := config.CSPConfig{
+			Enabled: true,
+			Policy:  "default-src 'self'; frame-ancestors 'none'",
+		}
+		middleware := SecurityHeaders(cfg, nil)
+
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodGet, "/canvas-app/canvas?embed=1", nil)
+
+		middleware(c)
+
+		csp := w.Header().Get("Content-Security-Policy")
+		assert.Equal(t, "SAMEORIGIN", w.Header().Get("X-Frame-Options"))
+		assert.NotContains(t, csp, ";;")
+		assert.Equal(t, 1, countDirectiveValue(csp, "frame-ancestors", "'self'"))
+		assert.Equal(t, 0, countDirectiveValue(csp, "frame-ancestors", "'none'"))
+		assert.Equal(t, 1, countDirectiveValue(csp, "media-src", "https:"))
+		assert.Equal(t, 1, countDirectiveValue(csp, "media-src", "blob:"))
+	})
+
 	t.Run("api_route_skips_csp_nonce_generation", func(t *testing.T) {
 		cfg := config.CSPConfig{
 			Enabled: true,

@@ -19,6 +19,8 @@ export type CanvasProject = {
     backgroundMode: CanvasBackgroundMode;
     showImageInfo: boolean;
     viewport: ViewportTransform;
+    cloudVersion?: number;
+    cloudSyncedAt?: string;
 };
 
 export type CanvasDeletedProject = {
@@ -40,14 +42,28 @@ type CanvasStore = {
 };
 
 const initialViewport: ViewportTransform = { x: 0, y: 0, k: 1 };
-const CANVAS_STORE_KEY = "infinite-canvas:canvas_store";
+const LEGACY_CANVAS_STORE_KEY = "infinite-canvas:canvas_store";
+const canvasUserScope = (() => {
+    const candidate = new URLSearchParams(window.location.search).get("user")?.trim() || "";
+    return /^[A-Za-z0-9_-]{1,64}$/.test(candidate) ? candidate : "";
+})();
+const CANVAS_STORE_KEY = canvasUserScope
+    ? `${LEGACY_CANVAS_STORE_KEY}:user:${canvasUserScope}`
+    : LEGACY_CANVAS_STORE_KEY;
 type PersistedCanvasState = Pick<CanvasStore, "projects" | "deletedProjects">;
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 let queuedPersistState: PersistedCanvasState | null = null;
 
 const canvasStorage: PersistStorage<CanvasStore> = {
     getItem: async (name) => {
-        const value = await localForageStorage.getItem(name);
+        let value = await localForageStorage.getItem(name);
+        if (!value && canvasUserScope) {
+            value = await localForageStorage.getItem(LEGACY_CANVAS_STORE_KEY);
+            if (value) {
+                await localForageStorage.setItem(name, value);
+                await localForageStorage.removeItem(LEGACY_CANVAS_STORE_KEY);
+            }
+        }
         if (!value) return null;
         const parsed = JSON.parse(value) as StorageValue<CanvasStore>;
         queuedPersistState = parsed.state as PersistedCanvasState;

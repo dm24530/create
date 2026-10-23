@@ -1,6 +1,9 @@
 package service
 
 import (
+	"net/url"
+	"path"
+	"regexp"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -21,8 +24,18 @@ const geminiImageOutputCounterKey = "gemini_image_output_counter"
 //   - 增量式流且多图分散在不同 chunk：会低估到 1，与改动前的模型名启发式同值，
 //     不构成回退。
 type geminiImageOutputCounter struct {
-	count int
+	count    int
+	outputs  []GeminiImageOutput
+	observed bool
 }
+
+type GeminiImageOutput struct {
+	Base64   string
+	MIMEType string
+	URL      string
+}
+
+var geminiTextImageURLPattern = regexp.MustCompile(`https?://[^\s"'<>]+`)
 
 // beginGeminiImageOutputObservation 在每次 Forward 开头重置计数器。
 // failover 会拿同一个 gin.Context 重跑转发，不重置就会把上一个账号的图数带进来。
@@ -55,8 +68,13 @@ func observeGeminiImageOutputs(c *gin.Context, payload []byte) {
 	if counter == nil {
 		return
 	}
-	if count := countGeminiInlineImageOutputs(payload); count > counter.count {
-		counter.count = count
+	if hasGeminiCandidates(payload) {
+		counter.observed = true
+	}
+	outputs := ExtractGeminiImageOutputs(payload)
+	if len(outputs) > counter.count {
+		counter.count = len(outputs)
+		counter.outputs = append([]GeminiImageOutput(nil), outputs...)
 	}
 }
 
@@ -66,6 +84,14 @@ func observedGeminiImageOutputs(c *gin.Context) int {
 		return 0
 	}
 	return counter.count
+}
+
+func observedGeminiImageOutputList(c *gin.Context) []GeminiImageOutput {
+	counter := geminiImageOutputCounterFromContext(c)
+	if counter == nil || len(counter.outputs) == 0 {
+		return nil
+	}
+	return append([]GeminiImageOutput(nil), counter.outputs...)
 }
 
 // resolveGeminiImageCount 决定本次请求按几张图计费。
@@ -84,39 +110,99 @@ func resolveGeminiImageCount(c *gin.Context, originalModel, mappedModel string) 
 	if observed := observedGeminiImageOutputs(c); observed > 0 {
 		return observed
 	}
+	if counter := geminiImageOutputCounterFromContext(c); counter != nil && counter.observed {
+		// A valid Gemini response with no usable image is not a successful image
+		// generation. Do not fall back to the model-name heuristic just to bill it.
+		return 0
+	}
 	if isImageGenerationModel(originalModel) || isImageGenerationModel(mappedModel) {
 		return 1
 	}
 	return 0
 }
 
-// countGeminiInlineImageOutputs 统计一段 Gemini 响应 JSON 里的内联图片 part。
-// Gemini REST 回 camelCase 的 inlineData，官方 SDK 与部分中转会回 snake_case
-// 的 inline_data，两种都要认。
-func countGeminiInlineImageOutputs(payload []byte) int {
+func hasGeminiCandidates(payload []byte) bool {
 	if len(payload) == 0 || !gjson.ValidBytes(payload) {
-		return 0
+		return false
 	}
-	count := 0
-	gjson.GetBytes(payload, "candidates").ForEach(func(_, candidate gjson.Result) bool {
+	candidates := gjson.GetBytes(payload, "candidates")
+	if !candidates.Exists() {
+		candidates = gjson.GetBytes(payload, "response.candidates")
+	}
+	return candidates.IsArray()
+}
+
+// extractGeminiImageOutputs normalizes every image representation Gemini-
+// compatible providers commonly return: inlineData, inline_data, fileData and
+// image URLs embedded in text. One candidate normally represents one generated
+// image, so inline data wins over duplicate file/text references for that
+// candidate.
+func ExtractGeminiImageOutputs(payload []byte) []GeminiImageOutput {
+	if len(payload) == 0 || !gjson.ValidBytes(payload) {
+		return nil
+	}
+	candidates := gjson.GetBytes(payload, "candidates")
+	if !candidates.Exists() {
+		candidates = gjson.GetBytes(payload, "response.candidates")
+	}
+	if !candidates.IsArray() {
+		return nil
+	}
+
+	outputs := make([]GeminiImageOutput, 0)
+	candidates.ForEach(func(_, candidate gjson.Result) bool {
+		inline := make([]GeminiImageOutput, 0)
+		files := make([]GeminiImageOutput, 0)
+		urls := make([]GeminiImageOutput, 0)
 		candidate.Get("content.parts").ForEach(func(_, part gjson.Result) bool {
-			if geminiPartIsInlineImage(part) {
-				count++
+			if output, ok := geminiInlineImageOutput(part); ok {
+				inline = append(inline, output)
+				return true
+			}
+			if output, ok := geminiFileImageOutput(part); ok {
+				files = append(files, output)
+				return true
+			}
+			if text := strings.TrimSpace(part.Get("text").String()); text != "" {
+				for _, rawURL := range geminiTextImageURLPattern.FindAllString(text, -1) {
+					rawURL = strings.TrimRight(rawURL, ".,);]")
+					if looksLikeGeminiImageURL(rawURL) {
+						urls = append(urls, GeminiImageOutput{URL: rawURL, MIMEType: imageMIMETypeFromURL(rawURL)})
+					}
+				}
 			}
 			return true
 		})
+
+		candidateOutputs := inline
+		if len(candidateOutputs) == 0 {
+			candidateOutputs = files
+		}
+		if len(candidateOutputs) == 0 {
+			candidateOutputs = urls
+		}
+		seenURLs := make(map[string]struct{})
+		for _, output := range candidateOutputs {
+			if output.Base64 == "" {
+				if _, exists := seenURLs[output.URL]; exists {
+					continue
+				}
+				seenURLs[output.URL] = struct{}{}
+			}
+			outputs = append(outputs, output)
+		}
 		return true
 	})
-	return count
+	return outputs
 }
 
-func geminiPartIsInlineImage(part gjson.Result) bool {
+func geminiInlineImageOutput(part gjson.Result) (GeminiImageOutput, bool) {
 	inline := part.Get("inlineData")
 	if !inline.Exists() {
 		inline = part.Get("inline_data")
 	}
 	if !inline.Exists() {
-		return false
+		return GeminiImageOutput{}, false
 	}
 
 	mimeType := inline.Get("mimeType")
@@ -124,9 +210,71 @@ func geminiPartIsInlineImage(part gjson.Result) bool {
 		mimeType = inline.Get("mime_type")
 	}
 	if !isGeminiInlineImageMIMEType(strings.ToLower(strings.TrimSpace(mimeType.String()))) {
-		return false
+		return GeminiImageOutput{}, false
 	}
 
 	// 只认真的带上了 base64 数据的 part，空壳 part 不计费。
-	return strings.TrimSpace(inline.Get("data").String()) != ""
+	data := strings.TrimSpace(inline.Get("data").String())
+	if data == "" {
+		return GeminiImageOutput{}, false
+	}
+	return GeminiImageOutput{Base64: data, MIMEType: strings.TrimSpace(mimeType.String())}, true
+}
+
+func geminiFileImageOutput(part gjson.Result) (GeminiImageOutput, bool) {
+	file := part.Get("fileData")
+	if !file.Exists() {
+		file = part.Get("file_data")
+	}
+	if !file.Exists() {
+		return GeminiImageOutput{}, false
+	}
+	uri := strings.TrimSpace(file.Get("fileUri").String())
+	if uri == "" {
+		uri = strings.TrimSpace(file.Get("file_uri").String())
+	}
+	if !looksLikeGeminiImageURL(uri) {
+		return GeminiImageOutput{}, false
+	}
+	mimeType := strings.TrimSpace(file.Get("mimeType").String())
+	if mimeType == "" {
+		mimeType = strings.TrimSpace(file.Get("mime_type").String())
+	}
+	if mimeType == "" {
+		mimeType = imageMIMETypeFromURL(uri)
+	}
+	return GeminiImageOutput{URL: uri, MIMEType: mimeType}, true
+}
+
+func looksLikeGeminiImageURL(rawURL string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return false
+	}
+	switch strings.ToLower(path.Ext(parsed.Path)) {
+	case ".png", ".jpg", ".jpeg", ".webp", ".gif", ".avif":
+		return true
+	}
+	return strings.HasPrefix(strings.ToLower(parsed.Query().Get("format")), "image/")
+}
+
+func imageMIMETypeFromURL(rawURL string) string {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return ""
+	}
+	switch strings.ToLower(path.Ext(parsed.Path)) {
+	case ".png":
+		return "image/png"
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".webp":
+		return "image/webp"
+	case ".gif":
+		return "image/gif"
+	case ".avif":
+		return "image/avif"
+	default:
+		return ""
+	}
 }

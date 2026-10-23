@@ -1,7 +1,9 @@
 import { defineConfig, loadEnv, Plugin } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import checker from 'vite-plugin-checker'
-import { resolve } from 'path'
+import { createReadStream } from 'node:fs'
+import { stat } from 'node:fs/promises'
+import { extname, resolve, sep } from 'node:path'
 
 function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (character) => ({
@@ -77,6 +79,65 @@ function injectPublicSettings(backendUrl: string): Plugin {
   }
 }
 
+function serveCanvasBuild(): Plugin {
+  const root = resolve(__dirname, '../backend/internal/web/dist/canvas-app')
+  const contentTypes: Record<string, string> = {
+    '.css': 'text/css; charset=utf-8',
+    '.html': 'text/html; charset=utf-8',
+    '.js': 'text/javascript; charset=utf-8',
+    '.json': 'application/json; charset=utf-8',
+    '.png': 'image/png',
+    '.svg': 'image/svg+xml',
+    '.woff2': 'font/woff2',
+  }
+
+  return {
+    name: 'serve-canvas-build',
+    apply: 'serve',
+    configureServer(server) {
+      server.middlewares.use('/canvas-app', async (request, response, next) => {
+        if (request.method !== 'GET' && request.method !== 'HEAD') {
+          next()
+          return
+        }
+
+        const requestPath = decodeURIComponent((request.url || '/').split('?')[0])
+          .replace(/^\/+/, '')
+        let filePath = resolve(root, requestPath)
+        if (filePath !== root && !filePath.startsWith(`${root}${sep}`)) {
+          response.statusCode = 403
+          response.end('Forbidden')
+          return
+        }
+
+        try {
+          const info = await stat(filePath)
+          if (info.isDirectory()) filePath = resolve(filePath, 'index.html')
+          await stat(filePath)
+        } catch {
+          filePath = resolve(root, 'index.html')
+          try {
+            await stat(filePath)
+          } catch {
+            response.statusCode = 503
+            response.setHeader('Content-Type', 'text/plain; charset=utf-8')
+            response.end('Canvas build not found. Run npm run build in canvas-app.')
+            return
+          }
+        }
+
+        response.setHeader('Cache-Control', 'no-store')
+        response.setHeader('Content-Type', contentTypes[extname(filePath).toLowerCase()] || 'application/octet-stream')
+        if (request.method === 'HEAD') {
+          response.end()
+          return
+        }
+        createReadStream(filePath).on('error', next).pipe(response)
+      })
+    },
+  }
+}
+
 export default defineConfig(({ mode }) => {
   // 加载环境变量
   const env = loadEnv(mode, process.cwd(), '')
@@ -86,6 +147,7 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [
       vue(),
+      serveCanvasBuild(),
       checker({
         vueTsc: true
       }),

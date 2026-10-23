@@ -76,4 +76,38 @@ describe('OpsErrorDetailModal', () => {
     expect(wrapper.findAll('pre')).toHaveLength(2)
     expect(wrapper.text()).not.toContain('admin.ops.errorDetail.payloads.upstream_detail')
   })
+
+  it('labels request type 6 as async', async () => {
+    mocks.getRequestErrorDetail.mockResolvedValue({
+      id: 2,
+      created_at: '2026-08-19T00:00:00Z',
+      phase: 'request',
+      type: 'request_error',
+      error_owner: 'client',
+      error_source: 'gateway',
+      severity: 'P2',
+      status_code: 400,
+      platform: 'gemini',
+      model: 'gemini-image',
+      resolved: false,
+      request_id: 'rid-async',
+      request_type: 6,
+      message: 'bad request',
+      upstream_errors: '[]',
+      is_business_limited: false,
+    })
+
+    const wrapper = shallowMount(OpsErrorDetailModal, {
+      props: { show: true, errorId: 2, errorType: 'request' },
+      global: {
+        stubs: {
+          BaseDialog: { template: '<div><slot /></div>' },
+          Icon: true,
+        },
+      },
+    })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('admin.ops.errorDetail.requestTypeAsync')
+  })
 })

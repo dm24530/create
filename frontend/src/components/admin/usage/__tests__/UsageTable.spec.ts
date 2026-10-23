@@ -355,6 +355,42 @@ describe('admin UsageTable tooltip', () => {
     expect(wrapper.get('[data-testid="request-type-badge"]').text()).toBe('Async')
   })
 
+  it('labels a recorded async request as async without relying on an image URL', () => {
+    const DataTableStreamStub = {
+      props: ['data'],
+      template: `
+        <div>
+          <div v-for="row in data" :key="row.request_id">
+            <slot name="cell-stream" :row="row" />
+          </div>
+        </div>
+      `,
+    }
+    const wrapper = mount(UsageTable, {
+      props: {
+        data: [{
+          ...baseImageRow,
+          request_id: 'req-async-record',
+          request_type: 'async',
+          stream: false,
+          image_url: '',
+        }],
+        loading: false,
+        columns: [],
+      },
+      global: {
+        stubs: {
+          DataTable: DataTableStreamStub,
+          EmptyState: true,
+          Icon: true,
+          Teleport: true,
+        },
+      },
+    })
+
+    expect(wrapper.get('[data-testid="request-type-badge"]').text()).toBe('Async')
+  })
+
   it.each([
     [0, '0.0x'],
     [0.5, '0.50x'],

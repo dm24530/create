@@ -539,6 +539,10 @@ const (
 	// sidebar entry is hidden. Defaults to false (opt-in feature).
 	SettingKeyAvailableChannelsEnabled = "available_channels_enabled"
 
+	// SettingKeyCanvasAdminOnly keeps the infinite canvas in administrator-only
+	// preview until the operator explicitly opens it to users.
+	SettingKeyCanvasAdminOnly = "canvas_admin_only"
+
 	// SettingKeySubscriptionEnabled is a DB-backed soft switch for the user-facing
 	// subscription surface: sidebar entries, purchase-page subscription tab, header
 	// progress badge, usage billing-type filter and the /subscriptions route. When

@@ -179,8 +179,8 @@ func (s *ImageStudioGalleryService) Save(
 		return nil, ErrImageStudioGalleryQuotaExceeded
 	}
 
-	// 对象键只用随机 id，不带用户 ID，避免公开访问域名暴露用户身份。
-	key := id + extensionForContentType(contentType)
+	userPrefix := path.Join("users", strconv.FormatInt(userID, 10))
+	key := path.Join(userPrefix, id+extensionForContentType(contentType))
 	url, objectKey, err := s.storage.SaveImageWithKey(ctx, key, contentType, data)
 	if err != nil {
 		return nil, err
@@ -191,7 +191,7 @@ func (s *ImageStudioGalleryService) Save(
 		logger.L().Warn("studio_work.thumbnail_build_failed", zap.String("work_id", id), zap.Error(thumbErr))
 	} else if thumbURL, thumbObjectKey, thumbErr = s.storage.SaveImageWithKey(
 		ctx,
-		"thumbs/"+id+".jpg",
+		path.Join(userPrefix, "thumbs", id+".jpg"),
 		"image/jpeg",
 		thumb,
 	); thumbErr != nil {

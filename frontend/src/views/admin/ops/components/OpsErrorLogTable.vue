@@ -250,6 +250,7 @@ function displayModel(log: OpsErrorLog): string {
 
 function formatRequestType(type: number | null | undefined): string {
   switch (type) {
+    case 6: return t('admin.ops.errorLog.requestTypeAsync')
     case 1: return t('admin.ops.errorLog.requestTypeSync')
     case 2: return t('admin.ops.errorLog.requestTypeStream')
     case 3: return t('admin.ops.errorLog.requestTypeWs')

@@ -270,6 +270,9 @@ func usageRecordContext(parent context.Context, base context.Context) context.Co
 	if requestID, _ := parent.Value(ctxkey.RequestID).(string); strings.TrimSpace(requestID) != "" {
 		base = context.WithValue(base, ctxkey.RequestID, strings.TrimSpace(requestID))
 	}
+	if async, _ := parent.Value(ctxkey.AsyncImageTask).(bool); async {
+		base = context.WithValue(base, ctxkey.AsyncImageTask, true)
+	}
 	// 下游子站上下文必须随计费任务一起度过 worker 池的 context 切换，
 	// 否则真实 draw.superai.sbs 流量的 usage_logs.subsite_id 会落成 NULL。
 	if subsite, ok := downstream.FromContext(parent); ok {

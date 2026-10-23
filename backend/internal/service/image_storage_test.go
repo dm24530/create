@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -53,11 +54,11 @@ func TestImageResultUploaderRewritesB64JSON(t *testing.T) {
 	b64 := base64.StdEncoding.EncodeToString(pngBytes)
 	result := json.RawMessage(`{"created":1,"data":[{"b64_json":"` + b64 + `","revised_prompt":"a cat"}]}`)
 
-	out, err := uploader.Rewrite(context.Background(), "imgtask_abc", result)
+	out, err := uploader.Rewrite(context.Background(), 42, "imgtask_abc", result)
 	require.NoError(t, err)
 
 	require.Len(t, storage.saved, 1)
-	require.Equal(t, "images/imgtask_abc-0.png", storage.saved[0].key)
+	require.Equal(t, "images/users/42/imgtask_abc-0.png", storage.saved[0].key)
 	require.Equal(t, "image/png", storage.saved[0].contentType)
 	require.Equal(t, pngBytes, storage.saved[0].data)
 
@@ -66,10 +67,38 @@ func TestImageResultUploaderRewritesB64JSON(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(out, &parsed))
 	require.Len(t, parsed.Data, 1)
-	require.JSONEq(t, `"https://cdn.test/images/imgtask_abc-0.png"`, string(parsed.Data[0]["url"]))
+	require.JSONEq(t, `"https://cdn.test/images/users/42/imgtask_abc-0.png"`, string(parsed.Data[0]["url"]))
 	_, hasB64 := parsed.Data[0]["b64_json"]
 	require.False(t, hasB64, "b64_json must be stripped after offload")
 	require.JSONEq(t, `"a cat"`, string(parsed.Data[0]["revised_prompt"]), "unrelated fields preserved")
+}
+
+func TestImageResultUploaderAddsInlinePreview(t *testing.T) {
+	storage := &fakeImageStorage{}
+	uploader := NewImageResultUploader(storage, "images/", 0, nil)
+	validPNG, err := base64.StdEncoding.DecodeString(
+		"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+	)
+	require.NoError(t, err)
+	result := json.RawMessage(`{"data":[{"b64_json":"` +
+		base64.StdEncoding.EncodeToString(validPNG) + `","mime_type":"image/png"}]}`)
+
+	out, err := uploader.Rewrite(context.Background(), 42, "imgtask_preview", result)
+	require.NoError(t, err)
+
+	var parsed struct {
+		Data []struct {
+			PreviewDataURL string `json:"preview_data_url"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(out, &parsed))
+	require.Len(t, parsed.Data, 1)
+	require.True(t, strings.HasPrefix(parsed.Data[0].PreviewDataURL, "data:image/jpeg;base64,"))
+	preview, err := base64.StdEncoding.DecodeString(
+		strings.TrimPrefix(parsed.Data[0].PreviewDataURL, "data:image/jpeg;base64,"),
+	)
+	require.NoError(t, err)
+	require.NotEmpty(t, preview)
 }
 
 func TestImageResultUploaderRewritesURL(t *testing.T) {
@@ -83,7 +112,7 @@ func TestImageResultUploaderRewritesURL(t *testing.T) {
 	uploader := NewImageResultUploader(storage, "images/", 0, nil)
 
 	result := json.RawMessage(`{"created":1,"data":[{"url":"` + upstream.URL + `/pic.png"}]}`)
-	out, err := uploader.Rewrite(context.Background(), "imgtask_xyz", result)
+	out, err := uploader.Rewrite(context.Background(), 42, "imgtask_xyz", result)
 	require.NoError(t, err)
 
 	require.Len(t, storage.saved, 1)
@@ -94,7 +123,7 @@ func TestImageResultUploaderRewritesURL(t *testing.T) {
 		Data []map[string]json.RawMessage `json:"data"`
 	}
 	require.NoError(t, json.Unmarshal(out, &parsed))
-	require.JSONEq(t, `"https://cdn.test/images/imgtask_xyz-0.png"`, string(parsed.Data[0]["url"]))
+	require.JSONEq(t, `"https://cdn.test/images/users/42/imgtask_xyz-0.png"`, string(parsed.Data[0]["url"]))
 }
 
 func TestImageResultUploaderRewritesImageDataURLWithoutHTTP(t *testing.T) {
@@ -108,19 +137,19 @@ func TestImageResultUploaderRewritesImageDataURLWithoutHTTP(t *testing.T) {
 	b64 := base64.StdEncoding.EncodeToString(pngBytes)
 	result := json.RawMessage(`{"data":[{"url":"DATA:image/jpeg;name=photo.jpg;BaSe64,` + b64 + `","revised_prompt":"kept"}]}`)
 
-	out, err := uploader.Rewrite(context.Background(), "imgtask_data", result)
+	out, err := uploader.Rewrite(context.Background(), 42, "imgtask_data", result)
 	require.NoError(t, err)
 	require.Zero(t, httpCalls)
 	require.Len(t, storage.saved, 1)
 	require.Equal(t, pngBytes, storage.saved[0].data)
 	require.Equal(t, "image/png", storage.saved[0].contentType, "detected bytes take precedence over a conflicting declaration")
-	require.Equal(t, "images/imgtask_data-0.png", storage.saved[0].key)
+	require.Equal(t, "images/users/42/imgtask_data-0.png", storage.saved[0].key)
 
 	var parsed struct {
 		Data []map[string]json.RawMessage `json:"data"`
 	}
 	require.NoError(t, json.Unmarshal(out, &parsed))
-	require.JSONEq(t, `"https://cdn.test/images/imgtask_data-0.png"`, string(parsed.Data[0]["url"]))
+	require.JSONEq(t, `"https://cdn.test/images/users/42/imgtask_data-0.png"`, string(parsed.Data[0]["url"]))
 	require.JSONEq(t, `"kept"`, string(parsed.Data[0]["revised_prompt"]))
 }
 
@@ -150,7 +179,7 @@ func TestImageResultUploaderDataURLValidation(t *testing.T) {
 			result, err := json.Marshal(map[string]any{"data": []map[string]string{{"url": tt.url}}})
 			require.NoError(t, err)
 
-			_, err = uploader.Rewrite(context.Background(), "imgtask_bad", result)
+			_, err = uploader.Rewrite(context.Background(), 42, "imgtask_bad", result)
 			require.ErrorContains(t, err, tt.wantErr)
 			require.Zero(t, httpCalls)
 		})
@@ -163,7 +192,7 @@ func TestImageResultUploaderRejectsOversizedImageDataURL(t *testing.T) {
 	payload := base64.StdEncoding.EncodeToString([]byte("four"))
 	result := json.RawMessage(`{"data":[{"url":"data:image/png;base64,` + payload + `"}]}`)
 
-	_, err := uploader.Rewrite(context.Background(), "imgtask_large", result)
+	_, err := uploader.Rewrite(context.Background(), 42, "imgtask_large", result)
 	require.ErrorContains(t, err, "decoded image data URL exceeds 3 bytes")
 	require.Empty(t, storage.saved)
 }
@@ -174,7 +203,7 @@ func TestImageResultUploaderB64JSONTakesPrecedenceOverDataURL(t *testing.T) {
 	b64 := base64.StdEncoding.EncodeToString(pngBytes)
 	result := json.RawMessage(`{"data":[{"b64_json":"` + b64 + `","url":"data:text/plain,not-an-image"}]}`)
 
-	_, err := uploader.Rewrite(context.Background(), "imgtask_precedence", result)
+	_, err := uploader.Rewrite(context.Background(), 42, "imgtask_precedence", result)
 	require.NoError(t, err)
 	require.Len(t, storage.saved, 1)
 	require.Equal(t, pngBytes, storage.saved[0].data)
@@ -187,7 +216,7 @@ func TestImageResultUploaderPropagatesStorageError(t *testing.T) {
 	b64 := base64.StdEncoding.EncodeToString(pngBytes)
 	result := json.RawMessage(`{"data":[{"b64_json":"` + b64 + `"}]}`)
 
-	_, err := uploader.Rewrite(context.Background(), "imgtask_err", result)
+	_, err := uploader.Rewrite(context.Background(), 42, "imgtask_err", result)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "bucket unreachable")
 }
@@ -195,7 +224,7 @@ func TestImageResultUploaderPropagatesStorageError(t *testing.T) {
 func TestImageResultUploaderNilStoragePassthrough(t *testing.T) {
 	var uploader *ImageResultUploader
 	result := json.RawMessage(`{"data":[{"url":"https://example.test/x.png"}]}`)
-	out, err := uploader.Rewrite(context.Background(), "imgtask_nil", result)
+	out, err := uploader.Rewrite(context.Background(), 42, "imgtask_nil", result)
 	require.NoError(t, err)
 	require.JSONEq(t, string(result), string(out))
 }
@@ -218,7 +247,7 @@ func TestImageTaskServiceCompleteOffloadsToStorage(t *testing.T) {
 	got, err := svc.Get(context.Background(), owner, created.ID)
 	require.NoError(t, err)
 	require.Equal(t, ImageTaskStatusCompleted, got.Status)
-	require.Equal(t, "https://cdn.test/images/"+created.ID+"-0.png", got.ImageURL)
+	require.Equal(t, "https://cdn.test/images/users/1/"+created.ID+"-0.png", got.ImageURL)
 	require.NotContains(t, string(got.Result), "b64_json", "large base64 must not be persisted to Redis")
 	require.Len(t, storage.saved, 1)
 }

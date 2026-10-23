@@ -333,6 +333,9 @@ type SystemSettings struct {
 	// Available Channels feature switch (user-facing aggregate view)
 	AvailableChannelsEnabled bool `json:"available_channels_enabled"`
 
+	// Infinite Canvas administrator-only preview switch.
+	CanvasAdminOnly bool `json:"canvas_admin_only"`
+
 	// Subscription feature switch: gates the whole user-facing subscription surface
 	// (sidebar entries, purchase-page subscription tab, header badge, /subscriptions route).
 	SubscriptionEnabled bool `json:"subscription_enabled"`
@@ -446,6 +449,7 @@ type PublicSettings struct {
 	ChannelMonitorHideUserRanking        bool   `json:"channel_monitor_hide_user_ranking"`
 
 	AvailableChannelsEnabled bool `json:"available_channels_enabled"`
+	CanvasAdminOnly          bool `json:"canvas_admin_only"`
 
 	SubscriptionEnabled bool `json:"subscription_enabled"`
 

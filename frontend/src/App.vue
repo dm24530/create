@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { RouterView, useRouter, useRoute } from 'vue-router'
-import { computed, onMounted, onBeforeUnmount, watch } from 'vue'
+import { computed, defineAsyncComponent, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import Toast from '@/components/common/Toast.vue'
 import NavigationProgress from '@/components/common/NavigationProgress.vue'
 import AdminComplianceDialog from '@/components/admin/AdminComplianceDialog.vue'
@@ -21,6 +21,9 @@ const subscriptionStore = useSubscriptionStore()
 const announcementStore = useAnnouncementStore()
 const adminComplianceStore = useAdminComplianceStore()
 const adminSettingsStore = useAdminSettingsStore()
+const CanvasHostView = defineAsyncComponent(() => import('@/features/infinite-canvas/CanvasHostView.vue'))
+const canvasMounted = ref(route.path === '/canvas')
+const isCanvasRoute = computed(() => route.path === '/canvas')
 
 function updateDocumentTitle() {
   const customMenuItems = [
@@ -58,6 +61,14 @@ watch(
   ],
   updateDocumentTitle,
   { deep: true }
+)
+
+watch(
+  () => route.path,
+  (path) => {
+    if (path === '/canvas') canvasMounted.value = true
+  },
+  { immediate: true },
 )
 
 // Watch for authentication state and manage subscription data + announcements
@@ -160,21 +171,44 @@ onMounted(async () => {
 
   // Re-resolve document title now that site settings are available
   updateDocumentTitle()
+
+  if (authStore.isAuthenticated) {
+    const preloadImageStudio = () => {
+      void import('@/features/image-studio/ImageStudioView.vue').catch(() => undefined)
+    }
+    const requestIdle = window.requestIdleCallback
+    if (typeof requestIdle === 'function') {
+      requestIdle(preloadImageStudio, { timeout: 1500 })
+    } else {
+      window.setTimeout(preloadImageStudio, 250)
+    }
+  }
 })
 </script>
 
 <template>
   <NavigationProgress />
   <RouterView v-slot="{ Component, route: currentRoute }">
-    <KeepAlive v-if="currentRoute.meta.keepAlive">
-      <component :is="Component" :key="currentRoute.fullPath" />
+    <KeepAlive>
+      <component
+        v-if="currentRoute.meta.keepAlive"
+        :is="Component"
+        :key="String(currentRoute.name || currentRoute.path)"
+      />
     </KeepAlive>
     <component
-      v-else
+      v-if="!currentRoute.meta.keepAlive"
       :is="Component"
       :key="currentRoute.fullPath"
     />
   </RouterView>
+  <div
+    v-if="canvasMounted"
+    v-show="isCanvasRoute"
+    class="fixed inset-0 z-40 bg-gray-50 dark:bg-dark-950"
+  >
+    <CanvasHostView />
+  </div>
   <Toast />
   <AnnouncementPopup />
   <AdminComplianceDialog />

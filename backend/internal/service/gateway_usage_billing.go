@@ -236,6 +236,13 @@ func resolveUsageBillingRequestID(ctx context.Context, upstreamRequestID string)
 	return "generated:" + generateRequestID()
 }
 
+// ResolveUsageBillingRequestID exposes the exact request ID used by
+// RecordUsage so related artifacts, such as usage image links, can join the
+// persisted usage row without guessing.
+func ResolveUsageBillingRequestID(ctx context.Context, upstreamRequestID string) string {
+	return resolveUsageBillingRequestID(ctx, upstreamRequestID)
+}
+
 func isForcedUsageBillingRequestID(requestID string) bool {
 	id := strings.TrimSpace(requestID)
 	return strings.HasPrefix(id, "web_search:") ||
@@ -1221,6 +1228,7 @@ func (s *GatewayService) buildRecordUsageLog(
 		BillingType:              billingType,
 		BillingMode:              resolveBillingMode(result, cost),
 		Stream:                   result.Stream,
+		RequestType:              usageRequestTypeFromContext(ctx, result),
 		DurationMs:               &durationMs,
 		FirstTokenMs:             result.FirstTokenMs,
 		ImageCount:               result.ImageCount,
@@ -1239,6 +1247,7 @@ func (s *GatewayService) buildRecordUsageLog(
 		SubscriptionID:           optionalSubscriptionID(subscription),
 		CreatedAt:                time.Now(),
 	}
+	usageLog.SyncRequestTypeAndLegacyFields()
 	if result.ImageCount > 0 && (cost == nil || cost.BillingMode != string(BillingModeToken)) {
 		usageLog.RateMultiplier = imageMultiplier
 	}
@@ -1254,6 +1263,16 @@ func (s *GatewayService) buildRecordUsageLog(
 	}
 
 	return usageLog
+}
+
+func usageRequestTypeFromContext(ctx context.Context, result *ForwardResult) RequestType {
+	if async, _ := ctx.Value(ctxkey.AsyncImageTask).(bool); async {
+		return RequestTypeAsync
+	}
+	if result == nil {
+		return RequestTypeUnknown
+	}
+	return RequestTypeFromLegacy(result.Stream, false)
 }
 
 // resolveBillingMode 根据计费结果和请求类型确定计费模式。

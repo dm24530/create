@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
@@ -240,6 +241,13 @@ func TestAsyncImageHandlerResolvesCompositeOpenAIModel(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	require.Equal(t, http.StatusAccepted, w.Code)
+	var accepted struct {
+		TaskID string `json:"task_id"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &accepted))
+	record, err := tasks.GetRecord(context.Background(), accepted.TaskID)
+	require.NoError(t, err)
+	require.Equal(t, service.PlatformOpenAI, record.Execution.Platform)
 	require.Eventually(t, func() bool {
 		select {
 		case platform := <-executed:
@@ -290,6 +298,13 @@ func TestAsyncImageHandlerResolvesCompositeGeminiModel(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	require.Equal(t, http.StatusAccepted, w.Code)
+	var accepted struct {
+		TaskID string `json:"task_id"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &accepted))
+	record, err := tasks.GetRecord(context.Background(), accepted.TaskID)
+	require.NoError(t, err)
+	require.Equal(t, service.PlatformGemini, record.Execution.Platform)
 	require.Eventually(t, func() bool {
 		select {
 		case platform := <-executed:
@@ -419,6 +434,36 @@ func TestAsyncImageHandlerAcceptsGeminiEnvelope(t *testing.T) {
 	got, err := tasks.Get(context.Background(), service.ImageTaskOwner{UserID: 7, APIKeyID: 9}, accepted.TaskID)
 	require.NoError(t, err)
 	require.Contains(t, string(got.Result), `"b64_json":"aGVsbG8="`)
+}
+
+func TestNormalizeGeminiImageTaskResultSupportsFileAndSnakeCaseResults(t *testing.T) {
+	inline, err := normalizeGeminiImageTaskResult([]byte(`{
+		"candidates":[{"content":{"parts":[
+			{"inline_data":{"mime_type":"image/webp","data":"YWJj"}}
+		]}}]
+	}`))
+	require.NoError(t, err)
+	require.JSONEq(t, `{"created":0,"data":[{"b64_json":"YWJj","mime_type":"image/webp"}]}`,
+		replaceNormalizedTimestamp(t, inline))
+
+	fileURL, err := normalizeGeminiImageTaskResult([]byte(`{
+		"candidates":[{"content":{"parts":[
+			{"fileData":{"mimeType":"image/jpeg","fileUri":"https://img.example.test/a.jpg"}}
+		]}}]
+	}`))
+	require.NoError(t, err)
+	require.JSONEq(t, `{"created":0,"data":[{"mime_type":"image/jpeg","url":"https://img.example.test/a.jpg"}]}`,
+		replaceNormalizedTimestamp(t, fileURL))
+}
+
+func replaceNormalizedTimestamp(t *testing.T, body []byte) string {
+	t.Helper()
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(body, &payload))
+	payload["created"] = 0
+	result, err := json.Marshal(payload)
+	require.NoError(t, err)
+	return string(result)
 }
 
 // When object storage is not configured the feature is fully disabled: the
@@ -821,6 +866,7 @@ func TestNewImageTaskContextRestoresRequestDetails(t *testing.T) {
 			require.Equal(t, tc.execution.ContentType, got.Request.Header.Get("Content-Type"))
 			require.Equal(t, tc.wantPlatform, mustForcePlatform(got))
 			require.Equal(t, tc.wantModel, mustContextString(got, asyncImageGeminiModelKey))
+			require.True(t, got.Request.Context().Value(ctxkey.AsyncImageTask).(bool))
 
 			gotBody, readErr := io.ReadAll(got.Request.Body)
 			require.NoError(t, readErr)

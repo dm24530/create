@@ -505,6 +505,9 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	// Available channels feature switch
 	updates[SettingKeyAvailableChannelsEnabled] = strconv.FormatBool(settings.AvailableChannelsEnabled)
 
+	// Infinite Canvas admin-only preview switch
+	updates[SettingKeyCanvasAdminOnly] = strconv.FormatBool(settings.CanvasAdminOnly)
+
 	// Subscription feature switch
 	updates[SettingKeySubscriptionEnabled] = strconv.FormatBool(settings.SubscriptionEnabled)
 
@@ -787,6 +790,11 @@ func (s *SettingService) refreshCachedSettings(settings *SystemSettings) {
 	backendModeCache.Store(&cachedBackendMode{
 		value:     settings.BackendModeEnabled,
 		expiresAt: time.Now().Add(backendModeCacheTTL).UnixNano(),
+	})
+	canvasAdminOnlySF.Forget("canvas_admin_only")
+	canvasAdminOnlyCache.Store(&cachedCanvasAdminOnly{
+		value:     settings.CanvasAdminOnly,
+		expiresAt: time.Now().Add(canvasAdminOnlyCacheTTL).UnixNano(),
 	})
 	gatewayForwardingSF.Forget("gateway_forwarding")
 	gatewayForwardingCache.Store(&cachedGatewayForwardingSettings{
