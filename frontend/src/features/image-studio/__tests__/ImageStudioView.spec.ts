@@ -823,11 +823,42 @@ describe('ImageStudioView gallery', () => {
     firstWrapper.unmount()
 
     listGallery.mockReturnValue(new Promise(() => {}))
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockClear()
     const secondWrapper = mountImageStudio()
 
     expect(secondWrapper.find('img[src="https://cdn.example.com/gallery-1-thumb.jpg"]').exists()).toBe(true)
     expect(secondWrapper.get('[data-testid="api-key-select"]').text()).toContain('dd')
     expect(secondWrapper.get('[data-testid="image-model-select"]').text()).toContain('gpt-image-1')
+    await vi.waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith('/v1/images/batches/models', expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: 'Bearer sk-local' }),
+      }))
+    })
+    expect(secondWrapper.find('.toolbar-error').exists()).toBe(false)
+  })
+
+  it('does not show a key error while cached credentials are still loading', async () => {
+    listKeys.mockResolvedValue({
+      items: [{ id: 1, name: 'dd', key: 'sk-local', status: 'active', group_id: 2 }],
+    })
+    getPublicSettings.mockResolvedValue({ api_base_url: '/v1' })
+    vi.mocked(fetch).mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: [{ id: 'gpt-image-1' }] }),
+    } as Response)
+
+    const firstWrapper = mountImageStudio()
+    await flushPromises()
+    await flushPromises()
+    firstWrapper.unmount()
+
+    listKeys.mockReturnValue(new Promise(() => {}))
+    const secondWrapper = mountImageStudio()
+    await flushPromises()
+
+    expect(secondWrapper.get('[data-testid="api-key-select"]').text()).toContain('dd')
+    expect(secondWrapper.find('.toolbar-error').exists()).toBe(false)
   })
 
   it('does not expose one user image snapshot to another user', async () => {
