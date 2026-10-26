@@ -28,6 +28,9 @@ export type CanvasImageGenerationType = "generation" | "edit";
 export type CanvasNodeImage = {
     id: string;
     status: CanvasNodeStatus;
+    taskId?: string;
+    taskPollUrl?: string;
+    taskProvider?: "gemini" | "openai";
     errorDetails?: string;
     content: string;
     storageKey?: string;
@@ -53,6 +56,7 @@ export type CanvasNodeMetadata = {
     composerContent?: string;
     prompt?: string;
     status?: CanvasNodeStatus;
+    generationStartedAt?: number;
     errorDetails?: string;
     fontSize?: number;
     generationMode?: CanvasGenerationMode;

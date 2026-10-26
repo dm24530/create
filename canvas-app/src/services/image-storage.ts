@@ -2,8 +2,16 @@ import localforage from "localforage";
 
 import { nanoid } from "nanoid";
 import i18n from "@/i18n";
+import { mapWithConcurrency } from "@/lib/concurrency";
 import { withLocalProxy } from "@/stores/use-config-store";
-import { createImageRequestBlob, createImageThumbnail } from "@/lib/image-thumbnail";
+import {
+    CANVAS_IMAGE_REQUEST_BUDGET_BYTES,
+    CANVAS_IMAGE_REQUEST_POLICIES,
+    CANVAS_IMAGE_REQUEST_POLICY_VERSION,
+    createImageRequestBlob,
+    createImageThumbnail,
+    type ImageRequestPolicy,
+} from "@/lib/image-thumbnail";
 
 export type UploadedImage = {
     url: string;
@@ -20,6 +28,7 @@ const imageLogStore = localforage.createInstance({ name: "infinite-canvas", stor
 const videoLogStore = localforage.createInstance({ name: "infinite-canvas", storeName: "video_generation_logs" });
 const objectUrls = new Map<string, string>();
 const previewUrls = new Map<string, string>();
+const requestImageCache = new Map<string, Promise<PreparedImageRequest>>();
 const previewListeners = new Set<() => void>();
 let previewRevision = 0;
 let previewQueue: Promise<unknown> = Promise.resolve();
@@ -29,10 +38,23 @@ const IMAGE_REMOTE_LOAD_TIMEOUT_MS = 10 * 60_000;
 const IMAGE_DECODE_TIMEOUT_MS = 10_000;
 const IMAGE_RESPONSE_ERROR = "ImageResponseError";
 const IMAGE_TIMEOUT_ERROR = "ImageTimeoutError";
+const REQUEST_IMAGE_CACHE_LIMIT = 24;
 
 type StoredImagePreview = { version: number; blob?: Blob };
 
 type ImageReadOptions = { signal?: AbortSignal };
+type ImageReferenceSource = { url?: string; dataUrl?: string; storageKey?: string };
+
+export type PreparedImageRequest = {
+    dataUrl: string;
+    mimeType: string;
+    bytes: number;
+    sourceBytes: number;
+    width: number;
+    height: number;
+    reencoded: boolean;
+    policy: number;
+};
 
 export async function uploadImage(input: string | Blob, options?: ImageReadOptions): Promise<UploadedImage> {
     if (typeof input !== "string") return storeImage(input, options);
@@ -59,7 +81,7 @@ async function storeImage(blob: Blob, options?: ImageReadOptions): Promise<Uploa
         await store.setItem(storageKey, blob);
         throwIfAborted(options?.signal);
         objectUrls.set(storageKey, url);
-        await storeImagePreview(storageKey, blob);
+        queueImagePreview(storageKey);
         return { url, storageKey, width: meta.width, height: meta.height, bytes: blob.size, mimeType: blob.type.startsWith("image/") ? blob.type : "" };
     } catch (error) {
         URL.revokeObjectURL(url);
@@ -214,6 +236,7 @@ async function deleteImagePreview(storageKey: string) {
 }
 
 export async function setImageBlob(storageKey: string, blob: Blob) {
+    clearRequestImageCache(storageKey);
     await store.setItem(storageKey, blob);
     await deleteImagePreview(storageKey);
     await storeImagePreview(storageKey, blob);
@@ -228,12 +251,28 @@ export async function imageToDataUrl(image: { url?: string; dataUrl?: string; st
     return blobToDataUrl(await fetchImageBlob(url, options));
 }
 
-export async function imageToRequestDataUrl(image: { url?: string; dataUrl?: string; storageKey?: string }, options?: ImageReadOptions) {
-    const dataUrl = await imageToDataUrl(image, options);
-    if (!dataUrl) return dataUrl;
-    const blob = await fetchImageBlob(dataUrl, options);
-    const optimized = await createImageRequestBlob(blob).catch(() => blob);
-    return optimized === blob ? dataUrl : blobToDataUrl(optimized);
+export async function prepareImageRequestDataUrls(images: readonly ImageReferenceSource[], options?: ImageReadOptions): Promise<PreparedImageRequest[]> {
+    if (images.length === 0) return [];
+    const blobs = await mapWithConcurrency(images, 2, async (image) => {
+        const dataUrl = await imageToDataUrl(image, options);
+        if (!dataUrl) throw new Error(i18n.t("apiErrors.referenceImageReadFailed"));
+        return fetchImageBlob(dataUrl, options);
+    });
+
+    let smallestTotal = Number.POSITIVE_INFINITY;
+    for (let policyIndex = 0; policyIndex < CANVAS_IMAGE_REQUEST_POLICIES.length; policyIndex += 1) {
+        const policy = CANVAS_IMAGE_REQUEST_POLICIES[policyIndex];
+        const prepared = await mapWithConcurrency(images, 2, (image, index) => prepareImageRequest(blobs[index], image, policy, policyIndex));
+        const total = prepared.reduce((sum, image) => sum + image.dataUrl.length, 0);
+        smallestTotal = Math.min(smallestTotal, total);
+        if (total <= CANVAS_IMAGE_REQUEST_BUDGET_BYTES) return prepared;
+    }
+
+    const limit = `${Math.round(CANVAS_IMAGE_REQUEST_BUDGET_BYTES / 1024 / 1024)} MB`;
+    const actual = `${Math.ceil(smallestTotal / 1024 / 1024)} MB`;
+    throw new Error(i18n.language.toLowerCase().startsWith("zh")
+        ? `参考图片总量为 ${actual}，超过 ${limit} 的安全上限，请减少参考图数量或使用更小的图片`
+        : `Reference images total ${actual}, above the ${limit} safety limit. Use fewer or smaller images.`);
 }
 
 export async function deleteStoredImages(keys: Iterable<string>) {
@@ -242,6 +281,7 @@ export async function deleteStoredImages(keys: Iterable<string>) {
             const url = objectUrls.get(key);
             if (url) URL.revokeObjectURL(url);
             objectUrls.delete(key);
+            clearRequestImageCache(key);
             await deleteImagePreview(key);
             await store.removeItem(key);
         }),
@@ -283,4 +323,61 @@ function blobToDataUrl(blob: Blob) {
         reader.onerror = () => reject(new Error(i18n.t("common.imageReadFailed")));
         reader.readAsDataURL(blob);
     });
+}
+
+async function prepareImageRequest(
+    blob: Blob,
+    source: ImageReferenceSource,
+    policy: ImageRequestPolicy,
+    policyIndex: number,
+): Promise<PreparedImageRequest> {
+    const sourceKey = imageRequestSourceKey(source);
+    const cacheKey = sourceKey ? `${sourceKey}|${CANVAS_IMAGE_REQUEST_POLICY_VERSION}:${policyIndex}` : "";
+    if (cacheKey) {
+        const cached = requestImageCache.get(cacheKey);
+        if (cached) return cached;
+    }
+
+    const pending = createImageRequestBlob(blob, policy).then(async (prepared) => {
+        const dataUrl = await blobToDataUrl(prepared.blob);
+        return {
+            dataUrl,
+            mimeType: prepared.blob.type || "image/png",
+            bytes: estimateBase64Bytes(dataUrl),
+            sourceBytes: blob.size,
+            width: prepared.width,
+            height: prepared.height,
+            reencoded: prepared.reencoded,
+            policy: policyIndex,
+        };
+    });
+    if (!cacheKey) return pending;
+
+    requestImageCache.set(cacheKey, pending);
+    while (requestImageCache.size > REQUEST_IMAGE_CACHE_LIMIT) {
+        const oldest = requestImageCache.keys().next().value;
+        if (!oldest) break;
+        requestImageCache.delete(oldest);
+    }
+    pending.catch(() => requestImageCache.delete(cacheKey));
+    return pending;
+}
+
+function imageRequestSourceKey(image: ImageReferenceSource) {
+    if (image.storageKey) return `storage:${image.storageKey}`;
+    if (image.url && !/^(blob|data):/i.test(image.url)) return `url:${image.url}`;
+    return "";
+}
+
+function clearRequestImageCache(storageKey: string) {
+    const prefix = `storage:${storageKey}|`;
+    for (const key of requestImageCache.keys()) {
+        if (key.startsWith(prefix)) requestImageCache.delete(key);
+    }
+}
+
+function estimateBase64Bytes(dataUrl: string) {
+    const comma = dataUrl.indexOf(",");
+    const encoded = comma >= 0 ? dataUrl.length - comma - 1 : dataUrl.length;
+    return Math.max(0, Math.floor((encoded * 3) / 4));
 }

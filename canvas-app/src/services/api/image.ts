@@ -4,9 +4,10 @@ import i18n from "@/i18n";
 import { buildApiUrl, resolveModelRequestConfig, resolveModelScript, withLocalProxy, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
 import { normalizePluginImages, runModelPlugin } from "./model-plugin";
 import { nanoid } from "nanoid";
+import { mapWithConcurrency } from "@/lib/concurrency";
 import { dataUrlToFile } from "@/lib/image-utils";
 import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
-import { imageToDataUrl, imageToRequestDataUrl } from "@/services/image-storage";
+import { imageToDataUrl, prepareImageRequestDataUrls, type PreparedImageRequest } from "@/services/image-storage";
 import { imageSizePresets, inferMediaScale } from "@/lib/media-size";
 import { isGeminiImageModel } from "@/lib/image-model";
 import type { ReferenceImage } from "@/types/image";
@@ -96,7 +97,11 @@ type GeminiPayload = {
     promptFeedback?: { blockReason?: string };
 };
 type GeminiStreamState = { buffer: string; text: string; toolCalls: ResponseToolCall[]; error?: string };
-type RequestOptions = { signal?: AbortSignal };
+export type GeneratedImageResult = { id: string; dataUrl: string };
+type RequestOptions = {
+    signal?: AbortSignal;
+    onPreview?: (images: GeneratedImageResult[]) => void;
+};
 
 const IMAGE_QUALITY_VALUES = ["low", "medium", "high", "xhigh", "max"];
 const DEFAULT_IMAGE_SHORT_SIDE = 1024;
@@ -108,6 +113,7 @@ const IMAGE_MAX_RATIO = 3;
 const IMAGE_OUTPUT_FORMAT = "png";
 // 与 image-storage 的下载超时保持一致，避免接口挂起时节点一直停在生成中。
 const IMAGE_REQUEST_TIMEOUT_MS = 10 * 60_000;
+const GEMINI_IMAGE_REQUEST_CONCURRENCY = 3;
 
 const GEMINI_SUPPORTED_RATIOS = ["1:1", "1:4", "1:8", "2:3", "3:2", "3:4", "4:1", "4:3", "4:5", "5:4", "8:1", "9:16", "16:9", "21:9"];
 
@@ -660,15 +666,13 @@ function parseGeminiToolResponse(payload: GeminiPayload): ToolResponseResult {
 }
 
 async function requestGeminiImages(config: AiConfig, prompt: string, references: ReferenceImage[], count: number, options?: RequestOptions) {
-    const requests = Array.from({ length: count }, () => requestGeminiImagesOnce(config, prompt, references, options));
-    return (await Promise.all(requests)).flat();
+    const prepared = await prepareImageRequestDataUrls(references, options);
+    const requests = await mapWithConcurrency(Array.from({ length: count }, (_, index) => index), GEMINI_IMAGE_REQUEST_CONCURRENCY, () => requestGeminiImagesOnce(config, prompt, prepared, options));
+    return requests.flat();
 }
 
-async function requestGeminiImagesOnce(config: AiConfig, prompt: string, references: ReferenceImage[], options?: RequestOptions) {
-    const parts: GeminiPart[] = [{ text: prompt }];
-    for (const image of references) {
-        parts.push(toGeminiImagePart(await imageToRequestDataUrl(image)));
-    }
+async function requestGeminiImagesOnce(config: AiConfig, prompt: string, references: PreparedImageRequest[], options?: RequestOptions) {
+    const parts: GeminiPart[] = [{ text: prompt }, ...references.map((image) => toGeminiImagePart(image.dataUrl))];
     const request = {
         ...toGeminiBody(config, [{ role: "user", content: prompt }], { generationConfig: { responseModalities: ["TEXT", "IMAGE"], ...resolveGeminiImageConfig(config) } }),
         contents: [{ role: "user", parts }],
@@ -696,6 +700,128 @@ type AsyncImageTaskResponse = {
     error?: unknown;
     message?: string;
 };
+
+export type PersistentImageTask = {
+    taskId: string;
+    pollUrl: string;
+    provider: "gemini" | "openai";
+};
+
+export async function submitPersistentImageTask(
+    config: AiConfig,
+    prompt: string,
+    references: ReferenceImage[],
+    options?: RequestOptions,
+): Promise<PersistentImageTask | null> {
+    const requestConfig = resolveModelRequestConfig(config, config.model || config.imageModel);
+    const requestPrompt = buildImageReferencePromptText(prompt, references);
+    if (requestConfig.apiFormat === "gemini" || isGeminiImageModel(requestConfig.model)) {
+        const prepared = await prepareImageRequestDataUrls(references, options);
+        const request = {
+            ...toGeminiBody(requestConfig, [{ role: "user", content: requestPrompt }], {
+                generationConfig: {
+                    responseModalities: ["TEXT", "IMAGE"],
+                    ...resolveGeminiImageConfig(requestConfig),
+                },
+            }),
+            contents: [{
+                role: "user",
+                parts: [
+                    { text: requestPrompt },
+                    ...prepared.map((image) => toGeminiImagePart(image.dataUrl)),
+                ],
+            }],
+        };
+        return submitAsyncImageTask(
+            requestConfig,
+            "/images/generations/async",
+            { model: requestConfig.model, request },
+            "application/json",
+            "gemini",
+            options,
+        );
+    }
+
+    if (references.length === 0) {
+        const payload: Record<string, unknown> = {
+            model: requestConfig.model,
+            prompt: withSystemPrompt(requestConfig, requestPrompt),
+            n: 1,
+            output_format: IMAGE_OUTPUT_FORMAT,
+        };
+        if (requestConfig.size) payload.size = resolveRequestSize(requestConfig.size);
+        if (requestConfig.quality) payload.quality = normalizeQuality(requestConfig.quality);
+        if (requestConfig.background) payload.background = normalizeBackground(requestConfig.background);
+        return submitAsyncImageTask(requestConfig, "/images/generations/async", payload, "application/json", "openai", options);
+    }
+
+    const formData = new FormData();
+    formData.set("model", requestConfig.model);
+    formData.set("prompt", withSystemPrompt(requestConfig, requestPrompt));
+    formData.set("n", "1");
+    if (!/gpt-image/.test(requestConfig.model)) formData.set("response_format", "b64_json");
+    formData.set("output_format", IMAGE_OUTPUT_FORMAT);
+    const quality = normalizeQuality(requestConfig.quality);
+    const requestSize = resolveRequestSize(requestConfig.size);
+    const background = normalizeBackground(requestConfig.background);
+    if (quality) formData.set("quality", quality);
+    if (requestSize) formData.set("size", requestSize);
+    if (background) formData.set("background", background);
+    const files = await Promise.all(references.map(async (image) => dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) })));
+    const imageField = files.length > 1 ? "image[]" : "image";
+    files.forEach((file) => formData.append(imageField, file));
+    return submitAsyncImageTask(requestConfig, "/images/edits/async", formData, "", "openai", options);
+}
+
+export async function waitForPersistentImageTask(
+    config: AiConfig,
+    task: PersistentImageTask,
+    options?: RequestOptions,
+) {
+    return pollImageTask(config, task.pollUrl, options);
+}
+
+async function submitAsyncImageTask(
+    config: AiConfig,
+    path: string,
+    data: unknown,
+    contentType: string,
+    provider: "gemini" | "openai",
+    options?: RequestOptions,
+): Promise<PersistentImageTask | null> {
+    let response;
+    try {
+        response = await axios.post<AsyncImageTaskResponse>(
+            aiApiUrl(config, path),
+            data,
+            {
+                headers: {
+                    ...aiHeaders(config, contentType || undefined),
+                    "Idempotency-Key": nanoid(),
+                },
+                signal: options?.signal,
+                timeout: 30_000,
+                validateStatus: () => true,
+            },
+        );
+    } catch (error) {
+        if (axios.isCancel(error)) throw error;
+        if (axios.isAxiosError(error)) {
+            const status = error.response?.status;
+            if (status === 404 || status === 405 || status === 501) return null;
+            throw new Error(readAxiosError(error, apiText("requestFailed")));
+        }
+        throw error;
+    }
+    if (response.status === 404 || response.status === 405 || response.status === 501) return null;
+    if (response.status < 200 || response.status >= 300) {
+        throw new Error(readApiErrorMessage(response.data) || readStatusError(response.status, apiText("requestFailed")));
+    }
+    const taskId = String(response.data?.task_id || response.data?.id || "").trim();
+    const pollUrl = String(response.data?.poll_url || "").trim();
+    if (!taskId || !pollUrl) throw new Error(apiText("requestFailed"));
+    return { taskId, pollUrl: resolvePollURL(config, pollUrl), provider };
+}
 
 async function requestGeminiImagesAsync(
     config: AiConfig,
@@ -732,7 +858,7 @@ async function requestGeminiImagesAsync(
     }
     const task = submit.data
     if (!task?.poll_url) throw new Error(apiText("requestFailed"))
-    return pollGeminiImageTask(config, resolvePollURL(config, task.poll_url), options)
+    return pollImageTask(config, resolvePollURL(config, task.poll_url), options)
 }
 
 function resolvePollURL(config: AiConfig, pollURL: string) {
@@ -742,13 +868,14 @@ function resolvePollURL(config: AiConfig, pollURL: string) {
     return withLocalProxy(new URL(pollURL, apiOrigin).toString())
 }
 
-async function pollGeminiImageTask(
+async function pollImageTask(
     config: AiConfig,
     url: string,
     options?: RequestOptions,
 ) {
     const deadline = Date.now() + 30 * 60_000
     const startedAt = Date.now()
+    let previewDelivered = false
     while (Date.now() < deadline) {
         if (options?.signal?.aborted) throw new Error(apiText("requestCanceled"))
         const response = await axios.get<AsyncImageTaskResponse>(url, {
@@ -761,6 +888,18 @@ async function pollGeminiImageTask(
             const result = typeof task.result === "string" ? JSON.parse(task.result) : task.result
             if (!result) throw new Error(apiText("noImageReturned"))
             return parseImagePayload(result as ImageApiResponse)
+        }
+        if (task.status === "preview_ready" && !previewDelivered) {
+            try {
+                const result = typeof task.result === "string" ? JSON.parse(task.result) : task.result
+                const images = result ? parseImagePayload(result as ImageApiResponse) : []
+                if (images.length) {
+                    previewDelivered = true
+                    options?.onPreview?.(images)
+                }
+            } catch {
+                // Keep polling for the final persisted image.
+            }
         }
         if (task.status === "failed") {
             throw new Error(readApiErrorMessage(task.error) || task.message || apiText("requestFailed"))

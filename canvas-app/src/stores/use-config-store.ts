@@ -120,7 +120,7 @@ export const defaultConfig: AiConfig = {
     size: "1:1",
     background: "",
     count: "1",
-    canvasImageCount: "3",
+    canvasImageCount: "1",
     proxyEnabled: false,
     proxyUrl: DEFAULT_LOCAL_PROXY_URL,
     nodeRegenerateBehavior: "new-node",
@@ -253,6 +253,18 @@ export const useConfigStore = create<ConfigStore>()(
                 const persistedConfig = (persistedState.config || {}) as Partial<AiConfig>;
                 const persistedWebdav = (persistedState.webdav || {}) as Partial<WebdavSyncConfig>;
                 const config = { ...defaultConfig, ...persistedConfig };
+                const countMigrationKey = `${CONFIG_STORE_KEY}:canvas-image-count-default-v1`;
+                let canvasImageCount = config.canvasImageCount || defaultConfig.canvasImageCount;
+                try {
+                    if (localStorage.getItem(countMigrationKey) !== "1") {
+                        if (!persistedConfig.canvasImageCount || persistedConfig.canvasImageCount === "3") {
+                            canvasImageCount = defaultConfig.canvasImageCount;
+                        }
+                        localStorage.setItem(countMigrationKey, "1");
+                    }
+                } catch {
+                    // Storage can be unavailable in restricted browser contexts.
+                }
                 if (!Array.isArray(persistedConfig.channels)) config.channels = [];
                 const channels = normalizeChannels(config);
                 const models = modelOptionsFromChannels(channels);
@@ -279,7 +291,7 @@ export const useConfigStore = create<ConfigStore>()(
                         videoGenerateAudio: config.videoGenerateAudio || "true",
                         videoWatermark: config.videoWatermark || "false",
                         videoMode: config.videoMode === "reference" ? "reference" : "frames",
-                        canvasImageCount: config.canvasImageCount || "3",
+                        canvasImageCount,
                         proxyEnabled: Boolean(config.proxyEnabled),
                         proxyUrl: config.proxyUrl || DEFAULT_LOCAL_PROXY_URL,
                         nodeRegenerateBehavior: config.nodeRegenerateBehavior === "overwrite" ? "overwrite" : "new-node",

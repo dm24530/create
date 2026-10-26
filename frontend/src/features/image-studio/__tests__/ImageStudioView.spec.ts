@@ -1368,6 +1368,72 @@ describe('ImageStudioView gallery', () => {
     expect(wrapper.findAll('.image-pending-card')).toHaveLength(0)
   })
 
+  it('shows a ready preview before the original image has been persisted', async () => {
+    listKeys.mockResolvedValue({
+      items: [{ id: 1, name: 'dd', key: 'sk-local', status: 'active', group_id: 2 }],
+    })
+    getPublicSettings.mockResolvedValue({ api_base_url: '/v1' })
+    let pollCalls = 0
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/images/batches/models')) {
+        return { ok: true, json: async () => ({ data: [] }) } as Response
+      }
+      if (url.endsWith('/models')) {
+        return { ok: true, json: async () => ({ data: [{ id: 'gpt-image-1' }] }) } as Response
+      }
+      if (url.endsWith('/images/generations/async')) {
+        return {
+          ok: true,
+          status: 202,
+          json: async () => ({
+            task_id: 'imgtask_preview_ready',
+            status: 'processing',
+            poll_url: '/v1/images/tasks/imgtask_preview_ready',
+          }),
+        } as Response
+      }
+      if (url.endsWith('/images/tasks/imgtask_preview_ready')) {
+        pollCalls += 1
+        if (pollCalls === 1) {
+          return {
+            ok: true,
+            json: async () => ({
+              task_id: 'imgtask_preview_ready',
+              status: 'preview_ready',
+              result: { data: [{ url: 'data:image/jpeg;base64,cHJldmlldw==' }] },
+            }),
+          } as Response
+        }
+        return {
+          ok: true,
+          json: async () => ({
+            task_id: 'imgtask_preview_ready',
+            status: 'completed',
+            result: { data: [{ b64_json: 'ZmluYWw=', mime_type: 'image/png' }] },
+          }),
+        } as Response
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountImageStudio()
+    await flushPromises()
+    await flushPromises()
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    await vi.waitFor(() => {
+      expect(wrapper.find('.image-pending-card--preview img').attributes('src')).toBe('data:image/jpeg;base64,cHJldmlldw==')
+    }, { timeout: 2000, interval: 50 })
+    expect(wrapper.find('.image-pending-card__preview-status').text()).toContain('预览已生成')
+    expect(saveGallery).not.toHaveBeenCalled()
+
+    await vi.waitFor(() => {
+      expect(wrapper.findAll('.image-pending-card')).toHaveLength(0)
+    }, { timeout: 2000, interval: 50 })
+    expect(saveGallery).toHaveBeenCalled()
+  })
+
   it('does not process a persistent image result twice', async () => {
     listKeys.mockResolvedValue({
       items: [{ id: 1, name: 'dd', key: 'sk-local', status: 'active', group_id: 2 }],

@@ -460,7 +460,7 @@ function NodeContent(props: NodeContentRendererProps) {
     if (props.node.type === CanvasNodeType.Config && props.renderNodeContent) return props.renderNodeContent(props.node);
     if (props.isBatchRoot && props.node.type === CanvasNodeType.Image) return <ImageNodeContent {...props} />;
     if (props.node.type === CanvasNodeType.Text && props.node.metadata?.texts?.length && (props.node.metadata.status !== "error" || props.node.metadata.texts.some((text) => text.content))) return <TextContent {...props} />;
-    if (props.node.metadata?.status === "loading") return <LoadingContent theme={props.theme} />;
+    if (props.node.metadata?.status === "loading") return <LoadingContent node={props.node} theme={props.theme} />;
     if (props.node.metadata?.status === "error") return <ErrorContent node={props.node} theme={props.theme} onRetry={props.onRetry} />;
 
     const Renderer = nodeContentRenderers[props.node.type as CanvasNodeType];
@@ -499,14 +499,52 @@ function GroupNodeContent({ node, theme, groupChildCount }: NodeContentRendererP
     );
 }
 
-function LoadingContent({ theme }: Pick<NodeContentRendererProps, "theme">) {
+function LoadingContent({ node, theme }: Pick<NodeContentRendererProps, "node" | "theme">) {
     const { t } = useTranslation();
     return (
         <div className="flex h-full w-full flex-col items-center justify-center gap-3" style={{ color: theme.node.activeStroke }}>
             <div className="size-10 animate-spin rounded-full border-2" style={{ borderColor: theme.node.stroke, borderTopColor: theme.node.activeStroke }} />
-            <span className="text-[10px] tracking-[0.2em]">{t("canvas.node.generating")}</span>
+            <GenerationTimingLabel startedAt={node.metadata?.generationStartedAt} label={t("canvas.node.generating")} />
         </div>
     );
+}
+
+function GenerationTimingLabel({ startedAt, label }: { startedAt?: number; label: string }) {
+    const { i18n } = useTranslation();
+    const elapsedSeconds = useElapsedSeconds(startedAt);
+    return (
+        <span className="text-[10px] tracking-[0.12em]">
+            {label} · {formatElapsedDuration(elapsedSeconds, i18n.language)}
+        </span>
+    );
+}
+
+function useElapsedSeconds(startedAt?: number) {
+    const fallbackStart = useRef(Date.now());
+    const [now, setNow] = useState(() => Date.now());
+    useEffect(() => {
+        setNow(Date.now());
+        const timer = window.setInterval(() => setNow(Date.now()), 1000);
+        return () => window.clearInterval(timer);
+    }, [startedAt]);
+    const start = startedAt && startedAt > 0 ? startedAt : fallbackStart.current;
+    return Math.max(0, Math.floor((now - start) / 1000));
+}
+
+function formatElapsedDuration(totalSeconds: number, language: string) {
+    const seconds = Math.max(0, Math.floor(totalSeconds));
+    const chinese = language.toLowerCase().startsWith("zh");
+    if (seconds < 60) return chinese ? `${seconds} 秒` : `${seconds}s`;
+    const minutes = Math.floor(seconds / 60);
+    const remainder = seconds % 60;
+    if (minutes < 60) {
+        return chinese ? `${minutes} 分 ${String(remainder).padStart(2, "0")} 秒` : `${minutes}m ${String(remainder).padStart(2, "0")}s`;
+    }
+    const hours = Math.floor(minutes / 60);
+    const minuteRemainder = minutes % 60;
+    return chinese
+        ? `${hours} 时 ${String(minuteRemainder).padStart(2, "0")} 分`
+        : `${hours}h ${String(minuteRemainder).padStart(2, "0")}m`;
 }
 
 function ErrorContent({ node, theme, onRetry }: Pick<NodeContentRendererProps, "node" | "theme" | "onRetry">) {
@@ -584,7 +622,7 @@ function TextContent({ node, theme, isEditingContent, textareaRef, mentionRefere
                         {content}
                     </div>
                 ) : primaryText ? (
-                    <TextSlotStatus text={primaryText} />
+                    <TextSlotStatus text={primaryText} startedAt={node.metadata?.generationStartedAt} />
                 ) : (
                     <div className="p-4 font-mono" style={{ color: theme.node.placeholder }}>
                         {t("canvas.node.editText")}
@@ -654,13 +692,13 @@ function ExpandedTextCard({ node, text, index, onSetPrimary }: { node: CanvasNod
                     </button>
                 </>
             ) : (
-                <TextSlotStatus text={text} />
+                <TextSlotStatus text={text} startedAt={node.metadata?.generationStartedAt} />
             )}
         </div>
     );
 }
 
-function TextSlotStatus({ text }: { text: CanvasNodeText }) {
+function TextSlotStatus({ text, startedAt }: { text: CanvasNodeText; startedAt?: number }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const { t } = useTranslation();
     const failed = text.status === "error";
@@ -668,7 +706,7 @@ function TextSlotStatus({ text }: { text: CanvasNodeText }) {
     return (
         <div className="flex h-full w-full flex-col items-center justify-center gap-3 px-6 text-center" style={{ background: theme.node.fill, color: failed ? theme.node.text : theme.node.activeStroke }}>
             {failed ? <span className="text-xs leading-5">{text.errorDetails || t("canvas.node.failed")}</span> : loading ? <div className="size-10 animate-spin rounded-full border-2" style={{ borderColor: theme.node.stroke, borderTopColor: theme.node.activeStroke }} /> : <span className="text-xs">{t("apiErrors.noContent")}</span>}
-            {loading ? <span className="text-[10px] tracking-[0.2em]">{t("canvas.node.generating")}</span> : null}
+            {loading ? <GenerationTimingLabel startedAt={startedAt} label={t("canvas.node.generating")} /> : null}
         </div>
     );
 }
@@ -798,7 +836,7 @@ function ImageContent({
                         className={`pointer-events-none block h-full w-full select-none ${node.metadata?.freeResize ? "object-fill" : "object-contain"}`}
                     />
                 ) : (
-                    <ImageSlotStatus image={primaryImage} />
+                    <ImageSlotStatus image={primaryImage} startedAt={node.metadata?.generationStartedAt} />
                 )}
             </div>
             {primaryImage?.status === "error" ? <BatchImageFailureActions placement="left" onRetry={() => onRetryBatchImage?.(primaryImage.id)} onDelete={() => onDeleteBatchImage?.(primaryImage.id)} /> : null}
@@ -879,7 +917,7 @@ function ExpandedImageCard({ node, image, index, scale, onView, onSetPrimary, on
                 onView();
             }}
         >
-            {image.content ? <img src={source} alt={node.title} draggable={false} className="pointer-events-none h-full w-full select-none object-contain" /> : <ImageSlotStatus image={image} />}
+            {image.content ? <img src={source} alt={node.title} draggable={false} className="pointer-events-none h-full w-full select-none object-contain" /> : <ImageSlotStatus image={image} startedAt={node.metadata?.generationStartedAt} />}
             {image.content ? (
                 <div className="pointer-events-none absolute inset-x-2 top-2 flex items-center gap-1 opacity-0 transition-opacity duration-150 group-hover/node:pointer-events-auto group-hover/node:opacity-100">
                     <button type="button" className="flex h-8 min-w-0 flex-1 items-center justify-center gap-1 rounded-lg border px-1.5 text-[10px] font-medium shadow-[0_6px_18px_rgba(15,23,42,.16)] backdrop-blur-md transition hover:scale-[1.02]" style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.toolbar.activeText }} title={t("common.download")} onClick={(event) => (event.stopPropagation(), onDownload())}>
@@ -917,14 +955,14 @@ function BatchImageFailureActions({ placement, onRetry, onDelete }: { placement:
     );
 }
 
-function ImageSlotStatus({ image }: { image?: CanvasNodeImage }) {
+function ImageSlotStatus({ image, startedAt }: { image?: CanvasNodeImage; startedAt?: number }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const { t } = useTranslation();
     const failed = image?.status === "error";
     return (
         <div className="flex h-full w-full flex-col items-center justify-center gap-3 px-6 text-center" style={{ background: theme.node.fill, color: failed ? theme.node.text : theme.node.activeStroke }}>
             {failed ? <span className="text-xs leading-5">{image.errorDetails || t("canvas.node.failed")}</span> : <div className="size-10 animate-spin rounded-full border-2" style={{ borderColor: theme.node.stroke, borderTopColor: theme.node.activeStroke }} />}
-            {!failed ? <span className="text-[10px] tracking-[0.2em]">{t("canvas.node.generating")}</span> : null}
+            {!failed ? <GenerationTimingLabel startedAt={startedAt} label={t("canvas.node.generating")} /> : null}
         </div>
     );
 }

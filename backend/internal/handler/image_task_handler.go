@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -43,12 +44,47 @@ const imageTaskLeaseTTL = 2 * time.Minute
 const imageTaskLeaseRenewInterval = 30 * time.Second
 const imageTaskLeaseRenewTimeout = 5 * time.Second
 const imageTaskLeaseRenewFailureLimit = 3
+const geminiAsyncImageMaxRequestBodyBytes = 16 << 20
+const geminiAsyncImageMaxInlineImages = 14
+const geminiAsyncImageMaxInlineBytes = 12 << 20
+const geminiAsyncImageMaxSingleInlineBytes = 8 << 20
 
 var defaultImageTaskRetryDelays = []time.Duration{10 * time.Second, 30 * time.Second}
+var errGeminiImageOutputMissing = errors.New("Gemini response contained no image output")
 
 type asyncGeminiTaskEnvelope struct {
 	Model   string          `json:"model"`
 	Request json.RawMessage `json:"request"`
+	Stats   geminiImageRequestStats
+}
+
+type geminiImageRequestPayload struct {
+	Contents []struct {
+		Parts []struct {
+			InlineData      *geminiImageInlineData `json:"inlineData"`
+			InlineDataSnake *geminiImageInlineData `json:"inline_data"`
+			FileData        *geminiImageFileData   `json:"fileData"`
+			FileDataSnake   *geminiImageFileData   `json:"file_data"`
+		} `json:"parts"`
+	} `json:"contents"`
+}
+
+type geminiImageInlineData struct {
+	MIMEType      string `json:"mimeType"`
+	MIMETypeSnake string `json:"mime_type"`
+	Data          string `json:"data"`
+}
+
+type geminiImageFileData struct {
+	MIMEType      string `json:"mimeType"`
+	MIMETypeSnake string `json:"mime_type"`
+	FileURI       string `json:"fileUri"`
+	FileURISnake  string `json:"file_uri"`
+}
+
+type geminiImageRequestStats struct {
+	ImageCount  int
+	InlineBytes int
 }
 
 func NewAsyncImageHandler(tasks *service.ImageTaskService, openAI *OpenAIGatewayHandler) *AsyncImageHandler {
@@ -138,6 +174,15 @@ func (h *AsyncImageHandler) Submit(c *gin.Context) {
 		imageTaskError(c, service.ErrImageTaskUnavailable)
 		return
 	}
+	if isGeminiAsyncImagePlatform(platform) && c.Request.ContentLength > geminiAsyncImageMaxRequestBodyBytes {
+		imageTaskJSONError(
+			c,
+			http.StatusRequestEntityTooLarge,
+			"invalid_request_error",
+			"Gemini image request is too large; reduce the number or resolution of reference images",
+		)
+		return
+	}
 
 	body, err := pkghttputil.ReadRequestBodyWithPrealloc(c.Request)
 	if err != nil {
@@ -161,23 +206,41 @@ func (h *AsyncImageHandler) Submit(c *gin.Context) {
 		imageTaskJSONError(c, http.StatusBadRequest, "invalid_request_error", "model is required for composite image tasks")
 		return
 	}
-	if err := h.validateRequest(c, effectivePlatform, body); err != nil {
+	var geminiEnvelope *asyncGeminiTaskEnvelope
+	if isGeminiAsyncImagePlatform(effectivePlatform) {
+		if len(body) > geminiAsyncImageMaxRequestBodyBytes {
+			imageTaskJSONError(
+				c,
+				http.StatusRequestEntityTooLarge,
+				"invalid_request_error",
+				"Gemini image request is too large; reduce the number or resolution of reference images",
+			)
+			return
+		}
+		geminiEnvelope, err = parseGeminiAsyncEnvelope(body)
+		if err != nil {
+			imageTaskJSONError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
+			return
+		}
+		logger.L().Info("image_task.gemini_request_validated",
+			zap.String("model", geminiEnvelope.Model),
+			zap.Int("body_bytes", len(body)),
+			zap.Int("image_count", geminiEnvelope.Stats.ImageCount),
+			zap.Int("inline_bytes", geminiEnvelope.Stats.InlineBytes),
+		)
+	}
+	if err := h.validateRequest(c, effectivePlatform, body, geminiEnvelope); err != nil {
 		imageTaskJSONError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
 		return
 	}
-	if !h.checkSecurityAuditBeforeSubmit(c, apiKey, effectivePlatform, body) {
+	if !h.checkSecurityAuditBeforeSubmit(c, apiKey, effectivePlatform, body, geminiEnvelope) {
 		return
 	}
 
 	executionBody := body
-	if isGeminiAsyncImagePlatform(effectivePlatform) {
-		envelope, parseErr := parseGeminiAsyncEnvelope(body)
-		if parseErr != nil {
-			imageTaskJSONError(c, http.StatusBadRequest, "invalid_request_error", parseErr.Error())
-			return
-		}
-		executionBody = envelope.Request
-		c.Set(asyncImageGeminiModelKey, envelope.Model)
+	if geminiEnvelope != nil {
+		executionBody = geminiEnvelope.Request
+		c.Set(asyncImageGeminiModelKey, geminiEnvelope.Model)
 	}
 	taskCtx, recorder, cancel := newAsyncImageContext(c, executionBody, h.tasks.ExecutionTimeout())
 	if modelValue, exists := c.Get(asyncImageGeminiModelKey); exists {
@@ -263,7 +326,13 @@ func writeAcceptedImageTask(c *gin.Context, task *service.ImageTask, pollURL str
 	})
 }
 
-func (h *AsyncImageHandler) checkSecurityAuditBeforeSubmit(c *gin.Context, apiKey *service.APIKey, platform string, body []byte) bool {
+func (h *AsyncImageHandler) checkSecurityAuditBeforeSubmit(
+	c *gin.Context,
+	apiKey *service.APIKey,
+	platform string,
+	body []byte,
+	geminiEnvelope *asyncGeminiTaskEnvelope,
+) bool {
 	if h == nil || h.openAI == nil {
 		return true
 	}
@@ -278,13 +347,16 @@ func (h *AsyncImageHandler) checkSecurityAuditBeforeSubmit(c *gin.Context, apiKe
 		parsed := service.ParseGrokMediaRequest(c.GetHeader("Content-Type"), body)
 		model, moderationBody = parsed.Model, parsed.ModerationBody()
 	} else if isGeminiAsyncImagePlatform(platform) {
-		envelope, err := parseGeminiAsyncEnvelope(body)
-		if err != nil {
-			imageTaskJSONError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
-			return false
+		if geminiEnvelope == nil {
+			parsed, err := parseGeminiAsyncEnvelope(body)
+			if err != nil {
+				imageTaskJSONError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
+				return false
+			}
+			geminiEnvelope = parsed
 		}
-		model = envelope.Model
-		moderationBody = extractGeminiPromptBody(envelope.Request)
+		model = geminiEnvelope.Model
+		moderationBody = extractGeminiPromptBody(geminiEnvelope.Request)
 	} else if h.openAI.gatewayService != nil {
 		parsed, err := h.openAI.gatewayService.ParseOpenAIImagesRequest(c, body)
 		if err != nil {
@@ -331,13 +403,13 @@ func (h *AsyncImageHandler) Get(c *gin.Context) {
 		return
 	}
 	c.Header("Cache-Control", "no-store")
-	if task.Status == service.ImageTaskStatusProcessing {
+	if task.Status == service.ImageTaskStatusProcessing || task.Status == service.ImageTaskStatusPreviewReady {
 		c.Header("Retry-After", "3")
 	}
 	c.JSON(http.StatusOK, task)
 }
 
-func (h *AsyncImageHandler) validateRequest(c *gin.Context, platform string, body []byte) error {
+func (h *AsyncImageHandler) validateRequest(c *gin.Context, platform string, body []byte, geminiEnvelope *asyncGeminiTaskEnvelope) error {
 	if h.openAI == nil || h.openAI.gatewayService == nil {
 		return nil
 	}
@@ -349,6 +421,9 @@ func (h *AsyncImageHandler) validateRequest(c *gin.Context, platform string, bod
 		return nil
 	}
 	if isGeminiAsyncImagePlatform(platform) {
+		if geminiEnvelope != nil {
+			return nil
+		}
 		_, err := parseGeminiAsyncEnvelope(body)
 		return err
 	}
@@ -652,7 +727,9 @@ func (h *AsyncImageHandler) run(taskID, platform string, taskCtx *gin.Context, r
 					zap.Error(normalizeErr),
 				)
 				message := "invalid Gemini image response"
-				if statusCode == http.StatusRequestEntityTooLarge {
+				if errors.Is(normalizeErr, errGeminiImageOutputMissing) {
+					message = "Gemini image upstream returned no image output"
+				} else if statusCode == http.StatusRequestEntityTooLarge {
 					message = "Gemini image request is too large; retry with fewer or smaller reference images"
 				} else if len(body) == 0 {
 					message = "Gemini image upstream returned an empty response"
@@ -673,6 +750,10 @@ func (h *AsyncImageHandler) run(taskID, platform string, taskCtx *gin.Context, r
 			statusCode = http.StatusOK
 		}
 		if statusCode >= http.StatusOK && statusCode < http.StatusMultipleChoices {
+			if isGeminiAsyncImagePlatform(platform) && geminiImageTaskResponseHasError(body) {
+				h.failTask(taskID, http.StatusBadGateway, extractImageTaskError(body))
+				return
+			}
 			if len(body) == 0 || !json.Valid(body) {
 				h.failTask(taskID, http.StatusBadGateway, imageTaskErrorPayload("api_error", "upstream returned an invalid image response"))
 				return
@@ -860,7 +941,89 @@ func parseGeminiAsyncEnvelope(body []byte) (*asyncGeminiTaskEnvelope, error) {
 	if len(envelope.Request) == 0 || !json.Valid(envelope.Request) {
 		return nil, errors.New("request is required")
 	}
+	stats, err := inspectGeminiImageRequest(envelope.Request)
+	if err != nil {
+		return nil, err
+	}
+	envelope.Stats = stats
 	return &envelope, nil
+}
+
+func inspectGeminiImageRequest(body []byte) (geminiImageRequestStats, error) {
+	var payload geminiImageRequestPayload
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return geminiImageRequestStats{}, errors.New("invalid Gemini image request payload")
+	}
+
+	stats := geminiImageRequestStats{}
+	for _, content := range payload.Contents {
+		for _, part := range content.Parts {
+			inline := part.InlineData
+			if inline == nil {
+				inline = part.InlineDataSnake
+			}
+			if inline != nil {
+				stats.ImageCount++
+				mimeType := firstNonEmptyHandlerString(inline.MIMEType, inline.MIMETypeSnake)
+				if mimeType == "" || !strings.HasPrefix(strings.ToLower(mimeType), "image/") {
+					return stats, errors.New("Gemini image parts require an image MIME type")
+				}
+				if strings.TrimSpace(inline.Data) == "" {
+					return stats, errors.New("Gemini image part data is required")
+				}
+				decodedBytes := (len(inline.Data) * 3) / 4
+				if decodedBytes > geminiAsyncImageMaxSingleInlineBytes {
+					return stats, fmt.Errorf("Gemini image part exceeds %d MB", geminiAsyncImageMaxSingleInlineBytes>>20)
+				}
+				stats.InlineBytes += decodedBytes
+				continue
+			}
+
+			file := part.FileData
+			if file == nil {
+				file = part.FileDataSnake
+			}
+			if file == nil {
+				continue
+			}
+			stats.ImageCount++
+			mimeType := firstNonEmptyHandlerString(file.MIMEType, file.MIMETypeSnake)
+			if mimeType == "" || !strings.HasPrefix(strings.ToLower(mimeType), "image/") {
+				return stats, errors.New("Gemini image parts require an image MIME type")
+			}
+			if firstNonEmptyHandlerString(file.FileURI, file.FileURISnake) == "" {
+				return stats, errors.New("Gemini file image URI is required")
+			}
+		}
+	}
+
+	if stats.ImageCount > geminiAsyncImageMaxInlineImages {
+		return stats, fmt.Errorf("Gemini image request supports at most %d images", geminiAsyncImageMaxInlineImages)
+	}
+	if stats.InlineBytes > geminiAsyncImageMaxInlineBytes {
+		return stats, fmt.Errorf("Gemini inline images exceed %d MB in total", geminiAsyncImageMaxInlineBytes>>20)
+	}
+	return stats, nil
+}
+
+func firstNonEmptyHandlerString(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func geminiImageTaskResponseHasError(body []byte) bool {
+	var envelope struct {
+		Error json.RawMessage `json:"error"`
+	}
+	if json.Unmarshal(body, &envelope) != nil {
+		return false
+	}
+	trimmed := strings.TrimSpace(string(envelope.Error))
+	return trimmed != "" && trimmed != "null"
 }
 
 func extractGeminiPromptBody(body []byte) json.RawMessage {
@@ -908,6 +1071,9 @@ func normalizeGeminiImageTaskResult(body []byte) ([]byte, error) {
 			item["url"] = output.URL
 		}
 		items = append(items, item)
+	}
+	if len(items) == 0 {
+		return nil, errGeminiImageOutputMissing
 	}
 	return json.Marshal(map[string]any{
 		"created": time.Now().UTC().Unix(),

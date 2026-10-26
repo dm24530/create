@@ -456,6 +456,40 @@ func TestNormalizeGeminiImageTaskResultSupportsFileAndSnakeCaseResults(t *testin
 		replaceNormalizedTimestamp(t, fileURL))
 }
 
+func TestInspectGeminiImageRequestSupportsInlineAndFileImages(t *testing.T) {
+	body := []byte(`{
+		"contents":[{"parts":[
+			{"text":"compose"},
+			{"inlineData":{"mimeType":"image/webp","data":"YWJj"}},
+			{"fileData":{"mime_type":"image/jpeg","file_uri":"https://assets.example/image.jpg"}}
+		]}]
+	}`)
+
+	stats, err := inspectGeminiImageRequest(body)
+
+	require.NoError(t, err)
+	require.Equal(t, 2, stats.ImageCount)
+	require.Equal(t, 3, stats.InlineBytes)
+}
+
+func TestParseGeminiAsyncEnvelopeRejectsTooManyImages(t *testing.T) {
+	imagePart := `{"inlineData":{"mimeType":"image/webp","data":"YWJj"}}`
+	parts := strings.TrimSuffix(strings.Repeat(imagePart+",", geminiAsyncImageMaxInlineImages+1), ",")
+	body := []byte(fmt.Sprintf(`{"model":"gemini-nano-banana-2.1","request":{"contents":[{"parts":[%s]}]}}`, parts))
+
+	_, err := parseGeminiAsyncEnvelope(body)
+
+	require.ErrorContains(t, err, "supports at most")
+}
+
+func TestNormalizeGeminiImageTaskResultRejectsMissingImage(t *testing.T) {
+	_, err := normalizeGeminiImageTaskResult([]byte(`{
+		"candidates":[{"content":{"parts":[{"text":"no image returned"}]}}]
+	}`))
+
+	require.ErrorIs(t, err, errGeminiImageOutputMissing)
+}
+
 func TestAsyncImageHandlerReportsGeminiNonJSONResponse(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	body := []byte(`{"contents":[{"parts":[{"text":"cat"}]}]}`)
@@ -496,6 +530,48 @@ func TestAsyncImageHandlerReportsGeminiNonJSONResponse(t *testing.T) {
 	require.Equal(t, service.ImageTaskStatusFailed, got.Status)
 	require.Equal(t, http.StatusBadGateway, got.HTTPStatus)
 	require.Contains(t, string(got.Error), "reference images")
+}
+
+func TestAsyncImageHandlerFailsGeminiHTTP200ErrorEnvelope(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"contents":[{"parts":[{"text":"cat"}]}]}`)
+	store := &asyncImageMemoryStore{tasks: map[string]*service.ImageTaskRecord{
+		"imgtask_gemini_error_envelope": {
+			ID:        "imgtask_gemini_error_envelope",
+			UserID:    7,
+			APIKeyID:  9,
+			Status:    service.ImageTaskStatusProcessing,
+			CreatedAt: time.Now().Unix(),
+			ExpiresAt: time.Now().Add(time.Hour).Unix(),
+			Execution: &service.ImageTaskExecution{
+				Platform:       service.PlatformGemini,
+				GeminiModel:    "gemini-nano-banana-2.1",
+				ContentType:    "application/json",
+				CompressedBody: body,
+			},
+		},
+	}}
+	tasks := service.NewImageTaskServiceWithUploader(store, nil, time.Hour, time.Minute)
+	apiKeyLoader := asyncImageAPIKeyLoader{key: &service.APIKey{ID: 9, UserID: 7, Key: "sk-test"}}
+	h := &AsyncImageHandler{
+		tasks:   tasks,
+		apiKeys: apiKeyLoader,
+		execute: func(_ string, c *gin.Context) {
+			c.JSON(http.StatusOK, gin.H{"error": gin.H{"message": "quota exhausted", "type": "api_error"}})
+		},
+	}
+
+	task := store.tasks["imgtask_gemini_error_envelope"]
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	taskCtx, recorder, runCancel, err := newImageTaskContext(task, apiKeyLoader.key, ctx, cancel)
+	require.NoError(t, err)
+	h.run(task.ID, service.PlatformGemini, taskCtx, recorder, runCancel)
+
+	got, err := tasks.Get(context.Background(), service.ImageTaskOwner{UserID: 7, APIKeyID: 9}, task.ID)
+	require.NoError(t, err)
+	require.Equal(t, service.ImageTaskStatusFailed, got.Status)
+	require.Equal(t, http.StatusBadGateway, got.HTTPStatus)
+	require.Contains(t, string(got.Error), "quota exhausted")
 }
 
 func replaceNormalizedTimestamp(t *testing.T, body []byte) string {

@@ -77,13 +77,32 @@
               :disabled="image.pending"
               @click="!image.pending && (previewImage = image)"
             >
-              <div v-if="image.pending" class="image-pending-card">
-                <span class="image-generation-spinner" aria-hidden="true"></span>
-                <strong>正在生成</strong>
-                <small>刷新或切换页面不会中断，完成后将在此显示</small>
-                <small class="image-pending-card__timer" data-testid="image-pending-timer">
-                  {{ pendingElapsedSeconds(image) }} 秒
-                </small>
+              <div
+                v-if="image.pending"
+                class="image-pending-card"
+                :class="{ 'image-pending-card--preview': image.previewSrc }"
+              >
+                <template v-if="image.previewSrc">
+                  <img
+                    :src="image.previewSrc"
+                    :alt="image.title"
+                    class="image-pending-card__preview"
+                    decoding="async"
+                  />
+                  <div class="image-pending-card__preview-status">
+                    <span class="image-generation-spinner" aria-hidden="true"></span>
+                    <strong>预览已生成</strong>
+                    <small>正在后台保存原图</small>
+                  </div>
+                </template>
+                <template v-else>
+                  <span class="image-generation-spinner" aria-hidden="true"></span>
+                  <strong>正在生成</strong>
+                  <small>刷新或切换页面不会中断，完成后将在此显示</small>
+                  <small class="image-pending-card__timer" data-testid="image-pending-timer">
+                    {{ pendingElapsedSeconds(image) }} 秒
+                  </small>
+                </template>
               </div>
               <template v-else>
                 <div
@@ -652,6 +671,7 @@ interface GeneratedImage {
   gatewayTaskId?: string
   gatewayPollUrl?: string
   gatewaySubmitPending?: boolean
+  previewSrc?: string
   apiKeyId?: number
   startedAt?: number
   durationMs?: number
@@ -2555,15 +2575,37 @@ function imageResultWithTaskTiming(
   }))
 }
 
+function applyGatewayPreview(image: GeneratedImage, items: any[]) {
+  const preview = items[0]
+  if (!preview) return
+  const mime = String(preview.mimeType || preview.mime_type || 'image/png')
+  const b64 = String(preview.b64_json || preview.data || '')
+  const src = String(
+    preview.preview_data_url
+    || preview.preview_url
+    || (b64 ? `data:${mime};base64,${b64}` : '')
+    || preview.url
+    || '',
+  )
+  if (!src) return
+  image.previewSrc = src
+  images.value = [...images.value]
+  persistPendingImages()
+}
+
 async function pollGatewayImageTask(
   pollUrl: string,
   headers: Record<string, string>,
-  options: { isCancelled?: () => boolean } = {},
+  options: {
+    isCancelled?: () => boolean
+    onPreview?: (items: any[]) => void
+  } = {},
 ): Promise<any[]> {
   const deadline = Date.now() + 30 * 60 * 1000
   const pollStartedAt = Date.now()
   const url = resolveGatewayPollUrl(pollUrl)
   let retryAttempt = 0
+  let previewDelivered = false
   while (Date.now() < deadline) {
     if (options.isCancelled?.()) throw new ImageGenerationWaitCancelled()
     let response: Response
@@ -2588,6 +2630,15 @@ async function pollGatewayImageTask(
       const result = task.result
       const normalized = typeof result === 'string' ? JSON.parse(result) : result
       return extractImages(normalized)
+    }
+    if (task?.status === 'preview_ready' && !previewDelivered) {
+      const result = task.result
+      const normalized = typeof result === 'string' ? JSON.parse(result) : result
+      const previewItems = extractImages(normalized)
+      if (previewItems.length) {
+        previewDelivered = true
+        options.onPreview?.(previewItems)
+      }
     }
     if (task?.status === 'failed') throw gatewayTaskError(task.error || task)
     await waitForGatewayPollRetry(gatewayPollInterval(Date.now() - pollStartedAt))
@@ -2691,6 +2742,7 @@ async function tryExecuteGatewayAsyncRequests(
     submitted.map(async (task) => {
       const items = await pollGatewayImageTask(task.pollUrl, headers, {
         isCancelled: () => componentDisposed,
+        onPreview: (previewItems) => applyGatewayPreview(task.image, previewItems),
       })
       const result = {
         status: 'fulfilled' as const,
@@ -2746,6 +2798,7 @@ async function resumeGatewayGeneration(pendingImages: GeneratedImage[]) {
         batch.map(async (image) => {
           const items = await pollGatewayImageTask(image.gatewayPollUrl!, headers, {
             isCancelled: () => componentDisposed,
+            onPreview: (previewItems) => applyGatewayPreview(image, previewItems),
           })
           const result = {
             status: 'fulfilled' as const,
@@ -4739,6 +4792,39 @@ onBeforeUnmount(() => {
 }
 
 .image-pending-card small { color: rgb(100 116 139); }
+
+.image-pending-card--preview {
+  background: rgb(15 23 42);
+  color: white;
+}
+
+.image-pending-card__preview {
+  position: absolute;
+  inset: 0;
+  height: 100%;
+  width: 100%;
+  object-fit: cover;
+  opacity: 0.88;
+}
+
+.image-pending-card__preview-status {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.45rem;
+  border: 1px solid rgb(255 255 255 / 0.16);
+  border-radius: 0.75rem;
+  background: rgb(15 23 42 / 0.72);
+  padding: 0.7rem 0.9rem;
+  text-align: center;
+  backdrop-filter: blur(8px);
+}
+
+.image-pending-card__preview-status small {
+  color: rgb(226 232 240);
+}
 
 .image-pending-card__timer {
   font-variant-numeric: tabular-nums;

@@ -1,6 +1,19 @@
 export const CANVAS_IMAGE_PREVIEW_MAX_EDGE = 768;
-export const CANVAS_IMAGE_REQUEST_MAX_EDGE = 2048;
-export const CANVAS_IMAGE_REQUEST_TARGET_BYTES = 2 * 1024 * 1024;
+export const CANVAS_IMAGE_REQUEST_BUDGET_BYTES = 6 * 1024 * 1024;
+export const CANVAS_IMAGE_REQUEST_POLICY_VERSION = "v2";
+
+export type ImageRequestPolicy = {
+    maxEdge: number;
+    quality: number;
+    targetBytes: number;
+};
+
+export const CANVAS_IMAGE_REQUEST_POLICIES: readonly ImageRequestPolicy[] = [
+    { maxEdge: 3072, quality: 0.92, targetBytes: 3 * 1024 * 1024 },
+    { maxEdge: 2560, quality: 0.9, targetBytes: 2.5 * 1024 * 1024 },
+    { maxEdge: 2048, quality: 0.88, targetBytes: 2 * 1024 * 1024 },
+    { maxEdge: 1536, quality: 0.82, targetBytes: 1.5 * 1024 * 1024 },
+];
 
 type ImageSourceChoice = {
     previewUrl?: string;
@@ -53,18 +66,15 @@ export async function createImageThumbnail(blob: Blob, maxEdge = CANVAS_IMAGE_PR
 // Reference images are uploaded inside JSON for Gemini requests. Original
 // screenshots can be tens of megabytes each, so resize/re-encode them before
 // creating the data URL while keeping enough detail for editing.
-export async function createImageRequestBlob(
-    blob: Blob,
-    maxEdge = CANVAS_IMAGE_REQUEST_MAX_EDGE,
-    targetBytes = CANVAS_IMAGE_REQUEST_TARGET_BYTES,
-) {
+export async function createImageRequestBlob(blob: Blob, policy: ImageRequestPolicy) {
     const bitmap = await createImageBitmap(blob);
-    const { width, height } = getThumbnailDimensions(bitmap.width, bitmap.height, maxEdge);
+    const originalWidth = bitmap.width;
+    const originalHeight = bitmap.height;
+    const { width, height } = getThumbnailDimensions(bitmap.width, bitmap.height, policy.maxEdge);
     const needsResize = width !== bitmap.width || height !== bitmap.height;
-    const needsReencode = needsResize || blob.size > targetBytes || !/^image\/(jpeg|webp)$/i.test(blob.type);
-    if (!needsReencode) {
+    if (!needsResize && blob.size <= policy.targetBytes) {
         bitmap.close();
-        return blob;
+        return { blob, width, height, reencoded: false };
     }
 
     const canvas = document.createElement("canvas");
@@ -73,10 +83,17 @@ export async function createImageRequestBlob(
     const context = canvas.getContext("2d");
     if (!context) {
         bitmap.close();
-        return blob;
+        return { blob, width: originalWidth, height: originalHeight, reencoded: false };
     }
     context.drawImage(bitmap, 0, 0, width, height);
     bitmap.close();
-    const encoded = await new Promise<Blob | undefined>((resolve) => canvas.toBlob((result) => resolve(result || undefined), "image/webp", 0.9));
-    return encoded || blob;
+    const encoded = await new Promise<Blob | undefined>((resolve) => canvas.toBlob((result) => resolve(result || undefined), "image/webp", policy.quality));
+    if (!encoded) return { blob, width: originalWidth, height: originalHeight, reencoded: false };
+    const selected = encoded.size < blob.size ? encoded : blob;
+    return {
+        blob: selected,
+        width: selected === encoded ? width : originalWidth,
+        height: selected === encoded ? height : originalHeight,
+        reencoded: selected === encoded,
+    };
 }

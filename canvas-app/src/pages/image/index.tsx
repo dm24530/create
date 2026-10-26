@@ -15,7 +15,7 @@ import { modelOptionLabel, useConfigStore, useEffectiveConfig, type AiConfig } f
 import { useThemeStore } from "@/stores/use-theme-store";
 import { nanoid } from "nanoid";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
-import { requestEdit, requestGeneration } from "@/services/api/image";
+import { requestEdit, requestGeneration, submitPersistentImageTask, waitForPersistentImageTask } from "@/services/api/image";
 import { deleteStoredImages, ensureImagePreview, getImagePreviewRevision, previewUrlFor, resolveImageUrl, subscribeImagePreviews, uploadImage } from "@/services/image-storage";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
@@ -321,7 +321,32 @@ export default function ImagePage() {
     const runGenerationSlot = async (index: number, snapshot: { text: string; config: AiConfig; references: ReferenceImage[] }) => {
         const itemStartedAt = performance.now();
         try {
-            const result = snapshot.references.length ? await requestEdit(snapshot.config, snapshot.text, snapshot.references) : await requestGeneration(snapshot.config, snapshot.text);
+            const persistentTask = await submitPersistentImageTask(snapshot.config, snapshot.text, snapshot.references);
+            const requestOptions = {
+                onPreview: (previewImages: Array<{ id: string; dataUrl: string }>) => {
+                    const preview = previewImages[0];
+                    if (!preview) return;
+                    setResults((value) =>
+                        updateResultAt(value, index, {
+                            status: "success",
+                            image: {
+                                id: preview.id,
+                                dataUrl: preview.dataUrl,
+                                durationMs: performance.now() - itemStartedAt,
+                                width: 0,
+                                height: 0,
+                                bytes: 0,
+                                mimeType: "image/jpeg",
+                            },
+                        }),
+                    );
+                },
+            };
+            const result = persistentTask
+                ? await waitForPersistentImageTask(snapshot.config, persistentTask, requestOptions)
+                : snapshot.references.length
+                  ? await requestEdit(snapshot.config, snapshot.text, snapshot.references, requestOptions)
+                  : await requestGeneration(snapshot.config, snapshot.text, requestOptions);
             const image = result[0];
             if (!image) throw new Error(t("imageWorkbench.missingResult"));
             const stored = await uploadImage(image.dataUrl);

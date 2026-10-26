@@ -23,9 +23,10 @@ import (
 )
 
 const (
-	ImageTaskStatusProcessing = "processing"
-	ImageTaskStatusCompleted  = "completed"
-	ImageTaskStatusFailed     = "failed"
+	ImageTaskStatusProcessing   = "processing"
+	ImageTaskStatusPreviewReady = "preview_ready"
+	ImageTaskStatusCompleted    = "completed"
+	ImageTaskStatusFailed       = "failed"
 
 	defaultImageTaskTTL              = 24 * time.Hour
 	defaultImageTaskExecutionTimeout = 30 * time.Minute
@@ -485,7 +486,14 @@ func (s *ImageTaskService) Complete(ctx context.Context, id string, statusCode i
 		if err != nil {
 			return err
 		}
-		rewritten, err := uploader.Rewrite(ctx, task.UserID, id, result)
+		previewPublished := false
+		rewritten, err := uploader.RewriteWithPreview(ctx, task.UserID, id, result, func(preview json.RawMessage) error {
+			if previewPublished {
+				return nil
+			}
+			previewPublished = true
+			return s.saveState(ctx, id, ImageTaskStatusPreviewReady, statusCode, preview, nil, false)
+		})
 		if err != nil {
 			// 转存失败不回退存 base64，避免大 blob 撑爆 Redis：直接把任务标记为失败。
 			logger.L().Error("image_task.offload_failed", zap.String("task_id", id), zap.Error(err))
@@ -504,6 +512,16 @@ func (s *ImageTaskService) Fail(ctx context.Context, id string, statusCode int, 
 }
 
 func (s *ImageTaskService) finish(ctx context.Context, id, status string, statusCode int, result, taskErr json.RawMessage) error {
+	return s.saveState(ctx, id, status, statusCode, result, taskErr, true)
+}
+
+func (s *ImageTaskService) saveState(
+	ctx context.Context,
+	id, status string,
+	statusCode int,
+	result, taskErr json.RawMessage,
+	terminal bool,
+) error {
 	if s == nil || s.store == nil {
 		return ErrImageTaskUnavailable
 	}
@@ -515,12 +533,16 @@ func (s *ImageTaskService) finish(ctx context.Context, id, status string, status
 		return ErrImageTaskUnavailable.WithCause(err)
 	}
 	now := time.Now().UTC()
-	completedAt := now.Unix()
 	task.Status = status
 	task.HTTPStatus = statusCode
 	task.Result = result
 	task.Error = taskErr
-	task.CompletedAt = &completedAt
+	if terminal {
+		completedAt := now.Unix()
+		task.CompletedAt = &completedAt
+	} else {
+		task.CompletedAt = nil
+	}
 	task.ExpiresAt = now.Add(s.ttl).Unix()
 	if err := s.store.Save(ctx, task, s.ttl); err != nil {
 		return ErrImageTaskUnavailable.WithCause(err)

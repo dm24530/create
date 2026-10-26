@@ -1,16 +1,22 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	"image/jpeg"
 	"io"
 	"mime"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
+
+	xdraw "golang.org/x/image/draw"
 )
 
 const defaultImageMaxDownloadBytes int64 = 32 << 20 // 32 MiB
@@ -76,6 +82,19 @@ func defaultImageDownloadHTTPClient() *http.Client {
 // 返回改写后的紧凑结果（data[i].url 指向对象存储，b64_json 被移除）。
 // 任一图片转存失败即返回 error（调用方据此将任务标记为失败，绝不把大 blob 落 Redis）。
 func (u *ImageResultUploader) Rewrite(ctx context.Context, userID int64, taskID string, result json.RawMessage) (json.RawMessage, error) {
+	return u.RewriteWithPreview(ctx, userID, taskID, result, nil)
+}
+
+// RewriteWithPreview uploads lightweight previews first, then stores the full
+// originals. The preview callback lets the task API surface an image before the
+// potentially large original upload to object storage has finished.
+func (u *ImageResultUploader) RewriteWithPreview(
+	ctx context.Context,
+	userID int64,
+	taskID string,
+	result json.RawMessage,
+	onPreview func(json.RawMessage) error,
+) (json.RawMessage, error) {
 	if u == nil || u.storage == nil {
 		return result, nil
 	}
@@ -98,36 +117,101 @@ func (u *ImageResultUploader) Rewrite(ctx context.Context, userID int64, taskID 
 	if len(items) == 0 {
 		return result, nil
 	}
+
+	type preparedImage struct {
+		item        map[string]json.RawMessage
+		data        []byte
+		contentType string
+		key         string
+	}
+
+	prepared := make([]preparedImage, len(items))
 	for i, item := range items {
 		data, contentType, err := u.fetchImageBytes(ctx, item)
 		if err != nil {
 			return nil, fmt.Errorf("image %d: %w", i, err)
 		}
 		key := u.buildKey(userID, taskID, i, contentType)
-		url, err := u.storage.Save(ctx, key, contentType, data)
-		if err != nil {
-			return nil, fmt.Errorf("image %d: upload to object storage: %w", i, err)
+		prepared[i] = preparedImage{
+			item:        item,
+			data:        data,
+			contentType: contentType,
+			key:         key,
 		}
-		urlRaw, err := json.Marshal(url)
-		if err != nil {
-			return nil, fmt.Errorf("image %d: encode url: %w", i, err)
-		}
-		item["url"] = urlRaw
-		objectKeyRaw, err := json.Marshal(key)
-		if err != nil {
-			return nil, fmt.Errorf("image %d: encode object key: %w", i, err)
-		}
-		item["object_key"] = objectKeyRaw
-		if preview, previewErr := buildThumbnail(data, 1024); previewErr == nil && len(preview) > 0 {
-			previewURL := "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(preview)
-			previewRaw, encodeErr := json.Marshal(previewURL)
-			if encodeErr == nil {
-				item["preview_data_url"] = previewRaw
-			}
-		}
-		delete(item, "b64_json")
-		items[i] = item
 	}
+
+	previewItems := make([]map[string]json.RawMessage, 0, len(prepared))
+	for i := range prepared {
+		previewData, thumbErr := buildFastImagePreview(prepared[i].data, 512)
+		if thumbErr != nil {
+			continue
+		}
+		previewItem, encodeErr := cloneImageItem(prepared[i].item)
+		if encodeErr != nil {
+			continue
+		}
+		previewURL := "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(previewData)
+		previewItem["url"] = encodedJSON(previewURL)
+		previewItem["preview_url"] = encodedJSON(previewURL)
+		delete(previewItem, "b64_json")
+		previewItems = append(previewItems, previewItem)
+	}
+
+	if onPreview != nil && len(previewItems) > 0 {
+		previewTop := make(map[string]json.RawMessage, 2)
+		if created, ok := top["created"]; ok {
+			previewTop["created"] = created
+		}
+		previewTop["data"] = encodedJSON(previewItems)
+		if err := onPreview(encodedJSON(previewTop)); err != nil {
+			return nil, fmt.Errorf("publish image preview: %w", err)
+		}
+	}
+
+	const uploadWorkers = 3
+	jobs := make(chan int)
+	var wg sync.WaitGroup
+	var firstErr error
+	var errMu sync.Mutex
+	for worker := 0; worker < uploadWorkers; worker++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for index := range jobs {
+				url, saveErr := u.storage.Save(ctx, prepared[index].key, prepared[index].contentType, prepared[index].data)
+				if saveErr != nil {
+					errMu.Lock()
+					if firstErr == nil {
+						firstErr = fmt.Errorf("image %d: upload to object storage: %w", index, saveErr)
+					}
+					errMu.Unlock()
+					continue
+				}
+				item, cloneErr := cloneImageItem(prepared[index].item)
+				if cloneErr != nil {
+					errMu.Lock()
+					if firstErr == nil {
+						firstErr = fmt.Errorf("image %d: prepare result: %w", index, cloneErr)
+					}
+					errMu.Unlock()
+					continue
+				}
+				item["url"] = encodedJSON(url)
+				item["object_key"] = encodedJSON(prepared[index].key)
+				delete(item, "b64_json")
+				items[index] = item
+			}
+		}()
+	}
+	for i := range prepared {
+		jobs <- i
+	}
+	close(jobs)
+	wg.Wait()
+	if firstErr != nil {
+		return nil, firstErr
+	}
+
 	newData, err := json.Marshal(items)
 	if err != nil {
 		return nil, fmt.Errorf("encode image response data: %w", err)
@@ -138,6 +222,52 @@ func (u *ImageResultUploader) Rewrite(ctx context.Context, userID int64, taskID 
 		return nil, fmt.Errorf("encode image response: %w", err)
 	}
 	return out, nil
+}
+
+func cloneImageItem(item map[string]json.RawMessage) (map[string]json.RawMessage, error) {
+	data, err := json.Marshal(item)
+	if err != nil {
+		return nil, err
+	}
+	var cloned map[string]json.RawMessage
+	if err := json.Unmarshal(data, &cloned); err != nil {
+		return nil, err
+	}
+	return cloned, nil
+}
+
+func encodedJSON(value any) json.RawMessage {
+	data, err := json.Marshal(value)
+	if err != nil {
+		panic(err)
+	}
+	return data
+}
+
+func buildFastImagePreview(data []byte, maxEdge int) ([]byte, error) {
+	img, _, err := image.Decode(bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	bounds := img.Bounds()
+	width, height := bounds.Dx(), bounds.Dy()
+	if width <= 0 || height <= 0 {
+		return nil, errors.New("image has empty bounds")
+	}
+	scale := float64(maxEdge) / float64(max(width, height))
+	if scale > 1 {
+		scale = 1
+	}
+	dstWidth := max(1, int(float64(width)*scale))
+	dstHeight := max(1, int(float64(height)*scale))
+	dst := image.NewRGBA(image.Rect(0, 0, dstWidth, dstHeight))
+	xdraw.ApproxBiLinear.Scale(dst, dst.Bounds(), img, bounds, xdraw.Over, nil)
+
+	var out bytes.Buffer
+	if err := jpeg.Encode(&out, dst, &jpeg.Options{Quality: 76}); err != nil {
+		return nil, err
+	}
+	return out.Bytes(), nil
 }
 
 func (u *ImageResultUploader) fetchImageBytes(ctx context.Context, item map[string]json.RawMessage) ([]byte, string, error) {

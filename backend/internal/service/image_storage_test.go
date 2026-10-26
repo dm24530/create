@@ -25,9 +25,11 @@ type savedImage struct {
 }
 
 type fakeImageStorage struct {
-	saved []savedImage
-	url   string
-	err   error
+	saved       []savedImage
+	url         string
+	err         error
+	saveStarted chan struct{}
+	release     chan struct{}
 }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -39,6 +41,12 @@ func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 func (f *fakeImageStorage) Save(_ context.Context, key, contentType string, data []byte) (string, error) {
 	if f.err != nil {
 		return "", f.err
+	}
+	if f.saveStarted != nil {
+		close(f.saveStarted)
+	}
+	if f.release != nil {
+		<-f.release
 	}
 	f.saved = append(f.saved, savedImage{key: key, contentType: contentType, data: append([]byte(nil), data...)})
 	if f.url != "" {
@@ -73,7 +81,7 @@ func TestImageResultUploaderRewritesB64JSON(t *testing.T) {
 	require.JSONEq(t, `"a cat"`, string(parsed.Data[0]["revised_prompt"]), "unrelated fields preserved")
 }
 
-func TestImageResultUploaderAddsInlinePreview(t *testing.T) {
+func TestImageResultUploaderPublishesPreviewBeforeOriginal(t *testing.T) {
 	storage := &fakeImageStorage{}
 	uploader := NewImageResultUploader(storage, "images/", 0, nil)
 	validPNG, err := base64.StdEncoding.DecodeString(
@@ -83,22 +91,33 @@ func TestImageResultUploaderAddsInlinePreview(t *testing.T) {
 	result := json.RawMessage(`{"data":[{"b64_json":"` +
 		base64.StdEncoding.EncodeToString(validPNG) + `","mime_type":"image/png"}]}`)
 
-	out, err := uploader.Rewrite(context.Background(), 42, "imgtask_preview", result)
-	require.NoError(t, err)
-
-	var parsed struct {
-		Data []struct {
-			PreviewDataURL string `json:"preview_data_url"`
-		} `json:"data"`
-	}
-	require.NoError(t, json.Unmarshal(out, &parsed))
-	require.Len(t, parsed.Data, 1)
-	require.True(t, strings.HasPrefix(parsed.Data[0].PreviewDataURL, "data:image/jpeg;base64,"))
-	preview, err := base64.StdEncoding.DecodeString(
-		strings.TrimPrefix(parsed.Data[0].PreviewDataURL, "data:image/jpeg;base64,"),
-	)
+	var preview json.RawMessage
+	out, err := uploader.RewriteWithPreview(context.Background(), 42, "imgtask_preview", result, func(value json.RawMessage) error {
+		preview = append(json.RawMessage(nil), value...)
+		return nil
+	})
 	require.NoError(t, err)
 	require.NotEmpty(t, preview)
+	require.Len(t, storage.saved, 1)
+	require.Equal(t, "images/users/42/imgtask_preview-0.png", storage.saved[0].key)
+
+	var parsedPreview struct {
+		Data []struct {
+			URL string `json:"url"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(preview, &parsedPreview))
+	require.Len(t, parsedPreview.Data, 1)
+	require.True(t, strings.HasPrefix(parsedPreview.Data[0].URL, "data:image/jpeg;base64,"))
+
+	var parsedFinal struct {
+		Data []struct {
+			URL string `json:"url"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(out, &parsedFinal))
+	require.Len(t, parsedFinal.Data, 1)
+	require.Equal(t, "https://cdn.test/images/users/42/imgtask_preview-0.png", parsedFinal.Data[0].URL)
 }
 
 func TestImageResultUploaderRewritesURL(t *testing.T) {
@@ -250,6 +269,53 @@ func TestImageTaskServiceCompleteOffloadsToStorage(t *testing.T) {
 	require.Equal(t, "https://cdn.test/images/users/1/"+created.ID+"-0.png", got.ImageURL)
 	require.NotContains(t, string(got.Result), "b64_json", "large base64 must not be persisted to Redis")
 	require.Len(t, storage.saved, 1)
+}
+
+func TestImageTaskServicePublishesPreviewBeforeOriginalUpload(t *testing.T) {
+	store := &imageTaskMemoryStore{}
+	storage := &fakeImageStorage{
+		saveStarted: make(chan struct{}),
+		release:     make(chan struct{}),
+	}
+	uploader := NewImageResultUploader(storage, "images/", 0, nil)
+	svc := NewImageTaskServiceWithUploader(store, uploader, time.Hour, time.Minute)
+
+	owner := ImageTaskOwner{UserID: 1, APIKeyID: 2}
+	created, err := svc.Create(context.Background(), owner)
+	require.NoError(t, err)
+
+	validPNG, err := base64.StdEncoding.DecodeString(
+		"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+	)
+	require.NoError(t, err)
+	result := json.RawMessage(`{"data":[{"b64_json":"` +
+		base64.StdEncoding.EncodeToString(validPNG) + `","mime_type":"image/png"}]}`)
+	completeDone := make(chan error, 1)
+	go func() {
+		completeDone <- svc.Complete(context.Background(), created.ID, http.StatusOK, result)
+	}()
+
+	select {
+	case <-storage.saveStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("original image upload did not start")
+	}
+
+	preview, err := svc.Get(context.Background(), owner, created.ID)
+	require.NoError(t, err)
+	require.Equal(t, ImageTaskStatusPreviewReady, preview.Status)
+	require.Nil(t, preview.CompletedAt)
+	require.Contains(t, string(preview.Result), "data:image/jpeg;base64,")
+	require.NotContains(t, string(preview.Result), "b64_json")
+
+	close(storage.release)
+	require.NoError(t, <-completeDone)
+
+	final, err := svc.Get(context.Background(), owner, created.ID)
+	require.NoError(t, err)
+	require.Equal(t, ImageTaskStatusCompleted, final.Status)
+	require.NotNil(t, final.CompletedAt)
+	require.Equal(t, "https://cdn.test/images/users/1/"+created.ID+"-0.png", final.ImageURL)
 }
 
 func TestImageTaskServiceCompleteOffloadFailureMarksFailed(t *testing.T) {
