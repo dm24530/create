@@ -721,7 +721,7 @@ async function loadS3Config() {
       prefix: cfg.prefix || 'backups/',
       force_path_style: cfg.force_path_style,
     }
-    s3SecretConfigured.value = Boolean(cfg.access_key_id)
+    s3SecretConfigured.value = Boolean(cfg.secret_configured)
   } catch (error) {
     appStore.showError((error as { message?: string })?.message || t('errors.networkError'))
   }

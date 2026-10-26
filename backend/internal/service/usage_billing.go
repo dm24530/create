@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"time"
 
 	"github.com/shopspring/decimal"
 )
@@ -18,6 +19,7 @@ var ErrUsageBillingRequestConflict = errors.New("usage billing request fingerpri
 // UsageBillingCommand describes one billable request that must be applied at most once.
 type UsageBillingCommand struct {
 	RequestID          string
+	RequestInstanceID  string
 	APIKeyID           int64
 	RequestFingerprint string
 	RequestPayloadHash string
@@ -49,6 +51,7 @@ func (c *UsageBillingCommand) Normalize() {
 		return
 	}
 	c.RequestID = strings.TrimSpace(c.RequestID)
+	c.RequestInstanceID = strings.TrimSpace(c.RequestInstanceID)
 	if strings.TrimSpace(c.RequestFingerprint) == "" {
 		c.RequestFingerprint = buildUsageBillingFingerprint(c)
 	}
@@ -223,4 +226,27 @@ type UsageBillingRepository interface {
 	ReserveBatchImageBalance(ctx context.Context, cmd *BatchImageBalanceHoldCommand) (*BatchImageBalanceHoldResult, error)
 	CaptureBatchImageBalance(ctx context.Context, cmd *BatchImageBalanceHoldCommand) (*BatchImageBalanceHoldResult, error)
 	ReleaseBatchImageBalance(ctx context.Context, cmd *BatchImageBalanceHoldCommand) (*BatchImageBalanceHoldResult, error)
+}
+
+// UsageBillingRefundCommand reverses a previously applied balance event at most once.
+type UsageBillingRefundCommand struct {
+	RequestID         string
+	RequestInstanceID string
+	APIKeyID          int64
+	Reason            string
+}
+
+type UsageBillingRefundResult struct {
+	Applied         bool
+	AlreadyRefunded bool
+	UserID          int64
+	APIKeyID        int64
+	RefundedAmount  float64
+	RefundedAt      *time.Time
+}
+
+// UsageBillingRefundRepository is an optional extension so existing test
+// repositories remain source-compatible while production supports refunds.
+type UsageBillingRefundRepository interface {
+	Refund(ctx context.Context, cmd *UsageBillingRefundCommand) (*UsageBillingRefundResult, error)
 }

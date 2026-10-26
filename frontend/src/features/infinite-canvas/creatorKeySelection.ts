@@ -9,9 +9,13 @@ function canGenerateImages(key: ApiKey) {
 export function selectCanvasCreatorKey(
   keys: ApiKey[],
   storage: Pick<Storage, 'getItem'> = localStorage,
+  userId?: number | string | null,
 ): ApiKey | null {
   try {
-    const preferences = JSON.parse(storage.getItem(IMAGE_STUDIO_PREFERENCES_STORAGE_KEY) || '{}')
+    const storageKey = userId == null
+      ? IMAGE_STUDIO_PREFERENCES_STORAGE_KEY
+      : `${IMAGE_STUDIO_PREFERENCES_STORAGE_KEY}:${userId}`
+    const preferences = JSON.parse(storage.getItem(storageKey) || '{}')
     const selectedId = typeof preferences?.keyId === 'string' ? preferences.keyId : ''
     if (!selectedId) return null
     return keys.find((key) => (

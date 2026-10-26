@@ -170,10 +170,14 @@ func (d *blockingDumper) Restore(_ context.Context, data io.Reader) error {
 type mockObjectStore struct {
 	objects          map[string][]byte
 	mu               sync.Mutex
+	uploadCalls      int
+	uploadErr        error
 	failUploadFileAt int
 	uploadFileCalls  int
 	deletedKeys      []string
 	failDeleteKeys   map[string]error
+	headCalls        int
+	headErr          error
 }
 
 type cancelingUploadFailureStore struct {
@@ -214,6 +218,13 @@ func newMockObjectStore() *mockObjectStore {
 }
 
 func (m *mockObjectStore) Upload(_ context.Context, key string, body io.Reader, _ string) (int64, error) {
+	m.mu.Lock()
+	m.uploadCalls++
+	uploadErr := m.uploadErr
+	m.mu.Unlock()
+	if uploadErr != nil {
+		return 0, uploadErr
+	}
 	data, err := io.ReadAll(body)
 	if err != nil {
 		return 0, err
@@ -268,7 +279,10 @@ func (m *mockObjectStore) PresignURL(_ context.Context, key string, _ time.Durat
 }
 
 func (m *mockObjectStore) HeadBucket(_ context.Context) error {
-	return nil
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.headCalls++
+	return m.headErr
 }
 
 func newTestBackupService(repo *mockSettingRepo, dumper DBDumper, store *mockObjectStore) *BackupService {
@@ -339,6 +353,7 @@ func TestBackupService_S3ConfigEncryption(t *testing.T) {
 	cfg, err := svc.GetS3Config(context.Background())
 	require.NoError(t, err)
 	require.Empty(t, cfg.SecretAccessKey)
+	require.True(t, cfg.SecretConfigured)
 	require.Equal(t, "my-bucket", cfg.Bucket)
 
 	// loadS3Config 内部应解密
@@ -417,6 +432,35 @@ func TestBackupService_S3ConfigStaysEncryptedAfterSecondSave(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "original-secret", internal.SecretAccessKey)
 	require.Equal(t, "AKID-THIRD", internal.AccessKeyID)
+}
+
+func TestBackupService_UpdateS3Config_PreservesUndecryptableStoredSecret(t *testing.T) {
+	repo := newMockSettingRepo()
+	svc := newTestBackupService(repo, &mockDumper{}, newMockObjectStore())
+
+	seed, err := json.Marshal(BackupS3Config{
+		Bucket:          "my-bucket",
+		AccessKeyID:     "AKID",
+		SecretAccessKey: "BROKEN-CIPHERTEXT",
+		Prefix:          "backups/",
+	})
+	require.NoError(t, err)
+	require.NoError(t, repo.Set(context.Background(), settingKeyBackupS3Config, string(seed)))
+
+	_, err = svc.UpdateS3Config(context.Background(), BackupS3Config{
+		Bucket:      "my-bucket",
+		AccessKeyID: "AKID-NEW",
+		Prefix:      "backups/",
+	})
+	require.NoError(t, err)
+
+	raw, err := repo.GetValue(context.Background(), settingKeyBackupS3Config)
+	require.NoError(t, err)
+	var stored BackupS3Config
+	require.NoError(t, json.Unmarshal([]byte(raw), &stored))
+	require.Equal(t, "BROKEN-CIPHERTEXT", stored.SecretAccessKey,
+		"an inherited unreadable value must not be encrypted a second time")
+	require.Equal(t, "AKID-NEW", stored.AccessKeyID)
 }
 
 func TestBackupService_UpdateS3Config_RejectsEphemeralKey(t *testing.T) {
@@ -1078,6 +1122,82 @@ func TestBackupService_TestS3Connection(t *testing.T) {
 		Bucket:          "test",
 		AccessKeyID:     "ak",
 		SecretAccessKey: "sk",
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, store.uploadCalls, "connection test must exercise the write path")
+	require.Zero(t, store.headCalls, "HeadBucket is not required for object-scoped R2 tokens")
+}
+
+func TestBackupService_TestS3Connection_AllowsHeadBucketDenied(t *testing.T) {
+	repo := newMockSettingRepo()
+	store := newMockObjectStore()
+	store.headErr = fmt.Errorf("AccessDenied: HeadBucket")
+	svc := newTestBackupService(repo, &mockDumper{}, store)
+
+	err := svc.TestS3Connection(context.Background(), BackupS3Config{
+		Bucket:          "test",
+		AccessKeyID:     "ak",
+		SecretAccessKey: "sk",
+	})
+	require.NoError(t, err)
+}
+
+func TestBackupService_TestS3Connection_WriteFailure(t *testing.T) {
+	repo := newMockSettingRepo()
+	store := newMockObjectStore()
+	store.uploadErr = fmt.Errorf("AccessDenied: PutObject")
+	svc := newTestBackupService(repo, &mockDumper{}, store)
+
+	err := svc.TestS3Connection(context.Background(), BackupS3Config{
+		Bucket:          "test",
+		AccessKeyID:     "ak",
+		SecretAccessKey: "sk",
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "S3 write test failed")
+	require.Contains(t, err.Error(), "AccessDenied")
+}
+
+func TestBackupService_TestS3Connection_UndecryptableStoredSecret(t *testing.T) {
+	repo := newMockSettingRepo()
+	seed, err := json.Marshal(BackupS3Config{
+		Bucket:          "test",
+		AccessKeyID:     "ak",
+		SecretAccessKey: "BROKEN-CIPHERTEXT",
+		Prefix:          "backups/",
+	})
+	require.NoError(t, err)
+	require.NoError(t, repo.Set(context.Background(), settingKeyBackupS3Config, string(seed)))
+
+	store := newMockObjectStore()
+	store.uploadErr = fmt.Errorf("Forbidden")
+	svc := newTestBackupService(repo, &mockDumper{}, store)
+
+	err = svc.TestS3Connection(context.Background(), BackupS3Config{
+		Bucket:      "test",
+		AccessKeyID: "ak",
+		Prefix:      "backups/",
+	})
+	require.ErrorIs(t, err, ErrBackupS3SecretUnreadable)
+	require.Contains(t, err.Error(), "re-enter the Secret Access Key")
+}
+
+func TestBackupService_TestS3Connection_AllowsLegacyPlaintextSecret(t *testing.T) {
+	repo := newMockSettingRepo()
+	seed, err := json.Marshal(BackupS3Config{
+		Bucket:          "test",
+		AccessKeyID:     "ak",
+		SecretAccessKey: "legacy-plaintext-secret",
+		Prefix:          "backups/",
+	})
+	require.NoError(t, err)
+	require.NoError(t, repo.Set(context.Background(), settingKeyBackupS3Config, string(seed)))
+
+	svc := newTestBackupService(repo, &mockDumper{}, newMockObjectStore())
+	err = svc.TestS3Connection(context.Background(), BackupS3Config{
+		Bucket:      "test",
+		AccessKeyID: "ak",
+		Prefix:      "backups/",
 	})
 	require.NoError(t, err)
 }

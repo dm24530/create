@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/servertiming"
@@ -21,6 +24,12 @@ type S3ImageStorage struct {
 	publicBaseURL string
 	presignExpiry time.Duration
 }
+
+const (
+	imageMultipartThreshold   = 8 << 20
+	imageMultipartPartSize    = 8 << 20
+	imageMultipartConcurrency = 4
+)
 
 var _ service.ImageStorage = (*S3ImageStorage)(nil)
 var _ service.ImageStorageURLResolver = (*S3ImageStorage)(nil)
@@ -58,6 +67,13 @@ func (s *S3ImageStorage) Save(ctx context.Context, key, contentType string, data
 
 // SaveWithExpiry is Save with an explicit presigned URL lifetime.
 func (s *S3ImageStorage) SaveWithExpiry(ctx context.Context, key, contentType string, data []byte, expiry time.Duration) (string, error) {
+	if len(data) >= imageMultipartThreshold {
+		if err := s.putMultipart(ctx, key, contentType, data); err != nil {
+			return "", err
+		}
+		return s.resultURL(ctx, key, expiry)
+	}
+
 	finish := servertiming.ObserveDependency(ctx, "s3")
 	input := &s3.PutObjectInput{
 		Bucket:      &s.bucket,
@@ -74,7 +90,10 @@ func (s *S3ImageStorage) SaveWithExpiry(ctx context.Context, key, contentType st
 	if err != nil {
 		return "", fmt.Errorf("S3 PutObject: %w", err)
 	}
+	return s.resultURL(ctx, key, expiry)
+}
 
+func (s *S3ImageStorage) resultURL(ctx context.Context, key string, expiry time.Duration) (string, error) {
 	if s.publicBaseURL != "" {
 		return s.publicBaseURL + "/" + strings.TrimLeft(key, "/"), nil
 	}
@@ -91,6 +110,116 @@ func (s *S3ImageStorage) SaveWithExpiry(ctx context.Context, key, contentType st
 		return "", fmt.Errorf("presign url: %w", err)
 	}
 	return result.URL, nil
+}
+
+func (s *S3ImageStorage) putMultipart(ctx context.Context, key, contentType string, data []byte) error {
+	finish := servertiming.ObserveDependency(ctx, "s3")
+	defer finish()
+
+	input := &s3.CreateMultipartUploadInput{
+		Bucket:      &s.bucket,
+		Key:         &key,
+		ContentType: &contentType,
+	}
+	if s.publicBaseURL != "" {
+		cacheControl := "public, max-age=31536000, immutable"
+		input.CacheControl = &cacheControl
+	}
+	created, err := s.client.CreateMultipartUpload(ctx, input)
+	if err != nil {
+		return fmt.Errorf("S3 CreateMultipartUpload: %w", err)
+	}
+	if created.UploadId == nil || *created.UploadId == "" {
+		return fmt.Errorf("S3 CreateMultipartUpload: empty upload ID")
+	}
+	uploadID := *created.UploadId
+
+	abort := func() {
+		abortCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_, _ = s.client.AbortMultipartUpload(abortCtx, &s3.AbortMultipartUploadInput{
+			Bucket:   &s.bucket,
+			Key:      &key,
+			UploadId: &uploadID,
+		})
+	}
+
+	partCount := (len(data) + imageMultipartPartSize - 1) / imageMultipartPartSize
+	completed := make([]types.CompletedPart, partCount)
+	var wg sync.WaitGroup
+	var firstErr error
+	var errMu sync.Mutex
+	uploadCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	jobs := make(chan int)
+
+	for worker := 0; worker < imageMultipartConcurrency; worker++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for index := range jobs {
+				start := index * imageMultipartPartSize
+				end := min(start+imageMultipartPartSize, len(data))
+				partNumber := int32(index + 1)
+				part, uploadErr := s.client.UploadPart(uploadCtx, &s3.UploadPartInput{
+					Bucket:     &s.bucket,
+					Key:        &key,
+					UploadId:   &uploadID,
+					PartNumber: &partNumber,
+					Body:       bytes.NewReader(data[start:end]),
+				})
+				if uploadErr != nil {
+					errMu.Lock()
+					if firstErr == nil {
+						firstErr = fmt.Errorf("S3 UploadPart %d: %w", partNumber, uploadErr)
+						cancel()
+					}
+					errMu.Unlock()
+					continue
+				}
+				etag := ""
+				if part.ETag != nil {
+					etag = *part.ETag
+				}
+				completed[index] = types.CompletedPart{ETag: &etag, PartNumber: &partNumber}
+			}
+		}()
+	}
+
+feed:
+	for index := 0; index < partCount; index++ {
+		select {
+		case jobs <- index:
+		case <-uploadCtx.Done():
+			break feed
+		}
+	}
+	close(jobs)
+	wg.Wait()
+	if firstErr != nil {
+		abort()
+		return firstErr
+	}
+	if err := ctx.Err(); err != nil {
+		abort()
+		return err
+	}
+	sort.Slice(completed, func(i, j int) bool {
+		return *completed[i].PartNumber < *completed[j].PartNumber
+	})
+	_, err = s.client.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{
+		Bucket:   &s.bucket,
+		Key:      &key,
+		UploadId: &uploadID,
+		MultipartUpload: &types.CompletedMultipartUpload{
+			Parts: completed,
+		},
+	})
+	if err != nil {
+		abort()
+		return fmt.Errorf("S3 CompleteMultipartUpload: %w", err)
+	}
+	return nil
 }
 
 func (s *S3ImageStorage) PresignGet(ctx context.Context, key string) (string, error) {

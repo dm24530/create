@@ -18,6 +18,13 @@ func TestResolveUsageBillingRequestID_ForcedWebSearchBeatsClientID(t *testing.T)
 	require.Equal(t, "web_search:uuid-1", got)
 }
 
+func TestResolveUsageBillingRequestID_ExplicitContextIDWins(t *testing.T) {
+	ctx := context.WithValue(context.Background(), ctxkey.ClientRequestID, "client-shared-id")
+	ctx = context.WithValue(ctx, ctxkey.UsageBillingRequestID, "grok-video:task-1")
+	got := resolveUsageBillingRequestID(ctx, "web_search:other")
+	require.Equal(t, "grok-video:task-1", got)
+}
+
 func TestResolveUsageBillingRequestID_ClientWinsOverPlainUpstream(t *testing.T) {
 	t.Parallel()
 	ctx := context.WithValue(context.Background(), ctxkey.ClientRequestID, "client-shared-id")

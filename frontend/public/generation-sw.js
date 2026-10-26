@@ -2,8 +2,8 @@ const DB_NAME = 'sub2api-image-generation'
 const DB_VERSION = 1
 const STORE_NAME = 'tasks'
 const RESPONSE_CACHE = 'sub2api-image-generation-responses-v1'
-const TASK_TIMEOUT_MS = 15 * 60 * 1000
-const RETRY_WINDOW_MS = 20 * 60 * 1000
+const TASK_TIMEOUT_MS = 5 * 60 * 1000
+const RETRY_WINDOW_MS = 5 * 60 * 1000
 const MIN_RETRY_DELAY_MS = 1500
 const MAX_RETRY_DELAY_MS = 30 * 1000
 

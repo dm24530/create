@@ -39,9 +39,19 @@
         </template>
 
         <template #cell-status="{ row }">
-          <span class="inline-flex items-center rounded px-2 py-0.5 text-xs font-medium" :class="statusClass(row.status_code)">
-            {{ row.status_code || '-' }}
-          </span>
+          <div class="flex flex-wrap items-center gap-1.5">
+            <span class="inline-flex items-center rounded px-2 py-0.5 text-xs font-medium" :class="statusClass(row.status_code)">
+              {{ row.status_code || '-' }}
+            </span>
+            <span
+              v-if="row.refund_status === 'refunded'"
+              class="inline-flex items-center rounded px-2 py-0.5 text-xs font-medium badge-success"
+              :title="refundTitle(row)"
+            >
+              {{ t('usage.errors.refunded') }}
+              <template v-if="row.refund_amount > 0"> · ${{ row.refund_amount.toFixed(6) }}</template>
+            </span>
+          </div>
         </template>
 
         <template #cell-category="{ row }">
@@ -201,4 +211,9 @@ function openDetail(id: number) {
 }
 
 const statusClass = statusCodeBadgeClass
+
+function refundTitle(row: UserErrorRequest) {
+  const amount = row.refund_amount > 0 ? `$${row.refund_amount.toFixed(8)}` : ''
+  return [t('usage.errors.refunded'), amount].filter(Boolean).join(' ')
+}
 </script>

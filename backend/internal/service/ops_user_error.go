@@ -11,21 +11,24 @@ import "time"
 // 与用量明细已向用户展示自身 ip_address/user_agent/分组/类型 的口径对齐；
 // error_body 仅在详情接口（GetUserErrorRequestDetail）按归属校验后返回。
 type UserErrorRequest struct {
-	ID              int64     `json:"id"`
-	CreatedAt       time.Time `json:"created_at"`
-	Model           string    `json:"model"`
-	InboundEndpoint string    `json:"inbound_endpoint"`
-	StatusCode      int       `json:"status_code"`
-	Category        string    `json:"category"`
-	Platform        string    `json:"platform"`
-	Message         string    `json:"message"`
-	KeyName         string    `json:"key_name"`
-	KeyDeleted      bool      `json:"key_deleted"`
-	ClientIP        string    `json:"client_ip,omitempty"`
-	GroupName       string    `json:"group_name,omitempty"`
-	RequestType     *int16    `json:"request_type,omitempty"`
-	Stream          bool      `json:"stream"`
-	UserAgent       string    `json:"user_agent,omitempty"`
+	ID              int64      `json:"id"`
+	CreatedAt       time.Time  `json:"created_at"`
+	Model           string     `json:"model"`
+	InboundEndpoint string     `json:"inbound_endpoint"`
+	StatusCode      int        `json:"status_code"`
+	Category        string     `json:"category"`
+	Platform        string     `json:"platform"`
+	Message         string     `json:"message"`
+	KeyName         string     `json:"key_name"`
+	KeyDeleted      bool       `json:"key_deleted"`
+	ClientIP        string     `json:"client_ip,omitempty"`
+	GroupName       string     `json:"group_name,omitempty"`
+	RequestType     *int16     `json:"request_type,omitempty"`
+	Stream          bool       `json:"stream"`
+	UserAgent       string     `json:"user_agent,omitempty"`
+	RefundStatus    string     `json:"refund_status"`
+	RefundAmount    float64    `json:"refund_amount"`
+	RefundedAt      *time.Time `json:"refunded_at,omitempty"`
 }
 
 // UserErrorRequestList 是用户错误请求分页结果。
@@ -118,6 +121,9 @@ func ToUserErrorRequest(e *OpsErrorLog) *UserErrorRequest {
 		RequestType:     e.RequestType,
 		Stream:          e.Stream,
 		UserAgent:       e.UserAgent,
+		RefundStatus:    e.RefundStatus,
+		RefundAmount:    e.RefundAmount,
+		RefundedAt:      e.RefundedAt,
 	}
 }
 

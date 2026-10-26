@@ -154,6 +154,7 @@ func (u *ImageResultUploader) RewriteWithPreview(
 		previewItem["url"] = encodedJSON(previewURL)
 		previewItem["preview_url"] = encodedJSON(previewURL)
 		delete(previewItem, "b64_json")
+		prepared[i].item["preview_data_url"] = encodedJSON(previewURL)
 		previewItems = append(previewItems, previewItem)
 	}
 

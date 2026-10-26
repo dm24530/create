@@ -2226,6 +2226,9 @@ export interface UserErrorRequest {
   request_type?: number
   stream?: boolean
   user_agent?: string
+  refund_status: 'none' | 'refunded'
+  refund_amount: number
+  refunded_at?: string | null
 }
 
 export interface UserErrorRequestDetail extends UserErrorRequest {

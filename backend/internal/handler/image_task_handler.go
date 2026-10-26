@@ -39,6 +39,10 @@ type imageTaskAPIKeyLoader interface {
 	GetByID(ctx context.Context, id int64) (*service.APIKey, error)
 }
 
+type imageTaskBillingRefunder interface {
+	RefundUsageBilling(context.Context, *service.UsageBillingRefundCommand) (*service.UsageBillingRefundResult, error)
+}
+
 const asyncImageGeminiModelKey = "async_image_gemini_model"
 const imageTaskLeaseTTL = 2 * time.Minute
 const imageTaskLeaseRenewInterval = 30 * time.Second
@@ -50,7 +54,7 @@ const geminiAsyncImageMaxInlineBytes = 12 << 20
 const geminiAsyncImageMaxSingleInlineBytes = 8 << 20
 
 var defaultImageTaskRetryDelays = []time.Duration{10 * time.Second, 30 * time.Second}
-var errGeminiImageOutputMissing = errors.New("Gemini response contained no image output")
+var errGeminiImageOutputMissing = errors.New("gemini response contained no image output")
 
 type asyncGeminiTaskEnvelope struct {
 	Model   string          `json:"model"`
@@ -255,12 +259,13 @@ func (h *AsyncImageHandler) Submit(c *gin.Context) {
 		c.Request.Context(),
 		service.ImageTaskOwner{UserID: apiKey.UserID, APIKeyID: apiKey.ID},
 		&service.ImageTaskExecution{
-			Platform:       effectivePlatform,
-			RequestPath:    requestPath,
-			GeminiModel:    geminiModel,
-			ContentType:    c.GetHeader("Content-Type"),
-			CompressedBody: executionBody,
-			UsageRequestID: imageTaskUsageRequestID(c.Request.Context()),
+			Platform:          effectivePlatform,
+			RequestPath:       requestPath,
+			GeminiModel:       geminiModel,
+			ContentType:       c.GetHeader("Content-Type"),
+			CompressedBody:    executionBody,
+			UsageRequestID:    imageTaskUsageRequestID(c.Request.Context()),
+			RequestInstanceID: resolveOpsRequestInstanceID(c.Request.Context()),
 		},
 		c.GetHeader("Idempotency-Key"),
 		service.ImageTaskRequestHash(platform, requestPath, geminiModel, c.GetHeader("Content-Type"), body),
@@ -577,6 +582,7 @@ func newImageTaskContext(
 	ctx = context.WithValue(ctx, ctxkey.AsyncImageTask, true)
 	request := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body)).WithContext(ctx)
 	request = request.WithContext(withImageTaskUsageRequestID(request.Context(), task.Execution.UsageRequestID))
+	request = request.WithContext(service.WithUsageBillingRequestID(request.Context(), task.Execution.UsageRequestID))
 	request.Header.Set("Authorization", "Bearer "+apiKey.Key)
 	if task.Execution.ContentType != "" {
 		request.Header.Set("Content-Type", task.Execution.ContentType)
@@ -726,7 +732,7 @@ func (h *AsyncImageHandler) run(taskID, platform string, taskCtx *gin.Context, r
 					zap.String("body_preview", preview),
 					zap.Error(normalizeErr),
 				)
-				message := "invalid Gemini image response"
+				var message string
 				if errors.Is(normalizeErr, errGeminiImageOutputMissing) {
 					message = "Gemini image upstream returned no image output"
 				} else if statusCode == http.StatusRequestEntityTooLarge {
@@ -966,14 +972,14 @@ func inspectGeminiImageRequest(body []byte) (geminiImageRequestStats, error) {
 				stats.ImageCount++
 				mimeType := firstNonEmptyHandlerString(inline.MIMEType, inline.MIMETypeSnake)
 				if mimeType == "" || !strings.HasPrefix(strings.ToLower(mimeType), "image/") {
-					return stats, errors.New("Gemini image parts require an image MIME type")
+					return stats, errors.New("gemini image parts require an image MIME type")
 				}
 				if strings.TrimSpace(inline.Data) == "" {
-					return stats, errors.New("Gemini image part data is required")
+					return stats, errors.New("gemini image part data is required")
 				}
 				decodedBytes := (len(inline.Data) * 3) / 4
 				if decodedBytes > geminiAsyncImageMaxSingleInlineBytes {
-					return stats, fmt.Errorf("Gemini image part exceeds %d MB", geminiAsyncImageMaxSingleInlineBytes>>20)
+					return stats, fmt.Errorf("gemini image part exceeds %d MB", geminiAsyncImageMaxSingleInlineBytes>>20)
 				}
 				stats.InlineBytes += decodedBytes
 				continue
@@ -989,19 +995,19 @@ func inspectGeminiImageRequest(body []byte) (geminiImageRequestStats, error) {
 			stats.ImageCount++
 			mimeType := firstNonEmptyHandlerString(file.MIMEType, file.MIMETypeSnake)
 			if mimeType == "" || !strings.HasPrefix(strings.ToLower(mimeType), "image/") {
-				return stats, errors.New("Gemini image parts require an image MIME type")
+				return stats, errors.New("gemini image parts require an image MIME type")
 			}
 			if firstNonEmptyHandlerString(file.FileURI, file.FileURISnake) == "" {
-				return stats, errors.New("Gemini file image URI is required")
+				return stats, errors.New("gemini file image URI is required")
 			}
 		}
 	}
 
 	if stats.ImageCount > geminiAsyncImageMaxInlineImages {
-		return stats, fmt.Errorf("Gemini image request supports at most %d images", geminiAsyncImageMaxInlineImages)
+		return stats, fmt.Errorf("gemini image request supports at most %d images", geminiAsyncImageMaxInlineImages)
 	}
 	if stats.InlineBytes > geminiAsyncImageMaxInlineBytes {
-		return stats, fmt.Errorf("Gemini inline images exceed %d MB in total", geminiAsyncImageMaxInlineBytes>>20)
+		return stats, fmt.Errorf("gemini inline images exceed %d MB in total", geminiAsyncImageMaxInlineBytes>>20)
 	}
 	return stats, nil
 }
@@ -1085,6 +1091,75 @@ func (h *AsyncImageHandler) failTask(taskID string, statusCode int, taskErr json
 	if err := h.tasks.Fail(context.Background(), taskID, statusCode, taskErr); err != nil {
 		logger.L().Error("image_task.failure_store_failed", zap.String("task_id", taskID), zap.Error(err))
 	}
+	h.refundFailedImageTask(taskID)
+}
+
+func (h *AsyncImageHandler) refundFailedImageTask(taskID string) {
+	if h == nil || h.tasks == nil {
+		return
+	}
+	record, err := h.tasks.GetRecord(context.Background(), taskID)
+	if err != nil || record == nil || record.Execution == nil {
+		return
+	}
+	if record.RefundStatus == "refunded" || record.APIKeyID <= 0 {
+		return
+	}
+	gatewayService := h.imageTaskGatewayService()
+	usageRequestID := strings.TrimSpace(record.Execution.UsageRequestID)
+	requestInstanceID := strings.TrimSpace(record.Execution.RequestInstanceID)
+	if gatewayService == nil || usageRequestID == "" {
+		return
+	}
+
+	apiKeyID := record.APIKeyID
+	go func() {
+		for _, delay := range []time.Duration{0, 2 * time.Second, 5 * time.Second, 10 * time.Second, 30 * time.Second} {
+			if delay > 0 {
+				time.Sleep(delay)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			result, refundErr := gatewayService.RefundUsageBilling(ctx, &service.UsageBillingRefundCommand{
+				RequestID:         usageRequestID,
+				RequestInstanceID: requestInstanceID,
+				APIKeyID:          apiKeyID,
+				Reason:            "async_image_task_failed",
+			})
+			cancel()
+			if refundErr != nil {
+				logger.L().Warn("image_task.refund_failed",
+					zap.String("task_id", taskID),
+					zap.String("request_id", usageRequestID),
+					zap.Error(refundErr),
+				)
+				continue
+			}
+			if result == nil || (!result.Applied && !result.AlreadyRefunded) {
+				continue
+			}
+			if markErr := h.tasks.MarkRefunded(context.Background(), taskID, result.RefundedAmount, result.RefundedAt); markErr != nil {
+				logger.L().Warn("image_task.refund_mark_failed",
+					zap.String("task_id", taskID),
+					zap.Error(markErr),
+				)
+				continue
+			}
+			return
+		}
+	}()
+}
+
+func (h *AsyncImageHandler) imageTaskGatewayService() imageTaskBillingRefunder {
+	if h == nil {
+		return nil
+	}
+	if h.openAI != nil && h.openAI.gatewayService != nil {
+		return h.openAI.gatewayService
+	}
+	if h.gateway != nil {
+		return h.gateway.gatewayService
+	}
+	return nil
 }
 
 func newAsyncImageContext(c *gin.Context, body []byte, timeoutDuration time.Duration) (*gin.Context, *httptest.ResponseRecorder, context.CancelFunc) {

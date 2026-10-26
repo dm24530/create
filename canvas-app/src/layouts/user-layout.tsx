@@ -2,9 +2,6 @@ import { lazy, Suspense, type ReactNode } from "react";
 
 import { isManagedMode } from "@/lib/managed-mode";
 
-const AgentPanel = lazy(() => import("@/components/agent/agent-panel").then((module) => ({
-    default: module.AgentPanel,
-})));
 const AppTopNav = lazy(() => import("@/components/layout/app-top-nav").then((module) => ({
     default: module.AppTopNav,
 })));
@@ -26,9 +23,6 @@ export default function UserLayout({ children }: { children: ReactNode }) {
                 </Suspense>
                 <div className="min-h-0 flex-1 overflow-hidden">{children}</div>
             </div>
-            <Suspense fallback={null}>
-                <AgentPanel />
-            </Suspense>
         </div>
     );
 }

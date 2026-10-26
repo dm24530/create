@@ -60,14 +60,21 @@ const STORE_NAME = 'tasks'
 const RESPONSE_CACHE = 'sub2api-image-generation-responses-v1'
 const WORKER_URL = '/generation-sw.js'
 const WAIT_INTERVAL_MS = 750
-const WAIT_TIMEOUT_MS = 30 * 60 * 1000
-const RETRY_WINDOW_MS = 20 * 60 * 1000
+const WAIT_TIMEOUT_MS = 5 * 60 * 1000
+const RETRY_WINDOW_MS = 5 * 60 * 1000
 const HEARTBEAT_INTERVAL_MS = 15 * 1000
 
 export class ImageGenerationWaitCancelled extends Error {
   constructor() {
     super('Image generation wait cancelled')
     this.name = 'ImageGenerationWaitCancelled'
+  }
+}
+
+export class ImageGenerationStillRunning extends Error {
+  constructor(message = '图片生成超过等待时间，任务已保留，可稍后继续查询') {
+    super(message)
+    this.name = 'ImageGenerationStillRunning'
   }
 }
 
@@ -358,7 +365,7 @@ export async function waitForPersistentImageGeneration(
     }
     if (responses.size === ids.length) break
     if (Date.now() - startedAt > WAIT_TIMEOUT_MS) {
-      throw new Error('图片生成超时，请稍后重试')
+      throw new ImageGenerationStillRunning()
     }
     await new Promise((resolve) => window.setTimeout(resolve, WAIT_INTERVAL_MS))
   }

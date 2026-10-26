@@ -97,7 +97,7 @@ type GeminiPayload = {
     promptFeedback?: { blockReason?: string };
 };
 type GeminiStreamState = { buffer: string; text: string; toolCalls: ResponseToolCall[]; error?: string };
-export type GeneratedImageResult = { id: string; dataUrl: string };
+export type GeneratedImageResult = { id: string; dataUrl: string; previewDataUrl?: string };
 type RequestOptions = {
     signal?: AbortSignal;
     onPreview?: (images: GeneratedImageResult[]) => void;
@@ -112,7 +112,7 @@ const IMAGE_MAX_EDGE = 3840;
 const IMAGE_MAX_RATIO = 3;
 const IMAGE_OUTPUT_FORMAT = "png";
 // 与 image-storage 的下载超时保持一致，避免接口挂起时节点一直停在生成中。
-const IMAGE_REQUEST_TIMEOUT_MS = 10 * 60_000;
+const IMAGE_REQUEST_TIMEOUT_MS = 4 * 60_000;
 const GEMINI_IMAGE_REQUEST_CONCURRENCY = 3;
 
 const GEMINI_SUPPORTED_RATIOS = ["1:1", "1:4", "1:8", "2:3", "3:2", "3:4", "4:1", "4:3", "4:5", "5:4", "8:1", "9:16", "16:9", "21:9"];
@@ -227,6 +227,14 @@ function resolveImageSource(item: Record<string, unknown>) {
     return null;
 }
 
+function resolveImagePreviewSource(item: Record<string, unknown>) {
+    for (const key of ["preview_data_url", "preview_url", "previewDataUrl"]) {
+        const value = item[key];
+        if (typeof value === "string" && value) return value;
+    }
+    return undefined;
+}
+
 function parseImagePayload(payload: ImageApiResponse) {
     if (typeof payload.code === "number" && payload.code !== 0) {
         throw new Error(payload.msg || apiText("requestFailed"));
@@ -236,10 +244,11 @@ function parseImagePayload(payload: ImageApiResponse) {
         || (payload as Record<string, unknown>).images as Array<Record<string, unknown>> | undefined
         || (payload as Record<string, unknown>).results as Array<Record<string, unknown>> | undefined
         || [];
-    const images = imageList
-        .map(resolveImageSource)
-        .filter((value): value is string => Boolean(value))
-        .map((dataUrl) => ({ id: nanoid(), dataUrl }));
+    const images: GeneratedImageResult[] = [];
+    for (const item of imageList) {
+        const dataUrl = resolveImageSource(item);
+        if (dataUrl) images.push({ id: nanoid(), dataUrl, previewDataUrl: resolveImagePreviewSource(item) });
+    }
 
     if (images.length === 0) {
         // Check whether the response contains data in an unrecognized format.
@@ -665,7 +674,7 @@ function parseGeminiToolResponse(payload: GeminiPayload): ToolResponseResult {
     return { content, toolCalls };
 }
 
-async function requestGeminiImages(config: AiConfig, prompt: string, references: ReferenceImage[], count: number, options?: RequestOptions) {
+async function requestGeminiImages(config: AiConfig, prompt: string, references: ReferenceImage[], count: number, options?: RequestOptions): Promise<GeneratedImageResult[]> {
     const prepared = await prepareImageRequestDataUrls(references, options);
     const requests = await mapWithConcurrency(Array.from({ length: count }, (_, index) => index), GEMINI_IMAGE_REQUEST_CONCURRENCY, () => requestGeminiImagesOnce(config, prompt, prepared, options));
     return requests.flat();
@@ -699,6 +708,9 @@ type AsyncImageTaskResponse = {
     result?: unknown;
     error?: unknown;
     message?: string;
+    refund_status?: "refunded";
+    refund_amount?: number;
+    refunded_at?: number;
 };
 
 export type PersistentImageTask = {
@@ -873,7 +885,7 @@ async function pollImageTask(
     url: string,
     options?: RequestOptions,
 ) {
-    const deadline = Date.now() + 30 * 60_000
+    const deadline = Date.now() + 5 * 60_000
     const startedAt = Date.now()
     let previewDelivered = false
     while (Date.now() < deadline) {
@@ -881,7 +893,7 @@ async function pollImageTask(
         const response = await axios.get<AsyncImageTaskResponse>(url, {
             headers: aiHeaders(config),
             signal: options?.signal,
-            timeout: 30_000,
+            timeout: Math.min(30_000, Math.max(1, deadline - Date.now())),
         })
         const task = response.data
         if (task.status === "completed") {
@@ -905,7 +917,7 @@ async function pollImageTask(
             throw new Error(readApiErrorMessage(task.error) || task.message || apiText("requestFailed"))
         }
         const elapsed = Date.now() - startedAt
-        await waitForAsyncImagePoll(elapsed < 10_000 ? 500 : elapsed < 60_000 ? 1500 : 2000, options?.signal)
+        await waitForAsyncImagePoll(elapsed < 10_000 ? 250 : elapsed < 60_000 ? 750 : 1000, options?.signal)
     }
     throw new Error(apiText("imageTimeout"))
 }
@@ -940,7 +952,7 @@ function parseGeminiImagePayload(payload: GeminiPayload) {
     return images;
 }
 
-export async function requestGeneration(config: AiConfig, prompt: string, options?: RequestOptions) {
+export async function requestGeneration(config: AiConfig, prompt: string, options?: RequestOptions): Promise<GeneratedImageResult[]> {
     const requestConfig = resolveModelRequestConfig(config, config.model || config.imageModel);
     const n = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
     const script = resolveModelScript(config, config.model || config.imageModel);
@@ -1000,7 +1012,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
     }
 }
 
-export async function requestEdit(config: AiConfig, prompt: string, references: ReferenceImage[], options?: RequestOptions) {
+export async function requestEdit(config: AiConfig, prompt: string, references: ReferenceImage[], options?: RequestOptions): Promise<GeneratedImageResult[]> {
     const requestConfig = resolveModelRequestConfig(config, config.model || config.imageModel);
     const n = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
     const requestPrompt = buildImageReferencePromptText(prompt, references);

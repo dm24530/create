@@ -857,8 +857,12 @@ func TestAsyncImageHandlerRetriesTransientUpstreamFailure(t *testing.T) {
 
 	task := store.tasks["imgtask_retry"]
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-	taskCtx, recorder, runCancel, err := newImageTaskContext(task, h.apiKeys.(asyncImageAPIKeyLoader).key, ctx, cancel)
-	require.NoError(t, err)
+	loader, ok := h.apiKeys.(asyncImageAPIKeyLoader)
+	require.True(t, ok)
+	taskCtx, recorder, runCancel, err := newImageTaskContext(task, loader.key, ctx, cancel)
+	if err != nil {
+		t.Fatal(err)
+	}
 	h.run(task.ID, service.PlatformGemini, taskCtx, recorder, runCancel)
 
 	require.Equal(t, 2, attempts)
@@ -984,7 +988,9 @@ func TestNewImageTaskContextRestoresRequestDetails(t *testing.T) {
 			require.Equal(t, tc.execution.ContentType, got.Request.Header.Get("Content-Type"))
 			require.Equal(t, tc.wantPlatform, mustForcePlatform(got))
 			require.Equal(t, tc.wantModel, mustContextString(got, asyncImageGeminiModelKey))
-			require.True(t, got.Request.Context().Value(ctxkey.AsyncImageTask).(bool))
+			asyncImageTask, ok := got.Request.Context().Value(ctxkey.AsyncImageTask).(bool)
+			require.True(t, ok)
+			require.True(t, asyncImageTask)
 
 			gotBody, readErr := io.ReadAll(got.Request.Body)
 			require.NoError(t, readErr)

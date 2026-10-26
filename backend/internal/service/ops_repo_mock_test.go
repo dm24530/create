@@ -9,6 +9,7 @@ import (
 type opsRepoMock struct {
 	InsertErrorLogFn              func(ctx context.Context, input *OpsInsertErrorLogInput) (int64, error)
 	BatchInsertErrorLogsFn        func(ctx context.Context, inputs []*OpsInsertErrorLogInput) (int64, error)
+	MarkErrorRefundedFn           func(ctx context.Context, requestID, clientRequestID string, apiKeyID int64, amount float64) error
 	GetErrorLogByIDFn             func(ctx context.Context, id int64) (*OpsErrorLogDetail, error)
 	BatchInsertSystemLogsFn       func(ctx context.Context, inputs []*OpsInsertSystemLogInput) (int64, error)
 	ListSystemLogsFn              func(ctx context.Context, filter *OpsSystemLogFilter) (*OpsSystemLogList, error)
@@ -28,6 +29,13 @@ func (m *opsRepoMock) BatchInsertErrorLogs(ctx context.Context, inputs []*OpsIns
 		return m.BatchInsertErrorLogsFn(ctx, inputs)
 	}
 	return int64(len(inputs)), nil
+}
+
+func (m *opsRepoMock) MarkErrorRefunded(ctx context.Context, requestID, clientRequestID string, apiKeyID int64, amount float64) error {
+	if m.MarkErrorRefundedFn != nil {
+		return m.MarkErrorRefundedFn(ctx, requestID, clientRequestID, apiKeyID, amount)
+	}
+	return nil
 }
 
 func (m *opsRepoMock) ListErrorLogs(ctx context.Context, filter *OpsErrorLogFilter) (*OpsErrorLogList, error) {

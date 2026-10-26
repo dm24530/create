@@ -129,8 +129,7 @@ export function hasResumableVideoTask(node: CanvasNodeData) {
 
 export function hasResumableImageTask(node: CanvasNodeData) {
     return node.type === CanvasNodeType.Image &&
-        node.metadata?.status === "loading" &&
-        Boolean(node.metadata.images?.some((image) => image.status === "loading" && image.taskId && image.taskPollUrl));
+        Boolean(node.metadata?.images?.some((image) => image.taskId && image.taskPollUrl && !image.storageKey));
 }
 
 export function resetInterruptedGeneration(nodes: CanvasNodeData[]) {

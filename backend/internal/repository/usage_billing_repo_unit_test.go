@@ -22,6 +22,7 @@ const (
 	userExistsForBillingSQL     = `(?s)SELECT 1\s+FROM users\s+WHERE id = \$1 AND deleted_at IS NULL`
 	apiKeyQuotaIncrementSQL     = `(?s)UPDATE api_keys\s+SET quota_used = quota_used \+ \$1,.*WHERE id = \$2 AND deleted_at IS NULL\s+RETURNING`
 	apiKeyRateLimitIncrementSQL = `(?s)UPDATE api_keys SET\s+usage_5h = .*WHERE id = \$2 AND deleted_at IS NULL`
+	refundDedupLookupSQL        = `(?s)SELECT user_id, subscription_id,.*FROM usage_billing_dedup\s+WHERE request_id = \$1 AND api_key_id = \$2\s+AND \(\$3 = '' OR request_instance_id = \$3\)\s+FOR UPDATE`
 )
 
 func TestDeductUsageBillingBalance_UsesSufficientBalanceGuard(t *testing.T) {
@@ -181,6 +182,47 @@ func TestDeductUsageBillingBalance_ReturnsUserNotFoundWhenNoUserUpdated(t *testi
 	_, _, err = deductUsageBillingBalance(ctx, tx, 42, 10)
 	require.ErrorIs(t, err, service.ErrUserNotFound)
 	require.NoError(t, tx.Rollback())
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestUsageBillingRepositoryRefundRestoresBalanceOnce(t *testing.T) {
+	ctx := context.Background()
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+	repo := &usageBillingRepository{db: db}
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(refundDedupLookupSQL).
+		WithArgs("req-refund", int64(9), "server-refund").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"user_id", "subscription_id", "balance_cost", "subscription_cost",
+			"api_key_quota_cost", "api_key_rate_limit_cost", "refunded_at", "refunded_amount",
+		}).AddRow(int64(42), nil, 0.12, 0, 0.12, 0.12, nil, 0))
+	mock.ExpectExec(`(?s)UPDATE users\s+SET balance = balance \+ \$1, updated_at = NOW\(\)\s+WHERE id = \$2 AND deleted_at IS NULL`).
+		WithArgs(0.12, int64(42)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`(?s)UPDATE api_keys\s+SET quota_used = GREATEST.*WHERE id = \$2 AND deleted_at IS NULL`).
+		WithArgs(0.12, int64(9), service.StatusAPIKeyQuotaExhausted, service.StatusAPIKeyActive).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`(?s)UPDATE api_keys\s+SET usage_5h = GREATEST.*WHERE id = \$2 AND deleted_at IS NULL`).
+		WithArgs(0.12, int64(9)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`(?s)UPDATE usage_billing_dedup\s+SET refunded_at = \$3, refunded_amount = \$4`).
+		WithArgs("req-refund", int64(9), sqlmock.AnyArg(), 0.12).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	result, err := repo.Refund(ctx, &service.UsageBillingRefundCommand{
+		RequestID:         "req-refund",
+		RequestInstanceID: "server-refund",
+		APIKeyID:          9,
+	})
+	require.NoError(t, err)
+	require.True(t, result.Applied)
+	require.Equal(t, int64(42), result.UserID)
+	require.InDelta(t, 0.12, result.RefundedAmount, 1e-12)
+	require.NotNil(t, result.RefundedAt)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

@@ -112,12 +112,14 @@ func TestImageResultUploaderPublishesPreviewBeforeOriginal(t *testing.T) {
 
 	var parsedFinal struct {
 		Data []struct {
-			URL string `json:"url"`
+			URL            string `json:"url"`
+			PreviewDataURL string `json:"preview_data_url"`
 		} `json:"data"`
 	}
 	require.NoError(t, json.Unmarshal(out, &parsedFinal))
 	require.Len(t, parsedFinal.Data, 1)
 	require.Equal(t, "https://cdn.test/images/users/42/imgtask_preview-0.png", parsedFinal.Data[0].URL)
+	require.True(t, strings.HasPrefix(parsedFinal.Data[0].PreviewDataURL, "data:image/jpeg;base64,"))
 }
 
 func TestImageResultUploaderRewritesURL(t *testing.T) {

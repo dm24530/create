@@ -335,7 +335,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	batchImageHandler := handler.ProvideBatchImageHandler(batchImagePublicService, batchImageDownloadService, batchImageCleanupService, openAIGatewayHandler)
 	imageStudioGalleryStore := repository.NewImageStudioGalleryStore(db)
 	imageStudioGalleryService := service.ProvideImageStudioGalleryService(imageStudioGalleryStore, imageStorageSettingService)
-	imageStudioGalleryHandler := handler.NewImageStudioGalleryHandler(imageStudioGalleryService)
+	imageStudioGalleryHandler := handler.NewImageStudioGalleryHandler(imageStudioGalleryService, imageTaskService)
 	videoStudioGalleryStore := repository.NewVideoStudioGalleryStore(db)
 	videoStudioGalleryService := service.NewVideoStudioGalleryService(videoStudioGalleryStore, imageStorageSettingService)
 	videoStudioGalleryHandler := handler.NewVideoStudioGalleryHandler(videoStudioGalleryService)

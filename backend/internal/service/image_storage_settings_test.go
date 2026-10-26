@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/stretchr/testify/require"
@@ -178,7 +179,10 @@ func TestImageStorageSettingsReuseBackupCredentials(t *testing.T) {
 		Prefix: "backups/", ForcePathStyle: true,
 	})
 
-	_, err := svc.Update(ctx, ImageStorageSettings{Enabled: true, ReuseBackupS3: true, Prefix: "images"})
+	_, err := svc.Update(ctx, ImageStorageSettings{
+		Enabled: true, ReuseBackupS3: true, Prefix: "images",
+		PublicBaseURL: "https://gen.superai.sbs/",
+	})
 	require.NoError(t, err)
 	_, enabled := svc.resolve()
 	require.True(t, enabled)
@@ -192,12 +196,51 @@ func TestImageStorageSettingsReuseBackupCredentials(t *testing.T) {
 	require.True(t, got.ForcePathStyle)
 	require.Equal(t, "backup-bucket", got.Bucket, "an empty bucket falls back to the backup bucket")
 	require.Equal(t, "images/", got.Prefix, "images stay under their own prefix so they never collide with backups/")
+	require.Equal(t, "https://gen.superai.sbs", got.PublicBaseURL, "the custom image domain must not be lost when reusing backup credentials")
 
 	// Reusing must not duplicate the secret into a second row.
 	raw, err := repo.GetValue(ctx, settingKeyImageStorageConfig)
 	require.NoError(t, err)
 	require.NotContains(t, raw, "backup-sk")
 	require.NotContains(t, raw, "enc:")
+}
+
+func TestImageStorageSettingsRefreshAcrossInstances(t *testing.T) {
+	svc, repo, built := newImageStorageFixture(t, config.ImageStorageConfig{})
+	ctx := context.Background()
+	seedBackupS3(t, repo, BackupS3Config{
+		Endpoint: "https://acct.r2.cloudflarestorage.com", Region: "auto",
+		Bucket: "backup-bucket", AccessKeyID: "ak", SecretAccessKey: "sk",
+		Prefix: "backups/",
+	})
+	_, err := svc.Update(ctx, ImageStorageSettings{
+		Enabled: true, ReuseBackupS3: true, Prefix: "images/",
+		PublicBaseURL: "https://old.example.com",
+	})
+	require.NoError(t, err)
+	_, enabled := svc.resolve()
+	require.True(t, enabled)
+	require.Len(t, *built, 1)
+
+	raw, err := repo.GetValue(ctx, settingKeyImageStorageConfig)
+	require.NoError(t, err)
+	var externallyUpdated ImageStorageSettings
+	require.NoError(t, json.Unmarshal([]byte(raw), &externallyUpdated))
+	externallyUpdated.PublicBaseURL = "https://new.example.com"
+	updatedRaw, err := json.Marshal(externallyUpdated)
+	require.NoError(t, err)
+	require.NoError(t, repo.Set(ctx, settingKeyImageStorageConfig, string(updatedRaw)))
+
+	_, _ = svc.resolve()
+	require.Len(t, *built, 1, "a recently resolved process keeps its short-lived snapshot")
+
+	svc.mu.Lock()
+	svc.resolvedAt = time.Now().Add(-imageStorageSettingsCacheTTL - time.Second)
+	svc.mu.Unlock()
+	_, enabled = svc.resolve()
+	require.True(t, enabled)
+	require.Len(t, *built, 2)
+	require.Equal(t, "https://new.example.com", (*built)[1].PublicBaseURL)
 }
 
 func TestImageStorageSettingsOwnCredentialsAreEncryptedAndMasked(t *testing.T) {

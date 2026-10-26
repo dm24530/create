@@ -751,6 +751,7 @@ func recordGrokMediaUsage(
 		videoTaskID = strings.TrimSpace(firstNonEmptyString(requestID, result.ResponseID))
 		if stable := service.StableGrokVideoBillingRequestID(firstNonEmptyString(result.ResponseID, requestID)); stable != "" {
 			result.RequestID = stable
+			c.Request = c.Request.WithContext(service.WithUsageBillingRequestID(c.Request.Context(), stable))
 		}
 		// Prefer task id hash for payload fingerprint stability across status/content.
 		if len(body) == 0 && videoTaskID != "" {

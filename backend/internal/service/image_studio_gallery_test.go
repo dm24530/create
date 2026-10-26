@@ -250,6 +250,31 @@ func TestImageStudioGallerySaveFromURLStoresServerFetchedBytes(t *testing.T) {
 	require.Len(t, saver.data, len(smallPNG(t)))
 }
 
+func TestImageStudioGallerySaveExistingObjectDoesNotReupload(t *testing.T) {
+	store := &galleryStoreStub{}
+	saver := &gallerySaverStub{}
+	svc := NewImageStudioGalleryService(store, saver)
+
+	entry, err := svc.SaveExistingObject(
+		context.Background(),
+		42,
+		"images/users/42/task-1.png",
+		"https://gen.example.com/images/users/42/task-1.png",
+		"a cat",
+		"gpt-image-1",
+		"1024x1024",
+		"png",
+		false,
+	)
+	require.NoError(t, err)
+	require.Empty(t, saver.key)
+	require.Empty(t, saver.data)
+	require.Equal(t, "images/users/42/task-1.png", entry.ObjectKey)
+	require.False(t, entry.Saved)
+	require.NotZero(t, entry.ExpiresAt)
+	require.Len(t, store.entries, 1)
+}
+
 func TestImageStudioGalleryReadImageFetchesOwnedEntry(t *testing.T) {
 	store := &galleryStoreStub{entries: []*ImageStudioGalleryEntry{
 		{ID: "work-1", URL: "https://cdn.example.com/work-1.png"},

@@ -13,20 +13,29 @@ import (
 	"net/http"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/lib/pq"
+	"go.uber.org/zap"
 )
 
 const (
 	maxCanvasProjectBytes = 12 << 20
 	maxCanvasAssetBytes   = 128 << 20
 	maxCanvasThumbBytes   = 4 << 20
+	canvasProjectPageSize = 50
+	canvasProjectMaxPage  = 100
+	canvasProjectQuota    = 100
+	canvasAssetCountQuota = 5000
+	canvasAssetBytesQuota = int64(2 << 30)
 )
 
 var canvasIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
@@ -35,6 +44,10 @@ type CanvasAssetStorage interface {
 	SaveImageWithKey(ctx context.Context, key, contentType string, data []byte) (string, string, error)
 	DeleteObject(ctx context.Context, key string) error
 	PresignImageObject(ctx context.Context, objectKey string) (string, error)
+}
+
+type canvasQueryRower interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
 type CanvasHandler struct {
@@ -88,17 +101,19 @@ func (h *CanvasHandler) ListProjects(c *gin.Context) {
 	if !ok {
 		return
 	}
+	limit, offset := canvasPage(c, canvasProjectPageSize, canvasProjectMaxPage)
 	rows, err := h.db.QueryContext(c.Request.Context(), `
 		SELECT id, title, version, created_at, updated_at
 		FROM canvas_projects
 		WHERE user_id = $1
 		ORDER BY updated_at DESC
-	`, userID)
+		LIMIT $2 OFFSET $3
+	`, userID, limit, offset)
 	if err != nil {
 		response.InternalError(c, "读取画布项目失败")
 		return
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	items := make([]CanvasProjectSummary, 0)
 	for rows.Next() {
 		var item CanvasProjectSummary
@@ -107,6 +122,100 @@ func (h *CanvasHandler) ListProjects(c *gin.Context) {
 			return
 		}
 		items = append(items, item)
+	}
+	response.Success(c, items)
+}
+
+// ListProjectsFull returns complete project records and all referenced assets
+// in a bounded page without requiring one request per project from the client.
+func (h *CanvasHandler) ListProjectsFull(c *gin.Context) {
+	userID, ok := h.userID(c)
+	if !ok {
+		return
+	}
+	limit, offset := canvasPage(c, canvasProjectPageSize, canvasProjectMaxPage)
+	rows, err := h.db.QueryContext(c.Request.Context(), `
+		SELECT id, title, graph, version, created_at, updated_at
+		FROM canvas_projects
+		WHERE user_id = $1
+		ORDER BY updated_at DESC
+		LIMIT $2 OFFSET $3
+	`, userID, limit, offset)
+	if err != nil {
+		response.InternalError(c, "读取画布项目失败")
+		return
+	}
+	defer func() { _ = rows.Close() }()
+	items := make([]*CanvasProjectRecord, 0, limit)
+	byID := make(map[string]*CanvasProjectRecord, limit)
+	for rows.Next() {
+		item := &CanvasProjectRecord{Assets: []CanvasAsset{}}
+		if err := rows.Scan(
+			&item.ID,
+			&item.Title,
+			&item.Graph,
+			&item.Version,
+			&item.CreatedAt,
+			&item.UpdatedAt,
+		); err != nil {
+			response.InternalError(c, "读取画布项目失败")
+			return
+		}
+		items = append(items, item)
+		byID[item.ID] = item
+	}
+	if err := rows.Err(); err != nil {
+		response.InternalError(c, "读取画布项目失败")
+		return
+	}
+	if len(items) == 0 {
+		response.Success(c, items)
+		return
+	}
+
+	projectIDs := make([]string, 0, len(items))
+	for _, item := range items {
+		projectIDs = append(projectIDs, item.ID)
+	}
+	assetRows, err := h.db.QueryContext(c.Request.Context(), `
+		SELECT id, project_id, node_id, kind, object_key, thumb_object_key,
+		       width, height, bytes, mime_type, sha256, created_at
+		FROM canvas_assets
+		WHERE user_id = $1 AND project_id = ANY($2)
+		ORDER BY created_at ASC
+	`, userID, pq.Array(projectIDs))
+	if err != nil {
+		response.InternalError(c, "读取画布资产失败")
+		return
+	}
+	defer func() { _ = assetRows.Close() }()
+	for assetRows.Next() {
+		var item CanvasAsset
+		var objectKey, thumbKey string
+		if err := assetRows.Scan(
+			&item.ID, &item.ProjectID, &item.NodeID, &item.Kind, &objectKey, &thumbKey,
+			&item.Width, &item.Height, &item.Bytes, &item.MimeType, &item.SHA256, &item.CreatedAt,
+		); err != nil {
+			response.InternalError(c, "读取画布资产失败")
+			return
+		}
+		project := byID[item.ProjectID]
+		if project == nil {
+			continue
+		}
+		if resolved, resolveErr := h.storage.PresignImageObject(c.Request.Context(), objectKey); resolveErr == nil {
+			item.URL = resolved
+		}
+		if thumbKey != "" {
+			if resolved, resolveErr := h.storage.PresignImageObject(c.Request.Context(), thumbKey); resolveErr == nil {
+				item.ThumbURL = resolved
+			}
+		}
+		project.Assets = append(project.Assets, item)
+	}
+	if err := assetRows.Err(); err != nil {
+		response.InternalError(c, "读取画布资产失败")
+		return
 	}
 	response.Success(c, items)
 }
@@ -174,8 +283,29 @@ func (h *CanvasHandler) PutProject(c *gin.Context) {
 	title = truncateCanvasTitle(title, 200)
 	ctx := c.Request.Context()
 	if request.Version <= 0 {
+		tx, err := h.db.BeginTx(ctx, nil)
+		if err != nil {
+			response.InternalError(c, "保存画布项目失败")
+			return
+		}
+		defer func() { _ = tx.Rollback() }()
+		if err := lockCanvasQuota(ctx, tx, "canvas-projects", userID); err != nil {
+			response.InternalError(c, "读取画布项目额度失败")
+			return
+		}
+		var projectCount int
+		if err := tx.QueryRowContext(ctx, `
+			SELECT COUNT(*) FROM canvas_projects WHERE user_id = $1
+		`, userID).Scan(&projectCount); err != nil {
+			response.InternalError(c, "读取画布项目额度失败")
+			return
+		}
+		if projectCount >= canvasProjectQuota {
+			response.Error(c, http.StatusTooManyRequests, "画布项目数量已达上限")
+			return
+		}
 		var version int
-		err := h.db.QueryRowContext(ctx, `
+		err = tx.QueryRowContext(ctx, `
 			INSERT INTO canvas_projects (id, user_id, title, graph, version)
 			VALUES ($1, $2, $3, $4::jsonb, 1)
 			ON CONFLICT (id) DO NOTHING
@@ -189,6 +319,11 @@ func (h *CanvasHandler) PutProject(c *gin.Context) {
 			response.InternalError(c, "保存画布项目失败")
 			return
 		}
+		if err := tx.Commit(); err != nil {
+			response.InternalError(c, "保存画布项目失败")
+			return
+		}
+		h.scheduleUnreferencedAssetCleanup(c.Request.Context(), userID, projectID, request.Graph)
 		response.Success(c, gin.H{"id": projectID, "version": version})
 		return
 	}
@@ -208,6 +343,7 @@ func (h *CanvasHandler) PutProject(c *gin.Context) {
 		response.InternalError(c, "保存画布项目失败")
 		return
 	}
+	h.scheduleUnreferencedAssetCleanup(c.Request.Context(), userID, projectID, request.Graph)
 	response.Success(c, gin.H{"id": projectID, "version": version, "updated_at": updatedAt})
 }
 
@@ -221,12 +357,10 @@ func (h *CanvasHandler) DeleteProject(c *gin.Context) {
 		response.BadRequest(c, "画布项目 ID 无效")
 		return
 	}
-	keys, _ := h.projectObjectKeys(c.Request.Context(), userID, projectID)
-	for _, key := range keys {
-		if err := h.storage.DeleteObject(c.Request.Context(), key); err != nil {
-			response.InternalError(c, "删除画布资产失败，项目记录已保留")
-			return
-		}
+	keys, keysErr := h.projectObjectKeys(c.Request.Context(), userID, projectID)
+	if keysErr != nil {
+		response.InternalError(c, "读取画布资产失败")
+		return
 	}
 	result, err := h.db.ExecContext(c.Request.Context(), `
 		DELETE FROM canvas_projects WHERE id = $1 AND user_id = $2
@@ -238,6 +372,15 @@ func (h *CanvasHandler) DeleteProject(c *gin.Context) {
 	if affected, _ := result.RowsAffected(); affected == 0 {
 		response.NotFound(c, "画布项目不存在")
 		return
+	}
+	for _, key := range keys {
+		if err := h.storage.DeleteObject(c.Request.Context(), key); err != nil {
+			logger.L().Warn("canvas.project_object_cleanup_failed",
+				zap.Int64("user_id", userID),
+				zap.String("project_id", projectID),
+				zap.String("object_key", key),
+				zap.Error(err))
+		}
 	}
 	response.Success(c, gin.H{"deleted": true})
 }
@@ -274,7 +417,7 @@ func (h *CanvasHandler) UploadAsset(c *gin.Context) {
 		response.BadRequest(c, "缺少画布资产文件")
 		return
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	data, err := io.ReadAll(io.LimitReader(file, maxCanvasAssetBytes+1))
 	if err != nil || len(data) == 0 || len(data) > maxCanvasAssetBytes {
 		response.BadRequest(c, "画布资产文件为空或过大")
@@ -318,19 +461,53 @@ func (h *CanvasHandler) UploadAsset(c *gin.Context) {
 			thumbURL, storedThumbKey, _ = h.storage.SaveImageWithKey(c.Request.Context(), thumbKey, thumbType, thumbData)
 		}
 	}
-	_, err = h.db.ExecContext(c.Request.Context(), `
+	tx, err := h.db.BeginTx(c.Request.Context(), nil)
+	if err != nil {
+		h.deleteCanvasObjects(c.Request.Context(), storedKey, storedThumbKey)
+		response.InternalError(c, "保存画布资产失败")
+		return
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := lockCanvasQuota(c.Request.Context(), tx, "canvas-assets", userID); err != nil {
+		h.deleteCanvasObjects(c.Request.Context(), storedKey, storedThumbKey)
+		response.InternalError(c, "读取画布存储额度失败")
+		return
+	}
+	var assetCount int
+	var storedBytes int64
+	if err := tx.QueryRowContext(c.Request.Context(), `
+		SELECT COUNT(*), COALESCE(SUM(bytes), 0)
+		FROM canvas_assets
+		WHERE user_id = $1
+	`, userID).Scan(&assetCount, &storedBytes); err != nil {
+		h.deleteCanvasObjects(c.Request.Context(), storedKey, storedThumbKey)
+		response.InternalError(c, "读取画布存储额度失败")
+		return
+	}
+	if assetCount >= canvasAssetCountQuota || storedBytes+int64(len(data)) > canvasAssetBytesQuota {
+		h.deleteCanvasObjects(c.Request.Context(), storedKey, storedThumbKey)
+		response.Error(c, http.StatusTooManyRequests, "画布存储空间已达上限")
+		return
+	}
+	if existing := findCanvasAssetByHashIn(c.Request.Context(), tx, h.storage, userID, projectID, nodeID, digest); existing != nil {
+		h.deleteCanvasObjects(c.Request.Context(), storedKey, storedThumbKey)
+		response.Success(c, *existing)
+		return
+	}
+	if _, err = tx.ExecContext(c.Request.Context(), `
 		INSERT INTO canvas_assets (
 			id, user_id, project_id, node_id, kind, object_key, thumb_object_key,
 			width, height, bytes, mime_type, sha256
 		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
 	`, assetID, userID, projectID, nodeID, kind, storedKey, storedThumbKey,
 		parseCanvasInt(c.PostForm("width")), parseCanvasInt(c.PostForm("height")),
-		len(data), contentType, digest)
-	if err != nil {
-		_ = h.storage.DeleteObject(c.Request.Context(), storedKey)
-		if storedThumbKey != "" {
-			_ = h.storage.DeleteObject(c.Request.Context(), storedThumbKey)
-		}
+		len(data), contentType, digest); err != nil {
+		h.deleteCanvasObjects(c.Request.Context(), storedKey, storedThumbKey)
+		response.InternalError(c, "保存画布资产失败")
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		h.deleteCanvasObjects(c.Request.Context(), storedKey, storedThumbKey)
 		response.InternalError(c, "保存画布资产失败")
 		return
 	}
@@ -373,23 +550,18 @@ func (h *CanvasHandler) DeleteAsset(c *gin.Context) {
 		response.InternalError(c, "读取画布资产失败")
 		return
 	}
-	if err := h.storage.DeleteObject(c.Request.Context(), objectKey); err != nil {
-		response.InternalError(c, "删除画布资产失败")
-		return
-	}
-	if thumbKey != "" {
-		if err := h.storage.DeleteObject(c.Request.Context(), thumbKey); err != nil {
-			response.InternalError(c, "删除画布缩略图失败")
-			return
-		}
-	}
-	_, err = h.db.ExecContext(c.Request.Context(), `
+	result, err := h.db.ExecContext(c.Request.Context(), `
 		DELETE FROM canvas_assets WHERE id = $1 AND user_id = $2
 	`, assetID, userID)
 	if err != nil {
 		response.InternalError(c, "删除画布资产失败")
 		return
 	}
+	if affected, _ := result.RowsAffected(); affected == 0 {
+		response.NotFound(c, "画布资产不存在")
+		return
+	}
+	h.deleteCanvasObjects(c.Request.Context(), objectKey, thumbKey)
 	response.Success(c, gin.H{"deleted": true})
 }
 
@@ -404,7 +576,7 @@ func (h *CanvasHandler) listProjectAssets(ctx context.Context, userID int64, pro
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	items := make([]CanvasAsset, 0)
 	for rows.Next() {
 		var item CanvasAsset
@@ -439,7 +611,7 @@ func (h *CanvasHandler) projectObjectKeys(ctx context.Context, userID int64, pro
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	keys := make([]string, 0)
 	for rows.Next() {
 		var objectKey, thumbKey string
@@ -454,8 +626,121 @@ func (h *CanvasHandler) projectObjectKeys(ctx context.Context, userID int64, pro
 	return keys, rows.Err()
 }
 
+func (h *CanvasHandler) scheduleUnreferencedAssetCleanup(
+	parent context.Context,
+	userID int64,
+	projectID string,
+	graph json.RawMessage,
+) {
+	referenced := canvasCloudAssetReferences(graph)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 30*time.Second)
+	go func() {
+		defer cancel()
+		if err := h.cleanupUnreferencedAssets(ctx, userID, projectID, referenced); err != nil {
+			logger.L().Warn("canvas.asset_cleanup_failed",
+				zap.Int64("user_id", userID),
+				zap.String("project_id", projectID),
+				zap.Error(err))
+		}
+	}()
+}
+
+func (h *CanvasHandler) cleanupUnreferencedAssets(
+	ctx context.Context,
+	userID int64,
+	projectID string,
+	referenced map[string]struct{},
+) error {
+	rows, err := h.db.QueryContext(ctx, `
+		SELECT id, object_key, thumb_object_key
+		FROM canvas_assets
+		WHERE user_id = $1 AND project_id = $2
+		  AND created_at < NOW() - INTERVAL '1 hour'
+	`, userID, projectID)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+	type orphan struct {
+		id        string
+		object    string
+		thumbnail string
+	}
+	orphans := make([]orphan, 0)
+	for rows.Next() {
+		var item orphan
+		if err := rows.Scan(&item.id, &item.object, &item.thumbnail); err != nil {
+			return err
+		}
+		if _, used := referenced[item.id]; used {
+			continue
+		}
+		orphans = append(orphans, item)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, item := range orphans {
+		if err := h.storage.DeleteObject(ctx, item.object); err != nil {
+			return err
+		}
+		if item.thumbnail != "" {
+			if err := h.storage.DeleteObject(ctx, item.thumbnail); err != nil {
+				return err
+			}
+		}
+		if _, err := h.db.ExecContext(ctx, `
+			DELETE FROM canvas_assets WHERE id = $1 AND user_id = $2
+		`, item.id, userID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func canvasCloudAssetReferences(graph json.RawMessage) map[string]struct{} {
+	references := make(map[string]struct{})
+	var value any
+	if json.Unmarshal(graph, &value) != nil {
+		return references
+	}
+	var walk func(any)
+	walk = func(current any) {
+		switch typed := current.(type) {
+		case map[string]any:
+			for key, child := range typed {
+				if key == "cloudAssetId" {
+					if id, ok := child.(string); ok && strings.TrimSpace(id) != "" {
+						references[id] = struct{}{}
+					}
+					continue
+				}
+				walk(child)
+			}
+		case []any:
+			for _, child := range typed {
+				walk(child)
+			}
+		}
+	}
+	walk(value)
+	return references
+}
+
 func (h *CanvasHandler) findCanvasAssetByHash(
 	ctx context.Context,
+	userID int64,
+	projectID string,
+	nodeID string,
+	digest string,
+) *CanvasAsset {
+	return findCanvasAssetByHashIn(ctx, h.db, h.storage, userID, projectID, nodeID, digest)
+}
+
+func findCanvasAssetByHashIn(
+	ctx context.Context,
+	queryer canvasQueryRower,
+	storage CanvasAssetStorage,
 	userID int64,
 	projectID string,
 	nodeID string,
@@ -466,7 +751,7 @@ func (h *CanvasHandler) findCanvasAssetByHash(
 	}
 	var item CanvasAsset
 	var objectKey, thumbKey string
-	err := h.db.QueryRowContext(ctx, `
+	err := queryer.QueryRowContext(ctx, `
 		SELECT id, project_id, node_id, kind, object_key, thumb_object_key,
 		       width, height, bytes, mime_type, sha256, created_at
 		FROM canvas_assets
@@ -480,15 +765,36 @@ func (h *CanvasHandler) findCanvasAssetByHash(
 	if err != nil {
 		return nil
 	}
-	if resolved, resolveErr := h.storage.PresignImageObject(ctx, objectKey); resolveErr == nil {
+	if resolved, resolveErr := storage.PresignImageObject(ctx, objectKey); resolveErr == nil {
 		item.URL = resolved
 	}
 	if thumbKey != "" {
-		if resolved, resolveErr := h.storage.PresignImageObject(ctx, thumbKey); resolveErr == nil {
+		if resolved, resolveErr := storage.PresignImageObject(ctx, thumbKey); resolveErr == nil {
 			item.ThumbURL = resolved
 		}
 	}
 	return &item
+}
+
+func lockCanvasQuota(ctx context.Context, tx *sql.Tx, scope string, userID int64) error {
+	_, err := tx.ExecContext(ctx,
+		`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
+		fmt.Sprintf("%s:%d", scope, userID),
+	)
+	return err
+}
+
+func (h *CanvasHandler) deleteCanvasObjects(ctx context.Context, keys ...string) {
+	for _, key := range keys {
+		if strings.TrimSpace(key) == "" {
+			continue
+		}
+		if err := h.storage.DeleteObject(ctx, key); err != nil {
+			logger.L().Warn("canvas.object_cleanup_failed",
+				zap.String("object_key", key),
+				zap.Error(err))
+		}
+	}
 }
 
 func (h *CanvasHandler) ownsProject(ctx context.Context, userID int64, projectID string) bool {
@@ -542,6 +848,21 @@ func truncateCanvasTitle(value string, limit int) string {
 		return value
 	}
 	return string(runes[:limit])
+}
+
+func canvasPage(c *gin.Context, defaultLimit, maxLimit int) (int, int) {
+	limit, _ := strconv.Atoi(strings.TrimSpace(c.Query("limit")))
+	offset, _ := strconv.Atoi(strings.TrimSpace(c.Query("offset")))
+	if limit <= 0 {
+		limit = defaultLimit
+	}
+	if limit > maxLimit {
+		limit = maxLimit
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	return limit, offset
 }
 
 func canvasAssetObjectKey(userID int64, projectID, assetID, extension string) string {

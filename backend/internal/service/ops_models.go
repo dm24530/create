@@ -48,6 +48,10 @@ type OpsErrorLog struct {
 	ResolvedByUserName string     `json:"resolved_by_user_name"`
 	ResolvedStatusRaw  string     `json:"-"`
 
+	RefundStatus string     `json:"refund_status"`
+	RefundAmount float64    `json:"refund_amount"`
+	RefundedAt   *time.Time `json:"refunded_at,omitempty"`
+
 	ClientRequestID string `json:"client_request_id"`
 	RequestID       string `json:"request_id"`
 	Message         string `json:"message"`

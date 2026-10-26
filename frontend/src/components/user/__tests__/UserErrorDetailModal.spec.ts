@@ -15,7 +15,15 @@ function deferred() {
   const promise = new Promise((res, rej) => { resolve = res; reject = rej })
   return { promise, resolve, reject }
 }
-const detail = (model: string) => ({ model, status_code: 500, category: 'upstream', created_at: '2026-09-20' })
+const detail = (model: string, extra: Record<string, unknown> = {}) => ({
+  model,
+  status_code: 500,
+  category: 'upstream',
+  created_at: '2026-09-20',
+  refund_status: 'none',
+  refund_amount: 0,
+  ...extra,
+})
 async function open() {
   const wrapper = mount(UserErrorDetailModal, {
     props: { show: false, errorId: 1 },
@@ -66,5 +74,15 @@ describe('user error detail requests', () => {
     const wrapper = await open(); await flushPromises()
     expect(wrapper.text()).toContain('usage.errors.detail.loadFailed')
     expect(wrapper.find('.animate-spin').exists()).toBe(false)
+  })
+
+  it('shows the refunded amount for a terminal failed request', async () => {
+    getDetail.mockResolvedValueOnce(detail('gpt-image-2', {
+      refund_status: 'refunded',
+      refund_amount: 0.12,
+    }))
+    const wrapper = await open(); await flushPromises()
+    expect(wrapper.text()).toContain('usage.errors.refunded')
+    expect(wrapper.text()).toContain('$0.120000')
   })
 })

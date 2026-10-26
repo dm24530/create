@@ -31,6 +31,7 @@ const (
 	opsAccountIDKey              = "ops_account_id"
 	opsRoutingCapacityLimitedKey = "ops_routing_capacity_limited"
 	opsDedicatedErrorRecordedKey = "ops_dedicated_error_recorded"
+	opsRefundOutcomeKey          = "ops_refund_outcome"
 
 	opsUpstreamModelKey = service.OpsUpstreamModelKey
 	opsRequestTypeKey   = "ops_request_type"
@@ -89,6 +90,12 @@ type opsErrorLogJob struct {
 	ops         *service.OpsService
 	entry       *service.OpsInsertErrorLogInput
 	queuedBytes int64
+}
+
+type opsRefundOutcome struct {
+	Status string
+	Amount float64
+	At     *time.Time
 }
 
 var (
@@ -212,6 +219,7 @@ func enqueueOpsErrorLog(ops *service.OpsService, entry *service.OpsInsertErrorLo
 	if ops == nil || entry == nil {
 		return
 	}
+	ops.RefundTerminalFailure(context.Background(), entry)
 	entry.UserAgent = normalizeOpsPersistentUserAgent(entry.UserAgent)
 	if entry.ErrorBody != "" {
 		originalBody := entry.ErrorBody
@@ -1085,12 +1093,21 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 		w := acquireOpsCaptureWriter(originalWriter)
 		w.setContext(c)
 		defer func() {
+			recovered := recover()
 			// Restore the original writer before returning so outer middlewares
 			// don't observe a pooled wrapper that has been released.
 			if c.Writer == w {
 				c.Writer = originalWriter
 			}
 			releaseOpsCaptureWriter(w)
+			if recovered != nil {
+				refundTerminalFailureForRequest(c, ops, http.StatusInternalServerError, parsedOpsError{
+					ErrorType:     "api_error",
+					Message:       "gateway handler panic",
+					StreamFailure: false,
+				})
+				panic(recovered)
+			}
 		}()
 		c.Writer = w
 		c.Next()
@@ -1099,6 +1116,20 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 		if _, rejected := middleware2.GetIngressRejectReason(c); rejected {
 			return
 		}
+
+		status := c.Writer.Status()
+		body := w.capturedBytes()
+		parsed := parseOpsErrorResponse(body)
+		if !parsed.StreamFailure {
+			if terminal, ok := w.capturedTerminalError(); ok {
+				parsed = terminal
+			}
+		}
+		if status < 400 && parsed.StreamFailure {
+			status = inferStreamFailureStatus(c, parsed)
+		}
+
+		refundTerminalFailureForRequest(c, ops, status, parsed)
 
 		if ops == nil {
 			return
@@ -1114,32 +1145,20 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 			return
 		}
 
-		status := c.Writer.Status()
-		body := w.capturedBytes()
-		parsed := parseOpsErrorResponse(body)
-		if !parsed.StreamFailure {
-			if terminal, ok := w.capturedTerminalError(); ok {
-				parsed = terminal
-			}
-		}
 		if status < 400 {
-			if parsed.StreamFailure {
-				status = inferStreamFailureStatus(c, parsed)
-			} else {
-				// A marked in-band error is a visible request failure even though its
-				// wire status is already 200. Otherwise retain recovered attempts as a
-				// provider-health row whose 2xx status keeps it outside request SLA.
-				if streamErrs := service.GetOpsStreamErrors(c); len(streamErrs) > 0 {
-					logOpsStreamError(c, ops, status)
-					// 请求级带内结果不承载上游归因，此前尝试的上游错误仍按恢复行记录。
-					if opsStreamErrorsAllRequestScoped(streamErrs) {
-						logOpsRecoveredUpstream(c, ops, status)
-					}
-				} else {
+			// A marked in-band error is a visible request failure even though its
+			// wire status is already 200. Otherwise retain recovered attempts as a
+			// provider-health row whose 2xx status keeps it outside request SLA.
+			if streamErrs := service.GetOpsStreamErrors(c); len(streamErrs) > 0 {
+				logOpsStreamError(c, ops, status)
+				// 请求级带内结果不承载上游归因，此前尝试的上游错误仍按恢复行记录。
+				if opsStreamErrorsAllRequestScoped(streamErrs) {
 					logOpsRecoveredUpstream(c, ops, status)
 				}
-				return
+			} else {
+				logOpsRecoveredUpstream(c, ops, status)
 			}
+			return
 		}
 
 		// Skip logging if a passthrough rule with skip_monitoring=true matched.
@@ -1274,6 +1293,9 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 				entry.Platform = apiKey.Group.Platform
 			}
 		}
+		entry.UsageRequestID = resolveOpsUsageBillingRequestID(c.Request.Context())
+		entry.RequestInstanceID = resolveOpsRequestInstanceID(c.Request.Context())
+		applyOpsRefundOutcome(c, entry)
 
 		var clientIP string
 		if ip := strings.TrimSpace(ip.GetClientIP(c)); ip != "" {
@@ -1283,6 +1305,90 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 
 		enqueueOpsErrorLog(ops, entry)
 	}
+}
+
+func refundTerminalFailureForRequest(
+	c *gin.Context,
+	ops *service.OpsService,
+	status int,
+	parsed parsedOpsError,
+) {
+	if ops == nil || c == nil || c.Request == nil {
+		return
+	}
+	refundStatus := status
+	if refundStatus < 400 {
+		for _, streamErr := range service.GetOpsStreamErrors(c) {
+			if streamErr.IntendedStatus >= 400 && (streamErr.RequestScoped || streamErr.CountTowardsSLA) {
+				refundStatus = streamErr.IntendedStatus
+				break
+			}
+		}
+	}
+	if refundStatus < 400 {
+		return
+	}
+	apiKey := getOpsAPIKey(c)
+	if apiKey == nil || apiKey.ID <= 0 {
+		return
+	}
+	requestID, _ := c.Request.Context().Value(ctxkey.RequestID).(string)
+	clientRequestID, _ := c.Request.Context().Value(ctxkey.ClientRequestID).(string)
+	entry := &service.OpsInsertErrorLogInput{
+		RequestID:         strings.TrimSpace(requestID),
+		ClientRequestID:   strings.TrimSpace(clientRequestID),
+		UsageRequestID:    resolveOpsUsageBillingRequestID(c.Request.Context()),
+		RequestInstanceID: resolveOpsRequestInstanceID(c.Request.Context()),
+		APIKeyID:          &apiKey.ID,
+		StatusCode:        refundStatus,
+		ErrorType:         parsed.ErrorType,
+	}
+	_ = ops.RefundTerminalFailure(c.Request.Context(), entry)
+	if entry.RefundStatus == "" {
+		return
+	}
+	c.Set(opsRefundOutcomeKey, &opsRefundOutcome{
+		Status: entry.RefundStatus,
+		Amount: entry.RefundAmount,
+		At:     entry.RefundedAt,
+	})
+}
+
+func resolveOpsUsageBillingRequestID(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	clientRequestID, _ := ctx.Value(ctxkey.ClientRequestID).(string)
+	requestID, _ := ctx.Value(ctxkey.RequestID).(string)
+	if strings.TrimSpace(clientRequestID) == "" && strings.TrimSpace(requestID) == "" {
+		return ""
+	}
+	return service.ResolveUsageBillingRequestID(ctx, "")
+}
+
+func resolveOpsRequestInstanceID(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	requestID, _ := ctx.Value(ctxkey.RequestID).(string)
+	return strings.TrimSpace(requestID)
+}
+
+func applyOpsRefundOutcome(c *gin.Context, entry *service.OpsInsertErrorLogInput) {
+	if c == nil || entry == nil {
+		return
+	}
+	value, ok := c.Get(opsRefundOutcomeKey)
+	if !ok {
+		return
+	}
+	outcome, ok := value.(*opsRefundOutcome)
+	if !ok || outcome == nil || outcome.Status == "" {
+		return
+	}
+	entry.RefundStatus = outcome.Status
+	entry.RefundAmount = outcome.Amount
+	entry.RefundedAt = outcome.At
 }
 
 func logOpsRecoveredUpstream(c *gin.Context, ops *service.OpsService, finalStatus int) {
@@ -1581,6 +1687,9 @@ func logOpsStreamErrorValue(c *gin.Context, ops *service.OpsService, wireStatus 
 			entry.Platform = apiKey.Group.Platform
 		}
 	}
+	entry.UsageRequestID = resolveOpsUsageBillingRequestID(c.Request.Context())
+	entry.RequestInstanceID = resolveOpsRequestInstanceID(c.Request.Context())
+	applyOpsRefundOutcome(c, entry)
 
 	if clientIP := strings.TrimSpace(ip.GetClientIP(c)); clientIP != "" {
 		entry.ClientIP = &clientIP

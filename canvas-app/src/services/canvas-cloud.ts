@@ -41,9 +41,15 @@ export function configureCanvasCloud(token?: string) {
   listeners.forEach((listener) => listener());
 }
 
+export function getCanvasAccessToken() {
+  return accessToken;
+}
+
 export function subscribeCanvasCloud(listener: () => void) {
   listeners.add(listener);
-  return () => listeners.delete(listener);
+  return () => {
+    listeners.delete(listener);
+  };
 }
 
 export function isCanvasCloudReady() {
@@ -74,6 +80,18 @@ export async function listCloudCanvasProjects() {
   return cloudRequest<CloudCanvasProjectSummary[]>("/projects");
 }
 
+export async function listCloudCanvasProjectsFull() {
+  const limit = 100;
+  const projects: CloudCanvasProject[] = [];
+  for (let offset = 0; ; offset += limit) {
+    const page = await cloudRequest<CloudCanvasProject[]>(
+      `/projects/full?limit=${limit}&offset=${offset}`,
+    );
+    projects.push(...page);
+    if (page.length < limit) return projects;
+  }
+}
+
 export async function getCloudCanvasProject(id: string) {
   return cloudRequest<CloudCanvasProject>(`/projects/${encodeURIComponent(id)}`);
 }
@@ -94,6 +112,17 @@ export async function putCloudCanvasProject(project: CanvasProject) {
 
 export function putCloudCanvasProjectKeepalive(project: CanvasProject) {
   if (!accessToken) return;
+  const body = JSON.stringify({
+    title: project.title,
+    graph: projectGraphForCloud(project),
+    version: project.cloudVersion || 0,
+  });
+  // The Fetch keepalive body limit is 64 KiB. Large canvases must use a
+  // regular request so the browser is not guaranteed to reject the flush.
+  if (new Blob([body]).size > 60 * 1024) {
+    void putCloudCanvasProject(project).catch(() => undefined);
+    return;
+  }
   void fetch(`/api/v1/canvas/projects/${encodeURIComponent(project.id)}`, {
     method: "PUT",
     keepalive: true,
@@ -101,11 +130,7 @@ export function putCloudCanvasProjectKeepalive(project: CanvasProject) {
       Authorization: `Bearer ${accessToken}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      title: project.title,
-      graph: projectGraphForCloud(project),
-      version: project.cloudVersion || 0,
-    }),
+    body,
   }).catch(() => undefined);
 }
 
@@ -193,16 +218,21 @@ export async function uploadPendingCanvasAssets(
         onUploaded({ nodeId: node.id, imageId: imageID, asset });
       });
     }
-    if (node.type === CanvasNodeType.Video && metadata?.storageKey && !metadata.cloudAssetId) {
+    if (
+      (node.type === CanvasNodeType.Video || node.type === CanvasNodeType.Audio) &&
+      metadata?.storageKey &&
+      !metadata.cloudAssetId
+    ) {
+      const kind = node.type === CanvasNodeType.Audio ? "audio" : "video";
       tasks.push(async () => {
         const blob = await getMediaBlob(metadata.storageKey!);
         if (!blob) return;
         const asset = await uploadCloudCanvasAsset({
           projectId,
           nodeId: node.id,
-          kind: "video",
+          kind,
           file: blob,
-          filename: canvasFilename(node.id, blob, ".mp4"),
+          filename: canvasFilename(node.id, blob, kind === "audio" ? ".mp3" : ".mp4"),
           width: metadata.naturalWidth,
           height: metadata.naturalHeight,
         });
@@ -278,7 +308,7 @@ function hydrateCloudNodes(nodes: CanvasNodeData[], assets: Map<string, CloudCan
       const previewURL = asset.thumb_url || asset.url;
       return {
         ...image,
-        content: previewURL,
+        content: asset.url,
         cloudURL: asset.url,
         cloudPreviewURL: previewURL,
         cloudSyncState: "uploaded" as const,
@@ -291,11 +321,12 @@ function hydrateCloudNodes(nodes: CanvasNodeData[], assets: Map<string, CloudCan
     if (!asset && !primaryImage) return { ...node, metadata: { ...node.metadata, images: hydratedImages } };
     const resolvedAsset = asset || (primaryImage?.cloudAssetId ? assets.get(primaryImage.cloudAssetId) : undefined);
     const previewURL = primaryImage?.cloudPreviewURL || resolvedAsset?.thumb_url || resolvedAsset?.url || "";
+    const fullURL = primaryImage?.cloudURL || resolvedAsset?.url || node.metadata?.content || "";
     return {
       ...node,
       metadata: {
         ...node.metadata,
-        content: previewURL,
+        content: fullURL,
         cloudAssetId: resolvedAsset?.id || cloudAssetId,
         cloudURL: primaryImage?.cloudURL || resolvedAsset?.url,
         cloudPreviewURL: previewURL,

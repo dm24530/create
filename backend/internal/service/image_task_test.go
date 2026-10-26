@@ -161,6 +161,25 @@ func TestImageTaskServiceMapsStoreFailures(t *testing.T) {
 	require.ErrorIs(t, err, ErrImageTaskUnavailable)
 }
 
+func TestImageTaskServiceMarksFailedTaskRefundedOnce(t *testing.T) {
+	store := &imageTaskMemoryStore{}
+	svc := NewImageTaskServiceWithOptions(store, time.Hour, time.Minute)
+	created, err := svc.Create(context.Background(), ImageTaskOwner{UserID: 1, APIKeyID: 2})
+	require.NoError(t, err)
+	require.NoError(t, svc.Fail(context.Background(), created.ID, http.StatusBadGateway, imageTaskErrorJSON("api_error", "upstream failed")))
+
+	refundedAt := time.Now().UTC().Truncate(time.Second)
+	require.NoError(t, svc.MarkRefunded(context.Background(), created.ID, 0.25, &refundedAt))
+	require.NoError(t, svc.MarkRefunded(context.Background(), created.ID, 9.99, &refundedAt))
+
+	got, err := svc.Get(context.Background(), ImageTaskOwner{UserID: 1, APIKeyID: 2}, created.ID)
+	require.NoError(t, err)
+	require.Equal(t, "refunded", got.RefundStatus)
+	require.InDelta(t, 0.25, got.RefundAmount, 1e-12)
+	require.NotNil(t, got.RefundedAt)
+	require.Equal(t, refundedAt.Unix(), *got.RefundedAt)
+}
+
 func TestImageTaskServiceCreateWithExecutionCompressesBody(t *testing.T) {
 	store := &imageTaskMemoryStore{}
 	svc := NewImageTaskServiceWithOptions(store, time.Hour, time.Minute)

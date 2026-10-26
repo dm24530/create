@@ -259,6 +259,68 @@ func (s *ImageStudioGalleryService) Save(
 	return entry, nil
 }
 
+// SaveExistingObject turns an object already persisted by the image task
+// pipeline into a studio work without downloading or uploading the image again.
+func (s *ImageStudioGalleryService) SaveExistingObject(
+	ctx context.Context,
+	userID int64,
+	objectKey string,
+	url string,
+	prompt string,
+	model string,
+	size string,
+	format string,
+	saved bool,
+	options ...ImageStudioGallerySaveOptions,
+) (*ImageStudioGalleryEntry, error) {
+	if s == nil || s.store == nil || s.storage == nil || userID <= 0 || strings.TrimSpace(objectKey) == "" {
+		return nil, ErrImageStudioGalleryUnavailable
+	}
+	count, err := s.store.Count(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	if saved && count >= resolveStudioQuota(s.storage) {
+		return nil, ErrImageStudioGalleryQuotaExceeded
+	}
+
+	serverNow := time.Now().UTC()
+	createdAt := serverNow
+	durationMs := 0
+	if len(options) > 0 {
+		durationMs = max(options[0].DurationMs, 0)
+		if options[0].CreatedAt > 0 {
+			candidate := time.Unix(options[0].CreatedAt, 0).UTC()
+			if !candidate.After(serverNow.Add(5*time.Minute)) &&
+				!candidate.Before(serverNow.Add(-30*24*time.Hour)) {
+				createdAt = candidate
+			}
+		}
+	}
+	expiresAt := int64(0)
+	if !saved {
+		expiresAt = serverNow.Add(s.tempRetention()).Unix()
+	}
+	entry := &ImageStudioGalleryEntry{
+		ID:         strings.ReplaceAll(uuid.NewString(), "-", ""),
+		UserID:     userID,
+		ObjectKey:  strings.TrimSpace(objectKey),
+		URL:        strings.TrimSpace(url),
+		Prompt:     strings.TrimSpace(prompt),
+		Model:      strings.TrimSpace(model),
+		Size:       strings.TrimSpace(size),
+		Format:     strings.TrimSpace(format),
+		Saved:      saved,
+		CreatedAt:  createdAt.Unix(),
+		DurationMs: durationMs,
+		ExpiresAt:  expiresAt,
+	}
+	if err := s.store.Save(ctx, entry, resolveStudioQuota(s.storage)); err != nil {
+		return nil, err
+	}
+	return entry, nil
+}
+
 // SaveFromURL 由服务端下载上游图片并转存到对象存储。
 // 上游返回的 URL 常常不允许浏览器跨域读取、且大多是短时效签名链接，
 // 由服务端抓取可以避开这两点，保证图库里存的是自己的长期地址。

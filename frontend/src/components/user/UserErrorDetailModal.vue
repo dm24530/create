@@ -34,9 +34,13 @@
         <!-- Status Code -->
         <div>
           <span class="font-medium text-gray-500 dark:text-dark-400">{{ t('usage.errors.status') }}</span>
-          <p class="mt-0.5">
+          <div class="mt-0.5 flex flex-wrap items-center gap-2">
             <span class="badge" :class="statusClass(detail.status_code)">{{ detail.status_code || '-' }}</span>
-          </p>
+            <span v-if="detail.refund_status === 'refunded'" class="badge badge-success">
+              {{ t('usage.errors.refunded') }}
+              <template v-if="detail.refund_amount > 0"> · ${{ detail.refund_amount.toFixed(6) }}</template>
+            </span>
+          </div>
         </div>
         <!-- Category -->
         <div>

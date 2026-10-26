@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"strings"
+	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
@@ -54,12 +55,276 @@ func (r *usageBillingRepository) Apply(ctx context.Context, cmd *service.UsageBi
 	if err := r.applyUsageBillingEffects(ctx, tx, cmd, result); err != nil {
 		return nil, err
 	}
+	if err := snapshotUsageBillingCommand(ctx, tx, cmd); err != nil {
+		return nil, err
+	}
 
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 	tx = nil
 	return result, nil
+}
+
+func (r *usageBillingRepository) Refund(
+	ctx context.Context,
+	cmd *service.UsageBillingRefundCommand,
+) (_ *service.UsageBillingRefundResult, err error) {
+	if cmd == nil {
+		return &service.UsageBillingRefundResult{}, nil
+	}
+	cmd.RequestID = strings.TrimSpace(cmd.RequestID)
+	cmd.RequestInstanceID = strings.TrimSpace(cmd.RequestInstanceID)
+	if cmd.RequestID == "" || cmd.APIKeyID <= 0 {
+		return &service.UsageBillingRefundResult{}, nil
+	}
+	if r == nil || r.db == nil {
+		return nil, errors.New("usage billing repository db is nil")
+	}
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if tx != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	var (
+		userID              sql.NullInt64
+		subscriptionID      sql.NullInt64
+		balanceCost         float64
+		subscriptionCost    float64
+		apiKeyQuotaCost     float64
+		apiKeyRateLimitCost float64
+		refundedAt          sql.NullTime
+		refundedAmount      float64
+	)
+	err = tx.QueryRowContext(ctx, `
+		SELECT user_id, subscription_id,
+		       COALESCE(balance_cost, 0),
+		       COALESCE(subscription_cost, 0),
+		       COALESCE(api_key_quota_cost, 0),
+		       COALESCE(api_key_rate_limit_cost, 0),
+		       refunded_at,
+		       COALESCE(refunded_amount, 0)
+		FROM usage_billing_dedup
+		WHERE request_id = $1 AND api_key_id = $2
+		  AND ($3 = '' OR request_instance_id = $3)
+		FOR UPDATE
+	`, cmd.RequestID, cmd.APIKeyID, strings.TrimSpace(cmd.RequestInstanceID)).Scan(
+		&userID,
+		&subscriptionID,
+		&balanceCost,
+		&subscriptionCost,
+		&apiKeyQuotaCost,
+		&apiKeyRateLimitCost,
+		&refundedAt,
+		&refundedAmount,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return &service.UsageBillingRefundResult{APIKeyID: cmd.APIKeyID}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	result := &service.UsageBillingRefundResult{
+		APIKeyID: cmd.APIKeyID,
+	}
+	if userID.Valid {
+		result.UserID = userID.Int64
+	}
+	if refundedAt.Valid {
+		result.AlreadyRefunded = true
+		result.RefundedAmount = refundedAmount
+		refundedAtValue := refundedAt.Time
+		result.RefundedAt = &refundedAtValue
+		return result, nil
+	}
+
+	if balanceCost <= 0 && subscriptionCost <= 0 && apiKeyQuotaCost <= 0 && apiKeyRateLimitCost <= 0 {
+		return result, nil
+	}
+
+	refundedAmount = 0
+	if userID.Valid && balanceCost > 0 {
+		res, err := tx.ExecContext(ctx, `
+			UPDATE users
+			SET balance = balance + $1, updated_at = NOW()
+			WHERE id = $2 AND deleted_at IS NULL
+		`, balanceCost, userID.Int64)
+		if err != nil {
+			return nil, err
+		}
+		affected, err := res.RowsAffected()
+		if err != nil {
+			return nil, err
+		}
+		if affected == 0 {
+			return nil, service.ErrUserNotFound
+		}
+		refundedAmount += balanceCost
+	} else if balanceCost > 0 {
+		return nil, service.ErrUserNotFound
+	}
+	if subscriptionID.Valid && subscriptionCost > 0 {
+		if err := reverseUsageBillingSubscription(ctx, tx, subscriptionID.Int64, subscriptionCost); err != nil {
+			if !errors.Is(err, service.ErrSubscriptionNotFound) {
+				return nil, err
+			}
+		} else {
+			refundedAmount += subscriptionCost
+		}
+	}
+	if apiKeyQuotaCost > 0 {
+		if err := reverseUsageBillingAPIKeyQuota(ctx, tx, cmd.APIKeyID, apiKeyQuotaCost); err != nil && !errors.Is(err, service.ErrAPIKeyNotFound) {
+			return nil, err
+		}
+	}
+	if apiKeyRateLimitCost > 0 {
+		if err := reverseUsageBillingAPIKeyRateLimit(ctx, tx, cmd.APIKeyID, apiKeyRateLimitCost); err != nil && !errors.Is(err, service.ErrAPIKeyNotFound) {
+			return nil, err
+		}
+	}
+
+	result.RefundedAmount = service.QuantizeUsageBillingAmount(refundedAmount)
+	now := time.Now().UTC()
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE usage_billing_dedup
+		SET refunded_at = $3, refunded_amount = $4
+		WHERE request_id = $1 AND api_key_id = $2 AND refunded_at IS NULL
+	`, cmd.RequestID, cmd.APIKeyID, now, result.RefundedAmount); err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	tx = nil
+	result.Applied = true
+	result.RefundedAt = &now
+	return result, nil
+}
+
+func snapshotUsageBillingCommand(ctx context.Context, tx *sql.Tx, cmd *service.UsageBillingCommand) error {
+	_, err := tx.ExecContext(ctx, `
+		UPDATE usage_billing_dedup
+		SET user_id = $3,
+		    request_instance_id = $4,
+		    subscription_id = $5,
+		    balance_cost = $6,
+		    subscription_cost = $7,
+		    api_key_quota_cost = $8,
+		    api_key_rate_limit_cost = $9
+		WHERE request_id = $1 AND api_key_id = $2
+	`,
+		cmd.RequestID,
+		cmd.APIKeyID,
+		nullableInt64Value(cmd.UserID),
+		nullableStringValue(cmd.RequestInstanceID),
+		nullableInt64Pointer(cmd.SubscriptionID),
+		service.QuantizeUsageBillingAmount(cmd.BalanceCost),
+		service.QuantizeUsageBillingAmount(cmd.SubscriptionCost),
+		service.QuantizeUsageBillingAmount(cmd.APIKeyQuotaCost),
+		service.QuantizeUsageBillingAmount(cmd.APIKeyRateLimitCost),
+	)
+	return err
+}
+
+func nullableInt64Value(value int64) any {
+	if value <= 0 {
+		return nil
+	}
+	return value
+}
+
+func nullableInt64Pointer(value *int64) any {
+	if value == nil || *value <= 0 {
+		return nil
+	}
+	return *value
+}
+
+func nullableStringValue(value string) any {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	return strings.TrimSpace(value)
+}
+
+func reverseUsageBillingSubscription(ctx context.Context, tx *sql.Tx, subscriptionID int64, costUSD float64) error {
+	res, err := tx.ExecContext(ctx, `
+		UPDATE user_subscriptions us
+		SET daily_usage_usd = GREATEST(0, us.daily_usage_usd - $1),
+		    weekly_usage_usd = GREATEST(0, us.weekly_usage_usd - $1),
+		    monthly_usage_usd = GREATEST(0, us.monthly_usage_usd - $1),
+		    updated_at = NOW()
+		FROM groups g
+		WHERE us.id = $2
+		  AND us.deleted_at IS NULL
+		  AND us.group_id = g.id
+		  AND g.deleted_at IS NULL
+	`, costUSD, subscriptionID)
+	if err != nil {
+		return err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return service.ErrSubscriptionNotFound
+	}
+	return nil
+}
+
+func reverseUsageBillingAPIKeyQuota(ctx context.Context, tx *sql.Tx, apiKeyID int64, amount float64) error {
+	res, err := tx.ExecContext(ctx, `
+		UPDATE api_keys
+		SET quota_used = GREATEST(0, quota_used - $1),
+		    status = CASE
+		      WHEN status = $3 AND (quota = 0 OR GREATEST(0, quota_used - $1) < quota) THEN $4
+		      ELSE status
+		    END,
+		    updated_at = NOW()
+		WHERE id = $2 AND deleted_at IS NULL
+	`, amount, apiKeyID, service.StatusAPIKeyQuotaExhausted, service.StatusAPIKeyActive)
+	if err != nil {
+		return err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return service.ErrAPIKeyNotFound
+	}
+	return nil
+}
+
+func reverseUsageBillingAPIKeyRateLimit(ctx context.Context, tx *sql.Tx, apiKeyID int64, amount float64) error {
+	res, err := tx.ExecContext(ctx, `
+		UPDATE api_keys
+		SET usage_5h = GREATEST(0, usage_5h - $1),
+		    usage_1d = GREATEST(0, usage_1d - $1),
+		    usage_7d = GREATEST(0, usage_7d - $1),
+		    updated_at = NOW()
+		WHERE id = $2 AND deleted_at IS NULL
+	`, amount, apiKeyID)
+	if err != nil {
+		return err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return service.ErrAPIKeyNotFound
+	}
+	return nil
 }
 
 func (r *usageBillingRepository) claimUsageBillingKey(ctx context.Context, tx *sql.Tx, cmd *service.UsageBillingCommand) (bool, error) {

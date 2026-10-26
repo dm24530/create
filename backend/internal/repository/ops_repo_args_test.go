@@ -14,11 +14,14 @@ func TestOpsInsertErrorLogArgsPreservesExplicitZeroUpstreamStatus(t *testing.T) 
 	zero := 0
 	args := opsInsertErrorLogArgs(&service.OpsInsertErrorLogInput{UpstreamStatusCode: &zero})
 
-	require.Len(t, args, 38)
+	require.Len(t, args, 41)
 	encoded, ok := args[27].(sql.NullInt64)
 	require.True(t, ok)
 	require.True(t, encoded.Valid)
 	require.Zero(t, encoded.Int64)
+	require.Equal(t, "none", args[38])
+	require.Equal(t, float64(0), args[39])
+	require.False(t, args[40].(sql.NullTime).Valid)
 }
 
 func TestOpsNullableIntPointerDistinguishesNilZeroAndStatus(t *testing.T) {

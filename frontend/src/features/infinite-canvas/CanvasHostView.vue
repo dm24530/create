@@ -41,6 +41,7 @@ const frameRef = ref<HTMLIFrameElement | null>(null)
 const frameLoaded = ref(false)
 const frameReady = ref(false)
 const frameBaseURL = ref('')
+const frameStorageScope = ref('')
 const bootstrapPayload = ref<{
   baseUrl: string
   apiKey: string
@@ -50,14 +51,32 @@ const bootstrapPayload = ref<{
 } | null>(null)
 const bootstrapTimers: number[] = []
 let frameReadyFallbackTimer: number | undefined
+let canvasContextRequestID = 0
 const { isDark } = useTheme()
 const { locale } = useI18n()
 const authStore = useAuthStore()
+watch(
+  () => authStore.user?.id,
+  (userID, previousUserID) => {
+    frameStorageScope.value = userID == null ? '' : resolveCanvasStorageScope(userID)
+    if (previousUserID === undefined || String(previousUserID ?? '') === String(userID ?? '')) return
+    clearBootstrapTimers()
+    frameLoaded.value = false
+    frameReady.value = false
+    bootstrapPayload.value = null
+    error.value = ''
+    if (userID != null) void loadContext()
+  },
+  { immediate: true },
+)
 const frameURL = computed(() => {
   const userID = String(authStore.user?.id || '').trim()
   if (!frameBaseURL.value || !userID) return frameBaseURL.value
   const separator = frameBaseURL.value.includes('?') ? '&' : '?'
-  return `${frameBaseURL.value}${separator}user=${encodeURIComponent(userID)}`
+  const scope = frameStorageScope.value
+    ? `&scope=${encodeURIComponent(frameStorageScope.value)}`
+    : ''
+  return `${frameBaseURL.value}${separator}user=${encodeURIComponent(userID)}${scope}`
 })
 const canvasLocale = computed<'zh-CN' | 'en-US'>(() => (
   locale.value.startsWith('zh') ? 'zh-CN' : 'en-US'
@@ -66,6 +85,27 @@ const canvasLocale = computed<'zh-CN' | 'en-US'>(() => (
 const frameOrigin = computed(() => (
   frameURL.value ? new URL(frameURL.value, window.location.origin).origin : window.location.origin
 ))
+
+function resolveCanvasStorageScope(userID: number | string) {
+  const storageKey = `sub2api:canvas-local-scope:${userID}`
+  try {
+    const existing = localStorage.getItem(storageKey)
+    if (existing && /^[A-Za-z0-9_-]{8,128}$/.test(existing)) return existing
+    const generated = randomStorageScope()
+    localStorage.setItem(storageKey, generated)
+    return generated
+  } catch {
+    return randomStorageScope()
+  }
+}
+
+function randomStorageScope() {
+  if (typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID().replace(/-/g, '')
+  }
+  const bytes = crypto.getRandomValues(new Uint8Array(16))
+  return Array.from(bytes, (value) => value.toString(16).padStart(2, '0')).join('')
+}
 
 async function resolveFrameURL() {
   if (!import.meta.env.DEV) {
@@ -92,6 +132,12 @@ async function resolveFrameURL() {
 }
 
 async function loadContext() {
+  const requestID = ++canvasContextRequestID
+  const ownerID = String(authStore.user?.id || '')
+  const isCurrentRequest = () => (
+    requestID === canvasContextRequestID &&
+    ownerID === String(authStore.user?.id || '')
+  )
   loading.value = true
   error.value = ''
   frameLoaded.value = false
@@ -106,7 +152,8 @@ async function loadContext() {
       settings.api_base_url || '',
       window.location.hostname,
     )
-    const creatorKey = selectCanvasCreatorKey(keyResponse.items || [])
+    if (!isCurrentRequest()) return
+    const creatorKey = selectCanvasCreatorKey(keyResponse.items || [], localStorage, ownerID)
     if (!creatorKey) {
       throw new Error('请先在生图工作台选择一个可用的 API Key')
     }
@@ -121,10 +168,15 @@ async function loadContext() {
       locale: canvasLocale.value,
     }
   } catch (cause) {
+    if (!isCurrentRequest()) return
     error.value = cause instanceof Error ? cause.message : '无法准备画布密钥'
   } finally {
-    loading.value = false
+    if (isCurrentRequest()) loading.value = false
   }
+}
+
+function clearBootstrapTimers() {
+  for (const timer of bootstrapTimers.splice(0)) window.clearTimeout(timer)
 }
 
 function postTheme() {
@@ -151,7 +203,7 @@ function sendBootstrap() {
     managed: true,
     theme: isDark.value ? 'dark' : 'light',
   }
-  for (const timer of bootstrapTimers.splice(0)) window.clearTimeout(timer)
+  clearBootstrapTimers()
   for (const delay of [0, 250, 750, 1500, 3000]) {
     bootstrapTimers.push(window.setTimeout(() => {
       frameRef.value?.contentWindow?.postMessage(payload, frameOrigin.value)
@@ -183,7 +235,7 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('message', handleFrameMessage)
   if (frameReadyFallbackTimer) window.clearTimeout(frameReadyFallbackTimer)
-  for (const timer of bootstrapTimers.splice(0)) window.clearTimeout(timer)
+  clearBootstrapTimers()
 })
 watch(isDark, postTheme)
 watch(canvasLocale, postLocale)

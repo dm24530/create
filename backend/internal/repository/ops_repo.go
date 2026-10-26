@@ -55,9 +55,12 @@ INSERT INTO ops_error_logs (
   response_latency_ms,
   time_to_first_token_ms,
   created_at,
-  api_key_prefix
+  api_key_prefix,
+  refund_status,
+  refund_amount,
+  refunded_at
 ) VALUES (
-  $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38
+  $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41
 )`
 
 func NewOpsRepository(db *sql.DB) service.OpsRepository {
@@ -128,6 +131,10 @@ func (r *opsRepository) BatchInsertErrorLogs(ctx context.Context, inputs []*serv
 }
 
 func opsInsertErrorLogArgs(input *service.OpsInsertErrorLogInput) []any {
+	refundStatus := strings.TrimSpace(input.RefundStatus)
+	if refundStatus == "" {
+		refundStatus = "none"
+	}
 	return []any{
 		opsNullString(input.RequestID),
 		opsNullString(input.ClientRequestID),
@@ -167,6 +174,9 @@ func opsInsertErrorLogArgs(input *service.OpsInsertErrorLogInput) []any {
 		opsNullInt64(input.TimeToFirstTokenMs),
 		input.CreatedAt,
 		opsNullString(input.APIKeyPrefix),
+		refundStatus,
+		service.QuantizeUsageBillingAmount(input.RefundAmount),
+		opsNullTime(input.RefundedAt),
 	}
 }
 
@@ -267,7 +277,10 @@ SELECT
   COALESCE(e.user_agent, ''),
   e.request_type,
   COALESCE(ak.name, ''),
-  ak.deleted_at
+  ak.deleted_at,
+  COALESCE(e.refund_status, 'none'),
+  COALESCE(e.refund_amount, 0),
+  e.refunded_at
 FROM ops_error_logs e
 LEFT JOIN accounts a ON e.account_id = a.id
 LEFT JOIN groups g ON e.group_id = g.id
@@ -302,6 +315,7 @@ LIMIT $` + itoa(len(args)+1) + ` OFFSET $` + itoa(len(args)+2)
 		var requestType sql.NullInt64
 		var apiKeyName string
 		var apiKeyDeletedAt sql.NullTime
+		var refundedAt sql.NullTime
 		if err := rows.Scan(
 			&item.ID,
 			&item.CreatedAt,
@@ -338,6 +352,9 @@ LIMIT $` + itoa(len(args)+1) + ` OFFSET $` + itoa(len(args)+2)
 			&requestType,
 			&apiKeyName,
 			&apiKeyDeletedAt,
+			&item.RefundStatus,
+			&item.RefundAmount,
+			&refundedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -380,6 +397,10 @@ LIMIT $` + itoa(len(args)+1) + ` OFFSET $` + itoa(len(args)+2)
 		}
 		item.APIKeyName = apiKeyName
 		item.APIKeyDeleted = apiKeyDeletedAt.Valid
+		if refundedAt.Valid {
+			t := refundedAt.Time
+			item.RefundedAt = &t
+		}
 		out = append(out, &item)
 	}
 	if err := rows.Err(); err != nil {
@@ -449,7 +470,10 @@ SELECT
   e.time_to_first_token_ms,
   COALESCE(e.api_key_prefix, ''),
   COALESCE(ak.name, ''),
-  ak.deleted_at
+  ak.deleted_at,
+  COALESCE(e.refund_status, 'none'),
+  COALESCE(e.refund_amount, 0),
+  e.refunded_at
 FROM ops_error_logs e
 LEFT JOIN users u ON e.user_id = u.id
 LEFT JOIN accounts a ON e.account_id = a.id
@@ -476,6 +500,7 @@ LIMIT 1`
 	var requestType sql.NullInt64
 	var detailAPIKeyName string
 	var detailAPIKeyDeletedAt sql.NullTime
+	var detailRefundedAt sql.NullTime
 
 	err := r.db.QueryRowContext(ctx, q, id).Scan(
 		&out.ID,
@@ -524,6 +549,9 @@ LIMIT 1`
 		&out.APIKeyPrefix,
 		&detailAPIKeyName,
 		&detailAPIKeyDeletedAt,
+		&out.RefundStatus,
+		&out.RefundAmount,
+		&detailRefundedAt,
 	)
 	if err != nil {
 		return nil, err
@@ -541,6 +569,10 @@ LIMIT 1`
 	if clientIP.Valid {
 		s := clientIP.String
 		out.ClientIP = &s
+	}
+	if detailRefundedAt.Valid {
+		t := detailRefundedAt.Time
+		out.RefundedAt = &t
 	}
 	if upstreamStatusCode.Valid {
 		v := int(upstreamStatusCode.Int64)
@@ -596,6 +628,34 @@ LIMIT 1`
 	}
 
 	return &out, nil
+}
+
+func (r *opsRepository) MarkErrorRefunded(
+	ctx context.Context,
+	requestID string,
+	clientRequestID string,
+	apiKeyID int64,
+	amount float64,
+) error {
+	if r == nil || r.db == nil {
+		return fmt.Errorf("nil ops repository")
+	}
+	requestID = strings.TrimSpace(requestID)
+	clientRequestID = strings.TrimSpace(clientRequestID)
+	if (requestID == "" && clientRequestID == "") || apiKeyID <= 0 {
+		return nil
+	}
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE ops_error_logs
+		SET refund_status = 'refunded',
+		    refund_amount = $4,
+		    refunded_at = NOW()
+		WHERE api_key_id = $2
+		  AND status_code >= 400
+		  AND refund_status <> 'refunded'
+		  AND (($1 <> '' AND request_id = $1) OR ($3 <> '' AND client_request_id = $3))
+	`, requestID, apiKeyID, clientRequestID, service.QuantizeUsageBillingAmount(amount))
+	return err
 }
 
 func (r *opsRepository) UpdateErrorResolution(ctx context.Context, errorID int64, resolved bool, resolvedByUserID *int64, resolvedAt *time.Time) error {

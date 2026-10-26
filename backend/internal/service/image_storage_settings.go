@@ -18,6 +18,7 @@ import (
 )
 
 const settingKeyImageStorageConfig = "image_storage_config"
+const imageStorageSettingsCacheTTL = 5 * time.Second
 
 // ErrImageStorageIncomplete 表示开关已打开但凭证不全，无法启用异步生图。
 //
@@ -103,6 +104,7 @@ type ImageStorageSettingService struct {
 
 	mu               sync.Mutex
 	resolved         bool
+	resolvedAt       time.Time
 	uploader         *ImageResultUploader
 	enabled          bool
 	galleryRetention time.Duration
@@ -315,12 +317,14 @@ func (s *ImageStorageSettingService) resolve() (*ImageResultUploader, bool) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.resolved {
+	now := time.Now()
+	if s.resolved && now.Sub(s.resolvedAt) < imageStorageSettingsCacheTTL {
 		return s.uploader, s.enabled
 	}
 
 	ctx := context.Background()
 	s.resolved = true
+	s.resolvedAt = now
 	s.uploader, s.enabled = nil, false
 	s.galleryRetention = ImageStudioGalleryTTL
 	s.studioQuota = StudioWorksQuotaPerUser
@@ -409,6 +413,7 @@ func (s *ImageStorageSettingService) Invalidate() {
 	}
 	s.mu.Lock()
 	s.resolved = false
+	s.resolvedAt = time.Time{}
 	s.uploader = nil
 	s.enabled = false
 	s.galleryRetention = ImageStudioGalleryTTL

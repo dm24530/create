@@ -45,7 +45,7 @@ import { CanvasToolbar } from "@/components/canvas/canvas-toolbar";
 import { AssetPickerModal, type InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
 import { CanvasSidePanel } from "@/components/canvas/canvas-side-panel";
 import { CanvasZoomControls } from "@/components/canvas/canvas-zoom-controls";
-import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
+import { flushCanvasStorePersistence, useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import {
     getCloudCanvasProject,
     isCanvasCloudReady,
@@ -216,14 +216,12 @@ function InfiniteCanvasPage() {
     const cloudAssetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const cloudSaveInFlightRef = useRef<Promise<void> | null>(null);
     const cloudSaveQueuedRef = useRef(false);
-    const cloudConflictBlockedRef = useRef(false);
     const cloudConflictNoticeAtRef = useRef(0);
     const pendingCloudAssetsRef = useRef(new Set<string>());
     const applyingHistoryRef = useRef(false);
     const historyPausedRef = useRef(false);
 
     useEffect(() => {
-        cloudConflictBlockedRef.current = false;
         cloudConflictNoticeAtRef.current = 0;
     }, [projectId]);
     const rafRef = useRef<number | null>(null);
@@ -474,7 +472,7 @@ function InfiniteCanvasPage() {
 
     const resumeImageNodeTask = useCallback(
         async (node: CanvasNodeData) => {
-            const resumableImages = (node.metadata?.images || []).filter((image) => image.status === NODE_STATUS_LOADING && image.taskId && image.taskPollUrl);
+            const resumableImages = (node.metadata?.images || []).filter((image) => image.taskId && image.taskPollUrl && !image.storageKey);
             if (resumableImages.length === 0 || generationRequestsRef.current.has(node.id)) return;
 
             setRunningNodeId(node.id);
@@ -503,6 +501,8 @@ function InfiniteCanvasPage() {
                                                   ...item,
                                                   metadata: {
                                                       ...item.metadata,
+                                                      status: NODE_STATUS_SUCCESS,
+                                                      errorDetails: undefined,
                                                       content: preview.dataUrl,
                                                       storageKey: undefined,
                                                       naturalWidth: undefined,
@@ -533,6 +533,29 @@ function InfiniteCanvasPage() {
                         });
                         const generated = result[0];
                         if (!generated) throw new Error(t("apiErrors.noImageReturned"));
+                        const previewDataUrl = generated.previewDataUrl;
+                        if (previewDataUrl) {
+                            setNodes((prev) =>
+                                prev.map((item) =>
+                                    item.id === node.id
+                                        ? {
+                                              ...item,
+                                              metadata: {
+                                                  ...item.metadata,
+                                                  status: NODE_STATUS_SUCCESS,
+                                                  content: item.metadata?.primaryImageId ? item.metadata.content : previewDataUrl,
+                                                  errorDetails: undefined,
+                                                  images: item.metadata?.images?.map((entry) =>
+                                                      entry.id === image.id
+                                                          ? { ...entry, status: NODE_STATUS_SUCCESS, content: previewDataUrl, errorDetails: undefined }
+                                                          : entry,
+                                                  ),
+                                              },
+                                          }
+                                        : item,
+                                ),
+                            );
+                        }
                         const uploaded = await uploadImage(generated.dataUrl, { signal: controller.signal });
                         clearPendingImageTask(projectId, node.id, image.id);
                         const imageSize = fitNodeSize(uploaded.width, uploaded.height, node.width, node.height);
@@ -758,7 +781,6 @@ function InfiniteCanvasPage() {
         const run = async () => {
             do {
                 cloudSaveQueuedRef.current = false;
-                if (cloudConflictBlockedRef.current) return;
                 const project = useCanvasStore.getState().projects.find((item) => item.id === projectId);
                 if (!project) return;
                 try {
@@ -775,27 +797,23 @@ function InfiniteCanvasPage() {
                         try {
                             const cloudProject = await getCloudCanvasProject(projectId);
                             const current = useCanvasStore.getState().projects.find((item) => item.id === projectId);
-                            const localUpdated = Date.parse(current?.updatedAt || "") || 0;
-                            const cloudUpdated = Date.parse(cloudProject.updated_at || "") || 0;
-                            if (current && localUpdated >= cloudUpdated) {
-                                useCanvasStore.setState((state) => ({
-                                    projects: state.projects.map((item) => (
-                                        item.id === projectId
-                                            ? { ...item, cloudVersion: cloudProject.version }
-                                            : item
-                                    )),
-                                }));
-                                cloudSaveQueuedRef.current = true;
-                                continue;
+                            if (!current) return;
+                            useCanvasStore.setState((state) => ({
+                                projects: state.projects.map((item) => (
+                                    item.id === projectId
+                                        ? { ...item, cloudVersion: cloudProject.version }
+                                        : item
+                                )),
+                            }));
+                            const now = Date.now();
+                            if (now - cloudConflictNoticeAtRef.current > 30_000) {
+                                cloudConflictNoticeAtRef.current = now;
+                                message.warning(t("canvas.projectPage.cloudConflict"));
                             }
+                            cloudSaveQueuedRef.current = true;
+                            continue;
                         } catch {
-                            // Fall through to the one-time conflict notice.
-                        }
-                        cloudConflictBlockedRef.current = true;
-                        const now = Date.now();
-                        if (now - cloudConflictNoticeAtRef.current > 30_000) {
-                            cloudConflictNoticeAtRef.current = now;
-                            message.warning(t("canvas.projectPage.cloudConflict"));
+                            return;
                         }
                     } else {
                         console.warn("Failed to sync canvas project", error);
@@ -918,8 +936,10 @@ function InfiniteCanvasPage() {
     }, [activeChatId, backgroundMode, chatSessions, connections, currentProject?.title, nodes, projectId, projectLoaded, showImageInfo, syncCanvasProjectToCloud]);
 
     useEffect(() => {
-        if (!projectLoaded || !isCanvasCloudReady()) return;
+        if (!projectLoaded) return;
         const flush = () => {
+            flushCanvasStorePersistence();
+            if (!isCanvasCloudReady()) return;
             const project = useCanvasStore.getState().projects.find((item) => item.id === projectId);
             if (project) putCloudCanvasProjectKeepalive(project);
         };
@@ -2789,8 +2809,9 @@ function InfiniteCanvasPage() {
                         : refs.length
                           ? await requestEdit(taskConfig, context.prompt, refs, requestOptions).then((items) => items[0])
                           : await requestGeneration(taskConfig, context.prompt, requestOptions).then((items) => items[0]);
+                    const displayUrl = image.previewDataUrl || image.dataUrl;
                     setNodes((prev) =>
-                        prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, content: image.dataUrl, storageKey: undefined, naturalWidth: undefined, naturalHeight: undefined, bytes: undefined, mimeType: undefined, prompt: scene, model: generationConfig.model, status: NODE_STATUS_SUCCESS, errorDetails: undefined } } : node)),
+                        prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, content: displayUrl, storageKey: undefined, naturalWidth: undefined, naturalHeight: undefined, bytes: undefined, mimeType: undefined, prompt: scene, model: generationConfig.model, status: NODE_STATUS_SUCCESS, errorDetails: undefined } } : node)),
                     );
                     void uploadImage(image.dataUrl, { signal: controller.signal })
                         .then((uploaded) => {
@@ -2946,6 +2967,8 @@ function InfiniteCanvasPage() {
                                             ...node,
                                             metadata: {
                                                 ...node.metadata,
+                                        status: NODE_STATUS_SUCCESS,
+                                        errorDetails: undefined,
                                                 content: previewItem.content,
                                                 storageKey: undefined,
                                                 naturalWidth: undefined,
@@ -3000,10 +3023,11 @@ function InfiniteCanvasPage() {
                                         : await requestGeneration(taskConfig, effectivePrompt, requestOptions).then((items) => items[0]);
                                 }
                                 if (!image) throw new Error(t("apiErrors.noImageReturned"));
+                                const displayUrl = image.previewDataUrl || image.dataUrl;
                                 const item: CanvasNodeImage = {
                                     id: imageId,
                                     status: NODE_STATUS_SUCCESS,
-                                    content: image.dataUrl,
+                                    content: displayUrl,
                                     naturalWidth: 0,
                                     naturalHeight: 0,
                                     bytes: 0,
@@ -3279,8 +3303,10 @@ function InfiniteCanvasPage() {
                     }),
                 );
                 if (rootId !== nodeId) finishGenerationRequest(rootId, controller);
-                if (controller.signal.aborted) return;
                 const completedTexts = results.flatMap((item) => (item?.status === NODE_STATUS_SUCCESS ? [item] : []));
+                if (controller.signal.aborted) {
+                    return;
+                }
                 const failedTexts = results.filter((item) => item?.status === NODE_STATUS_ERROR);
                 const firstText = completedTexts[0];
                 if (completedTexts.length <= 1) setExpandedBatchNodeIds((current) => new Set([...current].filter((id) => id !== rootId)));
@@ -3450,6 +3476,8 @@ function InfiniteCanvasPage() {
                                               ...item,
                                               metadata: {
                                                   ...item.metadata,
+                                                  status: NODE_STATUS_SUCCESS,
+                                                  errorDetails: undefined,
                                                   content: item.metadata?.primaryImageId === retryImageId ? preview.dataUrl : item.metadata?.content,
                                                   storageKey: item.metadata?.primaryImageId === retryImageId ? undefined : item.metadata?.storageKey,
                                                   naturalWidth: item.metadata?.primaryImageId === retryImageId ? undefined : item.metadata?.naturalWidth,
@@ -3484,6 +3512,29 @@ function InfiniteCanvasPage() {
                         : await requestGeneration(taskConfig, prompt, { signal: controller.signal }).then((items) => items[0]);
                 }
                 if (!image) throw new Error(t("apiErrors.noImageReturned"));
+                const previewDataUrl = image.previewDataUrl;
+                if (previewDataUrl) {
+                    setNodes((prev) =>
+                        prev.map((item) =>
+                            item.id === node.id
+                                ? {
+                                      ...item,
+                                      metadata: {
+                                          ...item.metadata,
+                                          status: NODE_STATUS_SUCCESS,
+                                          errorDetails: undefined,
+                                          content: item.metadata?.primaryImageId === retryImageId ? previewDataUrl : item.metadata?.content,
+                                          images: item.metadata?.images?.map((entry) =>
+                                              entry.id === retryImageId
+                                                  ? { ...entry, status: NODE_STATUS_SUCCESS, content: previewDataUrl, errorDetails: undefined }
+                                                  : entry,
+                                          ),
+                                      },
+                                  }
+                                : item,
+                        ),
+                    );
+                }
                 const uploadedImage = await uploadImage(image.dataUrl, { signal: controller.signal });
                 clearPendingImageTask(projectId, node.id, retryImageId);
                 const imageConfig = NODE_DEFAULT_SIZE[CanvasNodeType.Image];

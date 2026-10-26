@@ -11,20 +11,24 @@ import (
 func TestSubmitUsageRecordTaskCopiesRequestContext(t *testing.T) {
 	parent := context.WithValue(context.Background(), ctxkey.ClientRequestID, "client-request-123")
 	parent = context.WithValue(parent, ctxkey.RequestID, "request-456")
+	parent = context.WithValue(parent, ctxkey.UsageBillingRequestID, "grok-video:task-789")
 	parent = context.WithValue(parent, ctxkey.AsyncImageTask, true)
 
 	var gotClientRequestID string
 	var gotRequestID string
+	var gotUsageBillingRequestID string
 	var gotAsyncImageTask bool
 	h := &GatewayHandler{}
 	h.submitUsageRecordTask(parent, func(ctx context.Context) {
 		gotClientRequestID, _ = ctx.Value(ctxkey.ClientRequestID).(string)
 		gotRequestID, _ = ctx.Value(ctxkey.RequestID).(string)
+		gotUsageBillingRequestID, _ = ctx.Value(ctxkey.UsageBillingRequestID).(string)
 		gotAsyncImageTask, _ = ctx.Value(ctxkey.AsyncImageTask).(bool)
 	})
 
 	require.Equal(t, "client-request-123", gotClientRequestID)
 	require.Equal(t, "request-456", gotRequestID)
+	require.Equal(t, "grok-video:task-789", gotUsageBillingRequestID)
 	require.True(t, gotAsyncImageTask)
 }
 

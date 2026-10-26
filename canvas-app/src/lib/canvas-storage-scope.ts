@@ -1,0 +1,33 @@
+const search = typeof window === "undefined" ? null : new URLSearchParams(window.location.search);
+const scopeCandidate = search?.get("scope")?.trim() || "";
+const userCandidate = search?.get("user")?.trim() || "";
+
+export const canvasStorageScope = /^[A-Za-z0-9_-]{8,128}$/.test(scopeCandidate)
+    ? scopeCandidate
+    : /^[A-Za-z0-9_-]{1,64}$/.test(userCandidate)
+      ? `legacy-user-${userCandidate}`
+      : "default";
+
+const scopedPrefix = `scope:${canvasStorageScope}:`;
+
+export function scopedCanvasStorageKey(key: string) {
+    return key.startsWith(scopedPrefix) ? key : `${scopedPrefix}${key}`;
+}
+
+export function unscopedCanvasStorageKey(key: string) {
+    return key.startsWith(scopedPrefix) ? key.slice(scopedPrefix.length) : key;
+}
+
+export function legacyCanvasStorageKeys(key: string) {
+    const keys = new Set<string>();
+    if (userCandidate) {
+        keys.add(`${key}:user:${userCandidate}`);
+    }
+    keys.add(key);
+    keys.delete(scopedCanvasStorageKey(key));
+    return [...keys];
+}
+
+export function scopedCanvasStoreName(name: string) {
+    return `${name}:${canvasStorageScope}`;
+}

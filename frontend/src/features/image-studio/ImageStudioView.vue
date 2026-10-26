@@ -50,7 +50,7 @@
               <Icon name="refresh" size="xs" class="is-spinning" />
               <span>{{ activeImageTaskCount }} 个任务进行中</span>
             </span>
-            <button type="button" class="studio-results__action" :disabled="refreshing" @click="loadGallery">
+            <button type="button" class="studio-results__action" :disabled="refreshing" @click="loadGallery()">
               <Icon name="refresh" size="sm" :class="{ 'is-spinning': refreshing }" />
               <span>加载历史记录</span>
             </button>
@@ -74,8 +74,8 @@
             <button
               type="button"
               class="image-result-card__media relative block w-full overflow-hidden"
-              :disabled="image.pending"
-              @click="!image.pending && (previewImage = image)"
+              :disabled="image.pending || image.failed"
+              @click="!image.pending && !image.failed && (previewImage = image)"
             >
               <div
                 v-if="image.pending"
@@ -103,6 +103,11 @@
                     {{ pendingElapsedSeconds(image) }} 秒
                   </small>
                 </template>
+              </div>
+              <div v-else-if="image.failed" class="image-failure-card" data-testid="image-generation-failure">
+                <strong>生成失败</strong>
+                <p>{{ image.error || '生成失败，请重试' }}</p>
+                <small v-if="image.prompt">{{ image.prompt }}</small>
               </div>
               <template v-else>
                 <div
@@ -137,21 +142,21 @@
                     {{ image.createdAt ? `${formatCreatedAt(image.createdAt)} · ${image.meta}` : image.meta }}
                   </p>
                   <p
-                    v-if="!image.pending && image.saved"
+                    v-if="!image.pending && !image.failed && image.saved"
                     class="text-xs text-emerald-600 dark:text-emerald-400"
                     data-testid="image-saved-badge"
                   >
                     已保存到我的作品
                   </p>
                   <p
-                    v-else-if="!image.pending && image.expiresAt"
+                    v-else-if="!image.pending && !image.failed && image.expiresAt"
                     class="text-xs text-amber-600 dark:text-amber-400"
                     data-testid="image-temp-badge"
                   >
                     临时内容 · 还剩 {{ remainingDays(image) }} 天
                   </p>
                 </div>
-                <div v-if="!image.pending" class="flex shrink-0 gap-1">
+                <div v-if="!image.pending && !image.failed" class="flex shrink-0 gap-1">
                   <button
                     v-if="!image.saved && galleryBackedIds.has(galleryIdFor(image))"
                     type="button"
@@ -176,6 +181,15 @@
                     <Icon name="trash" size="sm" />
                   </button>
                 </div>
+                <button
+                  v-else-if="image.failed"
+                  type="button"
+                  class="mini-action"
+                  title="删除失败记录"
+                  @click="removeFailedImage(image)"
+                >
+                  <Icon name="trash" size="sm" />
+                </button>
               </div>
           </article>
         </div>
@@ -627,7 +641,7 @@ import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Toggle from '@/components/common/Toggle.vue'
 import ImageStudioSelect from './ImageStudioSelect.vue'
-import { IMAGE_STUDIO_DEFAULT_PROMPT, imageStudioDraft } from './imageStudioDraft'
+import { IMAGE_STUDIO_DEFAULT_PROMPT, imageStudioDraft, resetImageStudioDraft } from './imageStudioDraft'
 import {
   imageNeedsLocalResize,
   LOCAL_IMAGE_MAX_EDGE,
@@ -638,6 +652,7 @@ import Icon from '@/components/icons/Icon.vue'
 import { useClipboard } from '@/composables/useClipboard'
 import {
   createImageGenerationTaskId,
+  ImageGenerationStillRunning,
   ImageGenerationWaitCancelled,
   tryStartPersistentImageGeneration,
   waitForPersistentImageGeneration,
@@ -672,6 +687,8 @@ interface GeneratedImage {
   gatewayPollUrl?: string
   gatewaySubmitPending?: boolean
   previewSrc?: string
+  failed?: boolean
+  error?: string
   apiKeyId?: number
   startedAt?: number
   durationMs?: number
@@ -761,6 +778,24 @@ const fileInput = ref<HTMLInputElement | null>(null)
 const { copyToClipboard } = useClipboard()
 const appStore = useAppStore()
 const authStore = useAuthStore()
+const studioStateOwnerId = ref(String(authStore.user?.id || ''))
+let studioUserEpoch = 0
+
+type StudioOwnerSnapshot = {
+  epoch: number
+  userId: string
+}
+
+function captureStudioOwner(): StudioOwnerSnapshot {
+  return {
+    epoch: studioUserEpoch,
+    userId: studioStateOwnerId.value,
+  }
+}
+
+function isStudioOwnerCurrent(owner: StudioOwnerSnapshot) {
+  return owner.epoch === studioUserEpoch && owner.userId === studioStateOwnerId.value
+}
 
 const draftOwnerId = String(authStore.user?.id || '')
 if (imageStudioDraft.ownerId !== draftOwnerId) {
@@ -774,6 +809,7 @@ if (imageStudioDraft.ownerId !== draftOwnerId) {
 }
 
 const PENDING_STORAGE_KEY = 'sub2api:image-studio:pending'
+const FAILED_STORAGE_KEY = 'sub2api:image-studio:failures'
 const PENDING_PROMPT_STORAGE_KEY = 'sub2api:image-studio:pending-prompt'
 const STUDIO_PREFERENCES_STORAGE_KEY = 'sub2api:image-studio:preferences'
 const STUDIO_SNAPSHOT_STORAGE_KEY = 'sub2api:image-studio:snapshot-v1'
@@ -783,14 +819,22 @@ function pendingImageStorageKey(userId: number | string) {
   return `${PENDING_STORAGE_KEY}:${userId}`
 }
 
+function failedImageStorageKey(userId: number | string) {
+  return `${FAILED_STORAGE_KEY}:${userId}`
+}
+
 interface ImageStudioPreferences {
   keyId: string
   model: string
 }
 
+function studioPreferencesStorageKey(userId = authStore.user?.id) {
+  return userId == null ? STUDIO_PREFERENCES_STORAGE_KEY : `${STUDIO_PREFERENCES_STORAGE_KEY}:${userId}`
+}
+
 function readStudioPreferences(): ImageStudioPreferences {
   try {
-    const parsed = JSON.parse(localStorage.getItem(STUDIO_PREFERENCES_STORAGE_KEY) || '{}')
+    const parsed = JSON.parse(localStorage.getItem(studioPreferencesStorageKey()) || '{}')
     return {
       keyId: typeof parsed?.keyId === 'string' ? parsed.keyId : '',
       model: typeof parsed?.model === 'string' ? parsed.model : '',
@@ -803,7 +847,7 @@ function readStudioPreferences(): ImageStudioPreferences {
 function writeStudioPreferences(update: Partial<ImageStudioPreferences>) {
   try {
     const current = readStudioPreferences()
-    localStorage.setItem(STUDIO_PREFERENCES_STORAGE_KEY, JSON.stringify({
+    localStorage.setItem(studioPreferencesStorageKey(), JSON.stringify({
       ...current,
       ...update,
     }))
@@ -862,9 +906,8 @@ function restoreStudioSnapshot(userId?: number | string) {
   }
 }
 
-function writeStudioSnapshot() {
+function writeStudioSnapshot(userId: number | string | null | undefined = authStore.user?.id) {
   try {
-    const userId = authStore.user?.id
     if (userId == null) return
     const snapshot: ImageStudioSnapshot = {
       keys: keys.value.map((key) => ({ ...key, key: '' })),
@@ -1117,6 +1160,58 @@ const imageMediaTimeoutIds = new Map<string, ReturnType<typeof setTimeout>>()
 const studioQuota = ref<{ used: number; limit: number } | null>(null)
 const resumedGenerationBatches = new Set<string>()
 const resumedGatewayBatches = new Set<string>()
+
+function clearStudioUserState() {
+  studioUserEpoch += 1
+  if (previewImage.value) previewImage.value = null
+  previewDisplaySrc.value = ''
+  images.value = []
+  keys.value = []
+  selectedKeyId.value = ''
+  imageModels.value = []
+  imageModel.value = ''
+  apiBaseUrl.value = ''
+  loadingModels.value = false
+  refreshing.value = false
+  modelLoadError.value = ''
+  errorMessage.value = ''
+  keyCredentialsReady.value = false
+  generating.value = false
+  activeGenerations.value = 0
+  modelRequestId += 1
+  studioQuota.value = null
+  loadedImageMediaIds.value.clear()
+  failedImageMediaIds.value.clear()
+  imageMediaRetryNonce.value.clear()
+  for (const timer of imageMediaTimeoutIds.values()) clearTimeout(timer)
+  imageMediaTimeoutIds.clear()
+  locallySavedGalleryIds.clear()
+  galleryBackedIds.value.clear()
+  localToGalleryId.value.clear()
+  galleryRemoteThumbUrls.clear()
+  galleryThumbnailDataUrls.clear()
+  resumedGenerationBatches.clear()
+  resumedGatewayBatches.clear()
+  pendingDeleteImage.value = null
+  deletingImage.value = false
+  savingPreviewImage.value = false
+  previewPromptDraft.value = ''
+  resetImageStudioDraft()
+  prompt.value = IMAGE_STUDIO_DEFAULT_PROMPT
+  references.value = []
+  nextImageId = 1
+}
+
+async function switchStudioUser(userId?: number | string | null) {
+  const nextUserId = userId == null ? '' : String(userId)
+  if (nextUserId === studioStateOwnerId.value) return
+  if (studioStateOwnerId.value) writeStudioSnapshot(studioStateOwnerId.value)
+  clearStudioUserState()
+  studioStateOwnerId.value = nextUserId
+  if (!nextUserId) return
+  restoreStudioSnapshot(nextUserId)
+  await loadData()
+}
 let componentDisposed = false
 let nextReferenceId = Math.max(1, ...references.value.map((item) => item.id + 1))
 let modelRequestId = 0
@@ -1433,9 +1528,11 @@ function parseSize(value: string) {
   return { width: Number(match[1]), height: Number(match[2]) }
 }
 
-async function loadKeysAndSettings() {
+async function loadKeysAndSettings(epoch = studioUserEpoch, ownerId = studioStateOwnerId.value) {
+  const isCurrentUser = () => epoch === studioUserEpoch && ownerId === studioStateOwnerId.value
   const keysPromise = ensureCreatorKey('image')
     .then((result) => {
+      if (!isCurrentUser()) return
       keys.value = result.keys
       const preferences = readStudioPreferences()
       const preferredKey = result.keys.find((key) => (
@@ -1447,6 +1544,7 @@ async function loadKeysAndSettings() {
       keyCredentialsReady.value = true
     })
     .catch((error) => {
+      if (!isCurrentUser()) return
       keyCredentialsReady.value = true
       if (!isCreationServiceUnavailable(error)) {
         errorMessage.value = errorMessageFrom(error, '图片创作服务暂不可用')
@@ -1454,25 +1552,35 @@ async function loadKeysAndSettings() {
     })
   const settingsPromise = authAPI.getPublicSettings()
     .then((settings) => {
+      if (!isCurrentUser()) return
       apiBaseUrl.value = resolveEndpoint(settings.api_base_url || '')
     })
     .catch((error) => {
+      if (!isCurrentUser()) return
       if (!errorMessage.value) errorMessage.value = errorMessageFrom(error, '加载设置失败')
     })
 
   await Promise.allSettled([keysPromise, settingsPromise])
 }
 
-async function loadData() {
+async function loadData(epoch = studioUserEpoch, ownerId = studioStateOwnerId.value) {
+  if (epoch !== studioUserEpoch || ownerId !== studioStateOwnerId.value) return
   errorMessage.value = ''
   restorePendingImages()
-  await Promise.allSettled([loadKeysAndSettings(), loadGallery(), loadStudioQuota()])
+  restoreFailedImages()
+  await Promise.allSettled([
+    loadKeysAndSettings(epoch, ownerId),
+    loadGallery(epoch, ownerId),
+    loadStudioQuota(epoch, ownerId),
+  ])
+  if (epoch !== studioUserEpoch || ownerId !== studioStateOwnerId.value) return
   void resumeGatewayGeneration(images.value.filter((item) => item.pending && item.gatewayPollUrl))
 }
 
-async function loadGallery() {
+async function loadGallery(epoch = studioUserEpoch, ownerId = studioStateOwnerId.value) {
   try {
     const entries = await imageStudioGalleryAPI.list()
+    if (epoch !== studioUserEpoch || ownerId !== studioStateOwnerId.value) return
     for (const entry of entries) {
       if (entry?.id) galleryBackedIds.value.add(String(entry.id))
       if (entry?.id && entry.thumb_url) {
@@ -1696,13 +1804,53 @@ function restorePendingImages() {
   }
 }
 
+function restoreFailedImages() {
+  try {
+    const userId = authStore.user?.id
+    if (userId == null) return
+    const stored = JSON.parse(localStorage.getItem(failedImageStorageKey(userId)) || '[]')
+    if (!Array.isArray(stored)) return
+    const restored = stored
+      .filter((item): item is GeneratedImage => (
+        item
+        && item.failed === true
+        && typeof item.error === 'string'
+        && Number.isFinite(Number(item.id))
+      ))
+      .map((item) => ({
+        ...item,
+        id: Number(item.id),
+        title: '生成失败',
+        src: '',
+        pending: false,
+        failed: true,
+        saved: false,
+        expiresAt: 0,
+        createdAt: Number(item.createdAt) || Math.floor(Date.now() / 1000),
+      }))
+    if (!restored.length) return
+    nextImageId = Math.max(nextImageId, ...restored.map((item) => Number(item.id) + 1))
+    const restoredIds = new Set(restored.map((item) => String(item.id)))
+    images.value = [
+      ...restored,
+      ...images.value.filter((item) => !restoredIds.has(String(item.id))),
+    ]
+  } catch {
+    // Ignore malformed browser storage and keep the gallery usable.
+  }
+}
+
 function applyInspirationFromRoute() {
   try {
-    const pending = sessionStorage.getItem(PENDING_PROMPT_STORAGE_KEY)
+    sessionStorage.removeItem(PENDING_PROMPT_STORAGE_KEY)
+    const userId = authStore.user?.id
+    if (userId == null) return
+    const storageKey = `${PENDING_PROMPT_STORAGE_KEY}:${userId}`
+    const pending = sessionStorage.getItem(storageKey)
     if (pending && pending.trim()) {
       prompt.value = pending.trim()
       appStore.showSuccess('已带入图片灵感提示词，选好模型和尺寸就可以生成。', 3000)
-      sessionStorage.removeItem(PENDING_PROMPT_STORAGE_KEY)
+      sessionStorage.removeItem(storageKey)
     }
   } catch {
     // 浏览器存储不可用时按没有待带入提示词处理。
@@ -1721,7 +1869,22 @@ function persistPendingImages() {
   }
 }
 
+function persistFailedImages() {
+  try {
+    const userId = authStore.user?.id
+    if (userId == null) return
+    const failed = images.value
+      .filter((item) => item.failed && !item.pending)
+      .slice(0, 100)
+    if (failed.length) localStorage.setItem(failedImageStorageKey(userId), JSON.stringify(failed))
+    else localStorage.removeItem(failedImageStorageKey(userId))
+  } catch {
+    // Browser storage is optional.
+  }
+}
+
 async function resumePersistentGeneration(pendingImages: GeneratedImage[]) {
+  const owner = captureStudioOwner()
   const batches = new Map<string, GeneratedImage[]>()
   for (const image of pendingImages) {
     if (!image.taskId) continue
@@ -1733,10 +1896,11 @@ async function resumePersistentGeneration(pendingImages: GeneratedImage[]) {
   }
 
   for (const [batchId, batch] of batches) {
+    if (!isStudioOwnerCurrent(owner)) return
     resumedGenerationBatches.add(batchId)
     activeGenerations.value += 1
     generating.value = true
-    const progress = createGenerationProgress()
+    const progress = createGenerationProgress(owner)
     try {
       const imagesByTaskId = new Map(
         batch.map((image) => [String(image.taskId), image]),
@@ -1744,7 +1908,7 @@ async function resumePersistentGeneration(pendingImages: GeneratedImage[]) {
       const responses = await waitForPersistentImageGeneration(
         batch.map((image) => image.taskId!).filter(Boolean),
         {
-          isCancelled: () => componentDisposed,
+          isCancelled: () => componentDisposed || !isStudioOwnerCurrent(owner),
           onResponse: async (id, response) => {
             const image = imagesByTaskId.get(id)
             if (!image) return
@@ -1752,27 +1916,46 @@ async function resumePersistentGeneration(pendingImages: GeneratedImage[]) {
           },
         },
       )
-      for (let index = 0; index < responses.length; index += 1) {
+      const settledResults = responses.map(workerResponseToSettledResult)
+      for (let index = 0; index < settledResults.length; index += 1) {
         const image = batch[index]
         if (!image) continue
-        await progress.enqueue(image, workerResponseToSettledResult(responses[index]))
+        await progress.enqueue(image, settledResults[index])
       }
+      if (!isStudioOwnerCurrent(owner)) return
+      applyGenerationFailures(batch, settledResults, owner)
       await progress.drain()
-      removePendingImages(batch.filter((image) => !progress.completedIds.has(image.id)))
+      if (progress.stillRunning) {
+        errorMessage.value = '图片生成超过 5 分钟，任务已保留；刷新或稍后可继续查询结果。'
+        continue
+      }
+      removePendingImages(
+        batch.filter((image) => image.pending && !progress.completedIds.has(image.id)),
+        owner,
+      )
+      if (!isStudioOwnerCurrent(owner)) return
       if (progress.generatedCount === 0) {
-        throw progress.firstError || new Error('上游没有返回图片')
+        errorMessage.value = errorMessageFrom(progress.firstError, '恢复图片生成任务失败')
+        continue
       }
       if (progress.firstError) {
         errorMessage.value = errorMessageFrom(progress.firstError, '部分图片生成失败')
       }
     } catch (error) {
       if (error instanceof ImageGenerationWaitCancelled) return
-      removePendingImages(batch)
+      if (error instanceof ImageGenerationStillRunning) {
+        errorMessage.value = error.message
+        continue
+      }
+      markPendingImagesFailed(batch, error, owner)
+      if (!isStudioOwnerCurrent(owner)) return
       errorMessage.value = errorMessageFrom(error, '恢复图片生成任务失败')
     } finally {
-      resumedGenerationBatches.delete(batchId)
-      activeGenerations.value = Math.max(0, activeGenerations.value - 1)
-      generating.value = activeGenerations.value > 0
+      if (isStudioOwnerCurrent(owner)) {
+        resumedGenerationBatches.delete(batchId)
+        activeGenerations.value = Math.max(0, activeGenerations.value - 1)
+        generating.value = activeGenerations.value > 0
+      }
     }
   }
 }
@@ -1781,27 +1964,19 @@ async function persistGeneratedImages(
   items: GeneratedImage[],
   prompt: string,
   model: string,
-  options: { refresh?: boolean } = {},
+  options: { refresh?: boolean; owner?: StudioOwnerSnapshot } = {},
 ) {
+  if (options.owner && !isStudioOwnerCurrent(options.owner)) return false
   const results = await Promise.allSettled(items.map(async (item) => {
+    if (options.owner && !isStudioOwnerCurrent(options.owner)) {
+      throw new ImageGenerationWaitCancelled()
+    }
     // data: 前缀直接上传；http(s) 交给服务端下载转存，
     // 避免浏览器抓上游图片时被 CORS 拦掉导致保存失败。
-    const source = item.src.startsWith('data:')
-      ? { image_data_url: item.src }
-      : { image_url: item.src }
-    const entry = await imageStudioGalleryAPI.save({
-      ...source,
-      prompt,
-      model,
-      size: item.size || size.value,
-      format: item.format || format.value,
-      duration_ms: item.durationMs || undefined,
-      created_at: item.createdAt || undefined,
-      // 生成页的内容先进临时档（到期自动删）；用户点「存到我的作品」才转永久。
-      saved: false,
-    })
+    const entry = await saveImageToGallery(item, prompt, model, false)
     return { item, entry }
   }))
+  if (options.owner && !isStudioOwnerCurrent(options.owner)) return false
   const succeeded = results.filter((result) => result.status === 'fulfilled').length
   const failed = results.length - succeeded
   for (const result of results) {
@@ -1826,8 +2001,8 @@ async function persistGeneratedImages(
     }
   }
   if (succeeded > 0 && options.refresh !== false) {
-    await loadGallery()
-    await loadStudioQuota()
+    await loadGallery(options.owner?.epoch, options.owner?.userId)
+    await loadStudioQuota(options.owner?.epoch, options.owner?.userId)
   }
   if (failed > 0) {
     const failedResult = results.find(
@@ -1847,6 +2022,41 @@ async function persistGeneratedImages(
         : `图片已生成，但保存到图库失败：${detail}`
   }
   return succeeded > 0
+}
+
+async function saveImageToGallery(
+  image: GeneratedImage,
+  prompt: string,
+  model: string,
+  saved: boolean,
+) {
+  const serverTaskID = String(image.gatewayTaskId || '').trim()
+  if (serverTaskID) {
+    return imageStudioGalleryAPI.saveFromTask({
+      task_id: serverTaskID,
+      image_index: 0,
+      prompt,
+      model,
+      size: image.size || size.value,
+      format: image.format || format.value,
+      duration_ms: image.durationMs || undefined,
+      created_at: image.createdAt || undefined,
+      saved,
+    })
+  }
+  const source = image.src.startsWith('data:')
+    ? { image_data_url: image.src }
+    : { image_url: image.src }
+  return imageStudioGalleryAPI.save({
+    ...source,
+    prompt,
+    model,
+    size: image.size || size.value,
+    format: image.format || format.value,
+    duration_ms: image.durationMs || undefined,
+    created_at: image.createdAt || undefined,
+    saved,
+  })
 }
 
 // 配额满了后端返回 429 + *_QUOTA_EXCEEDED，单独给一句能指导操作的提示。
@@ -2067,17 +2277,12 @@ async function savePreviewToGallery() {
     }
 
     const promptText = previewPromptDraft.value.trim() || image.prompt || ''
-    const source = image.src.startsWith('data:')
-      ? { image_data_url: image.src }
-      : { image_url: image.src }
-    const entry = await imageStudioGalleryAPI.save({
-      ...source,
-      prompt: promptText,
-      model: image.model || imageModel.value,
-      size: image.size || size.value,
-      format: image.format || format.value,
-      saved: true,
-    })
+    const entry = await saveImageToGallery(
+      image,
+      promptText,
+      image.model || imageModel.value,
+      true,
+    )
     locallySavedGalleryIds.add(String(entry.id))
     galleryBackedIds.value.add(String(entry.id))
     localToGalleryId.value.set(String(image.id), String(entry.id))
@@ -2097,9 +2302,11 @@ async function savePreviewToGallery() {
   }
 }
 
-async function loadStudioQuota() {
+async function loadStudioQuota(epoch = studioUserEpoch, ownerId = studioStateOwnerId.value) {
   try {
-    studioQuota.value = await imageStudioGalleryAPI.quota()
+    const quota = await imageStudioGalleryAPI.quota()
+    if (epoch !== studioUserEpoch || ownerId !== studioStateOwnerId.value) return
+    studioQuota.value = quota
   } catch {
     // 配额展示是锦上添花，读不到就不显示。
   }
@@ -2260,22 +2467,17 @@ function errorMessageFrom(error: unknown, fallback = '加载图片模型失败')
   if (isCreationServiceUnavailable(error)) return ''
   // 后端对"没开启"和"凭证不全"给了可区分的业务码，直接给出可执行的下一步，
   // 而不是让用户对着笼统的失败提示猜。
-  const reason = typeof error === 'object' && error !== null && 'reason' in error
-    ? String((error as { reason?: unknown }).reason || '')
-    : ''
+  const reason = nestedErrorField(error, 'reason')
   if (reason === 'IMAGE_STORAGE_DISABLED' || reason === 'IMAGE_STORAGE_INCOMPLETE') {
     if (!authStore.isAdmin) return ''
     return reason === 'IMAGE_STORAGE_DISABLED'
       ? '图片存储未启用：请到后台「设置 → 数据备份」打开「异步生图对象存储」。'
       : '图片存储凭证不完整：请到后台「设置 → 数据备份」补齐存储桶与密钥。'
   }
-  const message = error instanceof Error
-    ? error.message
-    : typeof error === 'object' && error !== null && 'message' in error
-      ? String((error as { message?: unknown }).message || '')
-      : ''
+  const message = nestedErrorMessage(error)
+  const status = nestedErrorStatus(error)
   const normalized = message.trim().toLowerCase()
-  if (!normalized) return fallback
+  if (!normalized) return status ? `请求失败 (HTTP ${status})` : fallback
   if (
     normalized === 'failed to fetch' ||
     normalized.includes('networkerror') ||
@@ -2303,13 +2505,70 @@ function errorMessageFrom(error: unknown, fallback = '加载图片模型失败')
   ) {
     return '当前 API Key 未正确传给服务，请刷新页面或重新选择可用密钥。'
   }
-  return message || fallback
+  const finalMessage = message || fallback
+  return status && !/HTTP\s+\d+/i.test(finalMessage)
+    ? `请求失败 (HTTP ${status})：${finalMessage}`
+    : finalMessage
+}
+
+function nestedErrorMessage(error: unknown, depth = 0): string {
+  if (depth > 4 || error == null) return ''
+  if (typeof error === 'string') {
+    const trimmed = error.trim()
+    if (!trimmed) return ''
+    if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+      try {
+        return nestedErrorMessage(JSON.parse(trimmed), depth + 1) || trimmed
+      } catch {
+        return trimmed
+      }
+    }
+    return trimmed
+  }
+  if (typeof error !== 'object') return ''
+
+  const record = error as Record<string, unknown>
+  const response = isPlainRecord(record.response) ? record.response : null
+  const responseMessage = nestedErrorMessage(response?.data, depth + 1)
+  if (responseMessage) return responseMessage
+  for (const key of ['message', 'msg', 'detail', 'reason']) {
+    const value = nestedErrorMessage(record[key], depth + 1)
+    if (value) return value
+  }
+  const nestedError = nestedErrorMessage(record.error, depth + 1)
+  if (nestedError) return nestedError
+  return error instanceof Error ? error.message.trim() : ''
+}
+
+function nestedErrorStatus(error: unknown, depth = 0): number | undefined {
+  if (depth > 3 || !isPlainRecord(error)) return undefined
+  for (const key of ['status', 'statusCode', 'http_status']) {
+    const status = Number(error[key])
+    if (Number.isInteger(status) && status >= 100 && status <= 599) return status
+  }
+  return nestedErrorStatus(error.response, depth + 1) || nestedErrorStatus(error.error, depth + 1)
+}
+
+function nestedErrorField(error: unknown, field: string, depth = 0): string {
+  if (depth > 3 || !isPlainRecord(error)) return ''
+  const value = error[field]
+  if (typeof value === 'string' && value.trim()) return value.trim()
+  if (isPlainRecord(value)) {
+    const nested = nestedErrorField(value, field, depth + 1)
+    if (nested) return nested
+  }
+  const response = isPlainRecord(error.response) ? error.response : null
+  return nestedErrorField(response?.data, field, depth + 1)
+    || nestedErrorField(response, field, depth + 1)
+    || nestedErrorField(error.error, field, depth + 1)
+}
+
+function isPlainRecord(value: unknown): value is Record<string, any> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
 }
 
 function isImageStorageConfigError(error: unknown): boolean {
-  const reason = typeof error === 'object' && error !== null && 'reason' in error
-    ? String((error as { reason?: unknown }).reason || '')
-    : ''
+  const reason = nestedErrorField(error, 'reason')
   return reason === 'IMAGE_STORAGE_DISABLED' || reason === 'IMAGE_STORAGE_INCOMPLETE'
 }
 
@@ -2350,6 +2609,7 @@ function isGeminiModel(name: string) {
 
 async function generate() {
   if (!canGenerate.value || !selectedKey.value) return
+  const owner = captureStudioOwner()
   generating.value = true
   activeGenerations.value += 1
   const currentPrompt = prompt.value.trim()
@@ -2378,7 +2638,7 @@ async function generate() {
   errorMessage.value = ''
   const geminiModel = isGeminiModel(imageModel.value)
   const grokModel = isGrokImageModel.value
-  const progress = createGenerationProgress()
+  const progress = createGenerationProgress(owner)
   try {
     const headers: Record<string, string> = { Authorization: `Bearer ${selectedKey.value.key}` }
     let url = `${apiBaseUrl.value}${hasReferences.value ? '/images/edits' : '/images/generations'}`
@@ -2419,42 +2679,69 @@ async function generate() {
     for (const result of results) {
       if (result.status === 'rejected') progress.recordError(result.reason)
     }
+    applyGenerationFailures(pendingImages, results, owner)
     await progress.drain()
-    removePendingImages(pendingImages.filter((image) => !progress.completedIds.has(image.id)))
+    if (progress.stillRunning) {
+      errorMessage.value = '图片生成超过 5 分钟，任务已保留；刷新或稍后可继续查询结果。'
+      return
+    }
+    removePendingImages(
+      pendingImages.filter((image) => image.pending && !progress.completedIds.has(image.id)),
+      owner,
+    )
+    if (!isStudioOwnerCurrent(owner)) return
     if (progress.generatedCount === 0) {
-      throw progress.firstError || new Error('上游没有返回图片')
+      errorMessage.value = errorMessageFrom(progress.firstError, '生成失败')
+      return
     }
     if (progress.firstError) {
       errorMessage.value = errorMessageFrom(progress.firstError, '部分图片生成失败')
     }
   } catch (error) {
     if (error instanceof ImageGenerationWaitCancelled) return
-    removePendingImages(pendingImages)
+    if (error instanceof ImageGenerationStillRunning) {
+      errorMessage.value = error.message
+      return
+    }
+    markPendingImagesFailed(pendingImages, error, owner)
+    if (!isStudioOwnerCurrent(owner)) return
     errorMessage.value = errorMessageFrom(error, '生成失败')
   } finally {
-    activeGenerations.value -= 1
-    generating.value = activeGenerations.value > 0
+    if (isStudioOwnerCurrent(owner)) {
+      activeGenerations.value = Math.max(0, activeGenerations.value - 1)
+      generating.value = activeGenerations.value > 0
+    }
   }
 }
 
-function createGenerationProgress() {
+function createGenerationProgress(owner: StudioOwnerSnapshot) {
   const completedIds = new Set<GeneratedImage['id']>()
   const inFlightIds = new Set<GeneratedImage['id']>()
   let generatedCount = 0
   let firstError: unknown = null
+  let stillRunning = false
   let queue = Promise.resolve()
   let persistenceQueue = Promise.resolve()
   let persistenceNeedsRefresh = false
 
   const recordError = (error: unknown) => {
+    if (error instanceof ImageGenerationStillRunning) {
+      stillRunning = true
+      return
+    }
     if (!firstError) firstError = error
   }
 
   const enqueue: GenerationResultHandler = (image, result) => {
+    if (!isStudioOwnerCurrent(owner)) return queue
     if (completedIds.has(image.id) || inFlightIds.has(image.id)) return queue
     inFlightIds.add(image.id)
     queue = queue.then(async () => {
       if (result.status === 'rejected') {
+        if (result.reason instanceof ImageGenerationStillRunning) {
+          stillRunning = true
+          return
+        }
         recordError(result.reason)
         return
       }
@@ -2467,6 +2754,7 @@ function createGenerationProgress() {
         [result],
         generatedCount + 1,
         false,
+        owner,
       )
       if (!generated.length) {
         recordError(new Error('上游没有返回可用图片'))
@@ -2480,7 +2768,7 @@ function createGenerationProgress() {
             generated,
             image.prompt || prompt.value.trim(),
             image.model || imageModel.value,
-            { refresh: false },
+            { refresh: false, owner },
           )
           if (saved) persistenceNeedsRefresh = true
         })
@@ -2510,13 +2798,82 @@ function createGenerationProgress() {
     get firstError() {
       return firstError
     },
+    get stillRunning() {
+      return stillRunning
+    },
   }
 }
 
-function removePendingImages(pendingImages: GeneratedImage[]) {
-  const pendingIds = new Set(pendingImages.map((item) => item.id))
+function removePendingImages(
+  pendingImages: GeneratedImage[],
+  owner?: StudioOwnerSnapshot,
+) {
+  if (owner && !isStudioOwnerCurrent(owner)) return
+  const pendingIds = new Set(pendingImages.filter((item) => item.pending).map((item) => item.id))
   images.value = images.value.filter((item) => !pendingIds.has(item.id))
   persistPendingImages()
+}
+
+function applyGenerationFailures(
+  pendingImages: GeneratedImage[],
+  results: PromiseSettledResult<any[]>[],
+  owner?: StudioOwnerSnapshot,
+) {
+  if (owner && !isStudioOwnerCurrent(owner)) return
+  let changed = false
+  results.forEach((result, index) => {
+    if (result.status !== 'rejected') return
+    if (result.reason instanceof ImageGenerationStillRunning) return
+    const image = pendingImages[index]
+    if (!image) return
+    markImageFailed(image, result.reason)
+    changed = true
+  })
+  if (changed) {
+    images.value = [...images.value]
+    persistPendingImages()
+    persistFailedImages()
+  }
+}
+
+function markPendingImagesFailed(
+  pendingImages: GeneratedImage[],
+  error: unknown,
+  owner?: StudioOwnerSnapshot,
+) {
+  if (owner && !isStudioOwnerCurrent(owner)) return
+  if (!pendingImages.length) return
+  for (const image of pendingImages) markImageFailed(image, error)
+  images.value = [...images.value]
+  persistPendingImages()
+  persistFailedImages()
+}
+
+function markImageFailed(image: GeneratedImage, error: unknown) {
+  const message = errorMessageFrom(error, '生成失败')
+  image.pending = false
+  image.failed = true
+  image.error = message
+  image.title = '生成失败'
+  image.src = ''
+  image.originalSrc = undefined
+  image.thumbSrc = undefined
+  image.thumbSrcSet = undefined
+  image.previewSrc = undefined
+  image.saved = false
+  image.expiresAt = 0
+  image.createdAt = image.createdAt || Math.floor(Date.now() / 1000)
+  image.durationMs = image.startedAt
+    ? Math.max(1, Date.now() - Number(image.startedAt))
+    : image.durationMs
+}
+
+function removeFailedImage(image: GeneratedImage) {
+  images.value = images.value.filter((item) => String(item.id) !== String(image.id))
+  if (previewImage.value && String(previewImage.value.id) === String(image.id)) {
+    previewImage.value = null
+  }
+  persistFailedImages()
 }
 
 function gatewayAsyncSubmitUrl(syncUrl: string, geminiModel: boolean) {
@@ -2530,13 +2887,13 @@ function gatewayTaskPayload(payload: any) {
   return payload?.data && !payload?.task_id && !payload?.id ? payload.data : payload
 }
 
-function gatewayTaskError(payload: any): Error {
-  return new Error(
-    payload?.error?.message
+function gatewayTaskError(payload: any, httpStatus?: number): Error {
+  const message = payload?.error?.message
     || payload?.error
     || payload?.message
-    || '图片生成任务失败',
-  )
+    || '图片生成任务失败'
+  const status = Number(payload?.http_status || httpStatus || 0)
+  return new Error(status > 0 ? `上游 API 错误 (HTTP ${status})：${message}` : String(message))
 }
 
 function resolveGatewayPollUrl(raw: string) {
@@ -2552,6 +2909,29 @@ async function waitForGatewayPollRetry(delay: number) {
   if (componentDisposed) throw new ImageGenerationWaitCancelled()
   await new Promise((resolve) => window.setTimeout(resolve, delay))
   if (componentDisposed) throw new ImageGenerationWaitCancelled()
+}
+
+async function fetchWithTimeout(
+  input: Parameters<typeof fetch>[0],
+  init: Parameters<typeof fetch>[1] = {},
+  timeoutMs = 30_000,
+) {
+  const controller = new AbortController()
+  let timedOut = false
+  const timer = window.setTimeout(() => {
+    timedOut = true
+    controller.abort()
+  }, timeoutMs)
+  try {
+    return await fetch(input, { ...init, signal: controller.signal })
+  } catch (error) {
+    if (timedOut) {
+      throw new Error(`请求超时（${Math.ceil(timeoutMs / 60_000)} 分钟），请稍后重试`)
+    }
+    throw error
+  } finally {
+    window.clearTimeout(timer)
+  }
 }
 
 function gatewayPollInterval(elapsedMs: number) {
@@ -2601,7 +2981,7 @@ async function pollGatewayImageTask(
     onPreview?: (items: any[]) => void
   } = {},
 ): Promise<any[]> {
-  const deadline = Date.now() + 30 * 60 * 1000
+  const deadline = Date.now() + 5 * 60 * 1000
   const pollStartedAt = Date.now()
   const url = resolveGatewayPollUrl(pollUrl)
   let retryAttempt = 0
@@ -2611,7 +2991,11 @@ async function pollGatewayImageTask(
     let response: Response
     let payload: any
     try {
-      response = await fetch(url, { headers })
+      response = await fetchWithTimeout(
+        url,
+        { headers },
+        Math.min(30_000, Math.max(1, deadline - Date.now())),
+      )
       payload = await response.json().catch(() => null)
     } catch {
       retryAttempt += 1
@@ -2623,7 +3007,7 @@ async function pollGatewayImageTask(
       await waitForGatewayPollRetry(Math.min(30_000, 1500 * (2 ** Math.min(retryAttempt - 1, 5))))
       continue
     }
-    if (!response.ok) throw gatewayTaskError(payload)
+    if (!response.ok) throw gatewayTaskError(payload, response.status)
     retryAttempt = 0
     const task = gatewayTaskPayload(payload)
     if (task?.status === 'completed') {
@@ -2640,10 +3024,12 @@ async function pollGatewayImageTask(
         options.onPreview?.(previewItems)
       }
     }
-    if (task?.status === 'failed') throw gatewayTaskError(task.error || task)
+    if (task?.status === 'failed') {
+      throw gatewayTaskError(task.error || task, Number(task?.http_status || 0))
+    }
     await waitForGatewayPollRetry(gatewayPollInterval(Date.now() - pollStartedAt))
   }
-  throw new Error('图片生成超时，请稍后重试')
+  throw new ImageGenerationStillRunning('图片生成超过 5 分钟，任务已保留；刷新或稍后可继续查询结果。')
 }
 
 async function tryExecuteGatewayAsyncRequests(
@@ -2680,7 +3066,7 @@ async function tryExecuteGatewayAsyncRequests(
     for (let attempt = 1; attempt <= 2; attempt += 1) {
       requestError = null
       try {
-        response = await fetch(submitUrl, {
+        response = await fetchWithTimeout(submitUrl, {
           method: 'POST',
           headers: requestHeaders,
           body: requestBody,
@@ -2714,11 +3100,11 @@ async function tryExecuteGatewayAsyncRequests(
         persistPendingImages()
         return null
       }
-      results.push({ status: 'rejected', reason: gatewayTaskError(payload) })
+      results.push({ status: 'rejected', reason: gatewayTaskError(payload, response.status) })
       continue
     }
     if (!response.ok) {
-      const error = gatewayTaskError(payload)
+      const error = gatewayTaskError(payload, response.status)
       if (!submitted.length) throw error
       results.push({ status: 'rejected', reason: error })
       continue
@@ -2769,6 +3155,7 @@ function isAmbiguousGatewaySubmitStatus(status: number) {
 
 async function resumeGatewayGeneration(pendingImages: GeneratedImage[]) {
   if (!selectedKey.value?.key) return
+  const owner = captureStudioOwner()
   const batches = new Map<string, GeneratedImage[]>()
   for (const image of pendingImages) {
     if (!image.gatewayPollUrl) continue
@@ -2779,17 +3166,18 @@ async function resumeGatewayGeneration(pendingImages: GeneratedImage[]) {
     batches.set(batchId, batch)
   }
   for (const [batchId, batch] of batches) {
+    if (!isStudioOwnerCurrent(owner)) return
     resumedGatewayBatches.add(batchId)
     activeGenerations.value += 1
     generating.value = true
-    const progress = createGenerationProgress()
+    const progress = createGenerationProgress(owner)
     try {
       const apiKeyId = batch[0]?.apiKeyId
       const taskKey = apiKeyId
         ? imageCapableKeys.value.find((key) => Number(key.id) === Number(apiKeyId))
         : selectedKey.value
       if (!taskKey?.key) {
-        removePendingImages(batch)
+        markPendingImagesFailed(batch, new Error('找不到发起这组图片任务时使用的密钥，请重新生成。'), owner)
         errorMessage.value = '找不到发起这组图片任务时使用的密钥，请重新生成。'
         continue
       }
@@ -2797,7 +3185,7 @@ async function resumeGatewayGeneration(pendingImages: GeneratedImage[]) {
       const results = await Promise.allSettled(
         batch.map(async (image) => {
           const items = await pollGatewayImageTask(image.gatewayPollUrl!, headers, {
-            isCancelled: () => componentDisposed,
+            isCancelled: () => componentDisposed || !isStudioOwnerCurrent(owner),
             onPreview: (previewItems) => applyGatewayPreview(image, previewItems),
           })
           const result = {
@@ -2811,22 +3199,40 @@ async function resumeGatewayGeneration(pendingImages: GeneratedImage[]) {
       for (const result of results) {
         if (result.status === 'rejected') progress.recordError(result.reason)
       }
+      if (!isStudioOwnerCurrent(owner)) return
+      applyGenerationFailures(batch, results, owner)
       await progress.drain()
-      removePendingImages(batch.filter((image) => !progress.completedIds.has(image.id)))
+      if (progress.stillRunning) {
+        errorMessage.value = '图片生成超过 5 分钟，任务已保留；刷新或稍后可继续查询结果。'
+        continue
+      }
+      removePendingImages(
+        batch.filter((image) => image.pending && !progress.completedIds.has(image.id)),
+        owner,
+      )
+      if (!isStudioOwnerCurrent(owner)) return
       if (progress.generatedCount === 0) {
-        throw progress.firstError || new Error('上游没有返回图片')
+        errorMessage.value = errorMessageFrom(progress.firstError, '恢复图片生成任务失败')
+        continue
       }
       if (progress.firstError) {
         errorMessage.value = errorMessageFrom(progress.firstError, '部分图片生成失败')
       }
     } catch (error) {
       if (error instanceof ImageGenerationWaitCancelled) return
-      removePendingImages(batch)
+      if (error instanceof ImageGenerationStillRunning) {
+        errorMessage.value = error.message
+        continue
+      }
+      markPendingImagesFailed(batch, error, owner)
+      if (!isStudioOwnerCurrent(owner)) return
       errorMessage.value = errorMessageFrom(error, '恢复图片生成任务失败')
     } finally {
-      resumedGatewayBatches.delete(batchId)
-      activeGenerations.value = Math.max(0, activeGenerations.value - 1)
-      generating.value = activeGenerations.value > 0
+      if (isStudioOwnerCurrent(owner)) {
+        resumedGatewayBatches.delete(batchId)
+        activeGenerations.value = Math.max(0, activeGenerations.value - 1)
+        generating.value = activeGenerations.value > 0
+      }
     }
   }
 }
@@ -2920,10 +3326,14 @@ async function executeGenerationRequests(
   }
 
   return Promise.allSettled(pendingImages.map(async (image) => {
-    const response = await fetch(url, { method: 'POST', headers, body })
+    const response = await fetchWithTimeout(
+      url,
+      { method: 'POST', headers, body },
+      4 * 60_000,
+    )
     const payload = await response.json().catch(() => null)
     if (!response.ok) {
-      throw new Error(payload?.error?.message || payload?.message || `${response.status} ${response.statusText}`)
+      throw gatewayTaskError(payload, response.status)
     }
     const result = {
       status: 'fulfilled' as const,
@@ -2939,7 +3349,9 @@ async function finishGenerationBatch(
   results: PromiseSettledResult<any[]>[],
   titleStart = 1,
   persist = true,
+  owner?: StudioOwnerSnapshot,
 ) {
+  if (owner && !isStudioOwnerCurrent(owner)) return []
   const items: any[] = []
   let firstError: unknown = null
   for (const result of results) {
@@ -2979,6 +3391,7 @@ async function finishGenerationBatch(
     let actualFormat = imageFormatFromResult(item, rawSrc, requestedFormat)
     if (needsLocalResize) {
       const processed = await processImageForDisplay(rawSrc, requestedSize, requestedFormat)
+      if (owner && !isStudioOwnerCurrent(owner)) return []
       src = processed.src
       actualFormat = processed.format
       if (processed.error && !localProcessError) localProcessError = processed.error
@@ -3000,10 +3413,15 @@ async function finishGenerationBatch(
       meta: `${actualFormat.toUpperCase()} · ${requestedSize} · ${currentModel}`,
       createdAt: Math.floor((itemCompletedAt > 0 ? itemCompletedAt : completedAtMs) / 1000),
       durationMs: itemDurationMs > 0 ? itemDurationMs : fallbackDurationMs,
+      taskId: firstPending?.taskId,
+      gatewayTaskId: firstPending?.gatewayTaskId,
+      gatewayPollUrl: firstPending?.gatewayPollUrl,
+      apiKeyId: firstPending?.apiKeyId,
     })
   }
 
   const pendingIds = new Set(pendingImages.map((item) => item.id))
+  if (owner && !isStudioOwnerCurrent(owner)) return []
   const pendingIndex = images.value.findIndex((item) => pendingIds.has(item.id))
   images.value = images.value.filter((item) => !pendingIds.has(item.id))
   if (pendingIndex >= 0) {
@@ -3014,7 +3432,7 @@ async function finishGenerationBatch(
     appStore.showWarning('本地尺寸处理失败，已保留并显示上游原图。', 6000)
   }
   if (persist) {
-    await persistGeneratedImages(generated, currentPrompt, currentModel)
+    await persistGeneratedImages(generated, currentPrompt, currentModel, { owner })
   }
   return generated
 }
@@ -3288,7 +3706,7 @@ watch(imageModel, (model, previousModel) => {
 
 watch(
   [keys, imageModels, selectedKeyId, imageModel, images],
-  writeStudioSnapshot,
+  () => writeStudioSnapshot(),
   { deep: true, flush: 'post' },
 )
 
@@ -3316,6 +3734,14 @@ watch(
   { immediate: true },
 )
 
+watch(
+  () => authStore.user?.id,
+  (userId) => {
+    void switchStudioUser(userId)
+  },
+  { flush: 'sync' },
+)
+
 onMounted(() => {
   componentDisposed = false
   document.addEventListener('click', handleSizeOutside)
@@ -3325,6 +3751,11 @@ onMounted(() => {
 })
 onActivated(() => {
   componentDisposed = false
+  const currentUserId = authStore.user?.id == null ? '' : String(authStore.user.id)
+  if (currentUserId !== studioStateOwnerId.value) {
+    void switchStudioUser(currentUserId)
+    return
+  }
   if (activeGenerations.value > 0 || images.value.some((image) => image.pending)) {
     startGenerationClock()
   }
@@ -3336,10 +3767,12 @@ onActivated(() => {
 })
 onDeactivated(() => {
   stopGenerationClock()
+  if (studioStateOwnerId.value) writeStudioSnapshot(studioStateOwnerId.value)
 })
 onBeforeUnmount(() => {
   componentDisposed = true
   stopGenerationClock()
+  if (studioStateOwnerId.value) writeStudioSnapshot(studioStateOwnerId.value)
   document.removeEventListener('click', handleSizeOutside)
   document.removeEventListener('keydown', handleSizeEscape)
   for (const timer of imageMediaTimeoutIds.values()) {
@@ -4830,6 +5263,56 @@ onBeforeUnmount(() => {
   font-variant-numeric: tabular-nums;
   font-weight: 650;
   color: rgb(13 148 136) !important;
+}
+
+.image-failure-card {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.65rem;
+  overflow: hidden;
+  background: linear-gradient(145deg, rgb(254 242 242), rgb(255 247 237));
+  padding: 1.1rem;
+  text-align: center;
+  color: rgb(153 27 27);
+}
+
+.image-failure-card strong {
+  font-size: 0.875rem;
+  font-weight: 700;
+}
+
+.image-failure-card p {
+  display: -webkit-box;
+  overflow: hidden;
+  margin: 0;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 6;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.image-failure-card small {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  color: rgb(185 28 28 / 0.75);
+  font-size: 0.6875rem;
+  line-height: 1.4;
+}
+
+:global(.dark .image-failure-card) {
+  background: linear-gradient(145deg, rgb(69 10 10 / 0.45), rgb(41 22 10 / 0.55));
+  color: rgb(254 202 202);
+}
+
+:global(.dark .image-failure-card small) {
+  color: rgb(254 202 202 / 0.7);
 }
 
 .image-media-state {

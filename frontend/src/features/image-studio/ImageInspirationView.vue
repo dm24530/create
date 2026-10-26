@@ -305,6 +305,7 @@ import { useClipboard } from '@/composables/useClipboard'
 import ImageStudioSelect from './ImageStudioSelect.vue'
 import ImageInspirationTile from './ImageInspirationTile.vue'
 import { HOME_INSPIRATION_ITEMS } from './homeInspiration'
+import { useAuthStore } from '@/stores/auth'
 import {
   fetchInspirationLibrary,
   fetchOnlineInspirationFeed,
@@ -331,6 +332,7 @@ const PENDING_PROMPT_STORAGE_KEY = 'sub2api:image-studio:pending-prompt'
 
 const router = useRouter()
 const { copyToClipboard } = useClipboard()
+const authStore = useAuthStore()
 
 const source = ref<'library' | 'online'>('library')
 const active = ref<ActiveImage | null>(null)
@@ -599,7 +601,9 @@ function handoffPrompt(prompt: string) {
   const value = prompt.trim()
   if (!value) return
   try {
-    sessionStorage.setItem(PENDING_PROMPT_STORAGE_KEY, value)
+    sessionStorage.removeItem(PENDING_PROMPT_STORAGE_KEY)
+    const userId = authStore.user?.id
+    if (userId != null) sessionStorage.setItem(`${PENDING_PROMPT_STORAGE_KEY}:${userId}`, value)
   } catch {
     // 浏览器存储不可用时仍然回到工作台。
   }

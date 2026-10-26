@@ -13,13 +13,14 @@ import type { CanvasExportFile } from "@/types/canvas-export";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { useCanvasUiStore } from "@/stores/canvas/use-canvas-ui-store";
 import { exportCanvasProjects } from "@/lib/canvas/canvas-export";
+import { mergeCloudCanvasProjects } from "@/lib/canvas/merge-canvas-projects";
 import { hasAgentUrlBootstrap } from "@/lib/agent/agent-url-bootstrap";
 import {
     deleteCloudCanvasProject,
-    getCloudCanvasProject,
     hydrateCloudProject,
     isCanvasCloudReady,
-    listCloudCanvasProjects,
+    listCloudCanvasProjectsFull,
+    putCloudCanvasProject,
     subscribeCanvasCloud,
 } from "@/services/canvas-cloud";
 
@@ -85,45 +86,39 @@ export default function CanvasPage() {
             if (!isCanvasCloudReady() || syncing) return;
             syncing = true;
             try {
-                const summaries = await listCloudCanvasProjects();
-                const cloudProjects = await Promise.all(
-                    summaries.map(async (summary) => {
-                        const record = await getCloudCanvasProject(summary.id);
-                        return hydrateCloudProject(record);
-                    }),
-                );
+                const records = await listCloudCanvasProjectsFull();
+                const cloudProjects = records.map(hydrateCloudProject);
                 if (cancelled) return;
                 const currentState = useCanvasStore.getState();
-                const current = currentState.projects;
-                const deletedIds = new Set(currentState.deletedProjects.map((item) => item.id));
-                const cloudIds = new Set(cloudProjects.map((project) => project.id));
-                const byID = new Map(current.map((project) => [project.id, project]));
-                for (const cloudProject of cloudProjects) {
-                    if (deletedIds.has(cloudProject.id)) {
-                        void deleteCloudCanvasProject(cloudProject.id);
-                        continue;
-                    }
-                    const localProject = byID.get(cloudProject.id);
-                    if (!localProject) {
-                        byID.set(cloudProject.id, cloudProject);
-                        continue;
-                    }
-                    const localUpdated = Date.parse(localProject.updatedAt || "") || 0;
-                    const cloudUpdated = Date.parse(cloudProject.updatedAt || "") || 0;
-                    byID.set(
-                        cloudProject.id,
-                        cloudUpdated > localUpdated
-                            ? cloudProject
-                            : { ...localProject, cloudVersion: cloudProject.cloudVersion },
-                    );
-                }
-                for (const [id, project] of byID) {
-                    if (project.cloudVersion && !cloudIds.has(id)) byID.delete(id);
+                const merged = mergeCloudCanvasProjects({
+                    localProjects: currentState.projects,
+                    deletedProjects: currentState.deletedProjects,
+                    cloudProjects,
+                });
+                for (const id of merged.deletedCloudProjectIds) {
+                    void deleteCloudCanvasProject(id);
                 }
                 currentState.replaceProjects(
-                    Array.from(byID.values()).sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt)),
+                    merged.projects,
                     currentState.deletedProjects,
                 );
+                for (const id of merged.reuploadProjectIds) {
+                    const project = currentState.projects.find((item) => item.id === id);
+                    if (!project) continue;
+                    void putCloudCanvasProject(project)
+                        .then((saved) => {
+                            useCanvasStore.setState((state) => ({
+                                projects: state.projects.map((item) => (
+                                    item.id === id
+                                        ? { ...item, cloudVersion: saved.version, cloudSyncedAt: saved.updated_at || new Date().toISOString() }
+                                        : item
+                                )),
+                            }));
+                        })
+                        .catch((error) => {
+                            console.warn("Failed to reupload local canvas project", id, error);
+                        });
+                }
             } catch (error) {
                 console.warn("Failed to sync cloud canvas projects", error);
             } finally {

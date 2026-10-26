@@ -71,4 +71,9 @@ describe('image generation worker persistence', () => {
     expect(workerSource).toContain("task.status === 'processing'")
     expect(workerSource).toContain('为避免重复扣费未自动重试')
   })
+
+  it('keeps the browser worker and retry window at five minutes', () => {
+    expect(workerSource).toContain('const TASK_TIMEOUT_MS = 5 * 60 * 1000')
+    expect(workerSource).toContain('const RETRY_WINDOW_MS = 5 * 60 * 1000')
+  })
 })

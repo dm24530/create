@@ -4,8 +4,11 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -80,6 +83,158 @@ func TestUsageBillingRepositoryApply_DeduplicatesBalanceBilling(t *testing.T) {
 	require.Equal(t, 1, dedupCount)
 }
 
+func TestUsageBillingRepositoryRefund_RestoresChargeExactlyOnce(t *testing.T) {
+	ctx := context.Background()
+	client := testEntClient(t)
+	repo := NewUsageBillingRepository(client, integrationDB)
+
+	user := mustCreateUser(t, client, &service.User{
+		Email:        fmt.Sprintf("usage-billing-refund-user-%d@example.com", uniqueNano()),
+		PasswordHash: "hash",
+		Balance:      100,
+	})
+	apiKey := mustCreateApiKey(t, client, &service.APIKey{
+		UserID: user.ID,
+		Key:    "sk-usage-billing-refund-" + uuid.NewString(),
+		Name:   "billing-refund",
+		Quota:  10,
+	})
+
+	requestID := "client:refund-" + uuid.NewString()
+	requestInstanceID := "server-refund-" + uuid.NewString()
+	cmd := &service.UsageBillingCommand{
+		RequestID:           requestID,
+		RequestInstanceID:   requestInstanceID,
+		APIKeyID:            apiKey.ID,
+		UserID:              user.ID,
+		BalanceCost:         1.25,
+		APIKeyQuotaCost:     1.25,
+		APIKeyRateLimitCost: 1.25,
+	}
+
+	applied, err := repo.Apply(ctx, cmd)
+	require.NoError(t, err)
+	require.True(t, applied.Applied)
+
+	wrongInstance, err := repo.(service.UsageBillingRefundRepository).Refund(ctx, &service.UsageBillingRefundCommand{
+		RequestID:         requestID,
+		RequestInstanceID: "different-server-request",
+		APIKeyID:          apiKey.ID,
+	})
+	require.NoError(t, err)
+	require.False(t, wrongInstance.Applied)
+	require.False(t, wrongInstance.AlreadyRefunded)
+
+	first, err := repo.(service.UsageBillingRefundRepository).Refund(ctx, &service.UsageBillingRefundCommand{
+		RequestID:         requestID,
+		RequestInstanceID: requestInstanceID,
+		APIKeyID:          apiKey.ID,
+		Reason:            "terminal_request_failed:upstream_error",
+	})
+	require.NoError(t, err)
+	require.True(t, first.Applied)
+	require.InDelta(t, 1.25, first.RefundedAmount, 1e-12)
+	require.NotNil(t, first.RefundedAt)
+
+	second, err := repo.(service.UsageBillingRefundRepository).Refund(ctx, &service.UsageBillingRefundCommand{
+		RequestID:         requestID,
+		RequestInstanceID: requestInstanceID,
+		APIKeyID:          apiKey.ID,
+	})
+	require.NoError(t, err)
+	require.True(t, second.AlreadyRefunded)
+	require.InDelta(t, 1.25, second.RefundedAmount, 1e-12)
+
+	var balance, quotaUsed, usage5h, usage1d, usage7d float64
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `
+		SELECT u.balance, k.quota_used, k.usage_5h, k.usage_1d, k.usage_7d
+		FROM users u
+		JOIN api_keys k ON k.user_id = u.id
+		WHERE u.id = $1 AND k.id = $2
+	`, user.ID, apiKey.ID).Scan(&balance, &quotaUsed, &usage5h, &usage1d, &usage7d))
+	require.InDelta(t, 100, balance, 1e-12)
+	require.InDelta(t, 0, quotaUsed, 1e-12)
+	require.InDelta(t, 0, usage5h, 1e-12)
+	require.InDelta(t, 0, usage1d, 1e-12)
+	require.InDelta(t, 0, usage7d, 1e-12)
+
+	var refundedAmount float64
+	var refundedAt sql.NullTime
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `
+		SELECT refunded_amount, refunded_at
+		FROM usage_billing_dedup
+		WHERE request_id = $1 AND api_key_id = $2
+	`, requestID, apiKey.ID).Scan(&refundedAmount, &refundedAt))
+	require.InDelta(t, 1.25, refundedAmount, 1e-12)
+	require.True(t, refundedAt.Valid)
+}
+
+func TestUsageBillingRepositoryRefund_ConcurrentCallsApplyOnce(t *testing.T) {
+	ctx := context.Background()
+	client := testEntClient(t)
+	repo := NewUsageBillingRepository(client, integrationDB)
+
+	user := mustCreateUser(t, client, &service.User{
+		Email:        fmt.Sprintf("usage-billing-refund-concurrent-%d@example.com", uniqueNano()),
+		PasswordHash: "hash",
+		Balance:      100,
+	})
+	apiKey := mustCreateApiKey(t, client, &service.APIKey{
+		UserID: user.ID,
+		Key:    "sk-usage-billing-refund-concurrent-" + uuid.NewString(),
+		Name:   "billing-refund-concurrent",
+	})
+	requestID := "client:refund-concurrent-" + uuid.NewString()
+	requestInstanceID := "server-refund-concurrent-" + uuid.NewString()
+	applied, err := repo.Apply(ctx, &service.UsageBillingCommand{
+		RequestID:         requestID,
+		RequestInstanceID: requestInstanceID,
+		APIKeyID:          apiKey.ID,
+		UserID:            user.ID,
+		BalanceCost:       1.25,
+	})
+	require.NoError(t, err)
+	require.True(t, applied.Applied)
+
+	const workers = 8
+	var appliedCount atomic.Int64
+	var alreadyRefundedCount atomic.Int64
+	errCh := make(chan error, workers)
+	var wg sync.WaitGroup
+	wg.Add(workers)
+	for i := 0; i < workers; i++ {
+		go func() {
+			defer wg.Done()
+			result, refundErr := repo.(service.UsageBillingRefundRepository).Refund(ctx, &service.UsageBillingRefundCommand{
+				RequestID:         requestID,
+				RequestInstanceID: requestInstanceID,
+				APIKeyID:          apiKey.ID,
+			})
+			if refundErr != nil {
+				errCh <- refundErr
+				return
+			}
+			if result.Applied {
+				appliedCount.Add(1)
+			}
+			if result.AlreadyRefunded {
+				alreadyRefundedCount.Add(1)
+			}
+		}()
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		require.NoError(t, err)
+	}
+
+	require.EqualValues(t, 1, appliedCount.Load())
+	require.EqualValues(t, workers-1, alreadyRefundedCount.Load())
+	var balance float64
+	require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT balance FROM users WHERE id = $1", user.ID).Scan(&balance))
+	require.InDelta(t, 100, balance, 1e-12)
+}
+
 func TestUsageBillingRepositoryApply_DeduplicatesSubscriptionBilling(t *testing.T) {
 	ctx := context.Background()
 	client := testEntClient(t)
@@ -106,13 +261,15 @@ func TestUsageBillingRepositoryApply_DeduplicatesSubscriptionBilling(t *testing.
 	})
 
 	requestID := uuid.NewString()
+	requestInstanceID := "server-sub-refund-" + uuid.NewString()
 	cmd := &service.UsageBillingCommand{
-		RequestID:        requestID,
-		APIKeyID:         apiKey.ID,
-		UserID:           user.ID,
-		AccountID:        0,
-		SubscriptionID:   &subscription.ID,
-		SubscriptionCost: 2.5,
+		RequestID:         requestID,
+		RequestInstanceID: requestInstanceID,
+		APIKeyID:          apiKey.ID,
+		UserID:            user.ID,
+		AccountID:         0,
+		SubscriptionID:    &subscription.ID,
+		SubscriptionCost:  2.5,
 	}
 
 	result1, err := repo.Apply(ctx, cmd)
@@ -126,6 +283,29 @@ func TestUsageBillingRepositoryApply_DeduplicatesSubscriptionBilling(t *testing.
 	var dailyUsage float64
 	require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT daily_usage_usd FROM user_subscriptions WHERE id = $1", subscription.ID).Scan(&dailyUsage))
 	require.InDelta(t, 2.5, dailyUsage, 0.000001)
+
+	refund, err := repo.(service.UsageBillingRefundRepository).Refund(ctx, &service.UsageBillingRefundCommand{
+		RequestID:         requestID,
+		RequestInstanceID: requestInstanceID,
+		APIKeyID:          apiKey.ID,
+	})
+	require.NoError(t, err)
+	require.True(t, refund.Applied)
+	require.InDelta(t, 2.5, refund.RefundedAmount, 1e-12)
+
+	var dailyUsageAfterRefund, weeklyUsageAfterRefund, monthlyUsageAfterRefund float64
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `
+		SELECT daily_usage_usd, weekly_usage_usd, monthly_usage_usd
+		FROM user_subscriptions
+		WHERE id = $1
+	`, subscription.ID).Scan(
+		&dailyUsageAfterRefund,
+		&weeklyUsageAfterRefund,
+		&monthlyUsageAfterRefund,
+	))
+	require.InDelta(t, 0, dailyUsageAfterRefund, 1e-12)
+	require.InDelta(t, 0, weeklyUsageAfterRefund, 1e-12)
+	require.InDelta(t, 0, monthlyUsageAfterRefund, 1e-12)
 }
 
 func TestUsageBillingRepositoryApply_RequestFingerprintConflict(t *testing.T) {

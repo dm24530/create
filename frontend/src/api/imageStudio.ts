@@ -29,6 +29,18 @@ export interface SaveImageStudioGalleryRequest {
   saved?: boolean
 }
 
+export interface SaveImageStudioGalleryTaskRequest {
+  task_id: string
+  image_index?: number
+  prompt: string
+  model: string
+  size: string
+  format: string
+  duration_ms?: number
+  created_at?: number
+  saved?: boolean
+}
+
 export async function listImageStudioGallery(
   scope?: 'saved' | 'temp',
 ): Promise<ImageStudioGalleryEntry[]> {
@@ -41,10 +53,21 @@ export async function listImageStudioGallery(
 export async function saveImageStudioGallery(
   request: SaveImageStudioGalleryRequest,
 ): Promise<ImageStudioGalleryEntry> {
-  // Saving includes uploading the image to object storage, which can take several minutes.
+    // Saving includes uploading the image to object storage, which can take several minutes.
   const { data } = await apiClient.post<ImageStudioGalleryEntry>('/image-studio/gallery', request, {
-    timeout: 5 * 60 * 1000,
+    timeout: 4 * 60 * 1000,
   })
+  return data
+}
+
+export async function saveImageStudioGalleryFromTask(
+  request: SaveImageStudioGalleryTaskRequest,
+): Promise<ImageStudioGalleryEntry> {
+  const { data } = await apiClient.post<ImageStudioGalleryEntry>(
+    '/image-studio/gallery/from-task',
+    request,
+    { timeout: 30_000 },
+  )
   return data
 }
 
@@ -100,6 +123,7 @@ export async function fetchStudioWorksQuota(): Promise<StudioWorksQuota> {
 export const imageStudioGalleryAPI = {
   list: listImageStudioGallery,
   save: saveImageStudioGallery,
+  saveFromTask: saveImageStudioGalleryFromTask,
   delete: deleteImageStudioGallery,
   pin: pinImageStudioGallery,
   unpin: unpinImageStudioGallery,

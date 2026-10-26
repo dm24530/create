@@ -23,7 +23,6 @@ export const userCustomFeatureRoutesAfterKeys: RouteRecordRaw[] = [
       requiresAuth: true,
       requiresAdmin: false,
       title: 'Image Studio',
-      keepAlive: true,
       immersive: true,
     }
   },

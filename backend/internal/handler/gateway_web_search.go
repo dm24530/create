@@ -232,6 +232,7 @@ func (h *GatewayHandler) WebSearch(c *gin.Context) {
 	// Request IDs are billing idempotency keys, so they must be unique per invocation.
 	// Query/IP/UA hashes would collapse repeated identical searches into one charge.
 	searchRequestID := searchLabel + ":" + uuid.NewString()
+	c.Request = c.Request.WithContext(service.WithUsageBillingRequestID(c.Request.Context(), searchRequestID))
 	if apiKey.Group != nil {
 		if p := apiKey.Group.GetSearchPricePer1k(); p != nil && *p == 0 {
 			logger.L().With(

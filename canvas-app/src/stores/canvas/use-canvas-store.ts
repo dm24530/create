@@ -4,6 +4,7 @@ import { persist, type PersistStorage, type StorageValue } from "zustand/middlew
 import { nanoid } from "nanoid";
 import i18n from "@/i18n";
 import { localForageStorage } from "@/lib/localforage-storage";
+import { legacyCanvasStorageKeys, scopedCanvasStorageKey } from "@/lib/canvas-storage-scope";
 import type { CanvasBackgroundMode } from "@/lib/canvas-theme";
 import type { CanvasAssistantSession, CanvasConnection, CanvasNodeData, ViewportTransform } from "@/types/canvas";
 
@@ -43,25 +44,43 @@ type CanvasStore = {
 
 const initialViewport: ViewportTransform = { x: 0, y: 0, k: 1 };
 const LEGACY_CANVAS_STORE_KEY = "infinite-canvas:canvas_store";
-const canvasUserScope = (() => {
-    const candidate = new URLSearchParams(window.location.search).get("user")?.trim() || "";
-    return /^[A-Za-z0-9_-]{1,64}$/.test(candidate) ? candidate : "";
-})();
-const CANVAS_STORE_KEY = canvasUserScope
-    ? `${LEGACY_CANVAS_STORE_KEY}:user:${canvasUserScope}`
-    : LEGACY_CANVAS_STORE_KEY;
+const CANVAS_STORE_KEY = scopedCanvasStorageKey(LEGACY_CANVAS_STORE_KEY);
 type PersistedCanvasState = Pick<CanvasStore, "projects" | "deletedProjects">;
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 let queuedPersistState: PersistedCanvasState | null = null;
+let pendingPersistWrite: { name: string; value: string } | null = null;
+
+export function flushCanvasStorePersistence() {
+    if (saveTimer) {
+        clearTimeout(saveTimer);
+        saveTimer = null;
+    }
+    if (!pendingPersistWrite) return;
+    const pending = pendingPersistWrite;
+    pendingPersistWrite = null;
+    void localForageStorage.setItem(pending.name, pending.value);
+}
 
 const canvasStorage: PersistStorage<CanvasStore> = {
     getItem: async (name) => {
         let value = await localForageStorage.getItem(name);
-        if (!value && canvasUserScope) {
-            value = await localForageStorage.getItem(LEGACY_CANVAS_STORE_KEY);
+        if (!value) {
+            let migratedFrom = "";
+            for (const legacyKey of legacyCanvasStorageKeys(LEGACY_CANVAS_STORE_KEY)) {
+                value = await localForageStorage.getItem(legacyKey);
+                if (value) {
+                    migratedFrom = legacyKey;
+                    break;
+                }
+            }
             if (value) {
                 await localForageStorage.setItem(name, value);
-                await localForageStorage.removeItem(LEGACY_CANVAS_STORE_KEY);
+                if (migratedFrom) await localForageStorage.removeItem(migratedFrom);
+            }
+        }
+        if (value) {
+            for (const legacyKey of legacyCanvasStorageKeys(LEGACY_CANVAS_STORE_KEY)) {
+                await localForageStorage.removeItem(legacyKey);
             }
         }
         if (!value) return null;
@@ -73,11 +92,11 @@ const canvasStorage: PersistStorage<CanvasStore> = {
         const nextState = value.state as PersistedCanvasState;
         if (queuedPersistState && queuedPersistState.projects === nextState.projects && queuedPersistState.deletedProjects === nextState.deletedProjects) return;
         queuedPersistState = nextState;
+        pendingPersistWrite = { name, value: JSON.stringify(value) };
         if (saveTimer) clearTimeout(saveTimer);
         saveTimer = setTimeout(() => {
-            saveTimer = null;
-            void localForageStorage.setItem(name, JSON.stringify(value));
-        }, 400);
+            flushCanvasStorePersistence();
+        }, 100);
     },
     removeItem: (name) => localForageStorage.removeItem(name),
 };

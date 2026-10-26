@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"mime"
 	"net/http"
@@ -17,6 +18,7 @@ const maxImageStudioGalleryBytes = 32 << 20
 
 type ImageStudioGalleryHandler struct {
 	gallery *service.ImageStudioGalleryService
+	tasks   *service.ImageTaskService
 }
 
 type saveImageStudioGalleryRequest struct {
@@ -33,8 +35,23 @@ type saveImageStudioGalleryRequest struct {
 	Saved *bool `json:"saved"`
 }
 
-func NewImageStudioGalleryHandler(gallery *service.ImageStudioGalleryService) *ImageStudioGalleryHandler {
-	return &ImageStudioGalleryHandler{gallery: gallery}
+type saveImageStudioGalleryFromTaskRequest struct {
+	TaskID     string `json:"task_id"`
+	ImageIndex int    `json:"image_index"`
+	Prompt     string `json:"prompt"`
+	Model      string `json:"model"`
+	Size       string `json:"size"`
+	Format     string `json:"format"`
+	DurationMs int    `json:"duration_ms"`
+	CreatedAt  int64  `json:"created_at"`
+	Saved      *bool  `json:"saved"`
+}
+
+func NewImageStudioGalleryHandler(
+	gallery *service.ImageStudioGalleryService,
+	tasks *service.ImageTaskService,
+) *ImageStudioGalleryHandler {
+	return &ImageStudioGalleryHandler{gallery: gallery, tasks: tasks}
 }
 
 func (h *ImageStudioGalleryHandler) Save(c *gin.Context) {
@@ -78,6 +95,80 @@ func (h *ImageStudioGalleryHandler) Save(c *gin.Context) {
 		response.BadRequest(c, "image_data_url or image_url is required")
 		return
 	}
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, entry)
+}
+
+func (h *ImageStudioGalleryHandler) SaveFromTask(c *gin.Context) {
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not found in context")
+		return
+	}
+	if h == nil || h.tasks == nil || h.gallery == nil {
+		response.ErrorFrom(c, service.ErrImageStudioGalleryUnavailable)
+		return
+	}
+	var request saveImageStudioGalleryFromTaskRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		response.BadRequest(c, "Invalid gallery task request")
+		return
+	}
+	record, err := h.tasks.GetRecord(c.Request.Context(), strings.TrimSpace(request.TaskID))
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	if record == nil || record.UserID != subject.UserID {
+		response.NotFound(c, "Image task not found")
+		return
+	}
+	if record.Status != service.ImageTaskStatusCompleted {
+		response.Error(c, http.StatusConflict, "Image task is not ready to save")
+		return
+	}
+	var payload struct {
+		Data []struct {
+			ObjectKey string `json:"object_key"`
+			URL       string `json:"url"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(record.Result, &payload); err != nil || len(payload.Data) == 0 {
+		response.Error(c, http.StatusConflict, "Image task has no persisted image")
+		return
+	}
+	index := request.ImageIndex
+	if index < 0 {
+		index = 0
+	}
+	if index >= len(payload.Data) {
+		response.BadRequest(c, "Image index is out of range")
+		return
+	}
+	item := payload.Data[index]
+	if strings.TrimSpace(item.ObjectKey) == "" {
+		response.Error(c, http.StatusConflict, "Image task has no persisted object key")
+		return
+	}
+	saved := request.Saved == nil || *request.Saved
+	entry, err := h.gallery.SaveExistingObject(
+		c.Request.Context(),
+		subject.UserID,
+		item.ObjectKey,
+		item.URL,
+		request.Prompt,
+		request.Model,
+		request.Size,
+		request.Format,
+		saved,
+		service.ImageStudioGallerySaveOptions{
+			DurationMs: request.DurationMs,
+			CreatedAt:  request.CreatedAt,
+		},
+	)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return

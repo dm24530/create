@@ -49,13 +49,17 @@ const (
 )
 
 var (
-	ErrBackupS3NotConfigured  = infraerrors.BadRequest("BACKUP_S3_NOT_CONFIGURED", "backup S3 storage is not configured")
-	ErrBackupNotFound         = infraerrors.NotFound("BACKUP_NOT_FOUND", "backup record not found")
-	ErrBackupInProgress       = infraerrors.Conflict("BACKUP_IN_PROGRESS", "a backup is already in progress")
-	ErrRestoreInProgress      = infraerrors.Conflict("RESTORE_IN_PROGRESS", "a restore is already in progress")
-	ErrBackupRecordsCorrupt   = infraerrors.InternalServer("BACKUP_RECORDS_CORRUPT", "backup records data is corrupted")
-	ErrBackupS3ConfigCorrupt  = infraerrors.InternalServer("BACKUP_S3_CONFIG_CORRUPT", "backup S3 config data is corrupted")
-	ErrBackupArchiveProtected = infraerrors.Conflict("BACKUP_ARCHIVE_PROTECTED", "explicit confirmation is required to delete an archived backup")
+	ErrBackupS3NotConfigured    = infraerrors.BadRequest("BACKUP_S3_NOT_CONFIGURED", "backup S3 storage is not configured")
+	ErrBackupNotFound           = infraerrors.NotFound("BACKUP_NOT_FOUND", "backup record not found")
+	ErrBackupInProgress         = infraerrors.Conflict("BACKUP_IN_PROGRESS", "a backup is already in progress")
+	ErrRestoreInProgress        = infraerrors.Conflict("RESTORE_IN_PROGRESS", "a restore is already in progress")
+	ErrBackupRecordsCorrupt     = infraerrors.InternalServer("BACKUP_RECORDS_CORRUPT", "backup records data is corrupted")
+	ErrBackupS3ConfigCorrupt    = infraerrors.InternalServer("BACKUP_S3_CONFIG_CORRUPT", "backup S3 config data is corrupted")
+	ErrBackupArchiveProtected   = infraerrors.Conflict("BACKUP_ARCHIVE_PROTECTED", "explicit confirmation is required to delete an archived backup")
+	ErrBackupS3SecretUnreadable = infraerrors.BadRequest(
+		"BACKUP_S3_SECRET_UNREADABLE",
+		"the stored S3 Secret Access Key cannot be decrypted with the current encryption key; re-enter the Secret Access Key and save",
+	)
 
 	// ErrSecretEncryptionKeyNotConfigured is returned when an S3 SecretAccessKey
 	// would be encrypted with an auto-generated (ephemeral) key. That key is
@@ -102,6 +106,9 @@ type BackupS3Config struct {
 	SecretAccessKey string `json:"secret_access_key,omitempty"` //nolint:revive // field name follows AWS convention
 	Prefix          string `json:"prefix"`                      // S3 key 前缀，如 "backups/"
 	ForcePathStyle  bool   `json:"force_path_style"`
+	// SecretConfigured is response-only. It reports whether a secret is stored
+	// without exposing the secret itself to the browser.
+	SecretConfigured bool `json:"secret_configured,omitempty"`
 }
 
 // IsConfigured 检查必要字段是否已配置
@@ -379,7 +386,7 @@ func (s *BackupService) EncryptionKeyConfigured() bool {
 }
 
 func (s *BackupService) GetS3Config(ctx context.Context) (*BackupS3Config, error) {
-	cfg, err := s.loadS3Config(ctx)
+	cfg, err := s.loadStoredS3Config(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -387,17 +394,24 @@ func (s *BackupService) GetS3Config(ctx context.Context) (*BackupS3Config, error
 		return &BackupS3Config{}, nil
 	}
 	// 脱敏返回
+	cfg.SecretConfigured = cfg.SecretAccessKey != ""
 	cfg.SecretAccessKey = ""
 	return cfg, nil
 }
 
 func (s *BackupService) UpdateS3Config(ctx context.Context, cfg BackupS3Config) (*BackupS3Config, error) {
-	// 如果没提供 secret，保留原有值。loadS3Config 会解密，所以这里拿到的是明文，
-	// 和调用方新填的 secret 一样，都必须走下面的加密再落库。
+	// 如果没提供 secret，直接保留数据库中的原始密文，不做“先解密再加密”。
+	// 解密失败通常意味着密钥已变化或旧数据异常；此时重新加密只会把错误
+	// 密文再包一层，导致后续更难诊断。保留原始值，让用户明确重填 Secret。
+	preserveStoredSecret := false
 	if cfg.SecretAccessKey == "" {
-		old, _ := s.loadS3Config(ctx)
+		old, err := s.loadStoredS3Config(ctx)
+		if err != nil {
+			return nil, err
+		}
 		if old != nil {
 			cfg.SecretAccessKey = old.SecretAccessKey
+			preserveStoredSecret = cfg.SecretAccessKey != ""
 		}
 	}
 
@@ -405,7 +419,7 @@ func (s *BackupService) UpdateS3Config(ctx context.Context, cfg BackupS3Config) 
 	// 后本函数会清空返回值里的 secret，所以第二次保存（改端点、存定时配置）送上来的
 	// secret 是空的，会走上面的分支继承旧值。若那条路径跳过加密，明文就会覆盖掉库里
 	// 的密文，而读取侧“兼容未加密旧数据”的回退会把这件事永久掩盖成一条日志。
-	if cfg.SecretAccessKey != "" {
+	if cfg.SecretAccessKey != "" && !preserveStoredSecret {
 		// 拒绝用自动生成的临时密钥加密：该密钥每次重启都会变化，落库的密文在
 		// 重启/升级后无法解密（#4524）。与支付、TOTP 的处理保持一致。
 		if !s.encryptionKeyConfigured {
@@ -438,10 +452,24 @@ func (s *BackupService) UpdateS3Config(ctx context.Context, cfg BackupS3Config) 
 
 func (s *BackupService) TestS3Connection(ctx context.Context, cfg BackupS3Config) error {
 	// 如果没提供 secret，用已保存的
+	var storedDecryptErr error
 	if cfg.SecretAccessKey == "" {
-		old, _ := s.loadS3Config(ctx)
+		old, err := s.loadStoredS3Config(ctx)
+		if err != nil {
+			return err
+		}
 		if old != nil {
-			cfg.SecretAccessKey = old.SecretAccessKey
+			if old.SecretAccessKey != "" {
+				decrypted, err := s.encryptor.Decrypt(old.SecretAccessKey)
+				if err != nil {
+					// Preserve compatibility with legacy plaintext values. The
+					// write probe decides whether the value still works.
+					cfg.SecretAccessKey = old.SecretAccessKey
+					storedDecryptErr = err
+				} else {
+					cfg.SecretAccessKey = decrypted
+				}
+			}
 		}
 	}
 
@@ -453,7 +481,18 @@ func (s *BackupService) TestS3Connection(ctx context.Context, cfg BackupS3Config
 	if err != nil {
 		return err
 	}
-	return store.HeadBucket(ctx)
+	// R2/OSS object-scoped tokens commonly allow PutObject/GetObject but deny
+	// HeadBucket. A backup only needs to write, read and delete objects, so test
+	// the actual operation instead of treating a bucket-level probe as mandatory.
+	probeKey := s.buildS3Key(&cfg, fmt.Sprintf(".connection-test-%d.txt", time.Now().UnixNano()))
+	if _, err := store.Upload(ctx, probeKey, strings.NewReader("ok"), "text/plain"); err != nil {
+		if storedDecryptErr != nil {
+			return fmt.Errorf("%w: %v", ErrBackupS3SecretUnreadable, err)
+		}
+		return fmt.Errorf("S3 write test failed: %w", err)
+	}
+	_ = store.Delete(ctx, probeKey)
+	return nil
 }
 
 // ─── 定时备份管理 ───
@@ -1317,7 +1356,7 @@ func (s *BackupService) GetBackupDownloadURL(ctx context.Context, backupID strin
 
 // ─── 内部方法 ───
 
-func (s *BackupService) loadS3Config(ctx context.Context) (*BackupS3Config, error) {
+func (s *BackupService) loadStoredS3Config(ctx context.Context) (*BackupS3Config, error) {
 	raw, err := s.settingRepo.GetValue(ctx, settingKeyBackupS3Config)
 	if err != nil || raw == "" {
 		return nil, nil //nolint:nilnil // no config is a valid state
@@ -1325,6 +1364,14 @@ func (s *BackupService) loadS3Config(ctx context.Context) (*BackupS3Config, erro
 	var cfg BackupS3Config
 	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
 		return nil, ErrBackupS3ConfigCorrupt
+	}
+	return &cfg, nil
+}
+
+func (s *BackupService) loadS3Config(ctx context.Context) (*BackupS3Config, error) {
+	cfg, err := s.loadStoredS3Config(ctx)
+	if err != nil || cfg == nil {
+		return cfg, err
 	}
 	// 解密 SecretAccessKey
 	if cfg.SecretAccessKey != "" {
@@ -1336,7 +1383,7 @@ func (s *BackupService) loadS3Config(ctx context.Context) (*BackupS3Config, erro
 			cfg.SecretAccessKey = decrypted
 		}
 	}
-	return &cfg, nil
+	return cfg, nil
 }
 
 func (s *BackupService) getOrCreateStore(ctx context.Context, cfg *BackupS3Config) (BackupObjectStore, error) {

@@ -257,6 +257,22 @@ func setupOpsErrorLogTestQueue(t *testing.T, size int) {
 	opsErrorLogMu.Unlock()
 }
 
+func TestOpsErrorLoggerMiddleware_RepanicsAfterRefundAttempt(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(middleware2.Recovery())
+	router.Use(OpsErrorLoggerMiddleware(nil))
+	router.GET("/panic", func(*gin.Context) {
+		panic("gateway panic")
+	})
+
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/panic", nil)
+	router.ServeHTTP(recorder, req)
+
+	require.Equal(t, http.StatusInternalServerError, recorder.Code)
+}
+
 func TestOpsErrorLoggerMiddleware_HardSkipsIngressRejection(t *testing.T) {
 	setupOpsErrorLogTestQueue(t, 4)
 	gin.SetMode(gin.TestMode)

@@ -64,6 +64,10 @@ type OpsRepository interface {
 type OpsInsertErrorLogInput struct {
 	RequestID       string
 	ClientRequestID string
+	// UsageRequestID is the exact usage_billing_dedup request key. It may be
+	// prefixed (client:/local:/grok-video:), unlike the diagnostic RequestID.
+	UsageRequestID    string
+	RequestInstanceID string
 
 	UserID    *int64
 	APIKeyID  *int64
@@ -118,6 +122,10 @@ type OpsInsertErrorLogInput struct {
 	TimeToFirstTokenMs *int64
 
 	CreatedAt time.Time
+
+	RefundStatus string
+	RefundAmount float64
+	RefundedAt   *time.Time
 
 	// 有效(未删除)key 报错时快照的 key 脱敏前缀(前 8 位)。
 	// 落库快照而非读时 JOIN:key 之后被删(key 列被 tombstone 覆盖)仍保留当时前缀。

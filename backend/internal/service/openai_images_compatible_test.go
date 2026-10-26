@@ -221,6 +221,50 @@ func TestOpenAIImagesSchedulerUsesResolvedPlatformForDirectCompatibleModel(t *te
 	require.True(t, selection.Acquired)
 }
 
+func TestOpenAIImagesSchedulerRejectsNativeOnlyAccountsForCompatibleModel(t *testing.T) {
+	groupID := int64(3)
+	repo := &compositeOwnershipAccountRepo{
+		accounts: []Account{
+			{
+				ID:          1,
+				Platform:    PlatformOpenAI,
+				Type:        AccountTypeOAuth,
+				Status:      StatusActive,
+				Schedulable: true,
+				Credentials: map[string]any{
+					"access_token":  "unused-native-token",
+					"model_mapping": map[string]any{"gemini-3.1-flash-image": "gemini-3.1-flash-image"},
+				},
+			},
+			{
+				ID:          2,
+				Platform:    PlatformOpenAI,
+				Type:        AccountTypeSetupToken,
+				Status:      StatusActive,
+				Schedulable: true,
+				Credentials: map[string]any{
+					"access_token":  "unused-native-token",
+					"model_mapping": map[string]any{"gemini-3.1-flash-image": "gemini-3.1-flash-image"},
+				},
+			},
+		},
+	}
+	svc := &OpenAIGatewayService{accountRepo: repo}
+	ctx := WithResolvedTargetPlatform(WithCompositeImagesRouting(context.Background()), PlatformOpenAI)
+
+	selection, _, err := svc.SelectAccountWithSchedulerForImages(
+		ctx,
+		&groupID,
+		"",
+		"gemini-3.1-flash-image",
+		nil,
+		OpenAIImagesCapabilityAPIKey,
+	)
+
+	require.Nil(t, selection)
+	require.ErrorIs(t, err, ErrNoAvailableAccounts)
+}
+
 func TestCompatibleImagesParseUsesResolvedCrossPlatformUpstreamModel(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	body := []byte(`{"model":"public-image","prompt":"draw"}`)

@@ -210,6 +210,43 @@ describe('admin BackupView', () => {
     expect(wrapper.find('[data-testid="image-storage-not-ready"]').exists()).toBe(false)
   })
 
+  it('S3 Secret 已配置提示来自后端状态而不是 Access Key', async () => {
+    getS3Config.mockResolvedValue({
+      endpoint: 'https://acct.r2.cloudflarestorage.com',
+      region: 'auto',
+      bucket: 'create',
+      access_key_id: 'configured-access-key',
+      prefix: 'backups/',
+      force_path_style: false,
+      secret_configured: false,
+    })
+
+    const wrapper = mountBackupView()
+    await flushPromises()
+
+    const secretInput = wrapper.get('input[type="password"]')
+    expect(secretInput.attributes('placeholder')).toBe('')
+  })
+
+  it('S3 Secret 已保存时显示已配置占位提示', async () => {
+    getS3Config.mockResolvedValue({
+      endpoint: 'https://acct.r2.cloudflarestorage.com',
+      region: 'auto',
+      bucket: 'create',
+      access_key_id: 'configured-access-key',
+      prefix: 'backups/',
+      force_path_style: false,
+      secret_configured: true,
+    })
+
+    const wrapper = mountBackupView()
+    await flushPromises()
+
+    expect(wrapper.get('input[type="password"]').attributes('placeholder')).toBe(
+      'admin.backup.s3.secretConfigured',
+    )
+  })
+
   it('旧单文件记录仍使用单个下载地址', async () => {
     listBackups.mockResolvedValue({ items: [baseRecord('legacy')] })
     getDownloadURL.mockResolvedValue({ url: 'https://example.test/legacy.sql.gz' })

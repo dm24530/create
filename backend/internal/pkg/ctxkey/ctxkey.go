@@ -26,6 +26,10 @@ const (
 	// ClientRequestID 客户端请求的唯一标识，用于追踪请求全生命周期（用于 Ops 监控与排障）。
 	ClientRequestID Key = "ctx_client_request_id"
 
+	// UsageBillingRequestID 是本次请求在 usage_billing_dedup 中使用的最终计费键。
+	// 当计费键由任务/搜索 ID 强制生成，无法仅从 client/local 请求头推导时使用。
+	UsageBillingRequestID Key = "ctx_usage_billing_request_id"
+
 	// Model 请求模型标识（用于统一请求链路日志字段）。
 	Model Key = "ctx_model"
 

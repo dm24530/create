@@ -215,6 +215,11 @@ func postUsageBilling(ctx context.Context, p *postUsageBillingParams, deps *bill
 }
 
 func resolveUsageBillingRequestID(ctx context.Context, upstreamRequestID string) string {
+	if ctx != nil {
+		if requestID, _ := ctx.Value(ctxkey.UsageBillingRequestID).(string); strings.TrimSpace(requestID) != "" {
+			return strings.TrimSpace(requestID)
+		}
+	}
 	// Forced durable money-event IDs must win over client/local context IDs so
 	// standalone web_search / async video cannot collapse under a reused client id.
 	if requestID := strings.TrimSpace(upstreamRequestID); requestID != "" {
@@ -234,6 +239,17 @@ func resolveUsageBillingRequestID(ctx context.Context, upstreamRequestID string)
 		return requestID
 	}
 	return "generated:" + generateRequestID()
+}
+
+func WithUsageBillingRequestID(ctx context.Context, requestID string) context.Context {
+	requestID = strings.TrimSpace(requestID)
+	if requestID == "" {
+		return ctx
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, ctxkey.UsageBillingRequestID, requestID)
 }
 
 // ResolveUsageBillingRequestID exposes the exact request ID used by
@@ -372,6 +388,9 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 		postUsageBilling(ctx, p, deps)
 		return true, nil
 	}
+	if ctx != nil {
+		cmd.RequestInstanceID = requestInstanceIDFromContext(ctx)
+	}
 
 	billingCtx, cancel := detachedBillingContext(ctx)
 	defer cancel()
@@ -394,6 +413,82 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 
 	finalizePostUsageBilling(billingCtx, p, deps, result)
 	return true, nil
+}
+
+func requestInstanceIDFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	requestID, _ := ctx.Value(ctxkey.RequestID).(string)
+	return strings.TrimSpace(requestID)
+}
+
+// RefundUsageBilling reverses one previously applied charge. It is idempotent:
+// repeated calls return AlreadyRefunded without changing balances again.
+func (s *GatewayService) RefundUsageBilling(
+	ctx context.Context,
+	cmd *UsageBillingRefundCommand,
+) (*UsageBillingRefundResult, error) {
+	if s == nil {
+		return &UsageBillingRefundResult{}, nil
+	}
+	return refundUsageBilling(ctx, s.usageBillingRepo, s.billingCacheService, cmd)
+}
+
+func (s *OpenAIGatewayService) RefundUsageBilling(
+	ctx context.Context,
+	cmd *UsageBillingRefundCommand,
+) (*UsageBillingRefundResult, error) {
+	if s == nil {
+		return &UsageBillingRefundResult{}, nil
+	}
+	return refundUsageBilling(ctx, s.usageBillingRepo, s.billingCacheService, cmd)
+}
+
+func refundUsageBilling(
+	ctx context.Context,
+	usageBillingRepo UsageBillingRepository,
+	billingCacheService *BillingCacheService,
+	cmd *UsageBillingRefundCommand,
+) (*UsageBillingRefundResult, error) {
+	if usageBillingRepo == nil || cmd == nil {
+		return &UsageBillingRefundResult{}, nil
+	}
+	repo, ok := usageBillingRepo.(UsageBillingRefundRepository)
+	if !ok {
+		return &UsageBillingRefundResult{}, nil
+	}
+	billingCtx, cancel := detachedBillingContext(ctx)
+	defer cancel()
+	result, err := repo.Refund(billingCtx, cmd)
+	if err != nil || result == nil {
+		return result, err
+	}
+	if !result.Applied && !result.AlreadyRefunded {
+		return result, nil
+	}
+	if billingCacheService != nil {
+		if result.UserID > 0 {
+			if invalidateErr := billingCacheService.InvalidateUserBalance(billingCtx, result.UserID); invalidateErr != nil {
+				slog.Warn("invalidate balance cache after refund failed", "user_id", result.UserID, "error", invalidateErr)
+			}
+		}
+		if result.APIKeyID > 0 {
+			if invalidateErr := billingCacheService.InvalidateAPIKeyRateLimit(billingCtx, result.APIKeyID); invalidateErr != nil {
+				slog.Warn("invalidate api key rate-limit cache after refund failed", "api_key_id", result.APIKeyID, "error", invalidateErr)
+			}
+		}
+	}
+	if result.Applied {
+		slog.Info("usage_billing.refunded",
+			"request_id", strings.TrimSpace(cmd.RequestID),
+			"api_key_id", result.APIKeyID,
+			"user_id", result.UserID,
+			"refunded_amount", result.RefundedAmount,
+			"reason", strings.TrimSpace(cmd.Reason),
+		)
+	}
+	return result, nil
 }
 
 func finalizePostUsageBilling(ctx context.Context, p *postUsageBillingParams, deps *billingDeps, result *UsageBillingApplyResult) {

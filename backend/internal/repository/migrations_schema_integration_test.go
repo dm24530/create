@@ -142,8 +142,35 @@ WHERE ns.nspname = 'public'
 	require.NoError(t, tx.QueryRowContext(context.Background(), "SELECT to_regclass('public.usage_billing_dedup')").Scan(&usageBillingDedupRegclass))
 	require.True(t, usageBillingDedupRegclass.Valid, "expected usage_billing_dedup table to exist")
 	requireColumn(t, tx, "usage_billing_dedup", "request_fingerprint", "character varying", 64, false)
+	requireColumn(t, tx, "usage_billing_dedup", "user_id", "bigint", 0, true)
+	requireColumn(t, tx, "usage_billing_dedup", "request_instance_id", "character varying", 255, true)
+	requireColumn(t, tx, "usage_billing_dedup", "balance_cost", "numeric", 0, false)
+	requireColumn(t, tx, "usage_billing_dedup", "refunded_at", "timestamp with time zone", 0, true)
+	requireColumn(t, tx, "usage_billing_dedup", "refunded_amount", "numeric", 0, false)
 	requireIndex(t, tx, "usage_billing_dedup", "idx_usage_billing_dedup_request_api_key")
 	requireIndex(t, tx, "usage_billing_dedup", "idx_usage_billing_dedup_created_at_brin")
+	requireIndex(t, tx, "usage_billing_dedup", "idx_usage_billing_dedup_refunded_at")
+
+	requireColumn(t, tx, "ops_error_logs", "refund_status", "character varying", 16, false)
+	requireColumn(t, tx, "ops_error_logs", "refund_amount", "numeric", 0, false)
+	requireColumn(t, tx, "ops_error_logs", "refunded_at", "timestamp with time zone", 0, true)
+	requireIndex(t, tx, "ops_error_logs", "idx_ops_error_logs_refund_status_time")
+	var canvasUsagePlansRegclass sql.NullString
+	require.NoError(t, tx.QueryRowContext(context.Background(), "SELECT to_regclass('public.canvas_usage_plans')").Scan(&canvasUsagePlansRegclass))
+	require.True(t, canvasUsagePlansRegclass.Valid, "rollback-compatible canvas usage table must exist")
+	var canvasUsageReservationsRegclass sql.NullString
+	require.NoError(t, tx.QueryRowContext(context.Background(), "SELECT to_regclass('public.canvas_usage_reservations')").Scan(&canvasUsageReservationsRegclass))
+	require.True(t, canvasUsageReservationsRegclass.Valid, "rollback-compatible canvas usage table must exist")
+	requireColumn(t, tx, "canvas_usage_plans", "used_count", "integer", 0, false)
+	requireColumn(t, tx, "canvas_usage_reservations", "committed_count", "integer", 0, false)
+	requireIndex(t, tx, "canvas_usage_reservations", "idx_canvas_usage_reservations_active")
+	requireIndex(t, tx, "canvas_usage_reservations", "idx_canvas_usage_reservations_cleanup")
+	var staleCanvasUsageSettings int
+	require.NoError(t, tx.QueryRowContext(context.Background(), `
+		SELECT COUNT(*) FROM settings
+		WHERE key IN ('default_canvas_usage_count', 'canvas_usage_enforcement_enabled')
+	`).Scan(&staleCanvasUsageSettings))
+	require.Zero(t, staleCanvasUsageSettings, "canvas usage settings must be removed")
 
 	var usageBillingDedupArchiveRegclass sql.NullString
 	require.NoError(t, tx.QueryRowContext(context.Background(), "SELECT to_regclass('public.usage_billing_dedup_archive')").Scan(&usageBillingDedupArchiveRegclass))

@@ -1,4 +1,5 @@
 import { flushPromises, mount } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import VideoInspirationView from '../VideoInspirationView.vue'
@@ -83,6 +84,10 @@ const globalStubs = {
     template: '<div>{{ options.find(o => o.value === modelValue)?.label || placeholder }}</div>',
   },
 }
+
+beforeEach(() => {
+  setActivePinia(createPinia())
+})
 
 function seedRecord(overrides: Partial<VideoWorkRecord> = {}): VideoWorkRecord {
   return {

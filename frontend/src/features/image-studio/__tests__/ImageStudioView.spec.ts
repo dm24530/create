@@ -2,20 +2,21 @@ import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { flushPromises, mount } from '@vue/test-utils'
+import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import ImageStudioView from '../ImageStudioView.vue'
 import { resetImageStudioDraft } from '../imageStudioDraft'
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 
-const { listKeys, getPublicSettings, listGallery, saveGallery, pinGallery, deleteGallery, downloadGallery, thumbnailGallery, galleryQuota, copyToClipboard, imageNeedsLocalResize, processImageForDisplay, tryStartPersistent, waitForPersistent } = vi.hoisted(() => ({
+const { listKeys, getPublicSettings, listGallery, saveGallery, saveGalleryFromTask, pinGallery, deleteGallery, downloadGallery, thumbnailGallery, galleryQuota, copyToClipboard, imageNeedsLocalResize, processImageForDisplay, tryStartPersistent, waitForPersistent } = vi.hoisted(() => ({
   listKeys: vi.fn(),
   getPublicSettings: vi.fn(),
   listGallery: vi.fn(),
   saveGallery: vi.fn(),
+  saveGalleryFromTask: vi.fn(),
   pinGallery: vi.fn(),
   deleteGallery: vi.fn(),
   downloadGallery: vi.fn(),
@@ -38,6 +39,7 @@ vi.mock('@/api', () => ({
   imageStudioGalleryAPI: {
     list: listGallery,
     save: saveGallery,
+    saveFromTask: saveGalleryFromTask,
     pin: pinGallery,
     delete: deleteGallery,
     download: downloadGallery,
@@ -88,6 +90,8 @@ function imageStudioPendingStorageKey(userId = 2) {
   return `sub2api:image-studio:pending:${userId}`
 }
 
+const mountedWrappers = new Set<VueWrapper<any>>()
+
 function mountImageStudio(options: { isAdmin?: boolean; userId?: number } = {}) {
   const pinia = createPinia()
   setActivePinia(pinia)
@@ -97,7 +101,7 @@ function mountImageStudio(options: { isAdmin?: boolean; userId?: number } = {}) 
     email: options.isAdmin ? 'admin@example.com' : 'user@example.com',
     role: options.isAdmin ? 'admin' : 'user',
   } as any
-  return mount(ImageStudioView, {
+  const wrapper = mount(ImageStudioView, {
     global: {
       plugins: [pinia],
       stubs: {
@@ -117,7 +121,20 @@ function mountImageStudio(options: { isAdmin?: boolean; userId?: number } = {}) 
       },
     },
   })
+  mountedWrappers.add(wrapper)
+  return wrapper
 }
+
+afterEach(() => {
+  for (const wrapper of mountedWrappers) {
+    try {
+      wrapper.unmount()
+    } catch {
+      // Some tests explicitly unmount the wrapper.
+    }
+  }
+  mountedWrappers.clear()
+})
 
 function resetCommonMocks() {
   resetImageStudioDraft()
@@ -126,6 +143,7 @@ function resetCommonMocks() {
   getPublicSettings.mockReset()
   listGallery.mockReset()
   saveGallery.mockReset()
+  saveGalleryFromTask.mockReset()
   pinGallery.mockReset()
   deleteGallery.mockReset()
   downloadGallery.mockReset()
@@ -158,6 +176,16 @@ function resetCommonMocks() {
   saveGallery.mockResolvedValue({
     id: 'gallery-1',
     url: 'https://cdn.example.com/gallery-1.png',
+    prompt: '',
+    model: '',
+    size: '',
+    format: '',
+    created_at: 0,
+    expires_at: 0,
+  })
+  saveGalleryFromTask.mockResolvedValue({
+    id: 'gallery-task-1',
+    url: 'https://cdn.example.com/gallery-task-1.png',
     prompt: '',
     model: '',
     size: '',
@@ -748,7 +776,7 @@ describe('ImageStudioView inspiration handoff', () => {
 
   it('hydrates a prompt handed over from the image inspiration library', async () => {
     sessionStorage.setItem(
-      'sub2api:image-studio:pending-prompt',
+      'sub2api:image-studio:pending-prompt:2',
       '清晨薄雾中的现代建筑，克制的灰蓝色调。',
     )
 
@@ -762,7 +790,7 @@ describe('ImageStudioView inspiration handoff', () => {
         message: '已带入图片灵感提示词，选好模型和尺寸就可以生成。',
       }),
     ]))
-    expect(sessionStorage.getItem('sub2api:image-studio:pending-prompt')).toBeNull()
+    expect(sessionStorage.getItem('sub2api:image-studio:pending-prompt:2')).toBeNull()
   })
 })
 
@@ -825,6 +853,9 @@ describe('ImageStudioView gallery', () => {
     await flushPromises()
     await flushPromises()
     expect(firstWrapper.find('img[src="https://cdn.example.com/gallery-1-thumb.jpg"]').exists()).toBe(true)
+    await vi.waitFor(() => {
+      expect(firstWrapper.find('img[src="data:image/jpeg;base64,dGh1bWI="]').exists()).toBe(true)
+    })
     firstWrapper.unmount()
 
     listGallery.mockReturnValue(new Promise(() => {}))
@@ -897,6 +928,114 @@ describe('ImageStudioView gallery', () => {
     listGallery.mockReturnValue(new Promise(() => {}))
     const secondWrapper = mountImageStudio({ userId: 102 })
     expect(secondWrapper.find('img[src="https://cdn.example.com/user-101-private.png"]').exists()).toBe(false)
+  })
+
+  it('clears the current gallery immediately when the authenticated user changes', async () => {
+    listKeys.mockResolvedValue({
+      items: [{ id: 1, name: 'dd', key: 'sk-local', status: 'active', group_id: 2 }],
+    })
+    getPublicSettings.mockResolvedValue({ api_base_url: '/v1' })
+    listGallery.mockResolvedValueOnce([{
+      id: 'gallery-user-101',
+      url: 'https://cdn.example.com/user-101-private.png',
+      prompt: 'first user',
+      model: 'gpt-image-1',
+      size: '1024x1024',
+      format: 'png',
+      created_at: 1,
+      expires_at: 9999999999,
+    }])
+
+    const wrapper = mountImageStudio({ userId: 101 })
+    await flushPromises()
+    expect(wrapper.find('img[src="https://cdn.example.com/user-101-private.png"]').exists()).toBe(true)
+
+    const authStore = useAuthStore()
+    authStore.user = null
+    await flushPromises()
+    expect(wrapper.find('img[src="https://cdn.example.com/user-101-private.png"]').exists()).toBe(false)
+
+    let resolveSecondUser: (value: any[]) => void = () => undefined
+    listGallery.mockReturnValueOnce(new Promise((resolve) => {
+      resolveSecondUser = resolve
+    }))
+    authStore.user = {
+      id: 102,
+      email: 'second@example.com',
+      role: 'user',
+    } as any
+    await flushPromises()
+
+    expect(wrapper.find('img[src="https://cdn.example.com/user-101-private.png"]').exists()).toBe(false)
+
+    resolveSecondUser([{
+      id: 'gallery-user-102',
+      url: 'https://cdn.example.com/user-102-private.png',
+      prompt: 'second user',
+      model: 'gpt-image-1',
+      size: '1024x1024',
+      format: 'png',
+      created_at: 2,
+      expires_at: 9999999999,
+    }])
+    await flushPromises()
+    expect(wrapper.find('img[src="https://cdn.example.com/user-102-private.png"]').exists()).toBe(true)
+  })
+
+  it('ignores a previous user gallery response that resolves after logout', async () => {
+    listKeys.mockResolvedValue({
+      items: [{ id: 1, name: 'dd', key: 'sk-local', status: 'active', group_id: 2 }],
+    })
+    getPublicSettings.mockResolvedValue({ api_base_url: '/v1' })
+    let resolveFirstUser: (value: any[]) => void = () => undefined
+    let resolveSecondUser: (value: any[]) => void = () => undefined
+    listGallery
+      .mockReturnValueOnce(new Promise((resolve) => {
+        resolveFirstUser = resolve
+      }))
+      .mockReturnValueOnce(new Promise((resolve) => {
+        resolveSecondUser = resolve
+      }))
+
+    const wrapper = mountImageStudio({ userId: 101 })
+    await flushPromises()
+    const authStore = useAuthStore()
+    authStore.user = null
+    await flushPromises()
+    authStore.user = {
+      id: 102,
+      email: 'second@example.com',
+      role: 'user',
+    } as any
+    await flushPromises()
+
+    resolveFirstUser([{
+      id: 'gallery-stale-user-101',
+      url: 'https://cdn.example.com/stale-user-101.png',
+      prompt: 'stale',
+      model: 'gpt-image-1',
+      size: '1024x1024',
+      format: 'png',
+      created_at: 1,
+      expires_at: 9999999999,
+    }])
+    await flushPromises()
+    expect(wrapper.find('img[src="https://cdn.example.com/stale-user-101.png"]').exists()).toBe(false)
+
+    resolveSecondUser([{
+      id: 'gallery-user-102',
+      url: 'https://cdn.example.com/user-102-fresh.png',
+      prompt: 'fresh',
+      model: 'gpt-image-1',
+      size: '1024x1024',
+      format: 'png',
+      created_at: 2,
+      expires_at: 9999999999,
+    }])
+    await flushPromises()
+    await vi.waitFor(() => {
+      expect(wrapper.find('img[src="https://cdn.example.com/user-102-fresh.png"]').exists()).toBe(true)
+    })
   })
 
   it('replaces a cached generated image with its server gallery entry after remount', async () => {
@@ -1216,6 +1355,96 @@ describe('ImageStudioView gallery', () => {
     }))
   })
 
+  it('does not persist an in-flight generation after the authenticated user changes', async () => {
+    listKeys.mockResolvedValue({
+      items: [{ id: 1, name: 'dd', key: 'sk-local', status: 'active', group_id: 2 }],
+    })
+    getPublicSettings.mockResolvedValue({ api_base_url: '/v1' })
+    let resolveGeneration: (response: Response) => void = () => undefined
+    const generationResponse = new Promise<Response>((resolve) => {
+      resolveGeneration = resolve
+    })
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/images/batches/models')) {
+        return { ok: true, json: async () => ({ data: [] }) } as Response
+      }
+      if (url.endsWith('/models')) {
+        return { ok: true, json: async () => ({ data: [{ id: 'gpt-image-1' }] }) } as Response
+      }
+      if (url.endsWith('/images/generations/async')) return asyncImageUnavailableResponse()
+      if (url.endsWith('/images/generations')) return generationResponse
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountImageStudio({ userId: 101 })
+    await flushPromises()
+    await flushPromises()
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    const authStore = useAuthStore()
+    authStore.user = null
+    await flushPromises()
+    authStore.user = {
+      id: 102,
+      email: 'second@example.com',
+      role: 'user',
+    } as any
+    await flushPromises()
+
+    resolveGeneration({
+      ok: true,
+      json: async () => ({ data: [{ b64_json: 'b2xkLXVzZXItaW1hZ2U=' }] }),
+    } as Response)
+    await flushPromises()
+    await flushPromises()
+
+    expect(saveGallery).not.toHaveBeenCalled()
+    expect(wrapper.findAll('img[alt^="生成结果"]')).toHaveLength(0)
+  })
+
+  it('shows an explicit timeout failure when a sync image request exceeds four minutes', async () => {
+    vi.useFakeTimers()
+    try {
+      listKeys.mockResolvedValue({
+        items: [{ id: 1, name: 'dd', key: 'sk-local', status: 'active', group_id: 2 }],
+      })
+      getPublicSettings.mockResolvedValue({ api_base_url: '/v1' })
+      vi.mocked(fetch).mockImplementation(async (input, init) => {
+        const url = String(input)
+        if (url.endsWith('/images/batches/models')) {
+          return { ok: true, json: async () => ({ data: [] }) } as Response
+        }
+        if (url.endsWith('/models')) {
+          return { ok: true, json: async () => ({ data: [{ id: 'gpt-image-1' }] }) } as Response
+        }
+        if (url.endsWith('/images/generations/async')) return asyncImageUnavailableResponse()
+        if (url.endsWith('/images/generations')) {
+          return new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () => {
+              reject(new DOMException('Aborted', 'AbortError'))
+            }, { once: true })
+          })
+        }
+        throw new Error(`Unexpected request: ${url}`)
+      })
+
+      const wrapper = mountImageStudio()
+      await flushPromises()
+      await flushPromises()
+      await wrapper.get('form').trigger('submit')
+      await flushPromises()
+      await vi.advanceTimersByTimeAsync(4 * 60_000 + 1_000)
+      await flushPromises()
+
+      expect(wrapper.get('[data-testid="image-generation-failure"]').text()).toContain('请求超时')
+      expect(wrapper.get('[data-testid="image-generation-failure"]').text()).toContain('4 分钟')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('persists each generated image with its own completion time and duration', async () => {
     const baseTime = 1_700_000_000_000
     vi.useFakeTimers()
@@ -1279,17 +1508,18 @@ describe('ImageStudioView gallery', () => {
       await vi.advanceTimersByTimeAsync(3000)
       await flushPromises()
 
-      expect(saveGallery).toHaveBeenCalledTimes(2)
-      const payloads = saveGallery.mock.calls.map(([payload]) => payload)
+      expect(saveGalleryFromTask).toHaveBeenCalledTimes(2)
+      const payloads = saveGalleryFromTask.mock.calls.map(([payload]) => payload)
       expect(payloads.map((payload) => payload.created_at)).toEqual([
         baseTime / 1000 + 1,
         baseTime / 1000 + 3,
       ])
       expect(payloads.map((payload) => payload.duration_ms)).toEqual([1000, 3000])
-      expect(payloads.map((payload) => payload.image_data_url)).toEqual([
-        'data:image/png;base64,Zmlyc3Q=',
-        'data:image/png;base64,c2Vjb25k',
+      expect(payloads.map((payload) => payload.task_id)).toEqual([
+        'imgtask_timed_1',
+        'imgtask_timed_2',
       ])
+      expect(saveGallery).not.toHaveBeenCalled()
       expect(listGallery).toHaveBeenCalledTimes(2)
     } finally {
       vi.useRealTimers()
@@ -1368,6 +1598,103 @@ describe('ImageStudioView gallery', () => {
     expect(wrapper.findAll('.image-pending-card')).toHaveLength(0)
   })
 
+  it('keeps failed generations visible and restores them from user history', async () => {
+    listKeys.mockResolvedValue({
+      items: [{ id: 1, name: 'dd', key: 'sk-local', status: 'active', group_id: 2 }],
+    })
+    getPublicSettings.mockResolvedValue({ api_base_url: '/v1' })
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/images/batches/models')) {
+        return { ok: true, json: async () => ({ data: [] }) } as Response
+      }
+      if (url.endsWith('/models')) {
+        return { ok: true, json: async () => ({ data: [{ id: 'gpt-image-1' }] }) } as Response
+      }
+      if (url.endsWith('/images/generations/async')) {
+        return {
+          ok: false,
+          status: 403,
+          statusText: 'Forbidden',
+          json: async () => ({
+            error: {
+              message: 'The request was rejected by the safety system.',
+            },
+          }),
+        } as Response
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountImageStudio()
+    await flushPromises()
+    await flushPromises()
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="image-generation-failure"]').text())
+      .toContain('The request was rejected by the safety system.')
+    expect(wrapper.get('[data-testid="image-generation-failure"]').text())
+      .toContain('HTTP 403')
+    expect(wrapper.findAll('.image-pending-card')).toHaveLength(0)
+    const stored = JSON.parse(localStorage.getItem('sub2api:image-studio:failures:2') || '[]')
+    expect(stored).toHaveLength(1)
+    expect(stored[0].error).toContain('The request was rejected by the safety system.')
+    await wrapper.get('.studio-results__action').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="image-generation-failure"]').exists()).toBe(true)
+
+    wrapper.unmount()
+    const restoredWrapper = mountImageStudio()
+    await flushPromises()
+    await flushPromises()
+
+    expect(restoredWrapper.get('[data-testid="image-generation-failure"]').text())
+      .toContain('The request was rejected by the safety system.')
+    await restoredWrapper.get('button[title="删除失败记录"]').trigger('click')
+    expect(restoredWrapper.find('[data-testid="image-generation-failure"]').exists()).toBe(false)
+    expect(localStorage.getItem('sub2api:image-studio:failures:2')).toBeNull()
+    restoredWrapper.unmount()
+  })
+
+  it('shows non-upstream task protocol errors as removable failure cards', async () => {
+    listKeys.mockResolvedValue({
+      items: [{ id: 1, name: 'dd', key: 'sk-local', status: 'active', group_id: 2 }],
+    })
+    getPublicSettings.mockResolvedValue({ api_base_url: '/v1' })
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/images/batches/models')) {
+        return { ok: true, json: async () => ({ data: [] }) } as Response
+      }
+      if (url.endsWith('/models')) {
+        return { ok: true, json: async () => ({ data: [{ id: 'gpt-image-1' }] }) } as Response
+      }
+      if (url.endsWith('/images/generations/async')) {
+        return {
+          ok: true,
+          status: 200,
+          statusText: 'OK',
+          json: async () => ({}),
+        } as Response
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountImageStudio()
+    await flushPromises()
+    await flushPromises()
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="image-generation-failure"]').text())
+      .toContain('服务端没有返回图片任务地址')
+    expect(wrapper.findAll('.image-pending-card')).toHaveLength(0)
+    await wrapper.get('button[title="删除失败记录"]').trigger('click')
+    expect(wrapper.find('[data-testid="image-generation-failure"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
   it('shows a ready preview before the original image has been persisted', async () => {
     listKeys.mockResolvedValue({
       items: [{ id: 1, name: 'dd', key: 'sk-local', status: 'active', group_id: 2 }],
@@ -1426,12 +1753,14 @@ describe('ImageStudioView gallery', () => {
       expect(wrapper.find('.image-pending-card--preview img').attributes('src')).toBe('data:image/jpeg;base64,cHJldmlldw==')
     }, { timeout: 2000, interval: 50 })
     expect(wrapper.find('.image-pending-card__preview-status').text()).toContain('预览已生成')
-    expect(saveGallery).not.toHaveBeenCalled()
+    expect(saveGalleryFromTask).not.toHaveBeenCalled()
 
     await vi.waitFor(() => {
       expect(wrapper.findAll('.image-pending-card')).toHaveLength(0)
     }, { timeout: 2000, interval: 50 })
-    expect(saveGallery).toHaveBeenCalled()
+    expect(saveGalleryFromTask).toHaveBeenCalledWith(expect.objectContaining({
+      task_id: 'imgtask_preview_ready',
+    }))
   })
 
   it('does not process a persistent image result twice', async () => {
@@ -1546,6 +1875,12 @@ describe('ImageStudioView gallery', () => {
     )
     expect(wrapper.find('img[alt="生成结果 1"]').exists()).toBe(true)
     expect(localStorage.getItem(imageStudioPendingStorageKey())).toBeNull()
+    expect(saveGalleryFromTask).toHaveBeenCalledWith(expect.objectContaining({
+      task_id: 'imgtask_server',
+      image_index: 0,
+      saved: false,
+    }))
+    expect(saveGallery).not.toHaveBeenCalled()
 
     const generatedButton = wrapper.findAll('button').find((button) =>
       button.find('img[alt="生成结果 1"]').exists(),

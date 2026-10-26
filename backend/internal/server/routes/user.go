@@ -39,7 +39,11 @@ func RegisterUserRoutes(
 			user.POST("/auth-identities/bind/start", h.User.StartIdentityBinding)
 			user.GET("/api-keys/:id/usage/daily", panelRateLimiter.Heavy(), h.Usage.GetMyAPIKeyDailyUsage)
 			user.GET("/platform-quotas", h.User.GetMyPlatformQuotas)
-
+			// Temporary compatibility for cached canvas pages from releases that
+			// still called the quota API. These endpoints never charge.
+			user.GET("/canvas-usage", canvasUsageCompatibility)
+			user.POST("/canvas-usage/reserve", canvasUsageCompatibility)
+			user.POST("/canvas-usage/finalize", canvasUsageCompatibility)
 			// 通知邮箱管理
 			notifyEmail := user.Group("/notify-email")
 			{
@@ -103,6 +107,7 @@ func RegisterUserRoutes(
 		{
 			imageStudio.GET("/gallery", h.ImageStudioGallery.List)
 			imageStudio.POST("/gallery", h.ImageStudioGallery.Save)
+			imageStudio.POST("/gallery/from-task", h.ImageStudioGallery.SaveFromTask)
 			imageStudio.GET("/gallery/:id/thumbnail", h.ImageStudioGallery.Thumbnail)
 			imageStudio.GET("/gallery/:id/download", h.ImageStudioGallery.Download)
 			imageStudio.POST("/gallery/:id/pin", h.ImageStudioGallery.Pin)
@@ -127,6 +132,7 @@ func RegisterUserRoutes(
 		canvas.Use(middleware.CanvasAdminOnlyGuard(settingService))
 		{
 			canvas.GET("/projects", h.Canvas.ListProjects)
+			canvas.GET("/projects/full", h.Canvas.ListProjectsFull)
 			canvas.GET("/projects/:id", h.Canvas.GetProject)
 			canvas.PUT("/projects/:id", h.Canvas.PutProject)
 			canvas.DELETE("/projects/:id", h.Canvas.DeleteProject)

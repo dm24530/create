@@ -52,7 +52,6 @@ export function CanvasTopBar({
     const [shortcutsOpen, setShortcutsOpen] = useState(false);
     const sidePanelOpen = useCanvasSidePanelStore((state) => state.panelOpen);
     const toggleSidePanel = useCanvasSidePanelStore((state) => state.togglePanel);
-
     useEffect(() => {
         if (!isTitleEditing) return;
         const close = (event: PointerEvent) => {

@@ -805,11 +805,11 @@ function ImageContent({
     const isBatchRoot = batchCount > 1;
     const primaryImageId = node.metadata?.primaryImageId || images[0]?.id;
     const primaryImage = images.find((image) => image.id === primaryImageId);
-    const primaryContent = primaryImage?.content || node.metadata?.content;
+    const primaryContent = primaryImage?.cloudURL || primaryImage?.content || node.metadata?.cloudURL || node.metadata?.content;
     const primaryPreviewUrl = previewUrlFor(primaryImage?.storageKey || node.metadata?.storageKey);
     const primarySource = primaryContent
         ? pickImageSource({
-              previewUrl: primaryPreviewUrl,
+              previewUrl: primaryImage?.cloudPreviewURL || node.metadata?.cloudPreviewURL || primaryPreviewUrl,
               originalUrl: primaryContent,
               naturalWidth: primaryImage?.naturalWidth || node.metadata?.naturalWidth,
               naturalHeight: primaryImage?.naturalHeight || node.metadata?.naturalHeight,
@@ -880,10 +880,11 @@ function ExpandedImageCard({ node, image, index, scale, onView, onSetPrimary, on
     const row = Math.floor(slot / columns);
     const x = column * (node.width + 18);
     const y = (row - rows + 1) * (node.height + 18);
-    const source = image.content
+    const originalUrl = image.cloudURL || image.content;
+    const source = originalUrl
         ? pickImageSource({
-              previewUrl: previewUrlFor(image.storageKey),
-              originalUrl: image.content,
+              previewUrl: image.cloudPreviewURL || previewUrlFor(image.storageKey),
+              originalUrl,
               naturalWidth: image.naturalWidth,
               naturalHeight: image.naturalHeight,
               renderedWidth: node.width,

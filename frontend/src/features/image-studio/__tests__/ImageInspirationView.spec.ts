@@ -32,8 +32,13 @@ vi.mock('../../video-studio/videoArchiveApi', () => ({
   fetchOnlineInspirationFeed,
 }))
 
+vi.mock('@/stores/auth', () => ({
+  useAuthStore: () => ({ user: { id: 2 } }),
+}))
+
 const globalStubs = {
   AppLayout: { template: '<div><slot /></div>' },
+  StudioNav: { template: '<div />' },
   RouterLink: { props: ['to'], template: '<a><slot /></a>' },
   ImageStudioSelect: {
     props: ['modelValue', 'options'],
@@ -120,7 +125,7 @@ describe('ImageInspirationView', () => {
     )
 
     await wrapper.get('[data-testid="image-inspiration-use"]').trigger('click')
-    expect(sessionStorage.getItem('sub2api:image-studio:pending-prompt')).toContain('清晨薄雾')
+    expect(sessionStorage.getItem('sub2api:image-studio:pending-prompt:2')).toContain('清晨薄雾')
     expect(push).toHaveBeenCalledWith({ path: '/image-studio' })
   })
 

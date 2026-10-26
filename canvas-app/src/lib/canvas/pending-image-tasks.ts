@@ -131,7 +131,7 @@ export function applyPendingImageTasks(projectId: string, nodes: CanvasNodeData[
             ...node,
             metadata: {
                 ...node.metadata,
-                status: "loading" as const,
+                status: images.some((image) => image.taskId && image.content) ? ("success" as const) : ("loading" as const),
                 errorDetails: undefined,
                 generationStartedAt: node.metadata?.generationStartedAt || pending[0].generationStartedAt,
                 images,

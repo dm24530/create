@@ -29,7 +29,7 @@ const (
 	ImageTaskStatusFailed       = "failed"
 
 	defaultImageTaskTTL              = 24 * time.Hour
-	defaultImageTaskExecutionTimeout = 30 * time.Minute
+	defaultImageTaskExecutionTimeout = 5 * time.Minute
 )
 
 var (
@@ -42,44 +42,51 @@ var (
 // ImageTaskRecord is the private Redis representation of an asynchronous image
 // request. Ownership fields are intentionally omitted from the public view.
 type ImageTaskRecord struct {
-	ID          string              `json:"id"`
-	UserID      int64               `json:"user_id"`
-	APIKeyID    int64               `json:"api_key_id"`
-	Status      string              `json:"status"`
-	HTTPStatus  int                 `json:"http_status,omitempty"`
-	Result      json.RawMessage     `json:"result,omitempty"`
-	Error       json.RawMessage     `json:"error,omitempty"`
-	CreatedAt   int64               `json:"created_at"`
-	StartedAt   int64               `json:"started_at,omitempty"`
-	CompletedAt *int64              `json:"completed_at,omitempty"`
-	ExpiresAt   int64               `json:"expires_at"`
-	Execution   *ImageTaskExecution `json:"execution,omitempty"`
-	RequestHash string              `json:"request_hash,omitempty"`
+	ID           string              `json:"id"`
+	UserID       int64               `json:"user_id"`
+	APIKeyID     int64               `json:"api_key_id"`
+	Status       string              `json:"status"`
+	HTTPStatus   int                 `json:"http_status,omitempty"`
+	Result       json.RawMessage     `json:"result,omitempty"`
+	Error        json.RawMessage     `json:"error,omitempty"`
+	CreatedAt    int64               `json:"created_at"`
+	StartedAt    int64               `json:"started_at,omitempty"`
+	CompletedAt  *int64              `json:"completed_at,omitempty"`
+	ExpiresAt    int64               `json:"expires_at"`
+	Execution    *ImageTaskExecution `json:"execution,omitempty"`
+	RequestHash  string              `json:"request_hash,omitempty"`
+	RefundStatus string              `json:"refund_status,omitempty"`
+	RefundAmount float64             `json:"refund_amount,omitempty"`
+	RefundedAt   *int64              `json:"refunded_at,omitempty"`
 }
 
 type ImageTaskExecution struct {
-	Platform       string `json:"platform"`
-	RequestPath    string `json:"request_path,omitempty"`
-	GeminiModel    string `json:"gemini_model,omitempty"`
-	ContentType    string `json:"content_type,omitempty"`
-	CompressedBody []byte `json:"compressed_body,omitempty"`
-	BodyEncoding   string `json:"body_encoding,omitempty"`
-	UsageRequestID string `json:"usage_request_id,omitempty"`
+	Platform          string `json:"platform"`
+	RequestPath       string `json:"request_path,omitempty"`
+	GeminiModel       string `json:"gemini_model,omitempty"`
+	ContentType       string `json:"content_type,omitempty"`
+	CompressedBody    []byte `json:"compressed_body,omitempty"`
+	BodyEncoding      string `json:"body_encoding,omitempty"`
+	UsageRequestID    string `json:"usage_request_id,omitempty"`
+	RequestInstanceID string `json:"request_instance_id,omitempty"`
 }
 
 // ImageTask is the API-safe task representation returned to callers.
 type ImageTask struct {
-	ID          string          `json:"id"`
-	TaskID      string          `json:"task_id"`
-	Object      string          `json:"object"`
-	Status      string          `json:"status"`
-	HTTPStatus  int             `json:"http_status,omitempty"`
-	ImageURL    string          `json:"image_url,omitempty"`
-	Result      json.RawMessage `json:"result,omitempty"`
-	Error       json.RawMessage `json:"error,omitempty"`
-	CreatedAt   int64           `json:"created_at"`
-	CompletedAt *int64          `json:"completed_at,omitempty"`
-	ExpiresAt   int64           `json:"expires_at"`
+	ID           string          `json:"id"`
+	TaskID       string          `json:"task_id"`
+	Object       string          `json:"object"`
+	Status       string          `json:"status"`
+	HTTPStatus   int             `json:"http_status,omitempty"`
+	ImageURL     string          `json:"image_url,omitempty"`
+	Result       json.RawMessage `json:"result,omitempty"`
+	Error        json.RawMessage `json:"error,omitempty"`
+	CreatedAt    int64           `json:"created_at"`
+	CompletedAt  *int64          `json:"completed_at,omitempty"`
+	ExpiresAt    int64           `json:"expires_at"`
+	RefundStatus string          `json:"refund_status,omitempty"`
+	RefundAmount float64         `json:"refund_amount,omitempty"`
+	RefundedAt   *int64          `json:"refunded_at,omitempty"`
 }
 
 type ImageTaskOwner struct {
@@ -412,6 +419,40 @@ func (s *ImageTaskService) MarkStarted(ctx context.Context, id string) error {
 	return nil
 }
 
+func (s *ImageTaskService) MarkRefunded(
+	ctx context.Context,
+	id string,
+	amount float64,
+	refundedAt *time.Time,
+) error {
+	if s == nil || s.store == nil {
+		return ErrImageTaskUnavailable
+	}
+	task, err := s.store.Get(ctx, strings.TrimSpace(id))
+	if err != nil {
+		if errors.Is(err, ErrImageTaskNotFound) {
+			return ErrImageTaskNotFound
+		}
+		return ErrImageTaskUnavailable.WithCause(err)
+	}
+	if task.RefundStatus == "refunded" {
+		return nil
+	}
+	task.RefundStatus = "refunded"
+	task.RefundAmount = amount
+	if refundedAt == nil {
+		now := time.Now().UTC().Unix()
+		task.RefundedAt = &now
+	} else {
+		unix := refundedAt.UTC().Unix()
+		task.RefundedAt = &unix
+	}
+	if err := s.store.Save(ctx, task, s.ttl); err != nil {
+		return ErrImageTaskUnavailable.WithCause(err)
+	}
+	return nil
+}
+
 var imageTaskLeaseOwner = newImageTaskLeaseOwner()
 
 func newImageTaskLeaseOwner() string {
@@ -555,17 +596,20 @@ func imageTaskToPublic(task *ImageTaskRecord) *ImageTask {
 		return nil
 	}
 	return &ImageTask{
-		ID:          task.ID,
-		TaskID:      task.ID,
-		Object:      "image.generation.task",
-		Status:      task.Status,
-		HTTPStatus:  task.HTTPStatus,
-		ImageURL:    firstImageTaskURL(task.Result),
-		Result:      task.Result,
-		Error:       task.Error,
-		CreatedAt:   task.CreatedAt,
-		CompletedAt: task.CompletedAt,
-		ExpiresAt:   task.ExpiresAt,
+		ID:           task.ID,
+		TaskID:       task.ID,
+		Object:       "image.generation.task",
+		Status:       task.Status,
+		HTTPStatus:   task.HTTPStatus,
+		ImageURL:     firstImageTaskURL(task.Result),
+		Result:       task.Result,
+		Error:        task.Error,
+		CreatedAt:    task.CreatedAt,
+		CompletedAt:  task.CompletedAt,
+		ExpiresAt:    task.ExpiresAt,
+		RefundStatus: task.RefundStatus,
+		RefundAmount: task.RefundAmount,
+		RefundedAt:   task.RefundedAt,
 	}
 }
 

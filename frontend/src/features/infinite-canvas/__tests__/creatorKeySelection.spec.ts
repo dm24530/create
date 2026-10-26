@@ -27,6 +27,20 @@ describe('selectCanvasCreatorKey', () => {
     expect(selectCanvasCreatorKey([key(1, 10), preferred], storage)).toBe(preferred)
   })
 
+  it('uses the selected API key from the current user namespace', () => {
+    const preferred = key(2, 20)
+    const storage = {
+      getItem: vi.fn((key: string) => (
+        key === 'sub2api:image-studio:preferences:42'
+          ? JSON.stringify({ keyId: '2' })
+          : null
+      )),
+    } as unknown as Storage
+
+    expect(selectCanvasCreatorKey([key(1, 10), preferred], storage, 42)).toBe(preferred)
+    expect(storage.getItem).toHaveBeenCalledWith('sub2api:image-studio:preferences:42')
+  })
+
   it('returns null when the saved key is unavailable or cannot generate images', () => {
     const blocked = key(2, 20, false)
     const storage = {

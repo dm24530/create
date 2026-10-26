@@ -92,6 +92,10 @@ type CleanupReloader interface {
 	Reload(ctx context.Context) error
 }
 
+type opsErrorRefundMarker interface {
+	MarkErrorRefunded(ctx context.Context, requestID, clientRequestID string, apiKeyID int64, amount float64) error
+}
+
 // SetCleanupReloader 由 wire 注入 cleanup hook（构造期循环依赖的解耦点）。
 func (s *OpsService) SetCleanupReloader(r CleanupReloader) {
 	if s == nil {
@@ -408,6 +412,7 @@ func SanitizeOpsUpstreamErrorsForQueue(entry *OpsInsertErrorLogInput) error {
 }
 
 func (s *OpsService) RecordError(ctx context.Context, entry *OpsInsertErrorLogInput) error {
+	s.refundTerminalError(ctx, entry, false)
 	prepared, ok, err := s.prepareErrorLogInput(ctx, entry)
 	if err != nil {
 		log.Printf("[Ops] RecordError prepare failed: %v", err)
@@ -428,6 +433,9 @@ func (s *OpsService) RecordError(ctx context.Context, entry *OpsInsertErrorLogIn
 func (s *OpsService) RecordErrorBatch(ctx context.Context, entries []*OpsInsertErrorLogInput) error {
 	if len(entries) == 0 {
 		return nil
+	}
+	for _, entry := range entries {
+		s.refundTerminalError(ctx, entry, false)
 	}
 	prepared := make([]*OpsInsertErrorLogInput, 0, len(entries))
 	for _, entry := range entries {
@@ -456,6 +464,140 @@ func (s *OpsService) RecordErrorBatch(ctx context.Context, entries []*OpsInsertE
 		return err
 	}
 	return nil
+}
+
+// RefundTerminalFailure reverses a charged request for a terminal failure
+// without depending on monitoring filters, queue capacity, or log insertion.
+func (s *OpsService) RefundTerminalFailure(
+	ctx context.Context,
+	entry *OpsInsertErrorLogInput,
+) *UsageBillingRefundResult {
+	return s.refundTerminalError(ctx, entry, true)
+}
+
+func (s *OpsService) refundTerminalError(
+	ctx context.Context,
+	entry *OpsInsertErrorLogInput,
+	allowRetry bool,
+) *UsageBillingRefundResult {
+	if s == nil || s.gatewayService == nil || entry == nil {
+		return nil
+	}
+	if entry.RefundStatus == "refunded" {
+		return nil
+	}
+	if entry.StatusCode < 400 || entry.APIKeyID == nil || *entry.APIKeyID <= 0 {
+		return nil
+	}
+	requestID := opsUsageRequestID(entry)
+	if requestID == "" {
+		return nil
+	}
+	requestInstanceID := strings.TrimSpace(entry.RequestInstanceID)
+	if requestInstanceID == "" {
+		requestInstanceID = strings.TrimSpace(entry.RequestID)
+	}
+	apiKeyID := *entry.APIKeyID
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	refundCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	result, err := s.gatewayService.RefundUsageBilling(refundCtx, &UsageBillingRefundCommand{
+		RequestID:         requestID,
+		RequestInstanceID: requestInstanceID,
+		APIKeyID:          apiKeyID,
+		Reason:            "terminal_request_failed:" + strings.TrimSpace(entry.ErrorType),
+	})
+	if err != nil {
+		log.Printf("[Ops] automatic refund failed request_id=%s api_key_id=%d: %v", requestID, apiKeyID, err)
+		return nil
+	}
+	if result == nil {
+		return nil
+	}
+	if result.Applied || result.AlreadyRefunded {
+		entry.RefundStatus = "refunded"
+		entry.RefundAmount = result.RefundedAmount
+		entry.RefundedAt = result.RefundedAt
+		if entry.RefundedAt == nil {
+			now := time.Now().UTC()
+			entry.RefundedAt = &now
+		}
+		if marker, ok := s.opsRepo.(opsErrorRefundMarker); ok {
+			rawRequestID := strings.TrimSpace(entry.RequestID)
+			rawClientRequestID := strings.TrimSpace(entry.ClientRequestID)
+			if rawRequestID != "" || rawClientRequestID != "" {
+				if markErr := marker.MarkErrorRefunded(refundCtx, rawRequestID, rawClientRequestID, apiKeyID, result.RefundedAmount); markErr != nil {
+					log.Printf("[Ops] mark refund failed request_id=%s client_request_id=%s api_key_id=%d: %v", rawRequestID, rawClientRequestID, apiKeyID, markErr)
+				}
+			}
+		}
+		if s.apiKeyService != nil && result.UserID > 0 {
+			s.apiKeyService.InvalidateAuthCacheByUserID(refundCtx, result.UserID)
+		}
+		return result
+	}
+	if allowRetry && shouldRetryTerminalRefund(entry) {
+		// The terminal error can be observed just before the success-path billing
+		// transaction commits. Retry with bounded backoff so worker-pool latency
+		// cannot strand a charged failure without its refund.
+		retryEntry := *entry
+		go func() {
+			for _, delay := range []time.Duration{2 * time.Second, 5 * time.Second, 10 * time.Second, 30 * time.Second} {
+				timer := time.NewTimer(delay)
+				<-timer.C
+				result := s.refundTerminalError(context.Background(), &retryEntry, false)
+				if result != nil && (result.Applied || result.AlreadyRefunded) {
+					return
+				}
+			}
+		}()
+	}
+	return result
+}
+
+func shouldRetryTerminalRefund(entry *OpsInsertErrorLogInput) bool {
+	if entry == nil || entry.IsBusinessLimited {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(entry.ErrorOwner), "provider") || entry.StatusCode >= 500 {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(entry.ErrorType)) {
+	case "api_error", "server_error", "upstream_error", "timeout_error", "overloaded_error":
+		return true
+	default:
+		return false
+	}
+}
+
+func opsUsageRequestID(entry *OpsInsertErrorLogInput) string {
+	if entry == nil {
+		return ""
+	}
+	if requestID := strings.TrimSpace(entry.UsageRequestID); requestID != "" {
+		if strings.HasPrefix(requestID, "generated:") {
+			return ""
+		}
+		return requestID
+	}
+	if clientRequestID := strings.TrimSpace(entry.ClientRequestID); clientRequestID != "" {
+		return "client:" + clientRequestID
+	}
+	requestID := strings.TrimSpace(entry.RequestID)
+	if requestID == "" {
+		return ""
+	}
+	if strings.HasPrefix(requestID, "client:") ||
+		strings.HasPrefix(requestID, "local:") ||
+		isForcedUsageBillingRequestID(requestID) {
+		return requestID
+	}
+	if strings.HasPrefix(requestID, "generated:") {
+		return ""
+	}
+	return "local:" + requestID
 }
 
 func (s *OpsService) prepareErrorLogInput(ctx context.Context, entry *OpsInsertErrorLogInput) (*OpsInsertErrorLogInput, bool, error) {

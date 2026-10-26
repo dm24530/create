@@ -3,6 +3,7 @@ import { persist, type PersistStorage, type StorageValue } from "zustand/middlew
 
 import { nanoid } from "nanoid";
 import { localForageStorage } from "@/lib/localforage-storage";
+import { legacyCanvasStorageKeys, scopedCanvasStorageKey } from "@/lib/canvas-storage-scope";
 import { cleanupUnusedImages, ensureImagePreview, previewUrlFor, resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { cleanupUnusedMedia, resolveMediaUrl } from "@/services/file-storage";
 
@@ -42,11 +43,31 @@ export function assetCoverUrl(asset: Asset) {
     return asset.kind === "image" && cover === own ? previewUrlFor(asset.data.storageKey) || cover : cover;
 }
 
-const ASSET_STORE_KEY = "infinite-canvas:asset_store";
+const LEGACY_ASSET_STORE_KEY = "infinite-canvas:asset_store";
+const ASSET_STORE_KEY = scopedCanvasStorageKey(LEGACY_ASSET_STORE_KEY);
 
 const assetStorage: PersistStorage<AssetStore> = {
     getItem: async (name) => {
-        const value = await localForageStorage.getItem(name);
+        let value = await localForageStorage.getItem(name);
+        if (!value) {
+            let migratedFrom = "";
+            for (const legacyKey of legacyCanvasStorageKeys(LEGACY_ASSET_STORE_KEY)) {
+                value = await localForageStorage.getItem(legacyKey);
+                if (value) {
+                    migratedFrom = legacyKey;
+                    break;
+                }
+            }
+            if (value) {
+                await localForageStorage.setItem(name, value);
+                if (migratedFrom) await localForageStorage.removeItem(migratedFrom);
+            }
+        }
+        if (value) {
+            for (const legacyKey of legacyCanvasStorageKeys(LEGACY_ASSET_STORE_KEY)) {
+                await localForageStorage.removeItem(legacyKey);
+            }
+        }
         if (!value) return null;
         const parsed = JSON.parse(value) as StorageValue<AssetStore>;
         parsed.state.assets = await Promise.all(

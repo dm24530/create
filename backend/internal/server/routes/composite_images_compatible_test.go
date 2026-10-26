@@ -39,6 +39,10 @@ func (r compatibleImagesAccounts) ListSchedulableByPlatform(context.Context, str
 	return r.accounts, nil
 }
 
+func (r compatibleImagesAccounts) ListSchedulableByGroupID(context.Context, int64) ([]service.Account, error) {
+	return r.accounts, nil
+}
+
 func (r compatibleImagesAccounts) ListSchedulableUngroupedByPlatform(context.Context, string) ([]service.Account, error) {
 	return r.accounts, nil
 }
