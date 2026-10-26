@@ -8,6 +8,25 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 )
 
+type compositeImagesRoutingContextKey struct{}
+
+// WithCompositeImagesRouting marks an Images request made through a composite
+// group so the image scheduler may resolve an explicit cross-platform mapping.
+func WithCompositeImagesRouting(ctx context.Context) context.Context {
+	if ctx == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, compositeImagesRoutingContextKey{}, true)
+}
+
+func CompositeImagesRoutingFromContext(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	enabled, _ := ctx.Value(compositeImagesRoutingContextKey{}).(bool)
+	return enabled
+}
+
 // WithResolvedTargetPlatform stores the concrete provider chosen for a request
 // made through a composite group.
 func WithResolvedTargetPlatform(ctx context.Context, platform string) context.Context {

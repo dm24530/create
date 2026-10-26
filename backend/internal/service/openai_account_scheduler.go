@@ -2142,15 +2142,203 @@ func (s *OpenAIGatewayService) SelectAccountWithSchedulerForImages(
 	excludedIDs map[int64]struct{},
 	requiredCapability OpenAIImagesCapability,
 ) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
+	compositeImagesRouting := CompositeImagesRoutingFromContext(ctx)
+	platform := PlatformOpenAI
+	if resolvedPlatform, ok := ResolvedTargetPlatformFromContext(ctx); compositeImagesRouting && ok {
+		platform = resolvedPlatform
+	}
+	if platform != PlatformOpenAI {
+		selection, decision, err := s.selectExplicitCrossPlatformImageAccount(
+			ctx,
+			groupID,
+			requestedModel,
+			excludedIDs,
+			requiredCapability,
+			platform,
+		)
+		if selection != nil || err != nil {
+			return selection, decision, err
+		}
+		return nil, decision, fmt.Errorf("%w supporting model: %s (image target platform has no compatible API key)", ErrNoAvailableAccounts, requestedModel)
+	}
+
 	selection, decision, err := s.selectAccountWithScheduler(ctx, groupID, "", sessionHash, requestedModel, excludedIDs, OpenAIUpstreamTransportHTTPSSE, "", requiredCapability, false, PlatformOpenAI, false, false)
 	if err == nil && selection != nil && selection.Account != nil {
 		return selection, decision, nil
 	}
+
+	// A composite group may expose a public Images model through an explicit
+	// account-level mapping on another provider platform. That is deliberately
+	// checked only after the native OpenAI scheduler has no candidate, preserving
+	// existing OpenAI scheduling behavior.
+	if compositeImagesRouting && groupID != nil &&
+		(selection == nil || (err != nil && errors.Is(err, ErrNoAvailableAccounts))) {
+		crossSelection, crossDecision, crossErr := s.selectExplicitCrossPlatformImageAccount(
+			ctx,
+			groupID,
+			requestedModel,
+			excludedIDs,
+			requiredCapability,
+			"",
+		)
+		if crossSelection != nil || crossErr != nil {
+			return crossSelection, crossDecision, crossErr
+		}
+	}
+
 	// 如果要求 native 能力（如指定了模型）但没有可用的 APIKey 账号，回退到 basic（OAuth 账号）
 	if requiredCapability == OpenAIImagesCapabilityNative {
 		return s.selectAccountWithScheduler(ctx, groupID, "", sessionHash, requestedModel, excludedIDs, OpenAIUpstreamTransportHTTPSSE, "", OpenAIImagesCapabilityBasic, false, PlatformOpenAI, false, false)
 	}
 	return selection, decision, err
+}
+
+func (s *OpenAIGatewayService) selectExplicitCrossPlatformImageAccount(
+	ctx context.Context,
+	groupID *int64,
+	requestedModel string,
+	excludedIDs map[int64]struct{},
+	requiredCapability OpenAIImagesCapability,
+	platformHint string,
+) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
+	decision := OpenAIAccountScheduleDecision{
+		Layer: "images_cross_platform_explicit_mapping",
+	}
+	if s == nil || s.accountRepo == nil || groupID == nil || *groupID <= 0 || strings.TrimSpace(requestedModel) == "" {
+		return nil, decision, nil
+	}
+
+	accounts, err := s.accountRepo.ListSchedulableByGroupID(ctx, *groupID)
+	if err != nil {
+		return nil, decision, fmt.Errorf("list composite image accounts: %w", err)
+	}
+	if len(accounts) == 0 {
+		return nil, decision, fmt.Errorf(
+			"%w supporting model: %s (no schedulable accounts in composite group)",
+			ErrNoAvailableAccounts,
+			requestedModel,
+		)
+	}
+
+	source, hasSource := CompositeRouteSourceFromContext(ctx)
+	explicitRoute := hasSource && source == CompositeRouteSourceExplicit
+	directCompatibleModel := platformHint != "" && compatibleImagesModelPlatform(requestedModel) == platformHint
+	var (
+		platformFiltered   int
+		platformHintFilter int
+		typeOrSchedulable  int
+		capabilityFiltered int
+		excludedCount      int
+		mappingFiltered    int
+		runtimeFiltered    int
+	)
+	platforms := make(map[string]struct{})
+	candidates := make([]Account, 0, len(accounts))
+	for i := range accounts {
+		account := &accounts[i]
+		if account.Platform == PlatformOpenAI || !isConcreteRequestPlatform(account.Platform) {
+			platformFiltered++
+			continue
+		}
+		if platformHint != "" && account.Platform != platformHint {
+			platformHintFilter++
+			continue
+		}
+		if account.Type != AccountTypeAPIKey || !account.IsSchedulable() {
+			typeOrSchedulable++
+			continue
+		}
+		if !account.SupportsOpenAIImageCapability(requiredCapability) {
+			capabilityFiltered++
+			continue
+		}
+		if _, excluded := excludedIDs[account.ID]; excluded {
+			excludedCount++
+			continue
+		}
+		requireExplicitMapping := !directCompatibleModel && (!explicitRoute || platformHint == "")
+		if requireExplicitMapping {
+			if !explicitModelMappingClaims(*account, requestedModel) {
+				mappingFiltered++
+				continue
+			}
+			if err := validateCompatibleImagesModel(account.GetMappedModel(requestedModel)); err != nil {
+				mappingFiltered++
+				continue
+			}
+		}
+		if s.isOpenAIAccountRequestRuntimeBlocked(account, requestedModel) ||
+			s.isOpenAIAccountBlockedBySchedulingThreshold(ctx, account) {
+			runtimeFiltered++
+			continue
+		}
+		platforms[account.Platform] = struct{}{}
+		candidates = append(candidates, *account)
+	}
+
+	decision.CandidateCount = len(candidates)
+	if len(platforms) > 1 {
+		return nil, decision, fmt.Errorf(
+			"%w supporting model: %s (explicit image mapping is ambiguous across provider platforms)",
+			ErrNoAvailableAccounts,
+			requestedModel,
+		)
+	}
+	if len(candidates) == 0 {
+		return nil, decision, fmt.Errorf(
+			"%w supporting model: %s (image account filters: platform=%d platform_hint=%d type_or_schedulable=%d capability=%d excluded=%d mapping=%d runtime=%d)",
+			ErrNoAvailableAccounts,
+			requestedModel,
+			platformFiltered,
+			platformHintFilter,
+			typeOrSchedulable,
+			capabilityFiltered,
+			excludedCount,
+			mappingFiltered,
+			runtimeFiltered,
+		)
+	}
+
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].Priority != candidates[j].Priority {
+			return candidates[i].Priority > candidates[j].Priority
+		}
+		return candidates[i].ID < candidates[j].ID
+	})
+
+	var acquireErr error
+	for i := range candidates {
+		candidate := &candidates[i]
+		result, err := s.tryAcquireAccountSlot(ctx, candidate.ID, candidate.Concurrency)
+		if err != nil {
+			acquireErr = err
+			continue
+		}
+		if result == nil || !result.Acquired {
+			continue
+		}
+		decision.SelectedAccountID = candidate.ID
+		decision.SelectedAccountType = candidate.Type
+		return &AccountSelectionResult{
+			Account:     candidate,
+			Acquired:    true,
+			ReleaseFunc: result.ReleaseFunc,
+		}, decision, nil
+	}
+	if acquireErr != nil {
+		return nil, decision, acquireErr
+	}
+	return nil, decision, nil
+}
+
+func compatibleImagesModelPlatform(model string) string {
+	if isGeminiCompatibleImageModel(model) {
+		return PlatformGemini
+	}
+	if isGrokImageGenerationModel(model) {
+		return PlatformGrok
+	}
+	return ""
 }
 
 // selectAccountWithScheduler wraps selectAccountWithSchedulerOnce with a

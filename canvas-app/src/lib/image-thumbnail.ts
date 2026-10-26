@@ -1,4 +1,6 @@
 export const CANVAS_IMAGE_PREVIEW_MAX_EDGE = 768;
+export const CANVAS_IMAGE_REQUEST_MAX_EDGE = 2048;
+export const CANVAS_IMAGE_REQUEST_TARGET_BYTES = 2 * 1024 * 1024;
 
 type ImageSourceChoice = {
     previewUrl?: string;
@@ -46,4 +48,35 @@ export async function createImageThumbnail(blob: Blob, maxEdge = CANVAS_IMAGE_PR
     context.drawImage(bitmap, 0, 0, width, height);
     bitmap.close();
     return new Promise<Blob | undefined>((resolve) => canvas.toBlob((result) => resolve(result || undefined), "image/webp", 0.86));
+}
+
+// Reference images are uploaded inside JSON for Gemini requests. Original
+// screenshots can be tens of megabytes each, so resize/re-encode them before
+// creating the data URL while keeping enough detail for editing.
+export async function createImageRequestBlob(
+    blob: Blob,
+    maxEdge = CANVAS_IMAGE_REQUEST_MAX_EDGE,
+    targetBytes = CANVAS_IMAGE_REQUEST_TARGET_BYTES,
+) {
+    const bitmap = await createImageBitmap(blob);
+    const { width, height } = getThumbnailDimensions(bitmap.width, bitmap.height, maxEdge);
+    const needsResize = width !== bitmap.width || height !== bitmap.height;
+    const needsReencode = needsResize || blob.size > targetBytes || !/^image\/(jpeg|webp)$/i.test(blob.type);
+    if (!needsReencode) {
+        bitmap.close();
+        return blob;
+    }
+
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d");
+    if (!context) {
+        bitmap.close();
+        return blob;
+    }
+    context.drawImage(bitmap, 0, 0, width, height);
+    bitmap.close();
+    const encoded = await new Promise<Blob | undefined>((resolve) => canvas.toBlob((result) => resolve(result || undefined), "image/webp", 0.9));
+    return encoded || blob;
 }

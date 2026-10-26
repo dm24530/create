@@ -3,7 +3,7 @@ import localforage from "localforage";
 import { nanoid } from "nanoid";
 import i18n from "@/i18n";
 import { withLocalProxy } from "@/stores/use-config-store";
-import { createImageThumbnail } from "@/lib/image-thumbnail";
+import { createImageRequestBlob, createImageThumbnail } from "@/lib/image-thumbnail";
 
 export type UploadedImage = {
     url: string;
@@ -226,6 +226,14 @@ export async function imageToDataUrl(image: { url?: string; dataUrl?: string; st
     const url = image.dataUrl || (await resolveImageUrl(image.storageKey, image.url || ""));
     if (!url || url.startsWith("data:")) return url;
     return blobToDataUrl(await fetchImageBlob(url, options));
+}
+
+export async function imageToRequestDataUrl(image: { url?: string; dataUrl?: string; storageKey?: string }, options?: ImageReadOptions) {
+    const dataUrl = await imageToDataUrl(image, options);
+    if (!dataUrl) return dataUrl;
+    const blob = await fetchImageBlob(dataUrl, options);
+    const optimized = await createImageRequestBlob(blob).catch(() => blob);
+    return optimized === blob ? dataUrl : blobToDataUrl(optimized);
 }
 
 export async function deleteStoredImages(keys: Iterable<string>) {

@@ -1965,7 +1965,17 @@ func (a *Account) SupportsOpenAIImageCapability(capability OpenAIImagesCapabilit
 		return true
 	}
 	if !a.IsOpenAI() {
-		return false
+		// Composite groups may use one API-key account for multiple upstream
+		// protocols. The Images API can be exposed by a compatible gateway even
+		// when the account platform names another provider. Ownership is kept
+		// strict by the image scheduler's explicit model mapping check.
+		switch capability {
+		case OpenAIImagesCapabilityAPIKey, OpenAIImagesCapabilityBasic, OpenAIImagesCapabilityNative:
+			return a.Type == AccountTypeAPIKey &&
+				strings.TrimSpace(a.GetCredential("base_url")) != ""
+		default:
+			return false
+		}
 	}
 	switch capability {
 	case OpenAIImagesCapabilityAPIKey:

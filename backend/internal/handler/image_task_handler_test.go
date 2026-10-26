@@ -456,6 +456,48 @@ func TestNormalizeGeminiImageTaskResultSupportsFileAndSnakeCaseResults(t *testin
 		replaceNormalizedTimestamp(t, fileURL))
 }
 
+func TestAsyncImageHandlerReportsGeminiNonJSONResponse(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"contents":[{"parts":[{"text":"cat"}]}]}`)
+	store := &asyncImageMemoryStore{tasks: map[string]*service.ImageTaskRecord{
+		"imgtask_gemini_non_json": {
+			ID:        "imgtask_gemini_non_json",
+			UserID:    7,
+			APIKeyID:  9,
+			Status:    service.ImageTaskStatusProcessing,
+			CreatedAt: time.Now().Unix(),
+			ExpiresAt: time.Now().Add(time.Hour).Unix(),
+			Execution: &service.ImageTaskExecution{
+				Platform:       service.PlatformGemini,
+				GeminiModel:    "gemini-nano-banana-2.1",
+				ContentType:    "application/json",
+				CompressedBody: body,
+			},
+		},
+	}}
+	tasks := service.NewImageTaskServiceWithUploader(store, nil, time.Hour, time.Minute)
+	apiKeyLoader := asyncImageAPIKeyLoader{key: &service.APIKey{ID: 9, UserID: 7, Key: "sk-test"}}
+	h := &AsyncImageHandler{
+		tasks:   tasks,
+		apiKeys: apiKeyLoader,
+		execute: func(_ string, c *gin.Context) {
+			c.Data(http.StatusRequestEntityTooLarge, "text/html; charset=utf-8", []byte("<html>request entity too large</html>"))
+		},
+	}
+
+	task := store.tasks["imgtask_gemini_non_json"]
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	taskCtx, recorder, runCancel, err := newImageTaskContext(task, apiKeyLoader.key, ctx, cancel)
+	require.NoError(t, err)
+	h.run(task.ID, service.PlatformGemini, taskCtx, recorder, runCancel)
+
+	got, err := tasks.Get(context.Background(), service.ImageTaskOwner{UserID: 7, APIKeyID: 9}, task.ID)
+	require.NoError(t, err)
+	require.Equal(t, service.ImageTaskStatusFailed, got.Status)
+	require.Equal(t, http.StatusBadGateway, got.HTTPStatus)
+	require.Contains(t, string(got.Error), "reference images")
+}
+
 func replaceNormalizedTimestamp(t *testing.T, body []byte) string {
 	t.Helper()
 	var payload map[string]any

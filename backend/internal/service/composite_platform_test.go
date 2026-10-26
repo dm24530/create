@@ -17,6 +17,16 @@ func (r *compositeOwnershipAccountRepo) ListSchedulableByGroupID(context.Context
 	return r.accounts, nil
 }
 
+func (r *compositeOwnershipAccountRepo) ListSchedulableByGroupIDAndPlatform(_ context.Context, _ int64, platform string) ([]Account, error) {
+	accounts := make([]Account, 0, len(r.accounts))
+	for _, account := range r.accounts {
+		if account.Platform == platform {
+			accounts = append(accounts, account)
+		}
+	}
+	return accounts, nil
+}
+
 // Scenario: 唯一平台的精确别名可路由
 func TestResolveCompositeModelOwnershipKeepsProviderAccountsIsolated(t *testing.T) {
 	groupID := int64(7)

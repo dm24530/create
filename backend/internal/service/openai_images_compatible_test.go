@@ -46,22 +46,221 @@ func TestCompatibleImagesGeminiModels(t *testing.T) {
 	}
 }
 
+func TestOpenAIImagesSchedulerUsesExplicitCrossPlatformModelMapping(t *testing.T) {
+	groupID := int64(3)
+	repo := &compositeOwnershipAccountRepo{
+		accounts: []Account{{
+			ID:          6,
+			Platform:    PlatformGemini,
+			Type:        AccountTypeAPIKey,
+			Status:      StatusActive,
+			Schedulable: true,
+			Credentials: map[string]any{
+				"base_url": "https://compatible.example",
+				"api_key":  "sk-test",
+				"model_mapping": map[string]any{
+					"gpt-image-2": "gpt-image-2",
+				},
+			},
+		}},
+	}
+	svc := &OpenAIGatewayService{accountRepo: repo}
+
+	tests := []struct {
+		name string
+		ctx  context.Context
+	}{
+		{name: "unresolved_fallback", ctx: WithCompositeImagesRouting(context.Background())},
+		{
+			name: "account_route_context",
+			ctx: WithCompositeRouteDecision(WithCompositeImagesRouting(context.Background()), CompositeRouteDecision{
+				Matched:        true,
+				Source:         CompositeRouteSourceAccount,
+				TargetPlatform: PlatformGemini,
+				PublicModel:    "gpt-image-2",
+				UpstreamModel:  "gpt-image-2",
+			}),
+		},
+		{
+			name: "explicit_openai_route_falls_back_to_unique_mapping",
+			ctx: WithCompositeRouteDecision(WithCompositeImagesRouting(context.Background()), CompositeRouteDecision{
+				Matched:        true,
+				Source:         CompositeRouteSourceExplicit,
+				TargetPlatform: PlatformOpenAI,
+				PublicModel:    "gpt-image-2",
+				UpstreamModel:  "gpt-image-2",
+			}),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			selection, _, err := svc.SelectAccountWithSchedulerForImages(
+				tt.ctx,
+				&groupID,
+				"",
+				"gpt-image-2",
+				nil,
+				OpenAIImagesCapabilityAPIKey,
+			)
+
+			require.NoError(t, err)
+			require.NotNil(t, selection)
+			require.NotNil(t, selection.Account)
+			require.Equal(t, int64(6), selection.Account.ID)
+			require.True(t, selection.Acquired)
+		})
+	}
+}
+
+func TestOpenAIImagesSchedulerRejectsAmbiguousCrossPlatformMappings(t *testing.T) {
+	groupID := int64(3)
+	repo := &compositeOwnershipAccountRepo{
+		accounts: []Account{
+			{
+				ID:          6,
+				Platform:    PlatformGemini,
+				Type:        AccountTypeAPIKey,
+				Status:      StatusActive,
+				Schedulable: true,
+				Credentials: map[string]any{
+					"base_url":      "https://gemini-compatible.example",
+					"api_key":       "sk-gemini",
+					"model_mapping": map[string]any{"shared-image": "gemini-3-pro-image"},
+				},
+			},
+			{
+				ID:          7,
+				Platform:    PlatformGrok,
+				Type:        AccountTypeAPIKey,
+				Status:      StatusActive,
+				Schedulable: true,
+				Credentials: map[string]any{
+					"base_url":      "https://grok-compatible.example",
+					"api_key":       "sk-grok",
+					"model_mapping": map[string]any{"shared-image": "grok-imagine"},
+				},
+			},
+		},
+	}
+	svc := &OpenAIGatewayService{accountRepo: repo}
+
+	selection, _, err := svc.SelectAccountWithSchedulerForImages(
+		WithCompositeImagesRouting(context.Background()),
+		&groupID,
+		"",
+		"shared-image",
+		nil,
+		OpenAIImagesCapabilityAPIKey,
+	)
+
+	require.Nil(t, selection)
+	require.ErrorIs(t, err, ErrNoAvailableAccounts)
+	require.ErrorContains(t, err, "ambiguous")
+}
+
+func TestOpenAIImagesSchedulerDoesNotUseUnmappedCrossPlatformAccount(t *testing.T) {
+	groupID := int64(3)
+	repo := &compositeOwnershipAccountRepo{
+		accounts: []Account{{
+			ID:          6,
+			Platform:    PlatformGemini,
+			Type:        AccountTypeAPIKey,
+			Status:      StatusActive,
+			Schedulable: true,
+			Credentials: map[string]any{
+				"base_url": "https://compatible.example",
+				"api_key":  "sk-test",
+			},
+		}},
+	}
+	svc := &OpenAIGatewayService{accountRepo: repo}
+
+	selection, _, err := svc.SelectAccountWithSchedulerForImages(
+		WithCompositeImagesRouting(context.Background()),
+		&groupID,
+		"",
+		"gpt-image-2",
+		nil,
+		OpenAIImagesCapabilityNative,
+	)
+
+	require.Nil(t, selection)
+	require.ErrorIs(t, err, ErrNoAvailableAccounts)
+}
+
+func TestOpenAIImagesSchedulerUsesResolvedPlatformForDirectCompatibleModel(t *testing.T) {
+	groupID := int64(3)
+	repo := &compositeOwnershipAccountRepo{
+		accounts: []Account{{
+			ID:          6,
+			Platform:    PlatformGemini,
+			Type:        AccountTypeAPIKey,
+			Status:      StatusActive,
+			Schedulable: true,
+			Credentials: map[string]any{
+				"base_url": "https://compatible.example",
+				"api_key":  "sk-test",
+			},
+		}},
+	}
+	svc := &OpenAIGatewayService{accountRepo: repo}
+	ctx := WithResolvedTargetPlatform(WithCompositeImagesRouting(context.Background()), PlatformGemini)
+
+	selection, _, err := svc.SelectAccountWithSchedulerForImages(
+		ctx,
+		&groupID,
+		"",
+		"gemini-3.1-flash-image",
+		nil,
+		OpenAIImagesCapabilityAPIKey,
+	)
+
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	require.Equal(t, int64(6), selection.Account.ID)
+	require.True(t, selection.Acquired)
+}
+
+func TestCompatibleImagesParseUsesResolvedCrossPlatformUpstreamModel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"model":"public-image","prompt":"draw"}`)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, openAIImagesGenerationsEndpoint, bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Request = c.Request.WithContext(WithCompositeRouteDecision(c.Request.Context(), CompositeRouteDecision{
+		Matched:        true,
+		TargetPlatform: PlatformGemini,
+		UpstreamModel:  "gemini-3-pro-image",
+		PublicModel:    "public-image",
+	}))
+
+	parsed, err := (&OpenAIGatewayService{}).ParseOpenAIImagesRequest(c, body)
+
+	require.NoError(t, err)
+	require.Equal(t, "gemini-3-pro-image", parsed.Model)
+	require.Equal(t, OpenAIImagesCapabilityAPIKey, parsed.RequiredCapability)
+}
+
 func TestCompatibleImagesForwardGemini(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	for _, kind := range []string{"generation", "json_edit", "multipart_edit", "composite_multipart_alias", "channel_mapping", "account_mapping"} {
+	for _, kind := range []string{"generation", "json_edit", "multipart_edit", "composite_multipart_alias", "channel_mapping", "account_mapping", "cross_platform_account_mapping", "cross_platform_multipart_edit"} {
 		t.Run(kind, func(t *testing.T) {
 			model := "gemini-3.1-flash-image"
 			endpoint := openAIImagesGenerationsEndpoint
 			contentType := "application/json"
 			channelModel := ""
+			accountPlatform := PlatformOpenAI
 			credentials := map[string]any{"api_key": "image-key", "base_url": "https://compatible.example/v1"}
 			requestModel := model
 			if kind == "channel_mapping" {
 				requestModel, channelModel = "gpt-image-2", model
 			}
-			if kind == "account_mapping" {
+			if kind == "account_mapping" || strings.HasPrefix(kind, "cross_platform_") {
 				requestModel = "gpt-image-2"
 				credentials["model_mapping"] = map[string]any{requestModel: model}
+				if strings.HasPrefix(kind, "cross_platform_") {
+					accountPlatform = PlatformGemini
+				}
 			}
 			body := []byte(fmt.Sprintf(`{"model":%q,"prompt":"draw","size":"1024x1024","custom_field":"preserved"}`, requestModel))
 			if kind == "json_edit" {
@@ -101,7 +300,7 @@ func TestCompatibleImagesForwardGemini(t *testing.T) {
 			if kind == "channel_mapping" {
 				require.Equal(t, OpenAIImagesCapabilityAPIKey, parsed.RequiredCapabilityForModel(channelModel))
 			}
-			result, err := svc.ForwardImages(c.Request.Context(), c, &Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: credentials}, body, parsed, channelModel)
+			result, err := svc.ForwardImages(c.Request.Context(), c, &Account{ID: 1, Platform: accountPlatform, Type: AccountTypeAPIKey, Credentials: credentials}, body, parsed, channelModel)
 			require.NoError(t, err)
 			require.Equal(t, 1, result.ImageCount)
 			require.Equal(t, model, result.UpstreamModel)

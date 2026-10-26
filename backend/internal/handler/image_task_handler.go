@@ -635,7 +635,31 @@ func (h *AsyncImageHandler) run(taskID, platform string, taskCtx *gin.Context, r
 		if isGeminiAsyncImagePlatform(platform) {
 			normalized, normalizeErr := normalizeGeminiImageTaskResult(body)
 			if normalizeErr != nil {
-				h.failTask(taskID, http.StatusBadGateway, imageTaskErrorPayload("api_error", "invalid Gemini image response"))
+				statusCode := activeRecorder.Code
+				if statusCode == 0 {
+					statusCode = http.StatusOK
+				}
+				preview := strings.Join(strings.Fields(string(body)), " ")
+				if len(preview) > 300 {
+					preview = preview[:300]
+				}
+				logger.L().Warn("image_task.gemini_invalid_response",
+					zap.String("task_id", taskID),
+					zap.Int("status_code", statusCode),
+					zap.String("content_type", activeRecorder.Header().Get("Content-Type")),
+					zap.Int("body_bytes", len(body)),
+					zap.String("body_preview", preview),
+					zap.Error(normalizeErr),
+				)
+				message := "invalid Gemini image response"
+				if statusCode == http.StatusRequestEntityTooLarge {
+					message = "Gemini image request is too large; retry with fewer or smaller reference images"
+				} else if len(body) == 0 {
+					message = "Gemini image upstream returned an empty response"
+				} else {
+					message = "Gemini image upstream returned a non-JSON response"
+				}
+				h.failTask(taskID, http.StatusBadGateway, imageTaskErrorPayload("api_error", message))
 				return
 			}
 			body = normalized

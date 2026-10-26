@@ -231,10 +231,8 @@ func (s *OpenAIGatewayService) ParseOpenAIImagesRequest(c *gin.Context, body []b
 	applyOpenAIImagesDefaults(req)
 	// Composite middleware preserves multipart bodies, including their public
 	// alias. Validate and forward the resolved model without altering uploads.
-	if platform, _ := ResolvedTargetPlatformFromContext(c.Request.Context()); platform == PlatformOpenAI {
-		if model, ok := ResolvedUpstreamModelFromContext(c.Request.Context()); ok {
-			req.Model = model
-		}
+	if model, ok := ResolvedUpstreamModelFromContext(c.Request.Context()); ok {
+		req.Model = model
 	}
 	if err := validateCompatibleImagesModel(req.Model); err != nil {
 		return nil, err
@@ -658,7 +656,7 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 	upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
 	defer releaseUpstreamCtx()
 
-	token, _, err := s.GetAccessToken(upstreamCtx, account)
+	token, _, err := s.getOpenAIImagesAccessToken(upstreamCtx, account)
 	if err != nil {
 		return nil, err
 	}
@@ -811,6 +809,18 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 	}
 }
 
+func (s *OpenAIGatewayService) getOpenAIImagesAccessToken(ctx context.Context, account *Account) (string, string, error) {
+	if account != nil && account.Type == AccountTypeAPIKey &&
+		!account.IsOpenAI() && !account.IsMultiProtocolAPIKey() {
+		apiKey := strings.TrimSpace(account.GetCredential("api_key"))
+		if apiKey == "" {
+			return "", "", fmt.Errorf("api_key not found in credentials")
+		}
+		return apiKey, "apikey", nil
+	}
+	return s.GetAccessToken(ctx, account)
+}
+
 func (s *OpenAIGatewayService) buildOpenAIImagesRequest(
 	ctx context.Context,
 	c *gin.Context,
@@ -824,7 +834,7 @@ func (s *OpenAIGatewayService) buildOpenAIImagesRequest(
 	if endpoint == openAIImagesEditsEndpoint {
 		targetURL = openAIImagesEditsURL
 	}
-	baseURL := account.GetOpenAIBaseURL()
+	baseURL := account.GetOpenAIImagesBaseURL()
 	if baseURL != "" {
 		validatedURL, err := s.validateUpstreamBaseURL(baseURL)
 		if err != nil {
@@ -865,6 +875,21 @@ func (s *OpenAIGatewayService) buildOpenAIImagesRequest(
 	// 账号级请求头覆写（仅 openai api_key 账号启用时生效；OAuth 路径 no-op）
 	account.ApplyHeaderOverrides(req.Header)
 	return req, nil
+}
+
+// GetOpenAIImagesBaseURL resolves the OpenAI-compatible Images endpoint for
+// API-key passthrough. Cross-platform API-key gateways may expose Images while
+// their account platform identifies the provider used by other endpoints.
+func (a *Account) GetOpenAIImagesBaseURL() string {
+	if a == nil {
+		return ""
+	}
+	if a.Type == AccountTypeAPIKey {
+		if baseURL := strings.TrimSpace(a.GetCredential("base_url")); baseURL != "" {
+			return baseURL
+		}
+	}
+	return a.GetOpenAIBaseURL()
 }
 
 func buildOpenAIImagesURL(base string, endpoint string) string {
