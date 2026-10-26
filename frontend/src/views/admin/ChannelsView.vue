@@ -252,6 +252,87 @@
               </div>
             </div>
 
+            <!-- Composite groups are channel-wide groups, not an instruction to enable every platform. -->
+            <div v-if="compositeGroups.length > 0" class="space-y-2">
+              <label class="input-label mb-0">{{ t('admin.channels.form.compositeGroups') }}</label>
+              <div class="flex flex-wrap gap-2">
+                <label
+                  v-for="group in compositeGroups"
+                  :key="group.id"
+                  class="inline-flex cursor-pointer items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm transition-colors"
+                  :class="[
+                    form.composite_group_ids.includes(group.id)
+                      ? 'border-violet-300 bg-violet-50 dark:border-violet-700 dark:bg-violet-900/20'
+                      : 'border-gray-200 hover:bg-gray-50 dark:border-dark-600 dark:hover:bg-dark-700',
+                    isGroupInOtherChannel(group.id, 'composite') ? 'opacity-40' : ''
+                  ]"
+                >
+                  <input
+                    type="checkbox"
+                    :checked="form.composite_group_ids.includes(group.id)"
+                    :disabled="isGroupInOtherChannel(group.id, 'composite')"
+                    :data-testid="`composite-group-${group.id}`"
+                    class="h-3.5 w-3.5 rounded border-gray-300 text-violet-600 focus:ring-violet-500"
+                    @change="toggleCompositeGroup(group.id)"
+                  />
+                  <PlatformIcon platform="composite" size="xs" />
+                  <span class="font-medium text-violet-700 dark:text-violet-300">{{ group.name }}</span>
+                  <span class="text-[10px] text-gray-400">{{ group.account_count || 0 }}</span>
+                  <span
+                    v-if="isGroupInOtherChannel(group.id, 'composite')"
+                    class="text-[10px] text-gray-400"
+                  >{{ getGroupInOtherChannelLabel(group.id) }}</span>
+                </label>
+              </div>
+              <p class="text-xs text-gray-400">{{ t('admin.channels.form.compositeGroupsHint') }}</p>
+
+              <div
+                v-if="form.composite_group_ids.length > 0"
+                class="mt-3 space-y-2 rounded-lg border border-violet-200 bg-violet-50/40 p-3 dark:border-violet-900/50 dark:bg-violet-950/10"
+                data-testid="composite-model-pricing"
+              >
+                <div class="flex items-center justify-between gap-3">
+                  <div>
+                    <label class="input-label mb-0">{{ t('admin.channels.form.compositeModelPricing') }}</label>
+                    <p class="mt-0.5 text-xs text-gray-400">{{ t('admin.channels.form.compositeModelPricingHint') }}</p>
+                  </div>
+                  <button
+                    type="button"
+                    class="btn btn-secondary shrink-0"
+                    data-testid="add-composite-pricing"
+                    @click="addCompositePricingEntry"
+                  >
+                    <Icon name="plus" size="sm" class="mr-1" />
+                    {{ t('common.add', 'Add') }}
+                  </button>
+                </div>
+                <div
+                  v-for="(entry, index) in form.composite_model_pricing"
+                  :key="index"
+                  class="space-y-2"
+                  data-testid="composite-pricing-entry"
+                >
+                  <div class="w-56">
+                    <label class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.channels.form.targetPlatform') }}</label>
+                    <Select
+                      :modelValue="entry.platform || ''"
+                      :options="compositePricingPlatformOptions"
+                      class="mt-1"
+                      @update:modelValue="updateCompositePricingPlatform(index, String($event))"
+                    />
+                  </div>
+                  <PricingEntryCard
+                    :entry="entry"
+                    :platform="entry.platform || 'composite'"
+                    enable-time-pricing
+                    enable-tier-multipliers
+                    @update="updateCompositePricingEntry(index, $event)"
+                    @remove="form.composite_model_pricing.splice(index, 1)"
+                  />
+                </div>
+              </div>
+            </div>
+
             <!-- Apply Pricing to Account Stats (toggle only in basic settings) -->
             <div class="border-t border-gray-200 pt-4 dark:border-dark-700">
               <div class="flex items-center justify-between">
@@ -281,7 +362,8 @@
             <!-- Groups -->
             <div>
               <label class="input-label text-xs">
-                {{ t('admin.channels.form.groups', 'Associated Groups') }} <span class="text-red-500">*</span>
+                {{ t('admin.channels.form.groups', 'Associated Groups') }}
+                <span v-if="form.composite_group_ids.length === 0" class="text-red-500">*</span>
                 <span v-if="section.group_ids.length > 0" class="ml-1 font-normal text-gray-400">
                   ({{ t('admin.channels.form.selectedCount', { count: section.group_ids.length }) }})
                 </span>
@@ -299,16 +381,19 @@
                     :key="group.id"
                     class="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-gray-200 px-2 py-1 text-xs transition-colors hover:bg-gray-50 dark:border-dark-600 dark:hover:bg-dark-700"
                     :class="[
-                      section.group_ids.includes(group.id) ? 'bg-primary-50 border-primary-300 dark:bg-primary-900/20 dark:border-primary-700' : '',
+                      (group.platform === 'composite' ? form.composite_group_ids.includes(group.id) : section.group_ids.includes(group.id))
+                        ? 'bg-primary-50 border-primary-300 dark:bg-primary-900/20 dark:border-primary-700'
+                        : '',
                       isGroupInOtherChannel(group.id, section.platform) ? 'opacity-40' : ''
                     ]"
                   >
                     <input
                       type="checkbox"
-                      :checked="section.group_ids.includes(group.id)"
+                      :checked="group.platform === 'composite' ? form.composite_group_ids.includes(group.id) : section.group_ids.includes(group.id)"
                       :disabled="isGroupInOtherChannel(group.id, section.platform)"
+                      :data-testid="group.platform === 'composite' ? `platform-composite-group-${group.id}` : undefined"
                       class="h-3 w-3 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
-                      @change="toggleGroupInSection(sIdx, group.id)"
+                      @change="group.platform === 'composite' ? toggleCompositeGroup(group.id) : toggleGroupInSection(sIdx, group.id)"
                     />
                     <span :class="['font-medium', platformTextClass(group.platform)]">{{ group.name }}</span>
                     <span
@@ -418,7 +503,7 @@
             </div>
 
             <!-- Model Pricing -->
-            <div>
+            <div v-if="form.composite_group_ids.length === 0">
               <div class="mb-1 flex items-center justify-between">
                 <label class="input-label text-xs mb-0">{{ t('admin.channels.form.modelPricing', 'Model Pricing') }}</label>
                 <div class="flex items-center gap-2">
@@ -431,7 +516,12 @@
                   >
                     {{ syncingPlatform === section.platform ? t('admin.channels.form.syncingModels') : t('admin.channels.form.syncLatestModels') }}
                   </button>
-                  <button type="button" @click="addPricingEntry(sIdx)" class="text-xs text-primary-600 hover:text-primary-700">
+                  <button
+                    type="button"
+                    @click="addPricingEntry(sIdx)"
+                    class="text-xs text-primary-600 hover:text-primary-700"
+                    :data-testid="`add-platform-pricing-${section.platform}`"
+                  >
                     + {{ t('common.add', 'Add') }}
                   </button>
                 </div>
@@ -453,6 +543,17 @@
                   @update="updatePricingEntry(sIdx, idx, $event)"
                   @remove="removePricingEntry(sIdx, idx)"
                 />
+              </div>
+            </div>
+            <div
+              v-else
+              class="rounded-lg border border-violet-200 bg-violet-50/40 p-3 text-xs text-gray-600 dark:border-violet-900/50 dark:bg-violet-950/10 dark:text-gray-300"
+            >
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <span>{{ t('admin.channels.form.compositePricingInBasicHint') }}</span>
+                <button type="button" class="btn btn-secondary" @click="activeTab = 'basic'">
+                  {{ t('admin.channels.form.goToCompositePricing') }}
+                </button>
               </div>
             </div>
 
@@ -759,6 +860,8 @@ const form = reactive({
   restrict_models: false,
   billing_model_source: 'channel_mapped' as string,
   platforms: [] as PlatformSection[],
+  composite_group_ids: [] as number[],
+  composite_model_pricing: [] as PricingFormEntry[],
   apply_pricing_to_account_stats: false,
 })
 
@@ -767,8 +870,11 @@ let abortController: AbortController | null = null
 // ── Platform config ──
 // 平台清单中的全部具体平台（展示顺序）。
 const platformOrder = computed<GroupPlatform[]>(() => listPlatformIds())
-// Composite pricing/mapping may target every concrete schedulable provider.
-const compositePlatforms = platformOrder
+const compositeGroups = computed(() => allGroups.value.filter(group => group.platform === 'composite'))
+const compositePricingPlatformOptions = computed(() => platformOrder.value.map(platform => ({
+  value: platform,
+  label: t('admin.groups.platforms.' + platform, catalogPlatformLabel(platform)),
+})))
 
 // ── Helpers ──
 function formatDate(value: string): string {
@@ -806,10 +912,42 @@ function togglePlatform(platform: GroupPlatform) {
   }
 }
 
+function toggleCompositeGroup(groupId: number) {
+  const index = form.composite_group_ids.indexOf(groupId)
+  if (index >= 0) {
+    form.composite_group_ids.splice(index, 1)
+  } else {
+    const firstCompositeGroup = form.composite_group_ids.length === 0
+    form.composite_group_ids.push(groupId)
+    if (firstCompositeGroup) {
+      for (const section of form.platforms) {
+        for (const entry of section.model_pricing) {
+          if (entry.models.length > 0) {
+            form.composite_model_pricing.push({ ...entry, platform: entry.platform || section.platform })
+          }
+        }
+        section.model_pricing = []
+      }
+    }
+  }
+}
+
+function addCompositePricingEntry() {
+  form.composite_model_pricing.push(createPricingEntry([], platformOrder.value[0]))
+}
+
+function updateCompositePricingEntry(index: number, entry: PricingFormEntry) {
+  form.composite_model_pricing.splice(index, 1, entry)
+}
+
+function updateCompositePricingPlatform(index: number, platform: string) {
+  const entry = form.composite_model_pricing[index]
+  if (!entry) return
+  form.composite_model_pricing.splice(index, 1, { ...entry, platform })
+}
+
 function getGroupsForPlatform(platform: GroupPlatform): AdminGroup[] {
-  return allGroups.value.filter(
-    g => g.platform === platform || (g.platform === 'composite' && compositePlatforms.value.includes(platform))
-  )
+  return allGroups.value.filter(group => group.platform === platform || group.platform === 'composite')
 }
 
 // ── Group helpers ──
@@ -858,8 +996,13 @@ function toggleGroupInSection(sectionIdx: number, groupId: number) {
 
 // ── Pricing helpers ──
 function addPricingEntry(sectionIdx: number) {
-  form.platforms[sectionIdx].model_pricing.push({
-    models: [],
+  form.platforms[sectionIdx].model_pricing.push(createPricingEntry())
+}
+
+function createPricingEntry(models: string[] = [], platform?: string): PricingFormEntry {
+  return {
+    ...(platform ? { platform } : {}),
+    models: [...models],
     billing_mode: 'token',
     input_price: null,
     output_price: null,
@@ -874,7 +1017,7 @@ function addPricingEntry(sectionIdx: number) {
     per_request_price: null,
     intervals: [],
     time_pricing: createDefaultTimePricingForm()
-  })
+  }
 }
 
 const syncingPlatform = ref<string | null>(null)
@@ -896,24 +1039,10 @@ async function syncLatestModels(sectionIdx: number) {
       appStore.showSuccess(t('admin.channels.form.syncModelsAlreadyUpToDate'))
       return
     }
-    // Add new models as a single new pricing entry (user fills in prices)
-    section.model_pricing.push({
-      models: newModels,
-      billing_mode: 'token',
-      input_price: null,
-      output_price: null,
-      cache_write_price: null,
-      cache_write_1h_price: null,
-      cache_read_price: null,
-      fast_multiplier: null,
-      flex_multiplier: null,
-      reasoning_effort_multipliers: null,
-      image_input_price: null,
-      image_output_price: null,
-      per_request_price: null,
-      intervals: [],
-      time_pricing: createDefaultTimePricingForm()
-    })
+    // One entry per model keeps each synced model independently priced.
+    for (const model of newModels) {
+      section.model_pricing.push(createPricingEntry([model]))
+    }
     appStore.showSuccess(t('admin.channels.form.syncModelsSuccess', { count: newModels.length }))
   } catch (error) {
     appStore.showError(extractApiErrorMessage(error, t('admin.channels.form.syncModelsError')))
@@ -1107,14 +1236,42 @@ function accountStatsRulesToAPI(): AccountStatsPricingRule[] {
 }
 
 // ── Form ↔ API conversion ──
+function pricingFormToAPI(entry: PricingFormEntry, platform: string): ChannelModelPricing {
+  return {
+    platform,
+    models: entry.models,
+    billing_mode: entry.billing_mode,
+    input_price: mTokToPerToken(entry.input_price),
+    output_price: mTokToPerToken(entry.output_price),
+    cache_write_price: mTokToPerToken(entry.cache_write_price),
+    cache_write_1h_price: mTokToPerToken(entry.cache_write_1h_price),
+    cache_read_price: mTokToPerToken(entry.cache_read_price),
+    fast_multiplier: entry.fast_multiplier != null && entry.fast_multiplier !== '' ? Number(entry.fast_multiplier) : null,
+    flex_multiplier: entry.flex_multiplier != null && entry.flex_multiplier !== '' ? Number(entry.flex_multiplier) : null,
+    reasoning_effort_multipliers: formReasoningEffortMultipliersToAPI(entry.reasoning_effort_multipliers),
+    image_input_price: mTokToPerToken(entry.image_input_price),
+    image_output_price: mTokToPerToken(entry.image_output_price),
+    per_request_price: entry.per_request_price != null && entry.per_request_price !== '' ? Number(entry.per_request_price) : null,
+    intervals: formIntervalsToAPI(entry.intervals || []),
+    time_pricing: formTimePricingToAPI(entry.time_pricing)
+  }
+}
+
 function formToAPI(): { group_ids: number[], model_pricing: ChannelModelPricing[], model_mapping: Record<string, Record<string, string>>, features_config: Record<string, unknown> } {
-  const group_ids: number[] = []
+  const group_ids: number[] = [...form.composite_group_ids]
   const model_pricing: ChannelModelPricing[] = []
   const model_mapping: Record<string, Record<string, string>> = {}
   // Preserve existing features_config fields not managed by the form
   const featuresConfig: Record<string, unknown> = editingChannel.value?.features_config
     ? { ...editingChannel.value.features_config }
     : {}
+
+  if (form.composite_group_ids.length > 0) {
+    for (const entry of form.composite_model_pricing) {
+      if (!entry.platform || entry.models.length === 0) continue
+      model_pricing.push(pricingFormToAPI(entry, entry.platform))
+    }
+  }
 
   for (const section of form.platforms) {
     if (!section.enabled) continue
@@ -1128,24 +1285,7 @@ function formToAPI(): { group_ids: number[], model_pricing: ChannelModelPricing[
     // Model pricing with platform tag
     for (const entry of section.model_pricing) {
       if (entry.models.length === 0) continue
-      model_pricing.push({
-        platform: section.platform,
-        models: entry.models,
-        billing_mode: entry.billing_mode,
-        input_price: mTokToPerToken(entry.input_price),
-        output_price: mTokToPerToken(entry.output_price),
-        cache_write_price: mTokToPerToken(entry.cache_write_price),
-        cache_write_1h_price: mTokToPerToken(entry.cache_write_1h_price),
-        cache_read_price: mTokToPerToken(entry.cache_read_price),
-        fast_multiplier: entry.fast_multiplier != null && entry.fast_multiplier !== '' ? Number(entry.fast_multiplier) : null,
-        flex_multiplier: entry.flex_multiplier != null && entry.flex_multiplier !== '' ? Number(entry.flex_multiplier) : null,
-        reasoning_effort_multipliers: formReasoningEffortMultipliersToAPI(entry.reasoning_effort_multipliers),
-        image_input_price: mTokToPerToken(entry.image_input_price),
-        image_output_price: mTokToPerToken(entry.image_output_price),
-        per_request_price: entry.per_request_price != null && entry.per_request_price !== '' ? Number(entry.per_request_price) : null,
-        intervals: formIntervalsToAPI(entry.intervals || []),
-        time_pricing: formTimePricingToAPI(entry.time_pricing)
-      })
+      model_pricing.push(pricingFormToAPI(entry, section.platform))
     }
   }
   const uniqueGroupIds = Array.from(new Set(group_ids))
@@ -1195,28 +1335,57 @@ function formToAPI(): { group_ids: number[], model_pricing: ChannelModelPricing[
   return { group_ids: uniqueGroupIds, model_pricing, model_mapping, features_config: featuresConfig }
 }
 
+function channelPricingToForm(p: ChannelModelPricing): PricingFormEntry {
+  return {
+    platform: p.platform,
+    models: p.models || [],
+    billing_mode: p.billing_mode,
+    input_price: perTokenToMTok(p.input_price),
+    output_price: perTokenToMTok(p.output_price),
+    cache_write_price: perTokenToMTok(p.cache_write_price),
+    cache_write_1h_price: perTokenToMTok(p.cache_write_1h_price),
+    cache_read_price: perTokenToMTok(p.cache_read_price),
+    fast_multiplier: p.fast_multiplier,
+    flex_multiplier: p.flex_multiplier,
+    reasoning_effort_multipliers: p.reasoning_effort_multipliers ? { ...p.reasoning_effort_multipliers } : null,
+    image_input_price: perTokenToMTok(p.image_input_price),
+    image_output_price: perTokenToMTok(p.image_output_price),
+    per_request_price: p.per_request_price,
+    intervals: apiIntervalsToForm(p.intervals || []),
+    time_pricing: apiTimePricingToForm(p.time_pricing)
+  }
+}
+
 function apiToForm(channel: Channel): PlatformSection[] {
   // Build a map: groupID → platform
   const groupPlatformMap = new Map<number, GroupPlatform>()
   for (const g of allGroups.value) {
     groupPlatformMap.set(g.id, g.platform)
   }
+  const hasCompositeGroup = (channel.group_ids || []).some((groupId) => groupPlatformMap.get(groupId) === 'composite')
 
   // Determine which platforms are active (from groups + pricing + mapping)
   const activePlatforms = new Set<GroupPlatform>()
   for (const gid of channel.group_ids || []) {
     const p = groupPlatformMap.get(gid)
-    if (p === 'composite') {
-      compositePlatforms.value.forEach(platform => activePlatforms.add(platform))
-    } else if (p) {
+    if (p && p !== 'composite') {
       activePlatforms.add(p)
     }
   }
-  for (const p of channel.model_pricing || []) {
-    if (p.platform) activePlatforms.add(p.platform as GroupPlatform)
+  if (!hasCompositeGroup) {
+    for (const p of channel.model_pricing || []) {
+      if (p.platform) activePlatforms.add(p.platform as GroupPlatform)
+    }
   }
   for (const p of Object.keys(channel.model_mapping || {})) {
     if (platformOrder.value.includes(p as GroupPlatform)) activePlatforms.add(p as GroupPlatform)
+  }
+  for (const rule of channel.account_stats_pricing_rules || []) {
+    for (const pricing of rule.pricing || []) {
+      if (pricing.platform && platformOrder.value.includes(pricing.platform as GroupPlatform)) {
+        activePlatforms.add(pricing.platform as GroupPlatform)
+      }
+    }
   }
 
   // Build sections in platform order
@@ -1226,29 +1395,14 @@ function apiToForm(channel: Channel): PlatformSection[] {
 
     const groupIds = (channel.group_ids || []).filter(gid => {
       const groupPlatform = groupPlatformMap.get(gid)
-      return groupPlatform === platform ||
-        (groupPlatform === 'composite' && compositePlatforms.value.includes(platform))
+      return groupPlatform === platform
     })
     const mapping = (channel.model_mapping || {})[platform] || {}
-    const pricing = (channel.model_pricing || [])
-      .filter(p => (p.platform || 'anthropic') === platform)
-      .map(p => ({
-        models: p.models || [],
-        billing_mode: p.billing_mode,
-        input_price: perTokenToMTok(p.input_price),
-        output_price: perTokenToMTok(p.output_price),
-        cache_write_price: perTokenToMTok(p.cache_write_price),
-        cache_write_1h_price: perTokenToMTok(p.cache_write_1h_price),
-        cache_read_price: perTokenToMTok(p.cache_read_price),
-        fast_multiplier: p.fast_multiplier,
-        flex_multiplier: p.flex_multiplier,
-        reasoning_effort_multipliers: p.reasoning_effort_multipliers ? { ...p.reasoning_effort_multipliers } : null,
-        image_input_price: perTokenToMTok(p.image_input_price),
-        image_output_price: perTokenToMTok(p.image_output_price),
-        per_request_price: p.per_request_price,
-        intervals: apiIntervalsToForm(p.intervals || []),
-        time_pricing: apiTimePricingToForm(p.time_pricing)
-      } as PricingFormEntry))
+    const pricing = hasCompositeGroup
+      ? []
+      : (channel.model_pricing || [])
+          .filter(p => (p.platform || 'anthropic') === platform)
+          .map(channelPricingToForm)
 
     // Read web_search_emulation from features_config
     const fc = channel.features_config
@@ -1361,6 +1515,8 @@ function resetForm() {
   form.restrict_models = false
   form.billing_model_source = 'channel_mapped'
   form.platforms = []
+  form.composite_group_ids = []
+  form.composite_model_pricing = []
   form.apply_pricing_to_account_stats = false
   activeTab.value = 'basic'
   ruleAccountSearchRunner.clearAll()
@@ -1385,6 +1541,12 @@ async function openEditDialog(channel: Channel) {
   form.apply_pricing_to_account_stats = channel.apply_pricing_to_account_stats || false
   // Must load groups first so apiToForm can map groupID → platform
   await Promise.all([loadGroups(), loadAllChannelsForConflict()])
+  form.composite_group_ids = (channel.group_ids || []).filter((groupId) => {
+    return allGroups.value.some(group => group.id === groupId && group.platform === 'composite')
+  })
+  form.composite_model_pricing = form.composite_group_ids.length > 0
+    ? (channel.model_pricing || []).map(channelPricingToForm)
+    : []
   form.platforms = apiToForm(channel)
 
   // Distribute channel-level rules into per-platform sections
@@ -1487,7 +1649,7 @@ async function handleSubmit() {
 
   // Check for pricing entries with empty models (would be silently skipped)
   for (const section of form.platforms.filter(s => s.enabled)) {
-    if (section.group_ids.length === 0) {
+    if (section.group_ids.length === 0 && form.composite_group_ids.length === 0) {
       const platformLabel = t('admin.groups.platforms.' + section.platform, catalogPlatformLabel(section.platform))
       appStore.showError(t('admin.channels.noGroupsSelected', { platform: platformLabel }))
       activeTab.value = section.platform
@@ -1498,6 +1660,70 @@ async function handleSubmit() {
         const platformLabel = t('admin.groups.platforms.' + section.platform, catalogPlatformLabel(section.platform))
         appStore.showError(t('admin.channels.emptyModelsInPricing', { platform: platformLabel }))
         activeTab.value = section.platform
+        return
+      }
+    }
+  }
+
+  if (form.composite_group_ids.length > 0) {
+    const compositeModelsByPlatform = new Map<string, string[]>()
+    for (const [index, entry] of form.composite_model_pricing.entries()) {
+      const modelLabel = entry.models.join(', ') || `#${index + 1}`
+      if (!entry.platform) {
+        appStore.showError(t('admin.channels.form.compositePricingPlatformRequired'))
+        activeTab.value = 'basic'
+        return
+      }
+      if (entry.models.length === 0) {
+        appStore.showError(t('admin.channels.form.compositePricingModelsRequired', { model: modelLabel }))
+        activeTab.value = 'basic'
+        return
+      }
+      if ((entry.billing_mode === 'per_request' || entry.billing_mode === 'image') &&
+          (entry.per_request_price == null || entry.per_request_price === '') &&
+          (!entry.intervals || entry.intervals.length === 0)) {
+        appStore.showError(t('admin.channels.form.perRequestPriceRequired'))
+        activeTab.value = 'basic'
+        return
+      }
+      const reasoningError = validateReasoningEffortMultipliers(entry.reasoning_effort_multipliers, t)
+      if (reasoningError) {
+        appStore.showError(`${modelLabel}: ${reasoningError}`)
+        activeTab.value = 'basic'
+        return
+      }
+      if (!isValidPositiveMultiplier(entry.fast_multiplier) || !isValidPositiveMultiplier(entry.flex_multiplier)) {
+        appStore.showError(`${modelLabel}: ${t('admin.channels.form.multiplierPositive')}`)
+        activeTab.value = 'basic'
+        return
+      }
+      if (entry.intervals?.length) {
+        const intervalError = validateIntervals(entry.intervals, entry.billing_mode, t)
+        if (intervalError) {
+          appStore.showError(`${modelLabel}: ${intervalError}`)
+          activeTab.value = 'basic'
+          return
+        }
+      }
+      const timePricingError = validateTimePricing(entry.time_pricing, t)
+      if (timePricingError) {
+        appStore.showError(`${modelLabel}: ${timePricingError}`)
+        activeTab.value = 'basic'
+        return
+      }
+      const models = compositeModelsByPlatform.get(entry.platform) || []
+      models.push(...entry.models)
+      compositeModelsByPlatform.set(entry.platform, models)
+    }
+    for (const [platform, models] of compositeModelsByPlatform) {
+      const conflict = findModelConflict(models)
+      if (conflict) {
+        appStore.showError(t('admin.channels.form.compositePricingConflict', {
+          platform: t('admin.groups.platforms.' + platform, catalogPlatformLabel(platform)),
+          model1: conflict[0],
+          model2: conflict[1],
+        }))
+        activeTab.value = 'basic'
         return
       }
     }
