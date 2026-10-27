@@ -40,6 +40,7 @@ func newS3Client(ctx context.Context, p s3ClientParams) (*s3.Client, error) {
 			ForceAttemptHTTP2:     true,
 			MaxIdleConns:          128,
 			MaxIdleConnsPerHost:   64,
+			MaxConnsPerHost:       32,
 			IdleConnTimeout:       90 * time.Second,
 			TLSHandshakeTimeout:   10 * time.Second,
 			ExpectContinueTimeout: time.Second,

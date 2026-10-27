@@ -144,10 +144,7 @@ async function loadContext() {
   frameReady.value = false
   bootstrapPayload.value = null
   try {
-    const [settings, keyResponse] = await Promise.all([
-      authAPI.getPublicSettings(),
-      keysAPI.list(1, 100, { status: 'active' }),
-    ])
+    const [settings, keyResponse] = await loadCanvasContextWithRetry()
     const resolved = resolvePlaygroundApiEndpoint(
       settings.api_base_url || '',
       window.location.hostname,
@@ -169,10 +166,43 @@ async function loadContext() {
     }
   } catch (cause) {
     if (!isCurrentRequest()) return
-    error.value = cause instanceof Error ? cause.message : '无法准备画布密钥'
+    error.value = canvasContextErrorMessage(cause)
   } finally {
     if (isCurrentRequest()) loading.value = false
   }
+}
+
+async function loadCanvasContextWithRetry() {
+  let lastError: unknown
+  for (const delay of [0, 800, 2000]) {
+    if (delay > 0) await wait(delay)
+    try {
+      return await Promise.all([
+        authAPI.getPublicSettings(),
+        keysAPI.list(1, 100, { status: 'active' }),
+      ])
+    } catch (cause) {
+      lastError = cause
+      if (!isRetryableCanvasContextError(cause)) throw cause
+    }
+  }
+  throw lastError
+}
+
+function wait(delay: number) {
+  return new Promise<void>((resolve) => window.setTimeout(resolve, delay))
+}
+
+function isRetryableCanvasContextError(cause: unknown) {
+  const message = cause instanceof Error ? cause.message : String(cause || '')
+  return /failed to fetch|network error|load failed|fetch failed/i.test(message)
+}
+
+function canvasContextErrorMessage(cause: unknown) {
+  if (isRetryableCanvasContextError(cause)) {
+    return '网络连接失败，画布服务暂时不可用。通常是后端正在重启或源站返回 502，请稍后重试。'
+  }
+  return cause instanceof Error ? cause.message : '无法准备画布密钥'
 }
 
 function clearBootstrapTimers() {

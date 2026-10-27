@@ -180,6 +180,10 @@ type BackupService struct {
 	storeMu sync.Mutex // 保护 store/s3Cfg 缓存
 	store   BackupObjectStore
 	s3Cfg   *BackupS3Config
+	// s3ConfigGeneration increments whenever the effective S3 credentials change.
+	// Services that reuse these credentials can compare the value to invalidate
+	// their own cached clients immediately after an administrator saves a change.
+	s3ConfigGeneration atomic.Uint64
 
 	recordsMu sync.Mutex // 保护 records 的 load/save 操作
 
@@ -445,9 +449,20 @@ func (s *BackupService) UpdateS3Config(ctx context.Context, cfg BackupS3Config) 
 	s.store = nil
 	s.s3Cfg = nil
 	s.storeMu.Unlock()
+	s.s3ConfigGeneration.Add(1)
 
 	cfg.SecretAccessKey = ""
 	return &cfg, nil
+}
+
+// S3ConfigGeneration identifies the current in-process S3 configuration. It is
+// intentionally monotonic rather than a credential fingerprint so callers do
+// not need to inspect or retain secret material.
+func (s *BackupService) S3ConfigGeneration() uint64 {
+	if s == nil {
+		return 0
+	}
+	return s.s3ConfigGeneration.Load()
 }
 
 func (s *BackupService) TestS3Connection(ctx context.Context, cfg BackupS3Config) error {

@@ -130,6 +130,58 @@ func TestUsageHandlerImageLinkStreamsOwnedObject(t *testing.T) {
 	require.Empty(t, recorder.Header().Get("Location"))
 }
 
+func TestUsageHandlerOpenImageLinkRedirectsObjectToPresignedURL(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler := NewUsageHandler(nil, nil, nil, nil)
+	handler.SetImageLinkDeps(
+		&usageImageLinkStoreStub{link: &service.UsageLogImageLink{
+			UserID:    7,
+			ObjectKey: "images/result.png",
+		}},
+		&usageImageStorageStub{
+			presignURL: "https://storage.example.test/result.png",
+		},
+	)
+	router := gin.New()
+	router.GET("/usage-images/:token", handler.OpenImageLink)
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/usage-images/token", nil))
+
+	require.Equal(t, http.StatusFound, recorder.Code)
+	require.Equal(t, "https://storage.example.test/result.png", recorder.Header().Get("Location"))
+}
+
+func TestUsageHandlerOpenImageLinkServesStoredPreviewBeforeOriginal(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler := NewUsageHandler(nil, nil, nil, nil)
+	handler.SetImageLinkDeps(
+		&usageImageLinkStoreStub{link: &service.UsageLogImageLink{
+			UserID:    7,
+			ObjectKey: "images/result.png",
+			ImageURL:  "data:image/jpeg;base64,cHJldmlldw==",
+		}},
+		&usageImageStorageStub{
+			presignURL: "https://storage.example.test/result.png",
+		},
+	)
+	router := gin.New()
+	router.GET("/usage-images/:token", handler.OpenImageLink)
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/usage-images/token", nil))
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Equal(t, "image/jpeg", recorder.Header().Get("Content-Type"))
+	require.Equal(t, "preview", recorder.Body.String())
+	require.Empty(t, recorder.Header().Get("Location"))
+
+	originalRecorder := httptest.NewRecorder()
+	router.ServeHTTP(originalRecorder, httptest.NewRequest(http.MethodGet, "/usage-images/token?full=1", nil))
+	require.Equal(t, http.StatusFound, originalRecorder.Code)
+	require.Equal(t, "https://storage.example.test/result.png", originalRecorder.Header().Get("Location"))
+}
+
 func TestUsageHandlerImageLinkAllowsAdminToOpenAnotherUsersImage(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	handler := NewUsageHandler(nil, nil, nil, nil)

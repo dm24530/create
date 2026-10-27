@@ -1,4 +1,6 @@
-export function CanvasRefreshShell() {
+import type { ReactNode } from "react";
+
+export function CanvasRefreshShell({ children }: { children?: ReactNode }) {
     return (
         <main className="relative h-full min-h-0 overflow-hidden bg-background text-foreground">
             <div
@@ -29,6 +31,7 @@ export function CanvasRefreshShell() {
                 <div className="h-4 w-10 rounded bg-current opacity-10" />
                 <div className="size-8 rounded-md bg-current opacity-10" />
             </div>
+            {children}
         </main>
     );
 }

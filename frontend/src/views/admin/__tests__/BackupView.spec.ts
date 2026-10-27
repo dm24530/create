@@ -245,6 +245,8 @@ describe('admin BackupView', () => {
     expect(wrapper.get('input[type="password"]').attributes('placeholder')).toBe(
       'admin.backup.s3.secretConfigured',
     )
+    expect(wrapper.get('input[type="password"]').attributes('autocomplete')).toBe('new-password')
+    expect(wrapper.get('input[type="password"]').attributes('data-lpignore')).toBe('true')
   })
 
   it('旧单文件记录仍使用单个下载地址', async () => {

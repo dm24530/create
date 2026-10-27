@@ -48,7 +48,6 @@ interface ImageGenerationTaskRecord {
   updatedAt: number
   attempts?: number
   deadlineAt?: number
-  nextRetryAt?: number
   request?: PersistedImageGenerationRequest
   response?: StoredImageGenerationResponse
   error?: string
@@ -60,8 +59,8 @@ const STORE_NAME = 'tasks'
 const RESPONSE_CACHE = 'sub2api-image-generation-responses-v1'
 const WORKER_URL = '/generation-sw.js'
 const WAIT_INTERVAL_MS = 750
-const WAIT_TIMEOUT_MS = 5 * 60 * 1000
-const RETRY_WINDOW_MS = 5 * 60 * 1000
+const WAIT_TIMEOUT_MS = 3 * 60 * 1000
+const TASK_DEADLINE_MS = 3 * 60 * 1000
 const HEARTBEAT_INTERVAL_MS = 15 * 1000
 
 export class ImageGenerationWaitCancelled extends Error {
@@ -72,7 +71,7 @@ export class ImageGenerationWaitCancelled extends Error {
 }
 
 export class ImageGenerationStillRunning extends Error {
-  constructor(message = '图片生成超过等待时间，任务已保留，可稍后继续查询') {
+  constructor(message = '图片生成超过 3 分钟，已停止等待') {
     super(message)
     this.name = 'ImageGenerationStillRunning'
   }
@@ -197,7 +196,7 @@ export function keepPersistentImageGenerationAlive(ids: string[]) {
   for (const id of ids) {
     if (id) heartbeatTaskIds.add(id)
   }
-  heartbeatDeadline = Math.max(heartbeatDeadline, Date.now() + RETRY_WINDOW_MS)
+  heartbeatDeadline = Math.max(heartbeatDeadline, Date.now() + TASK_DEADLINE_MS)
   if (heartbeatTimer !== null) return
   heartbeatTimer = window.setInterval(() => {
     void heartbeatTick()
@@ -305,7 +304,10 @@ export async function tryStartPersistentImageGeneration(
         createdAt: persisted.createdAt,
         updatedAt: now,
         attempts: 0,
-        deadlineAt: now + RETRY_WINDOW_MS,
+        deadlineAt: Math.min(
+          now + TASK_DEADLINE_MS,
+          persisted.createdAt + TASK_DEADLINE_MS,
+        ),
         request: persisted,
       }
     }))

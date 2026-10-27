@@ -12,10 +12,14 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"go.uber.org/zap"
 	xdraw "golang.org/x/image/draw"
 )
 
@@ -48,14 +52,23 @@ type ImageStorageURLResolver interface {
 	Exists(ctx context.Context, key string) (bool, error)
 }
 
+// ImageStorageDownloadURLResolver creates a short-lived direct object URL with
+// an attachment response. Large originals should be downloaded by the browser
+// directly instead of proxying the entire object through the application.
+type ImageStorageDownloadURLResolver interface {
+	PresignGetDownload(ctx context.Context, key, filename string) (string, error)
+}
+
 // ImageResultUploader 是 ImageStorage 的上层编排器（与具体厂商无关）：
 // 把上游生图响应里的每张图片（b64_json 解码 / url 下载）转存到对象存储，
 // 并把响应结果改写为只含短链接的紧凑 JSON，从而避免大 base64 落 Redis。
 type ImageResultUploader struct {
 	storage          ImageStorage
+	localAssets      *LocalImageAssetStore
 	httpClient       *http.Client
 	prefix           string
 	maxDownloadBytes int64
+	identities       UserStorageIdentityResolver
 }
 
 // NewImageResultUploader 构造一个 uploader；storage 为 nil 时 Rewrite 直接透传。
@@ -74,8 +87,54 @@ func NewImageResultUploader(storage ImageStorage, prefix string, maxDownloadByte
 	}
 }
 
+func (u *ImageResultUploader) SetLocalAssets(store *LocalImageAssetStore) {
+	if u == nil {
+		return
+	}
+	u.localAssets = store
+}
+
+func (u *ImageResultUploader) SetUserStorageIdentityResolver(identities UserStorageIdentityResolver) {
+	if u == nil {
+		return
+	}
+	u.identities = identities
+}
+
 func defaultImageDownloadHTTPClient() *http.Client {
-	return &http.Client{Timeout: 60 * time.Second}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	// Do not let an environment proxy bypass the socket-level SSRF checks.
+	transport.Proxy = nil
+	transport.DialContext = safeDialContext
+	return &http.Client{
+		Timeout:   60 * time.Second,
+		Transport: transport,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 5 {
+				return errors.New("too many image download redirects")
+			}
+			return validateImageDownloadURL(req.URL)
+		},
+	}
+}
+
+func validateImageDownloadURL(target *url.URL) error {
+	if target == nil {
+		return errors.New("image download URL is required")
+	}
+	switch strings.ToLower(strings.TrimSpace(target.Scheme)) {
+	case "http", "https":
+	default:
+		return fmt.Errorf("unsupported image download scheme %q", target.Scheme)
+	}
+	if target.User != nil {
+		return errors.New("image download URL must not contain credentials")
+	}
+	host := strings.TrimSpace(target.Hostname())
+	if host == "" || isBlockedHostname(host) {
+		return fmt.Errorf("image download host is not allowed: %q", host)
+	}
+	return nil
 }
 
 // Rewrite 将 result（上游生图响应 JSON）里的每张图片转存到对象存储，
@@ -117,6 +176,14 @@ func (u *ImageResultUploader) RewriteWithPreview(
 	if len(items) == 0 {
 		return result, nil
 	}
+	storageKey := "users/" + strconv.FormatInt(userID, 10)
+	if u.identities != nil {
+		resolved, err := u.identities.StorageKey(ctx, userID)
+		if err != nil {
+			return nil, err
+		}
+		storageKey = resolved
+	}
 
 	type preparedImage struct {
 		item        map[string]json.RawMessage
@@ -131,7 +198,7 @@ func (u *ImageResultUploader) RewriteWithPreview(
 		if err != nil {
 			return nil, fmt.Errorf("image %d: %w", i, err)
 		}
-		key := u.buildKey(userID, taskID, i, contentType)
+		key := u.buildKey(storageKey, taskID, i, contentType)
 		prepared[i] = preparedImage{
 			item:        item,
 			data:        data,
@@ -142,7 +209,7 @@ func (u *ImageResultUploader) RewriteWithPreview(
 
 	previewItems := make([]map[string]json.RawMessage, 0, len(prepared))
 	for i := range prepared {
-		previewData, thumbErr := buildFastImagePreview(prepared[i].data, 512)
+		previewData, thumbErr := buildFastImagePreview(prepared[i].data, 1024)
 		if thumbErr != nil {
 			continue
 		}
@@ -167,6 +234,52 @@ func (u *ImageResultUploader) RewriteWithPreview(
 		if err := onPreview(encodedJSON(previewTop)); err != nil {
 			return nil, fmt.Errorf("publish image preview: %w", err)
 		}
+	}
+
+	if u.localAssets != nil {
+		expiresAt := time.Now().UTC().Add(defaultImageTaskTTL).Unix()
+		stagedKeys := make([]string, 0, len(prepared))
+		var stageErr error
+		for i := range prepared {
+			meta, err := u.localAssets.Save(
+				ctx,
+				userID,
+				taskID,
+				prepared[i].key,
+				prepared[i].contentType,
+				expiresAt,
+				prepared[i].data,
+			)
+			if err != nil {
+				stageErr = fmt.Errorf("image %d: stage local original: %w", i, err)
+				break
+			}
+			stagedKeys = append(stagedKeys, prepared[i].key)
+			item, cloneErr := cloneImageItem(prepared[i].item)
+			if cloneErr != nil {
+				stageErr = fmt.Errorf("image %d: prepare local result: %w", i, cloneErr)
+				break
+			}
+			item["url"] = encodedJSON(u.localAssets.URL(meta.ID))
+			item["local_asset_id"] = encodedJSON(meta.ID)
+			item["object_key"] = encodedJSON(prepared[i].key)
+			delete(item, "b64_json")
+			items[i] = item
+		}
+		if stageErr == nil {
+			out, err := imageResultWithItems(top, items)
+			if err != nil {
+				return nil, err
+			}
+			return out, nil
+		}
+		for _, key := range stagedKeys {
+			_ = u.localAssets.DeleteByObjectKey(key)
+		}
+		logger.L().Warn("image_storage.local_stage_failed; falling back to direct object upload",
+			zap.String("task_id", taskID),
+			zap.Int64("user_id", userID),
+			zap.Error(stageErr))
 	}
 
 	const uploadWorkers = 3
@@ -213,6 +326,10 @@ func (u *ImageResultUploader) RewriteWithPreview(
 		return nil, firstErr
 	}
 
+	return imageResultWithItems(top, items)
+}
+
+func imageResultWithItems(top map[string]json.RawMessage, items []map[string]json.RawMessage) (json.RawMessage, error) {
 	newData, err := json.Marshal(items)
 	if err != nil {
 		return nil, fmt.Errorf("encode image response data: %w", err)
@@ -353,7 +470,14 @@ func (u *ImageResultUploader) decodeImageDataURL(rawURL string) ([]byte, string,
 }
 
 func (u *ImageResultUploader) download(ctx context.Context, rawURL string) ([]byte, string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return nil, "", fmt.Errorf("parse image download URL: %w", err)
+	}
+	if err := validateImageDownloadURL(parsed); err != nil {
+		return nil, "", err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, parsed.String(), nil)
 	if err != nil {
 		return nil, "", fmt.Errorf("build download request: %w", err)
 	}
@@ -383,11 +507,11 @@ func (u *ImageResultUploader) download(ctx context.Context, rawURL string) ([]by
 	return data, contentType, nil
 }
 
-func (u *ImageResultUploader) buildKey(userID int64, taskID string, index int, contentType string) string {
+func (u *ImageResultUploader) buildKey(storageKey, taskID string, index int, contentType string) string {
 	return fmt.Sprintf(
-		"%susers/%d/%s-%d%s",
+		"%s%s/%s-%d%s",
 		u.prefix,
-		userID,
+		storageKey,
 		taskID,
 		index,
 		extensionForContentType(contentType),

@@ -16,6 +16,7 @@ import { exportCanvasProjects } from "@/lib/canvas/canvas-export";
 import { mergeCloudCanvasProjects } from "@/lib/canvas/merge-canvas-projects";
 import { hasAgentUrlBootstrap } from "@/lib/agent/agent-url-bootstrap";
 import {
+    canvasProjectCloudFingerprint,
     deleteCloudCanvasProject,
     hydrateCloudProject,
     isCanvasCloudReady,
@@ -103,20 +104,32 @@ export default function CanvasPage() {
                     currentState.deletedProjects,
                 );
                 for (const id of merged.reuploadProjectIds) {
-                    const project = currentState.projects.find((item) => item.id === id);
+                    const project = useCanvasStore.getState().projects.find((item) => item.id === id);
                     if (!project) continue;
+                    const fingerprint = canvasProjectCloudFingerprint(project);
                     void putCloudCanvasProject(project)
                         .then((saved) => {
                             useCanvasStore.setState((state) => ({
                                 projects: state.projects.map((item) => (
                                     item.id === id
-                                        ? { ...item, cloudVersion: saved.version, cloudSyncedAt: saved.updated_at || new Date().toISOString() }
+                                        ? {
+                                            ...item,
+                                            cloudVersion: saved.version,
+                                            cloudSyncedAt: saved.updated_at || new Date().toISOString(),
+                                            cloudSyncedFingerprint: fingerprint,
+                                            cloudVersionUncertain: false,
+                                        }
                                         : item
                                 )),
                             }));
                         })
                         .catch((error) => {
                             console.warn("Failed to reupload local canvas project", id, error);
+                            if ((error as Error & { status?: number })?.status === 409) {
+                                useCanvasStore.setState((state) => ({
+                                    projects: state.projects.filter((item) => item.id !== id),
+                                }));
+                            }
                         });
                 }
             } catch (error) {

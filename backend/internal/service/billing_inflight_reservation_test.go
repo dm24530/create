@@ -486,7 +486,13 @@ func TestInflightEstimate_AccountMappingNoDBAndBoundedMemory(t *testing.T) {
 		}
 		return min
 	}
-	uniqueNames := minHeapGrowth(func(i int) string { return fmt.Sprintf("rand-%d-%d", i, time.Now().UnixNano()) })
+	// Precompute the unique names so the measurement compares cache behavior,
+	// not per-iteration string formatting and clock allocations.
+	uniqueModels := make([]string, n)
+	for i := range uniqueModels {
+		uniqueModels[i] = fmt.Sprintf("rand-%d", i)
+	}
+	uniqueNames := minHeapGrowth(func(i int) string { return uniqueModels[i] })
 	repeatedName := minHeapGrowth(func(int) string { return "rand-repeated-unpriced" })
 
 	require.Zero(t, repo.dbCalls.Load(), "no direct DB query on the request path")

@@ -131,6 +131,12 @@ func SecurityHeaders(cfg config.CSPConfig, getFrameSrcOrigins func() []string) g
 			if !directiveHasValue(finalPolicy, "media-src", "blob:") {
 				finalPolicy = addToDirective(finalPolicy, "media-src", "blob:")
 			}
+			if !directiveHasValue(finalPolicy, "connect-src", "data:") {
+				finalPolicy = addToDirective(finalPolicy, "connect-src", "data:")
+			}
+			if !directiveHasValue(finalPolicy, "connect-src", "blob:") {
+				finalPolicy = addToDirective(finalPolicy, "connect-src", "blob:")
+			}
 		}
 		if getFrameSrcOrigins != nil {
 			for _, origin := range getFrameSrcOrigins() {

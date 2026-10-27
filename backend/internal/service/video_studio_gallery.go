@@ -8,6 +8,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -95,8 +96,9 @@ type VideoStudioMediaSaver interface {
 }
 
 type VideoStudioGalleryService struct {
-	store   VideoStudioGalleryStore
-	storage VideoStudioMediaSaver
+	store      VideoStudioGalleryStore
+	storage    VideoStudioMediaSaver
+	identities UserStorageIdentityResolver
 }
 
 func NewVideoStudioGalleryService(
@@ -104,6 +106,15 @@ func NewVideoStudioGalleryService(
 	storage VideoStudioMediaSaver,
 ) *VideoStudioGalleryService {
 	return &VideoStudioGalleryService{store: store, storage: storage}
+}
+
+func (s *VideoStudioGalleryService) SetUserStorageIdentityResolver(
+	identities UserStorageIdentityResolver,
+) {
+	if s == nil {
+		return
+	}
+	s.identities = identities
 }
 
 // tempRetention 是"没存进我的作品"的临时视频保留时长，与图片共用同一份保留天数配置。
@@ -148,9 +159,16 @@ func (s *VideoStudioGalleryService) Save(
 		return nil, ErrVideoStudioGalleryQuotaExceeded
 	}
 
-	// 对象键同样只用随机 id，避免公开域名暴露用户身份。
+	storageKey := strconv.FormatInt(userID, 10)
+	if s.identities != nil {
+		resolved, err := s.identities.StorageKey(ctx, userID)
+		if err != nil {
+			return nil, err
+		}
+		storageKey = resolved
+	}
 	id := strings.ReplaceAll(uuid.NewString(), "-", "")
-	key := id + videoExtensionForContentType(contentType)
+	key := storageKey + "/" + id + videoExtensionForContentType(contentType)
 	url, err := s.storage.SaveVideo(ctx, key, contentType, data)
 	if err != nil {
 		return nil, err

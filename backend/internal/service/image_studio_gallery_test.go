@@ -110,6 +110,10 @@ type gallerySaverStub struct {
 	resolvedURLs map[string]string
 	presignCalls int
 	batchCalls   int
+	downloadURL  string
+	downloadHits int
+	existsHits   int
+	missing      map[string]bool
 }
 
 func (s *gallerySaverStub) SaveImageWithKey(
@@ -162,6 +166,23 @@ func (s *gallerySaverStub) PresignImageObject(_ context.Context, objectKey strin
 	return "https://cdn.example.com/" + strings.TrimLeft(objectKey, "/"), nil
 }
 
+func (s *gallerySaverStub) PresignImageObjectDownload(
+	_ context.Context,
+	objectKey string,
+	_ string,
+) (string, error) {
+	s.downloadHits++
+	if s.downloadURL != "" {
+		return s.downloadURL, nil
+	}
+	return "https://cdn.example.com/download/" + strings.TrimLeft(objectKey, "/"), nil
+}
+
+func (s *gallerySaverStub) ImageObjectExists(_ context.Context, objectKey string) (bool, error) {
+	s.existsHits++
+	return !s.missing[objectKey], nil
+}
+
 func (s *gallerySaverStub) PresignImageObjects(
 	_ context.Context,
 	objectKeys []string,
@@ -200,6 +221,42 @@ func TestImageStudioGalleryListResolvesStoredObjectsToCurrentPublicURLs(t *testi
 	require.Zero(t, saver.presignCalls)
 }
 
+func TestImageStudioGalleryListKeepsPendingLocalAssetURL(t *testing.T) {
+	local := NewLocalImageAssetStore(t.TempDir())
+	meta, err := local.Save(
+		context.Background(),
+		7,
+		"task-1",
+		"images/users/7/task-1-0.png",
+		"image/png",
+		time.Now().Add(time.Hour).Unix(),
+		smallPNG(t),
+	)
+	require.NoError(t, err)
+	store := &galleryStoreStub{entries: []*ImageStudioGalleryEntry{{
+		ID:        "work-1",
+		ObjectKey: meta.ObjectKey,
+		URL:       local.URL(meta.ID),
+	}}}
+	saver := &gallerySaverStub{resolvedURLs: map[string]string{
+		meta.ObjectKey: "https://gen.example.com/images/users/7/task-1-0.png",
+	}}
+	svc := NewImageStudioGalleryService(store, saver)
+	svc.SetLocalAssetStore(local)
+
+	entries, err := svc.List(context.Background(), 7, 20, nil)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	require.Equal(t, local.URL(meta.ID), entries[0].URL)
+	require.Zero(t, saver.batchCalls, "pending local assets must not be replaced by not-yet-uploaded R2 URLs")
+
+	require.NoError(t, local.MarkUploaded(meta.ID, "https://cdn.example.com/image.png"))
+	entries, err = svc.List(context.Background(), 7, 20, nil)
+	require.NoError(t, err)
+	require.Equal(t, "https://gen.example.com/images/users/7/task-1-0.png", entries[0].URL)
+	require.Equal(t, 1, saver.batchCalls)
+}
+
 // 作品记录是永久的：不再写过期时间，但要记下 object_key，删除时才知道删哪个文件。
 func TestImageStudioGallerySaveKeepsWorkPermanently(t *testing.T) {
 	store := &galleryStoreStub{}
@@ -226,6 +283,26 @@ func TestImageStudioGallerySaveKeepsWorkPermanently(t *testing.T) {
 	require.Equal(t, "images/users/42/"+entry.ID+".png", entry.ObjectKey, "记录里必须存最终对象键（带前缀）")
 	require.Equal(t, "https://cdn.example.com/users/42/thumbs/"+entry.ID+".jpg", entry.ThumbURL)
 	require.Len(t, store.entries, 1)
+}
+
+func TestImageStudioGallerySaveUsesOpaqueUserStorageKey(t *testing.T) {
+	store := &galleryStoreStub{}
+	saver := &gallerySaverStub{}
+	svc := NewImageStudioGalleryService(store, saver)
+	svc.SetUserStorageIdentityResolver(fixedUserStorageIdentityResolver{
+		key: "0123456789abcdef0123456789abcdef",
+	})
+
+	entry, err := svc.Save(
+		context.Background(), 42, "cat", "model", "1024x1024", "png",
+		"image/png", pngBytes, true,
+	)
+	require.NoError(t, err)
+	require.Equal(t, "0123456789abcdef0123456789abcdef/"+entry.ID+".png", saver.key)
+	require.Equal(t,
+		"images/0123456789abcdef0123456789abcdef/"+entry.ID+".png",
+		entry.ObjectKey,
+	)
 }
 
 func TestImageStudioGallerySaveFromURLStoresServerFetchedBytes(t *testing.T) {
@@ -275,6 +352,100 @@ func TestImageStudioGallerySaveExistingObjectDoesNotReupload(t *testing.T) {
 	require.Len(t, store.entries, 1)
 }
 
+func TestImageStudioGallerySaveExistingObjectSynchronizesLocalAssetExpiry(t *testing.T) {
+	local := NewLocalImageAssetStore(t.TempDir())
+	meta, err := local.Save(
+		context.Background(),
+		42,
+		"task-1",
+		"images/users/42/task-1-0.png",
+		"image/png",
+		time.Now().Add(time.Hour).Unix(),
+		smallPNG(t),
+	)
+	require.NoError(t, err)
+
+	store := &galleryStoreStub{}
+	svc := NewImageStudioGalleryService(store, &gallerySaverStub{retention: 7 * 24 * time.Hour})
+	svc.SetLocalAssetStore(local)
+
+	temporary, err := svc.SaveExistingObject(
+		context.Background(),
+		42,
+		meta.ObjectKey,
+		local.URL(meta.ID),
+		"a cat",
+		"gpt-image-1",
+		"1024x1024",
+		"png",
+		false,
+	)
+	require.NoError(t, err)
+	temporaryMeta, err := local.Get(meta.ID)
+	require.NoError(t, err)
+	require.Equal(t, temporary.ExpiresAt, temporaryMeta.ExpiresAt)
+
+	saved, err := svc.SaveExistingObject(
+		context.Background(),
+		42,
+		meta.ObjectKey,
+		local.URL(meta.ID),
+		"a cat",
+		"gpt-image-1",
+		"1024x1024",
+		"png",
+		true,
+	)
+	require.NoError(t, err)
+	savedMeta, err := local.Get(meta.ID)
+	require.NoError(t, err)
+	require.Zero(t, saved.ExpiresAt)
+	require.Zero(t, savedMeta.ExpiresAt)
+}
+
+func TestImageStudioGalleryPinAndUnpinUpdateLocalAssetExpiryAfterUpload(t *testing.T) {
+	local := NewLocalImageAssetStore(t.TempDir())
+	meta, err := local.Save(
+		context.Background(),
+		42,
+		"task-1",
+		"images/users/42/task-1-0.png",
+		"image/png",
+		time.Now().Add(time.Hour).Unix(),
+		smallPNG(t),
+	)
+	require.NoError(t, err)
+	require.NoError(t, local.MarkUploaded(meta.ID, "https://cdn.example.com/task-1.png"))
+
+	createdAt := time.Now().UTC().Unix()
+	store := &galleryStoreStub{entries: []*ImageStudioGalleryEntry{{
+		ID:        "work-1",
+		UserID:    42,
+		ObjectKey: meta.ObjectKey,
+		URL:       local.URL(meta.ID),
+		CreatedAt: createdAt,
+		Saved:     false,
+	}}}
+	saver := &gallerySaverStub{retention: 7 * 24 * time.Hour, resolvedURLs: map[string]string{
+		meta.ObjectKey: "https://cdn.example.com/task-1.png",
+	}}
+	svc := NewImageStudioGalleryService(store, saver)
+	svc.SetLocalAssetStore(local)
+
+	require.NoError(t, svc.Pin(context.Background(), 42, "work-1"))
+	pinned, err := local.Get(meta.ID)
+	require.NoError(t, err)
+	require.Zero(t, pinned.ExpiresAt)
+
+	store.entries[0].Saved = true
+	entry, err := svc.Unpin(context.Background(), 42, "work-1")
+	require.NoError(t, err)
+	unpinned, err := local.Get(meta.ID)
+	require.NoError(t, err)
+	require.Equal(t, entry.ExpiresAt, unpinned.ExpiresAt)
+	require.NotZero(t, unpinned.ExpiresAt)
+}
+
 func TestImageStudioGalleryReadImageFetchesOwnedEntry(t *testing.T) {
 	store := &galleryStoreStub{entries: []*ImageStudioGalleryEntry{
 		{ID: "work-1", URL: "https://cdn.example.com/work-1.png"},
@@ -310,6 +481,27 @@ func TestImageStudioGalleryThumbnailResizesAndCaches(t *testing.T) {
 
 	_, err = svc.Thumbnail(context.Background(), 7, "work-1", 120)
 	require.NoError(t, err)
+	require.Equal(t, 1, saver.fetchCalls)
+}
+
+func TestImageStudioGalleryThumbnailPrefersExistingThumbnailObject(t *testing.T) {
+	store := &galleryStoreStub{entries: []*ImageStudioGalleryEntry{
+		{
+			ID:       "work-1",
+			URL:      "https://cdn.example.com/work-1-original.png",
+			ThumbURL: "https://cdn.example.com/work-1-thumb.jpg",
+		},
+	}}
+	saver := &gallerySaverStub{
+		fetchData: []byte{0xFF, 0xD8, 0xFF, 0x00},
+		fetchType: "image/jpeg",
+	}
+	svc := NewImageStudioGalleryService(store, saver)
+
+	thumb, err := svc.Thumbnail(context.Background(), 7, "work-1", 120)
+	require.NoError(t, err)
+	require.Equal(t, saver.fetchData, thumb)
+	require.Equal(t, "https://cdn.example.com/work-1-thumb.jpg", saver.fetchedURL)
 	require.Equal(t, 1, saver.fetchCalls)
 }
 
@@ -589,6 +781,76 @@ func TestImageStudioGallerySweepDeletesObjects(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 2, n)
 	require.Equal(t, []string{"images/a.png", "videos/b.mp4"}, saver.deletedObject)
+}
+
+func TestImageStudioGalleryDownloadURLFallsBackForPendingLocalAsset(t *testing.T) {
+	local := NewLocalImageAssetStore(t.TempDir())
+	meta, err := local.Save(
+		context.Background(),
+		42,
+		"task-1",
+		"images/abcdefabcdefabcdefabcdefabcdefab/task-1-0.png",
+		"image/png",
+		time.Now().Add(time.Hour).Unix(),
+		smallPNG(t),
+	)
+	require.NoError(t, err)
+
+	store := &galleryStoreStub{entries: []*ImageStudioGalleryEntry{{
+		ID:        "work-1",
+		UserID:    42,
+		ObjectKey: meta.ObjectKey,
+		URL:       local.URL(meta.ID),
+	}}}
+	saver := &gallerySaverStub{}
+	svc := NewImageStudioGalleryService(store, saver)
+	svc.SetLocalAssetStore(local)
+
+	_, _, err = svc.DownloadURL(context.Background(), 42, "work-1", "image.png")
+	require.ErrorIs(t, err, ErrImageStudioGalleryUnavailable)
+	require.Zero(t, saver.downloadHits)
+}
+
+func TestImageStudioGalleryDownloadURLDoesNotBlockOnHeadObject(t *testing.T) {
+	store := &galleryStoreStub{entries: []*ImageStudioGalleryEntry{{
+		ID:        "work-1",
+		UserID:    42,
+		ObjectKey: "images/abcdefabcdefabcdefabcdefabcdefab/missing.png",
+		URL:       "https://cdn.example.com/missing.png",
+	}}}
+	saver := &gallerySaverStub{missing: map[string]bool{
+		"images/abcdefabcdefabcdefabcdefabcdefab/missing.png": true,
+	}}
+	svc := NewImageStudioGalleryService(store, saver)
+
+	_, url, err := svc.DownloadURL(context.Background(), 42, "work-1", "image.png")
+	require.NoError(t, err)
+	require.Contains(t, url, "/download/images/")
+	require.Equal(t, 1, saver.downloadHits)
+	require.Zero(t, saver.existsHits)
+}
+
+func TestImageStudioGalleryReadImageResolvesObjectKeyInsteadOfStaleURL(t *testing.T) {
+	store := &galleryStoreStub{entries: []*ImageStudioGalleryEntry{{
+		ID:        "work-1",
+		UserID:    42,
+		ObjectKey: "images/abcdefabcdefabcdefabcdefabcdefab/current.png",
+		URL:       "https://old.example.com/expired.png?signature=old",
+	}}}
+	saver := &gallerySaverStub{
+		fetchData: smallPNG(t),
+		fetchType: "image/png",
+		resolvedURLs: map[string]string{
+			"images/abcdefabcdefabcdefabcdefabcdefab/current.png": "https://cdn.example.com/current.png",
+		},
+	}
+	svc := NewImageStudioGalleryService(store, saver)
+
+	_, data, contentType, err := svc.ReadImage(context.Background(), 42, "work-1")
+	require.NoError(t, err)
+	require.NotEmpty(t, data)
+	require.Equal(t, "image/png", contentType)
+	require.Equal(t, "https://cdn.example.com/current.png", saver.fetchedURL)
 }
 
 func smallPNG(t *testing.T) []byte {

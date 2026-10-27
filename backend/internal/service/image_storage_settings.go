@@ -93,6 +93,10 @@ type ImageStorageSettingService struct {
 	encryptor   SecretEncryptor
 	backup      *BackupService
 	factory     ImageStorageFactory
+	identities  UserStorageIdentityResolver
+	localAssets *LocalImageAssetStore
+	localOnce   sync.Once
+	uploading   sync.Map
 
 	// mirrorCache 记住"远端地址 → 已转存地址"，避免每次请求都重新下载。
 	mirrorMu    sync.Mutex
@@ -109,6 +113,103 @@ type ImageStorageSettingService struct {
 	enabled          bool
 	galleryRetention time.Duration
 	studioQuota      int
+	// backupConfigGeneration is the BackupService credential generation used to
+	// build the current uploader. Saving backup S3 settings invalidates the image
+	// client immediately instead of waiting for the 5-second consistency window.
+	backupConfigGeneration uint64
+}
+
+func (s *ImageStorageSettingService) SetLocalAssetStore(store *LocalImageAssetStore) {
+	if s == nil || store == nil {
+		return
+	}
+	s.localAssets = store
+	s.localOnce.Do(func() {
+		go s.localAssetUploadLoop()
+	})
+}
+
+func (s *ImageStorageSettingService) SetUserStorageIdentityResolver(
+	identities UserStorageIdentityResolver,
+) {
+	if s == nil {
+		return
+	}
+	s.identities = identities
+}
+
+func (s *ImageStorageSettingService) StorageKeyForUser(ctx context.Context, userID int64) (string, error) {
+	if s == nil || s.identities == nil {
+		return "", ErrUserStorageKeyUnavailable
+	}
+	return s.identities.StorageKey(ctx, userID)
+}
+
+func (s *ImageStorageSettingService) localAssetUploadLoop() {
+	const (
+		workerLimit = 4
+		pollDelay   = 2 * time.Second
+	)
+	slots := make(chan struct{}, workerLimit)
+	for {
+		pending, err := s.localAssets.ListPending(100)
+		if err != nil {
+			logger.L().Warn("image_storage.local_asset_scan_failed", zap.Error(err))
+		}
+		for _, meta := range pending {
+			if meta == nil {
+				continue
+			}
+			if _, loaded := s.uploading.LoadOrStore(meta.ID, struct{}{}); loaded {
+				continue
+			}
+			slots <- struct{}{}
+			go func(item *LocalImageAssetMetadata) {
+				defer func() {
+					s.uploading.Delete(item.ID)
+					<-slots
+				}()
+				uploader, enabled := s.resolve()
+				if !enabled || uploader == nil || uploader.storage == nil {
+					return
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+				defer cancel()
+				s.uploadLocalAsset(ctx, item, uploader)
+			}(meta)
+		}
+		time.Sleep(pollDelay)
+	}
+}
+
+func (s *ImageStorageSettingService) uploadLocalAsset(
+	ctx context.Context,
+	item *LocalImageAssetMetadata,
+	uploader *ImageResultUploader,
+) {
+	if s == nil || s.localAssets == nil || item == nil || uploader == nil || uploader.storage == nil {
+		return
+	}
+	_, data, readErr := s.localAssets.Read(item.ID)
+	if readErr != nil {
+		if !errors.Is(readErr, ErrLocalImageAssetNotFound) {
+			logger.L().Warn("image_storage.local_asset_read_failed",
+				zap.String("asset_id", item.ID), zap.Error(readErr))
+		}
+		return
+	}
+	remoteURL, saveErr := uploader.storage.Save(ctx, item.ObjectKey, item.ContentType, data)
+	if saveErr != nil {
+		logger.L().Warn("image_storage.local_asset_upload_failed",
+			zap.String("asset_id", item.ID),
+			zap.String("object_key", item.ObjectKey),
+			zap.Error(saveErr))
+		return
+	}
+	if markErr := s.localAssets.MarkUploaded(item.ID, remoteURL); markErr != nil {
+		logger.L().Warn("image_storage.local_asset_mark_uploaded_failed",
+			zap.String("asset_id", item.ID), zap.Error(markErr))
+	}
 }
 
 func NewImageStorageSettingService(
@@ -146,6 +247,21 @@ func (s *ImageStorageSettingService) SaveImage(ctx context.Context, key, content
 func (s *ImageStorageSettingService) SaveImageWithKey(
 	ctx context.Context, key, contentType string, data []byte,
 ) (string, string, error) {
+	return s.saveImageWithKey(ctx, key, contentType, data, true)
+}
+
+// SaveImageWithFullKey writes the exact key supplied by the caller. Canvas
+// objects use this so their public path is canvas/{storage_key}/... rather than
+// being forced under the generic images/ prefix.
+func (s *ImageStorageSettingService) SaveImageWithFullKey(
+	ctx context.Context, key, contentType string, data []byte,
+) (string, string, error) {
+	return s.saveImageWithKey(ctx, key, contentType, data, false)
+}
+
+func (s *ImageStorageSettingService) saveImageWithKey(
+	ctx context.Context, key, contentType string, data []byte, applyPrefix bool,
+) (string, string, error) {
 	if reason := s.unusableReason(ctx); reason != nil {
 		return "", "", reason
 	}
@@ -153,7 +269,10 @@ func (s *ImageStorageSettingService) SaveImageWithKey(
 	if !enabled || uploader == nil || uploader.storage == nil {
 		return "", "", ErrImageStorageIncomplete
 	}
-	key = uploader.prefix + strings.TrimLeft(strings.TrimSpace(key), "/")
+	key = strings.TrimLeft(strings.TrimSpace(key), "/")
+	if applyPrefix {
+		key = uploader.prefix + key
+	}
 	if storage, ok := uploader.storage.(ImageStorageWithExpiry); ok {
 		url, err := storage.SaveWithExpiry(ctx, key, contentType, data, s.GalleryRetention())
 		return url, key, err
@@ -241,7 +360,44 @@ func (s *ImageStorageSettingService) FetchImageURL(ctx context.Context, rawURL s
 	if s == nil || rawURL == "" {
 		return nil, "", ErrImageStorageIncomplete
 	}
+	if s.localAssets != nil {
+		if assetID, ok := s.localAssets.AssetIDFromURL(rawURL); ok {
+			meta, metaErr := s.localAssets.Get(assetID)
+			if metaErr != nil {
+				return nil, "", metaErr
+			}
+			if meta.Uploaded && strings.TrimSpace(meta.RemoteURL) != "" {
+				rawURL = strings.TrimSpace(meta.RemoteURL)
+				if remoteURL, resolveErr := s.PresignImageObject(ctx, meta.ObjectKey); resolveErr == nil && remoteURL != "" {
+					rawURL = remoteURL
+				}
+			} else {
+				data, contentType, _, readErr := s.localAssets.ReadURL(ctx, rawURL)
+				if readErr == nil && len(data) > 0 {
+					return data, contentType, nil
+				}
+				if readErr != nil && !errors.Is(readErr, ErrLocalImageAssetNotFound) {
+					return nil, "", readErr
+				}
+				// MarkUploaded writes metadata before removing the local file. A
+				// reader that raced that transition must re-check metadata so it
+				// can follow the uploaded object instead of returning a 404.
+				latest, latestErr := s.localAssets.Get(assetID)
+				if latestErr != nil || !latest.Uploaded || strings.TrimSpace(latest.RemoteURL) == "" {
+					return nil, "", ErrLocalImageAssetNotFound
+				}
+				rawURL = strings.TrimSpace(latest.RemoteURL)
+				if remoteURL, resolveErr := s.PresignImageObject(ctx, latest.ObjectKey); resolveErr == nil && remoteURL != "" {
+					rawURL = remoteURL
+				}
+			}
+		}
+	}
 	if reason := s.unusableReason(ctx); reason != nil {
+		if strings.HasPrefix(rawURL, "http://") || strings.HasPrefix(rawURL, "https://") {
+			downloader := NewImageResultUploader(nil, "", s.maxDownloadBytes(), nil)
+			return downloader.download(ctx, rawURL)
+		}
 		return nil, "", reason
 	}
 	uploader, enabled := s.resolve()
@@ -249,6 +405,14 @@ func (s *ImageStorageSettingService) FetchImageURL(ctx context.Context, rawURL s
 		return nil, "", ErrImageStorageIncomplete
 	}
 	return uploader.download(ctx, rawURL)
+}
+
+func (s *ImageStorageSettingService) maxDownloadBytes() int64 {
+	cfg, err := s.effectiveConfig(context.Background())
+	if err == nil && cfg != nil && cfg.MaxDownloadByte > 0 {
+		return cfg.MaxDownloadByte
+	}
+	return defaultImageMaxDownloadBytes
 }
 
 func (s *ImageStorageSettingService) PresignImageObject(ctx context.Context, objectKey string) (string, error) {
@@ -264,6 +428,25 @@ func (s *ImageStorageSettingService) PresignImageObject(ctx context.Context, obj
 		return "", ErrImageStorageIncomplete
 	}
 	return resolver.PresignGet(ctx, objectKey)
+}
+
+func (s *ImageStorageSettingService) PresignImageObjectDownload(
+	ctx context.Context,
+	objectKey string,
+	filename string,
+) (string, error) {
+	if reason := s.unusableReason(ctx); reason != nil {
+		return "", reason
+	}
+	uploader, enabled := s.resolve()
+	if !enabled || uploader == nil || uploader.storage == nil {
+		return "", ErrImageStorageIncomplete
+	}
+	resolver, ok := uploader.storage.(ImageStorageDownloadURLResolver)
+	if !ok {
+		return "", ErrImageStorageIncomplete
+	}
+	return resolver.PresignGetDownload(ctx, objectKey, filename)
 }
 
 func (s *ImageStorageSettingService) PresignImageObjects(
@@ -318,6 +501,10 @@ func (s *ImageStorageSettingService) resolve() (*ImageResultUploader, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := time.Now()
+	if s.resolved && s.backup != nil &&
+		s.backupConfigGeneration != s.backup.S3ConfigGeneration() {
+		s.resolved = false
+	}
 	if s.resolved && now.Sub(s.resolvedAt) < imageStorageSettingsCacheTTL {
 		return s.uploader, s.enabled
 	}
@@ -328,6 +515,9 @@ func (s *ImageStorageSettingService) resolve() (*ImageResultUploader, bool) {
 	s.uploader, s.enabled = nil, false
 	s.galleryRetention = ImageStudioGalleryTTL
 	s.studioQuota = StudioWorksQuotaPerUser
+	if s.backup != nil {
+		s.backupConfigGeneration = s.backup.S3ConfigGeneration()
+	}
 
 	cfg, err := s.effectiveConfig(ctx)
 	if err != nil {
@@ -353,6 +543,8 @@ func (s *ImageStorageSettingService) resolve() (*ImageResultUploader, bool) {
 		return nil, false
 	}
 	s.uploader = NewImageResultUploader(storage, cfg.Prefix, cfg.MaxDownloadByte, nil)
+	s.uploader.SetLocalAssets(s.localAssets)
+	s.uploader.SetUserStorageIdentityResolver(s.identities)
 	s.enabled = true
 	if cfg.GalleryRetentionDays > 0 {
 		s.galleryRetention = time.Duration(cfg.GalleryRetentionDays) * 24 * time.Hour
@@ -366,6 +558,11 @@ func (s *ImageStorageSettingService) DeleteObject(ctx context.Context, key strin
 	key = strings.TrimSpace(key)
 	if key == "" {
 		return nil
+	}
+	if s.localAssets != nil {
+		if err := s.localAssets.DeleteByObjectKey(key); err != nil {
+			return err
+		}
 	}
 	uploader, enabled := s.resolve()
 	if !enabled || uploader == nil || uploader.storage == nil {

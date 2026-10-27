@@ -259,21 +259,25 @@
         </template>
 
         <template #cell-image_url="{ row }">
-          <button
-            v-if="safeImageURL(row.image_url)"
-            type="button"
-            data-testid="open-usage-image"
-            class="inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-medium text-primary-600 transition-colors hover:bg-primary-50 disabled:cursor-wait disabled:opacity-60 dark:text-primary-400 dark:hover:bg-primary-900/30"
-            :disabled="openingImageKey === imageRowKey(row)"
-            @click="openUsageImage(row)"
-          >
-            <Icon
-              :name="openingImageKey === imageRowKey(row) ? 'refresh' : 'externalLink'"
-              size="xs"
-              :class="{ 'animate-spin': openingImageKey === imageRowKey(row) }"
-            />
-            <span>{{ openingImageKey === imageRowKey(row) ? '加载中' : '打开图片' }}</span>
-          </button>
+          <div v-if="safeImageURL(row.image_url)" class="flex items-center gap-2">
+            <button
+              type="button"
+              data-testid="open-usage-image"
+              class="inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-medium text-primary-600 transition-colors hover:bg-primary-50 dark:text-primary-400 dark:hover:bg-primary-900/30"
+              @click="openUsageImage(row)"
+            >
+              <Icon name="externalLink" size="xs" />
+              <span>打开图片</span>
+            </button>
+            <a
+              v-if="usagePublicImagePath(safeImageURL(row.image_url))"
+              data-testid="open-usage-image-original"
+              :href="`${usagePublicImagePath(safeImageURL(row.image_url))}?full=1`"
+              target="_blank"
+              rel="noopener noreferrer"
+              class="text-xs text-gray-500 transition-colors hover:text-primary-600 dark:text-gray-400 dark:hover:text-primary-400"
+            >原图</a>
+          </div>
           <span v-else class="text-sm text-gray-400 dark:text-gray-500">-</span>
         </template>
 
@@ -587,7 +591,6 @@ import DataTable from '@/components/common/DataTable.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import IpGeoCell from '@/components/common/IpGeoCell.vue'
 import Icon from '@/components/icons/Icon.vue'
-import usageAPI from '@/api/usage'
 import { fetchBatch, getEntry } from '@/utils/ipGeoLookup'
 import type { AdminUsageLog } from '@/types'
 import type { Column } from '@/components/common/types'
@@ -622,7 +625,6 @@ const emit = defineEmits<{
 const { t } = useI18n()
 const appStore = useAppStore()
 const copiedRequestId = ref<string | null>(null)
-const openingImageKey = ref('')
 const showAccountBilling = props.showAccountBilling
 const showUpstreamEndpoint = props.showUpstreamEndpoint
 const ipGeoBatchLoading = ref(false)
@@ -744,8 +746,6 @@ const safeImageURL = (value?: string | null): string => {
   }
 }
 
-const imageRowKey = (row: AdminUsageLog): string => row.request_id || row.image_url || ''
-
 const usageImageAPIPath = (value: string): string => {
   try {
     const parsed = new URL(value, window.location.origin)
@@ -759,37 +759,19 @@ const usageImageAPIPath = (value: string): string => {
   }
 }
 
+const usagePublicImagePath = (value: string): string => {
+  const apiPath = usageImageAPIPath(value)
+  const prefix = '/usage/image-links/'
+  if (!apiPath.startsWith(prefix)) return ''
+  return `/api/v1/usage-images/${apiPath.slice(prefix.length)}`
+}
+
 const openUsageImage = async (row: AdminUsageLog) => {
   const sourceURL = safeImageURL(row.image_url)
   if (!sourceURL) return
 
-  const apiPath = usageImageAPIPath(sourceURL)
-  if (!apiPath) {
-    window.open(sourceURL, '_blank', 'noopener,noreferrer')
-    return
-  }
-
-  const key = imageRowKey(row)
-  if (openingImageKey.value === key) return
-  const popup = window.open('about:blank', '_blank')
-  if (!popup) {
-    appStore.showError('浏览器阻止了图片窗口，请允许弹出窗口后重试')
-    return
-  }
-  popup.opener = null
-  openingImageKey.value = key
-  try {
-    const blob = await usageAPI.getImageLink(apiPath)
-    if (!blob.size) throw new Error('图片内容为空')
-    const objectURL = URL.createObjectURL(blob)
-    popup.location.replace(objectURL)
-    window.setTimeout(() => URL.revokeObjectURL(objectURL), 60_000)
-  } catch (error) {
-    popup.close()
-    appStore.showError(error instanceof Error ? error.message : '打开图片失败')
-  } finally {
-    if (openingImageKey.value === key) openingImageKey.value = ''
-  }
+  const publicPath = usagePublicImagePath(sourceURL)
+  window.open(publicPath || sourceURL, '_blank', 'noopener,noreferrer')
 }
 
 // 超过 1 分钟简化为 "Xm Ys"，免去人工换算（超过 1 小时再进位为 "Xh Ym"）

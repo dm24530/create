@@ -75,6 +75,7 @@ type Handlers struct {
 	VideoStudioGallery *VideoStudioGalleryHandler
 	VideoInspiration   *VideoInspirationHandler
 	Canvas             *CanvasHandler
+	LocalImageAsset    *LocalImageAssetHandler
 }
 
 // BuildInfo contains build-time information

@@ -41,3 +41,13 @@ func TestUsageLogImageLinkStoreUpsert(t *testing.T) {
 	}))
 	require.NoError(t, mock.ExpectationsWereMet())
 }
+
+func TestUsageLogImageLinkTokenIsRandomAndOpaque(t *testing.T) {
+	first := newUsageLogImageLinkToken()
+	second := newUsageLogImageLinkToken()
+
+	require.Len(t, first, 32)
+	require.Len(t, second, 32)
+	require.NotEqual(t, first, second)
+	require.Regexp(t, `^[a-f0-9]{32}$`, first)
+}

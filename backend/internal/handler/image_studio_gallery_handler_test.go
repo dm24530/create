@@ -84,8 +84,9 @@ func (s *galleryHandlerStoreStub) Delete(context.Context, int64, string) error {
 }
 
 type galleryHandlerSaverStub struct {
-	saveCalls  int
-	fetchCalls int
+	saveCalls   int
+	fetchCalls  int
+	downloadURL string
 }
 
 func (s *galleryHandlerSaverStub) SaveImageWithKey(
@@ -116,6 +117,48 @@ func (s *galleryHandlerSaverStub) FetchImageURL(
 ) ([]byte, string, error) {
 	s.fetchCalls++
 	return nil, "", nil
+}
+
+func (s *galleryHandlerSaverStub) PresignImageObjectDownload(
+	context.Context,
+	string,
+	string,
+) (string, error) {
+	return s.downloadURL, nil
+}
+
+func TestImageStudioGalleryDownloadURLReturnsSignedAttachment(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	galleryStore := &galleryHandlerStoreStub{entries: []*service.ImageStudioGalleryEntry{
+		{
+			ID:        "work-1",
+			UserID:    7,
+			ObjectKey: "images/work-1.jpg",
+			Format:    "jpg",
+		},
+	}}
+	saver := &galleryHandlerSaverStub{
+		downloadURL: "https://cdn.example.com/images/work-1.jpg?response-content-disposition=attachment",
+	}
+	h := NewImageStudioGalleryHandler(service.NewImageStudioGalleryService(galleryStore, saver), nil)
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set(string(middleware2.ContextKeyUser), middleware2.AuthSubject{UserID: 7})
+		c.Next()
+	})
+	router.GET("/api/v1/image-studio/gallery/:id/download-url", h.DownloadURL)
+
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/image-studio/gallery/work-1/download-url",
+		nil,
+	)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Contains(t, recorder.Body.String(), saver.downloadURL)
+	require.Contains(t, recorder.Body.String(), "image-work-1.jpg")
 }
 
 func TestImageStudioGallerySaveFromTaskUsesPersistedObject(t *testing.T) {

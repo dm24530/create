@@ -25,14 +25,13 @@ import (
 )
 
 type AsyncImageHandler struct {
-	tasks                *service.ImageTaskService
-	openAI               *OpenAIGatewayHandler
-	gateway              *GatewayHandler
-	apiKeys              imageTaskAPIKeyLoader
-	imageLinks           service.UsageLogImageLinkStore
-	execute              func(platform string, c *gin.Context)
-	imageTaskRetryDelays []time.Duration
-	running              sync.Map
+	tasks      *service.ImageTaskService
+	openAI     *OpenAIGatewayHandler
+	gateway    *GatewayHandler
+	apiKeys    imageTaskAPIKeyLoader
+	imageLinks service.UsageLogImageLinkStore
+	execute    func(platform string, c *gin.Context)
+	running    sync.Map
 }
 
 type imageTaskAPIKeyLoader interface {
@@ -53,7 +52,6 @@ const geminiAsyncImageMaxInlineImages = 14
 const geminiAsyncImageMaxInlineBytes = 12 << 20
 const geminiAsyncImageMaxSingleInlineBytes = 8 << 20
 
-var defaultImageTaskRetryDelays = []time.Duration{10 * time.Second, 30 * time.Second}
 var errGeminiImageOutputMissing = errors.New("gemini response contained no image output")
 
 type asyncGeminiTaskEnvelope struct {
@@ -667,148 +665,77 @@ func (h *AsyncImageHandler) run(taskID, platform string, taskCtx *gin.Context, r
 		return
 	}
 	usageRequestID := imageTaskUsageRequestID(taskCtx.Request.Context())
-	taskRecord, taskRecordErr := h.tasks.GetRecord(context.Background(), taskID)
-	retryDelays := h.effectiveImageTaskRetryDelays()
-	activeCtx, activeRecorder := taskCtx, recorder
-
-	for attempt := 0; attempt <= len(retryDelays); attempt++ {
-		var retryCancel context.CancelFunc
-		if attempt > 0 {
-			delay := retryDelays[attempt-1]
-			logger.L().Warn("image_task.transient_retry_scheduled",
-				zap.String("task_id", taskID),
-				zap.Int("attempt", attempt+1),
-				zap.Duration("delay", delay),
-			)
-			if !waitForImageTaskRetry(taskCtx.Request.Context(), delay) {
-				return
-			}
-			if taskRecordErr != nil || taskRecord == nil || h.apiKeys == nil {
-				h.failTask(taskID, http.StatusServiceUnavailable, imageTaskErrorPayload(
-					"api_error",
-					"image task retry context is unavailable",
-				))
-				return
-			}
-			retryCtx, retryRecorder, cancelRetry, err := h.contextFromTask(taskRecord)
-			if err != nil {
-				h.failTask(taskID, http.StatusServiceUnavailable, imageTaskErrorPayload("api_error", err.Error()))
-				return
-			}
-			activeCtx, activeRecorder, retryCancel = retryCtx, retryRecorder, cancelRetry
-		}
-
-		h.execute(platform, activeCtx)
-		attemptCtxErr := activeCtx.Request.Context().Err()
-		if retryCancel != nil {
-			retryCancel()
-		}
-		if leaseLost.Load() {
-			// Another worker may own the task now; never let this stale execution
-			// overwrite the authoritative result.
-			return
-		}
-		if !h.renewTaskLease(taskID) {
-			leaseLost.Store(true)
-			return
-		}
-		body := bytes.TrimSpace(activeRecorder.Body.Bytes())
-		if isGeminiAsyncImagePlatform(platform) {
-			normalized, normalizeErr := normalizeGeminiImageTaskResult(body)
-			if normalizeErr != nil {
-				statusCode := activeRecorder.Code
-				if statusCode == 0 {
-					statusCode = http.StatusOK
-				}
-				preview := strings.Join(strings.Fields(string(body)), " ")
-				if len(preview) > 300 {
-					preview = preview[:300]
-				}
-				logger.L().Warn("image_task.gemini_invalid_response",
-					zap.String("task_id", taskID),
-					zap.Int("status_code", statusCode),
-					zap.String("content_type", activeRecorder.Header().Get("Content-Type")),
-					zap.Int("body_bytes", len(body)),
-					zap.String("body_preview", preview),
-					zap.Error(normalizeErr),
-				)
-				var message string
-				if errors.Is(normalizeErr, errGeminiImageOutputMissing) {
-					message = "Gemini image upstream returned no image output"
-				} else if statusCode == http.StatusRequestEntityTooLarge {
-					message = "Gemini image request is too large; retry with fewer or smaller reference images"
-				} else if len(body) == 0 {
-					message = "Gemini image upstream returned an empty response"
-				} else {
-					message = "Gemini image upstream returned a non-JSON response"
-				}
-				h.failTask(taskID, http.StatusBadGateway, imageTaskErrorPayload("api_error", message))
-				return
-			}
-			body = normalized
-		}
-		if attemptCtxErr != nil && len(body) == 0 {
-			h.failTask(taskID, http.StatusGatewayTimeout, imageTaskErrorPayload("timeout_error", "image generation task timed out"))
-			return
-		}
-		statusCode := activeRecorder.Code
-		if statusCode == 0 {
-			statusCode = http.StatusOK
-		}
-		if statusCode >= http.StatusOK && statusCode < http.StatusMultipleChoices {
-			if isGeminiAsyncImagePlatform(platform) && geminiImageTaskResponseHasError(body) {
-				h.failTask(taskID, http.StatusBadGateway, extractImageTaskError(body))
-				return
-			}
-			if len(body) == 0 || !json.Valid(body) {
-				h.failTask(taskID, http.StatusBadGateway, imageTaskErrorPayload("api_error", "upstream returned an invalid image response"))
-				return
-			}
-			if err := h.tasks.Complete(context.Background(), taskID, statusCode, json.RawMessage(body)); err != nil {
-				logger.L().Error("image_task.complete_store_failed", zap.String("task_id", taskID), zap.Error(err))
-				return
-			}
-			h.recordUsageImageLink(taskID, usageRequestID)
-			return
-		}
-		if attempt < len(retryDelays) && isRetryableImageTaskResponse(statusCode, body) {
-			continue
-		}
-		h.failTask(taskID, statusCode, extractImageTaskError(body))
+	h.execute(platform, taskCtx)
+	attemptCtxErr := taskCtx.Request.Context().Err()
+	if leaseLost.Load() {
+		// Another worker may own the task now; never let this stale execution
+		// overwrite the authoritative result.
 		return
 	}
-}
-
-func (h *AsyncImageHandler) effectiveImageTaskRetryDelays() []time.Duration {
-	if h != nil && h.imageTaskRetryDelays != nil {
-		return h.imageTaskRetryDelays
+	if !h.renewTaskLease(taskID) {
+		leaseLost.Store(true)
+		return
 	}
-	return defaultImageTaskRetryDelays
-}
-
-func isRetryableImageTaskResponse(statusCode int, body []byte) bool {
-	switch statusCode {
-	case http.StatusRequestTimeout, http.StatusTooEarly, http.StatusTooManyRequests:
-		return true
+	body := bytes.TrimSpace(recorder.Body.Bytes())
+	if isGeminiAsyncImagePlatform(platform) {
+		normalized, normalizeErr := normalizeGeminiImageTaskResult(body)
+		if normalizeErr != nil {
+			statusCode := recorder.Code
+			if statusCode == 0 {
+				statusCode = http.StatusOK
+			}
+			preview := strings.Join(strings.Fields(string(body)), " ")
+			if len(preview) > 300 {
+				preview = preview[:300]
+			}
+			logger.L().Warn("image_task.gemini_invalid_response",
+				zap.String("task_id", taskID),
+				zap.Int("status_code", statusCode),
+				zap.String("content_type", recorder.Header().Get("Content-Type")),
+				zap.Int("body_bytes", len(body)),
+				zap.String("body_preview", preview),
+				zap.Error(normalizeErr),
+			)
+			var message string
+			if errors.Is(normalizeErr, errGeminiImageOutputMissing) {
+				message = "Gemini image upstream returned no image output"
+			} else if statusCode == http.StatusRequestEntityTooLarge {
+				message = "Gemini image request is too large; retry with fewer or smaller reference images"
+			} else if len(body) == 0 {
+				message = "Gemini image upstream returned an empty response"
+			} else {
+				message = "Gemini image upstream returned a non-JSON response"
+			}
+			h.failTask(taskID, http.StatusBadGateway, imageTaskErrorPayload("api_error", message))
+			return
+		}
+		body = normalized
 	}
-	if statusCode >= http.StatusInternalServerError {
-		return true
+	if attemptCtxErr != nil && len(body) == 0 {
+		h.failTask(taskID, http.StatusGatewayTimeout, imageTaskErrorPayload("timeout_error", "image generation task timed out"))
+		return
 	}
-	return strings.Contains(strings.ToLower(string(body)), "upstream service temporarily unavailable")
-}
-
-func waitForImageTaskRetry(ctx context.Context, delay time.Duration) bool {
-	if delay <= 0 {
-		return ctx == nil || ctx.Err() == nil
+	statusCode := recorder.Code
+	if statusCode == 0 {
+		statusCode = http.StatusOK
 	}
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return false
-	case <-timer.C:
-		return true
+	if statusCode >= http.StatusOK && statusCode < http.StatusMultipleChoices {
+		if isGeminiAsyncImagePlatform(platform) && geminiImageTaskResponseHasError(body) {
+			h.failTask(taskID, http.StatusBadGateway, extractImageTaskError(body))
+			return
+		}
+		if len(body) == 0 || !json.Valid(body) {
+			h.failTask(taskID, http.StatusBadGateway, imageTaskErrorPayload("api_error", "upstream returned an invalid image response"))
+			return
+		}
+		if err := h.tasks.Complete(context.Background(), taskID, statusCode, json.RawMessage(body)); err != nil {
+			logger.L().Error("image_task.complete_store_failed", zap.String("task_id", taskID), zap.Error(err))
+			return
+		}
+		h.recordUsageImageLink(taskID, usageRequestID)
+		return
 	}
+	h.failTask(taskID, statusCode, extractImageTaskError(body))
 }
 
 func imageTaskUsageRequestID(ctx context.Context) string {
@@ -835,6 +762,11 @@ func withImageTaskUsageRequestID(ctx context.Context, requestID string) context.
 	}
 }
 
+func isAsyncImageTaskContext(ctx context.Context) bool {
+	async, _ := ctx.Value(ctxkey.AsyncImageTask).(bool)
+	return async
+}
+
 func (h *AsyncImageHandler) recordUsageImageLink(taskID, usageRequestID string) {
 	if h == nil || h.imageLinks == nil || strings.TrimSpace(usageRequestID) == "" {
 		return
@@ -847,6 +779,9 @@ func (h *AsyncImageHandler) recordUsageImageLink(taskID, usageRequestID string) 
 	imageURL := firstImageTaskResultURL(task.Result)
 	if imageURL == "" {
 		return
+	}
+	if previewURL := firstImageTaskResultPreviewURL(task.Result); previewURL != "" {
+		imageURL = previewURL
 	}
 	objectKey := firstImageTaskResultObjectKey(task.Result)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -887,6 +822,31 @@ func firstImageTaskResultURL(result json.RawMessage) string {
 			if value := strings.TrimSpace(candidate); value != "" {
 				return value
 			}
+		}
+	}
+	return ""
+}
+
+func firstImageTaskResultPreviewURL(result json.RawMessage) string {
+	var payload struct {
+		PreviewDataURL string `json:"preview_data_url"`
+		PreviewURL     string `json:"preview_url"`
+		Data           []struct {
+			PreviewDataURL string `json:"preview_data_url"`
+			PreviewURL     string `json:"preview_url"`
+		} `json:"data"`
+	}
+	if len(result) == 0 || json.Unmarshal(result, &payload) != nil {
+		return ""
+	}
+	candidates := []string{payload.PreviewDataURL, payload.PreviewURL}
+	if len(payload.Data) > 0 {
+		candidates = append(candidates, payload.Data[0].PreviewDataURL, payload.Data[0].PreviewURL)
+	}
+	for _, candidate := range candidates {
+		if value := strings.TrimSpace(candidate); strings.HasPrefix(value, "data:image/") ||
+			strings.HasPrefix(value, "http://") || strings.HasPrefix(value, "https://") {
+			return value
 		}
 	}
 	return ""

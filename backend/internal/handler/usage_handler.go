@@ -143,6 +143,71 @@ func (h *UsageHandler) ImageLink(c *gin.Context) {
 	writeExpiredUsageImage(c)
 }
 
+// OpenImageLink is a capability URL for browser image viewers. The opaque,
+// expiring link token is the authorization; this avoids buffering the entire
+// object in the frontend and redirects directly to object storage.
+func (h *UsageHandler) OpenImageLink(c *gin.Context) {
+	if h.imageLinks == nil {
+		writeExpiredUsageImage(c)
+		return
+	}
+	link, err := h.imageLinks.GetByToken(c.Request.Context(), strings.TrimSpace(c.Param("token")))
+	if err != nil {
+		if errors.Is(err, service.ErrUsageLogImageLinkNotFound) {
+			writeExpiredUsageImage(c)
+			return
+		}
+		response.ErrorFrom(c, err)
+		return
+	}
+	imageURL := strings.TrimSpace(link.ImageURL)
+	if c.Query("full") != "1" && strings.HasPrefix(imageURL, "data:image/") {
+		writeInlineUsageDataURL(c, imageURL)
+		return
+	}
+	if h.imageStorage != nil && strings.TrimSpace(link.ObjectKey) != "" {
+		url, urlErr := h.imageStorage.PresignImageObject(c.Request.Context(), link.ObjectKey)
+		if urlErr != nil {
+			response.ErrorFrom(c, urlErr)
+			return
+		}
+		c.Header("Cache-Control", "private, max-age=300")
+		c.Redirect(http.StatusFound, url)
+		return
+	}
+	if strings.HasPrefix(imageURL, "http://") || strings.HasPrefix(imageURL, "https://") {
+		c.Header("Cache-Control", "private, max-age=300")
+		c.Redirect(http.StatusFound, imageURL)
+		return
+	}
+	if strings.HasPrefix(imageURL, "data:image/") {
+		writeInlineUsageDataURL(c, imageURL)
+		return
+	}
+	writeExpiredUsageImage(c)
+}
+
+func writeInlineUsageDataURL(c *gin.Context, imageURL string) {
+	comma := strings.IndexByte(imageURL, ',')
+	header := ""
+	if comma > len("data:") {
+		header = imageURL[len("data:"):comma]
+	}
+	if !strings.HasSuffix(strings.ToLower(header), ";base64") {
+		writeExpiredUsageImage(c)
+		return
+	}
+	contentType := strings.TrimSpace(strings.SplitN(header, ";", 2)[0])
+	data, err := base64.StdEncoding.DecodeString(imageURL[comma+1:])
+	if err != nil || len(data) == 0 || !strings.HasPrefix(strings.ToLower(contentType), "image/") {
+		writeExpiredUsageImage(c)
+		return
+	}
+	c.Header("Cache-Control", "private, max-age=300")
+	c.Header("Content-Disposition", "inline")
+	c.Data(http.StatusOK, contentType, data)
+}
+
 func writeExpiredUsageImage(c *gin.Context) {
 	c.Data(http.StatusGone, "text/html; charset=utf-8", []byte(
 		"<html><body style=\"font-family:sans-serif;padding:24px\">"+

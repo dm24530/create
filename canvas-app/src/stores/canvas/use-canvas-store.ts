@@ -22,6 +22,8 @@ export type CanvasProject = {
     viewport: ViewportTransform;
     cloudVersion?: number;
     cloudSyncedAt?: string;
+    cloudVersionUncertain?: boolean;
+    cloudSyncedFingerprint?: string;
 };
 
 export type CanvasDeletedProject = {
@@ -58,12 +60,17 @@ export function flushCanvasStorePersistence() {
     if (!pendingPersistWrite) return;
     const pending = pendingPersistWrite;
     pendingPersistWrite = null;
+    writeLocalStorageBackup(pending.name, pending.value);
     void localForageStorage.setItem(pending.name, pending.value);
 }
 
 const canvasStorage: PersistStorage<CanvasStore> = {
     getItem: async (name) => {
         let value = await localForageStorage.getItem(name);
+        const backup = readLocalStorageBackup(name);
+        if (backup && persistedStateFreshness(backup) > persistedStateFreshness(value)) {
+            value = backup;
+        }
         if (!value) {
             let migratedFrom = "";
             for (const legacyKey of legacyCanvasStorageKeys(LEGACY_CANVAS_STORE_KEY)) {
@@ -74,6 +81,7 @@ const canvasStorage: PersistStorage<CanvasStore> = {
                 }
             }
             if (value) {
+                writeLocalStorageBackup(name, value);
                 await localForageStorage.setItem(name, value);
                 if (migratedFrom) await localForageStorage.removeItem(migratedFrom);
             }
@@ -98,8 +106,52 @@ const canvasStorage: PersistStorage<CanvasStore> = {
             flushCanvasStorePersistence();
         }, 100);
     },
-    removeItem: (name) => localForageStorage.removeItem(name),
+    removeItem: (name) => {
+        if (typeof window !== "undefined") {
+            try {
+                window.localStorage.removeItem(name);
+            } catch {
+                // Ignore storage cleanup failures; IndexedDB cleanup below remains authoritative.
+            }
+        }
+        return localForageStorage.removeItem(name);
+    },
 };
+
+function readLocalStorageBackup(name: string) {
+    if (typeof window === "undefined") return null;
+    try {
+        return window.localStorage.getItem(name);
+    } catch {
+        return null;
+    }
+}
+
+function writeLocalStorageBackup(name: string, value: string) {
+    if (typeof window === "undefined") return;
+    try {
+        window.localStorage.setItem(name, value);
+    } catch {
+        // IndexedDB remains the primary store when the browser quota rejects the backup.
+    }
+}
+
+function persistedStateFreshness(value: string | null) {
+    if (!value) return 0;
+    try {
+        const state = (JSON.parse(value) as StorageValue<CanvasStore>).state;
+        let newest = 0;
+        for (const project of state.projects || []) {
+            newest = Math.max(newest, Date.parse(project.updatedAt || "") || 0);
+        }
+        for (const project of state.deletedProjects || []) {
+            newest = Math.max(newest, Date.parse(project.deletedAt || "") || 0);
+        }
+        return newest;
+    } catch {
+        return 0;
+    }
+}
 
 export const useCanvasStore = create<CanvasStore>()(
     persist(

@@ -42,8 +42,10 @@ var canvasIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
 type CanvasAssetStorage interface {
 	SaveImageWithKey(ctx context.Context, key, contentType string, data []byte) (string, string, error)
+	SaveImageWithFullKey(ctx context.Context, key, contentType string, data []byte) (string, string, error)
 	DeleteObject(ctx context.Context, key string) error
 	PresignImageObject(ctx context.Context, objectKey string) (string, error)
+	FetchImageURL(ctx context.Context, rawURL string) ([]byte, string, error)
 }
 
 type canvasQueryRower interface {
@@ -51,8 +53,9 @@ type canvasQueryRower interface {
 }
 
 type CanvasHandler struct {
-	db      *sql.DB
-	storage CanvasAssetStorage
+	db         *sql.DB
+	storage    CanvasAssetStorage
+	identities service.UserStorageIdentityResolver
 }
 
 type CanvasProjectSummary struct {
@@ -92,8 +95,12 @@ type putCanvasProjectRequest struct {
 	Version int             `json:"version"`
 }
 
-func NewCanvasHandler(db *sql.DB, storage *service.ImageStorageSettingService) *CanvasHandler {
-	return &CanvasHandler{db: db, storage: storage}
+func NewCanvasHandler(
+	db *sql.DB,
+	storage *service.ImageStorageSettingService,
+	identities service.UserStorageIdentityResolver,
+) *CanvasHandler {
+	return &CanvasHandler{db: db, storage: storage, identities: identities}
 }
 
 func (h *CanvasHandler) ListProjects(c *gin.Context) {
@@ -336,7 +343,16 @@ func (h *CanvasHandler) PutProject(c *gin.Context) {
 		RETURNING version, updated_at
 	`, projectID, userID, title, string(request.Graph), request.Version).Scan(&version, &updatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
-		response.Error(c, http.StatusConflict, "画布已在其他设备更新，请刷新后重试")
+		currentVersion := 0
+		_ = h.db.QueryRowContext(ctx, `
+			SELECT version FROM canvas_projects WHERE id = $1 AND user_id = $2
+		`, projectID, userID).Scan(&currentVersion)
+		logger.L().Warn("canvas.project_version_conflict",
+			zap.Int64("user_id", userID),
+			zap.String("project_id", projectID),
+			zap.Int("client_version", request.Version),
+			zap.Int("current_version", currentVersion))
+		response.Error(c, http.StatusConflict, "画布版本已变化，请刷新后重试")
 		return
 	}
 	if err != nil {
@@ -412,19 +428,34 @@ func (h *CanvasHandler) UploadAsset(c *gin.Context) {
 		response.NotFound(c, "画布项目不存在")
 		return
 	}
-	file, header, err := c.Request.FormFile("file")
-	if err != nil {
-		response.BadRequest(c, "缺少画布资产文件")
-		return
+	var data []byte
+	var contentType string
+	var filename string
+	var err error
+	file, header, fileErr := c.Request.FormFile("file")
+	if fileErr == nil {
+		defer func() { _ = file.Close() }()
+		data, err = io.ReadAll(io.LimitReader(file, maxCanvasAssetBytes+1))
+		if err != nil || len(data) == 0 || len(data) > maxCanvasAssetBytes {
+			response.BadRequest(c, "画布资产文件为空或过大")
+			return
+		}
+		filename = header.Filename
+		contentType = strings.TrimSpace(header.Header.Get("Content-Type"))
+	} else {
+		sourceURL := strings.TrimSpace(c.PostForm("source_url"))
+		if sourceURL == "" {
+			response.BadRequest(c, "缺少画布资产文件")
+			return
+		}
+		data, contentType, err = h.storage.FetchImageURL(c.Request.Context(), sourceURL)
+		if err != nil || len(data) == 0 || len(data) > maxCanvasAssetBytes {
+			response.BadRequest(c, "拉取画布资产失败或文件过大")
+			return
+		}
+		filename = "remote-image"
 	}
-	defer func() { _ = file.Close() }()
-	data, err := io.ReadAll(io.LimitReader(file, maxCanvasAssetBytes+1))
-	if err != nil || len(data) == 0 || len(data) > maxCanvasAssetBytes {
-		response.BadRequest(c, "画布资产文件为空或过大")
-		return
-	}
-	contentType := strings.TrimSpace(header.Header.Get("Content-Type"))
-	if contentType == "" {
+	if strings.TrimSpace(contentType) == "" {
 		contentType = http.DetectContentType(data)
 	}
 	if !isCanvasMimeType(contentType) {
@@ -439,9 +470,14 @@ func (h *CanvasHandler) UploadAsset(c *gin.Context) {
 	}
 
 	assetID := strings.ReplaceAll(uuid.NewString(), "-", "")
-	extension := canvasFileExtension(header.Filename, contentType)
-	objectKey := canvasAssetObjectKey(userID, projectID, assetID, extension)
-	url, storedKey, err := h.storage.SaveImageWithKey(c.Request.Context(), objectKey, contentType, data)
+	extension := canvasFileExtension(filename, contentType)
+	storageKey, err := h.userStorageKey(c.Request.Context(), userID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	objectKey := canvasAssetObjectKey(storageKey, projectID, assetID, extension)
+	url, storedKey, err := h.storage.SaveImageWithFullKey(c.Request.Context(), objectKey, contentType, data)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
@@ -457,8 +493,8 @@ func (h *CanvasHandler) UploadAsset(c *gin.Context) {
 				thumbType = http.DetectContentType(thumbData)
 			}
 			thumbExtension := canvasFileExtension("", thumbType)
-			thumbKey := canvasAssetThumbKey(userID, projectID, assetID, thumbExtension)
-			thumbURL, storedThumbKey, _ = h.storage.SaveImageWithKey(c.Request.Context(), thumbKey, thumbType, thumbData)
+			thumbKey := canvasAssetThumbKey(storageKey, projectID, assetID, thumbExtension)
+			thumbURL, storedThumbKey, _ = h.storage.SaveImageWithFullKey(c.Request.Context(), thumbKey, thumbType, thumbData)
 		}
 	}
 	tx, err := h.db.BeginTx(c.Request.Context(), nil)
@@ -813,6 +849,15 @@ func (h *CanvasHandler) userID(c *gin.Context) (int64, bool) {
 	return subject.UserID, true
 }
 
+func (h *CanvasHandler) userStorageKey(ctx context.Context, userID int64) (string, error) {
+	if h.identities != nil {
+		return h.identities.StorageKey(ctx, userID)
+	}
+	// Tests and legacy callers that only construct the handler struct keep the
+	// numeric fallback. Production wiring always supplies the resolver.
+	return strconv.FormatInt(userID, 10), nil
+}
+
 func canvasFileExtension(filename, contentType string) string {
 	ext := strings.ToLower(filepath.Ext(filename))
 	if ext != "" && len(ext) <= 8 {
@@ -865,10 +910,10 @@ func canvasPage(c *gin.Context, defaultLimit, maxLimit int) (int, int) {
 	return limit, offset
 }
 
-func canvasAssetObjectKey(userID int64, projectID, assetID, extension string) string {
-	return fmt.Sprintf("canvas/users/%d/projects/%s/assets/%s%s", userID, projectID, assetID, extension)
+func canvasAssetObjectKey(storageKey, projectID, assetID, extension string) string {
+	return fmt.Sprintf("canvas/%s/%s/assets/%s%s", storageKey, projectID, assetID, extension)
 }
 
-func canvasAssetThumbKey(userID int64, projectID, assetID, extension string) string {
-	return fmt.Sprintf("canvas/users/%d/projects/%s/thumbs/%s%s", userID, projectID, assetID, extension)
+func canvasAssetThumbKey(storageKey, projectID, assetID, extension string) string {
+	return fmt.Sprintf("canvas/%s/%s/thumbs/%s%s", storageKey, projectID, assetID, extension)
 }

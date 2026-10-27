@@ -243,6 +243,38 @@ func TestImageStorageSettingsRefreshAcrossInstances(t *testing.T) {
 	require.Equal(t, "https://new.example.com", (*built)[1].PublicBaseURL)
 }
 
+func TestImageStorageSettingsRefreshImmediatelyAfterBackupCredentialsChange(t *testing.T) {
+	svc, repo, built := newImageStorageFixture(t, config.ImageStorageConfig{})
+	ctx := context.Background()
+	seedBackupS3(t, repo, BackupS3Config{
+		Endpoint: "https://old.r2.cloudflarestorage.com", Region: "auto",
+		Bucket: "backup-bucket", AccessKeyID: "old-ak", SecretAccessKey: "old-sk",
+		Prefix: "backups/",
+	})
+	_, err := svc.Update(ctx, ImageStorageSettings{
+		Enabled: true, ReuseBackupS3: true, Prefix: "images/",
+	})
+	require.NoError(t, err)
+	_, enabled := svc.resolve()
+	require.True(t, enabled)
+	require.Len(t, *built, 1)
+	require.Equal(t, "old-sk", (*built)[0].SecretAccessKey)
+
+	_, err = svc.backup.UpdateS3Config(ctx, BackupS3Config{
+		Endpoint: "https://new.r2.cloudflarestorage.com", Region: "auto",
+		Bucket: "backup-bucket", AccessKeyID: "new-ak", SecretAccessKey: "new-sk",
+		Prefix: "backups/",
+	})
+	require.NoError(t, err)
+
+	_, enabled = svc.resolve()
+	require.True(t, enabled)
+	require.Len(t, *built, 2, "backup credential changes must invalidate the reused image client")
+	require.Equal(t, "https://new.r2.cloudflarestorage.com", (*built)[1].Endpoint)
+	require.Equal(t, "new-ak", (*built)[1].AccessKeyID)
+	require.Equal(t, "new-sk", (*built)[1].SecretAccessKey)
+}
+
 func TestImageStorageSettingsOwnCredentialsAreEncryptedAndMasked(t *testing.T) {
 	svc, repo, built := newImageStorageFixture(t, config.ImageStorageConfig{})
 	ctx := context.Background()

@@ -2,9 +2,10 @@ package handler
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"path"
-	"strconv"
 	"strings"
 	"time"
 
@@ -51,16 +52,23 @@ func (h *GatewayHandler) recordUsageImageLink(
 	if h.imageStorage != nil {
 		data, contentType, ok := h.usageImageBytes(linkCtx, result.ImageOutputs, imageURL)
 		if ok {
-			key := path.Join("usage", "users", strconv.FormatInt(apiKey.UserID, 10),
-				sanitizeUsageImageRequestID(requestID)+imageExtension(contentType))
-			if resolvedURL, storedKey, err := h.imageStorage.SaveImageWithKey(linkCtx, key, contentType, data); err == nil {
-				imageURL = resolvedURL
-				objectKey = storedKey
-			} else {
-				logger.L().Warn("usage_image_link.persist_failed",
+			storageKey, storageErr := h.imageStorage.StorageKeyForUser(linkCtx, apiKey.UserID)
+			if storageErr != nil {
+				logger.L().Warn("usage_image_link.storage_key_failed",
 					zap.Int64("user_id", apiKey.UserID),
 					zap.String("request_id", requestID),
-					zap.Error(err))
+					zap.Error(storageErr))
+			} else {
+				key := usageImageObjectKey(storageKey, requestID, contentType)
+				if resolvedURL, storedKey, err := h.imageStorage.SaveImageWithKey(linkCtx, key, contentType, data); err == nil {
+					imageURL = resolvedURL
+					objectKey = storedKey
+				} else {
+					logger.L().Warn("usage_image_link.persist_failed",
+						zap.Int64("user_id", apiKey.UserID),
+						zap.String("request_id", requestID),
+						zap.Error(err))
+				}
 			}
 		}
 	}
@@ -109,9 +117,12 @@ func (h *GatewayHandler) usageImageBytes(
 	return data, contentType, true
 }
 
-func sanitizeUsageImageRequestID(value string) string {
-	replacer := strings.NewReplacer(":", "_", "/", "_", "\\", "_", "..", "_")
-	return replacer.Replace(strings.TrimSpace(value))
+func usageImageObjectKey(storageKey, requestID, contentType string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(requestID)))
+	return path.Join(
+		strings.TrimSpace(storageKey),
+		"usage-"+hex.EncodeToString(sum[:])+imageExtension(contentType),
+	)
 }
 
 func imageExtension(contentType string) string {

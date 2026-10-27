@@ -45,33 +45,53 @@ export async function resolveMetadataReferences(metadata: CanvasNodeMetadata) {
 export async function hydrateCanvasImages(nodes: CanvasNodeData[]) {
     return Promise.all(
         nodes.map(async (node) => {
-            const metadata = node.metadata;
-            const content = metadata?.content;
-            if ((node.type === CanvasNodeType.Video || node.type === CanvasNodeType.Audio) && metadata?.storageKey) return { ...node, metadata: { ...metadata, content: await resolveMediaUrl(metadata.storageKey, content) } };
-            if (node.type !== CanvasNodeType.Image || !metadata || !content) return node;
-            const images = await Promise.all(
-                (metadata.images || []).map(async (image) => {
-                    if (!image.content) return image;
-                    void ensureImagePreview(image.storageKey);
-                    return { ...image, content: await resolveImageUrl(image.storageKey, image.content) };
-                }),
-            );
-            if (metadata.storageKey) {
-                void ensureImagePreview(metadata.storageKey);
-                return { ...node, metadata: { ...metadata, content: await resolveImageUrl(metadata.storageKey, content), images } };
+            try {
+                const metadata = node.metadata;
+                const content = metadata?.content;
+                if ((node.type === CanvasNodeType.Video || node.type === CanvasNodeType.Audio) && metadata?.storageKey) {
+                    const resolved = await resolveMediaUrl(metadata.storageKey, content).catch(() => content);
+                    return { ...node, metadata: { ...metadata, content: resolved } };
+                }
+                if (node.type !== CanvasNodeType.Image || !metadata || !content) return node;
+                const images = await Promise.all(
+                    (metadata.images || []).map(async (image) => {
+                        if (!image.content) return image;
+                        void ensureImagePreview(image.storageKey);
+                        const resolved = await resolveImageUrl(image.storageKey, image.content).catch(() => image.content);
+                        return { ...image, content: resolved };
+                    }),
+                );
+                if (metadata.storageKey) {
+                    void ensureImagePreview(metadata.storageKey);
+                    const resolved = await resolveImageUrl(metadata.storageKey, content).catch(() => content);
+                    return { ...node, metadata: { ...metadata, content: resolved, images } };
+                }
+                if (!content.startsWith("data:image/")) return node;
+                try {
+                    return { ...node, metadata: { ...metadata, ...imageMetadata(await uploadImage(content)) } };
+                } catch {
+                    return node;
+                }
+            } catch {
+                return node;
             }
-            if (!content.startsWith("data:image/")) return node;
-            return { ...node, metadata: { ...metadata, ...imageMetadata(await uploadImage(content)) } };
         }),
     );
 }
 
 export async function hydrateAssistantImages(sessions: CanvasAssistantSession[]) {
     const hydrateItem = async <T extends { dataUrl?: string; storageKey?: string }>(item: T) => {
-        if (item.storageKey) return { ...item, dataUrl: await resolveImageUrl(item.storageKey, item.dataUrl) };
+        if (item.storageKey) {
+            const dataUrl = await resolveImageUrl(item.storageKey, item.dataUrl).catch(() => item.dataUrl);
+            return { ...item, dataUrl };
+        }
         if (item.dataUrl?.startsWith("data:image/")) {
-            const image = await uploadImage(item.dataUrl);
-            return { ...item, dataUrl: image.url, storageKey: image.storageKey };
+            try {
+                const image = await uploadImage(item.dataUrl);
+                return { ...item, dataUrl: image.url, storageKey: image.storageKey };
+            } catch {
+                return item;
+            }
         }
         return item;
     };

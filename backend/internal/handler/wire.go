@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"database/sql"
+
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/handler/admin"
 	"github.com/Wei-Shaw/sub2api/internal/securityaudit"
@@ -164,6 +166,14 @@ func ProvideBatchImageHandler(
 	return h
 }
 
+func ProvideCanvasHandler(
+	db *sql.DB,
+	storage *service.ImageStorageSettingService,
+	identities service.UserStorageIdentityResolver,
+) *CanvasHandler {
+	return NewCanvasHandler(db, storage, identities)
+}
+
 // ProvideSystemHandler creates admin.SystemHandler with UpdateService
 func ProvideSystemHandler(updateService *service.UpdateService, lockService *service.SystemOperationLockService) *admin.SystemHandler {
 	return admin.NewSystemHandler(updateService, lockService)
@@ -217,6 +227,7 @@ func ProvideHandlers(
 	videoStudioGalleryHandler *VideoStudioGalleryHandler,
 	videoInspirationHandler *VideoInspirationHandler,
 	canvasHandler *CanvasHandler,
+	localImageAssetHandler *LocalImageAssetHandler,
 	imageLinks service.UsageLogImageLinkStore,
 	imageStorage *service.ImageStorageSettingService,
 	_ *service.IdempotencyCoordinator,
@@ -252,6 +263,7 @@ func ProvideHandlers(
 		VideoStudioGallery: videoStudioGalleryHandler,
 		VideoInspiration:   videoInspirationHandler,
 		Canvas:             canvasHandler,
+		LocalImageAsset:    localImageAssetHandler,
 	}
 }
 
@@ -289,7 +301,8 @@ var ProviderSet = wire.NewSet(
 	NewImageStudioGalleryHandler,
 	NewVideoStudioGalleryHandler,
 	NewVideoInspirationHandler,
-	NewCanvasHandler,
+	ProvideCanvasHandler,
+	NewLocalImageAssetHandler,
 
 	// Admin handlers
 	admin.NewDashboardHandler,

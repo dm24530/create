@@ -153,24 +153,9 @@ const baseImageRow = {
 }
 
 describe('admin UsageTable tooltip', () => {
-  it('opens a protected usage image with authenticated API fetch', async () => {
+  it('opens the public capability URL without buffering the whole image first', async () => {
     usageAPIMocks.getImageLink.mockReset()
-    usageAPIMocks.getImageLink.mockResolvedValue(new Blob(['image'], { type: 'image/png' }))
-    const popup = {
-      opener: window,
-      close: vi.fn(),
-      location: { replace: vi.fn() },
-    }
-    vi.spyOn(window, 'open').mockReturnValue(popup as unknown as Window)
-    const createObjectURL = vi.fn(() => 'blob:usage-image')
-    Object.defineProperty(URL, 'createObjectURL', {
-      configurable: true,
-      value: createObjectURL,
-    })
-    Object.defineProperty(URL, 'revokeObjectURL', {
-      configurable: true,
-      value: vi.fn(),
-    })
+    const open = vi.spyOn(window, 'open').mockReturnValue(null)
 
     const wrapper = mount(UsageTable, {
       props: {
@@ -182,13 +167,18 @@ describe('admin UsageTable tooltip', () => {
     })
     const button = wrapper.get('[data-testid="open-usage-image"]')
     expect(button.text()).toContain('打开图片')
+    expect(wrapper.get('[data-testid="open-usage-image-original"]').attributes('href'))
+      .toBe('/api/v1/usage-images/token?full=1')
 
     await button.trigger('click')
     await flushPromises()
 
-    expect(usageAPIMocks.getImageLink).toHaveBeenCalledWith('/usage/image-links/token')
-    expect(popup.location.replace).toHaveBeenCalledWith('blob:usage-image')
-    expect(createObjectURL).toHaveBeenCalled()
+    expect(usageAPIMocks.getImageLink).not.toHaveBeenCalled()
+    expect(open).toHaveBeenCalledWith(
+      '/api/v1/usage-images/token',
+      '_blank',
+      'noopener,noreferrer',
+    )
   })
 
   it('shows output TPS in the latency cell using total duration', () => {

@@ -1,6 +1,10 @@
-import type { CanvasNodeData, CanvasNodeTypeId } from "@/types/canvas";
+import type { CanvasNodeData } from "@/types/canvas";
 import { CanvasNodeType } from "@/types/canvas";
 import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
+import {
+  canvasProjectCloudFingerprint,
+  projectGraphForCloud,
+} from "@/lib/canvas/canvas-cloud-content";
 import { createImageThumbnail } from "@/lib/image-thumbnail";
 import { getImageBlob } from "@/services/image-storage";
 import { getMediaBlob } from "@/services/file-storage";
@@ -110,33 +114,11 @@ export async function putCloudCanvasProject(project: CanvasProject) {
   );
 }
 
-export function putCloudCanvasProjectKeepalive(project: CanvasProject) {
-  if (!accessToken) return;
-  const body = JSON.stringify({
-    title: project.title,
-    graph: projectGraphForCloud(project),
-    version: project.cloudVersion || 0,
-  });
-  // The Fetch keepalive body limit is 64 KiB. Large canvases must use a
-  // regular request so the browser is not guaranteed to reject the flush.
-  if (new Blob([body]).size > 60 * 1024) {
-    void putCloudCanvasProject(project).catch(() => undefined);
-    return;
-  }
-  void fetch(`/api/v1/canvas/projects/${encodeURIComponent(project.id)}`, {
-    method: "PUT",
-    keepalive: true,
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/json",
-    },
-    body,
-  }).catch(() => undefined);
-}
-
 export async function deleteCloudCanvasProject(id: string) {
   await cloudRequest(`/projects/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
+
+export { canvasProjectCloudFingerprint, projectGraphForCloud };
 
 export async function uploadCloudCanvasAsset(input: {
   projectId: string;
@@ -162,6 +144,27 @@ export async function uploadCloudCanvasAsset(input: {
   });
 }
 
+export async function uploadCloudCanvasAssetFromURL(input: {
+  projectId: string;
+  nodeId: string;
+  kind: "image" | "video" | "audio";
+  sourceUrl: string;
+  width?: number;
+  height?: number;
+}) {
+  const form = new FormData();
+  form.append("project_id", input.projectId);
+  form.append("node_id", input.nodeId);
+  form.append("kind", input.kind);
+  form.append("source_url", input.sourceUrl);
+  form.append("width", String(input.width || 0));
+  form.append("height", String(input.height || 0));
+  return cloudRequest<CloudCanvasAsset>("/assets", {
+    method: "POST",
+    body: form,
+  });
+}
+
 export async function deleteCloudCanvasAsset(id: string) {
   await cloudRequest(`/assets/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
@@ -178,43 +181,62 @@ export async function uploadPendingCanvasAssets(
   onUploaded: (result: CanvasAssetUploadResult) => void,
 ) {
   const tasks: Array<() => Promise<void>> = [];
+  const isRemoteURL = (value?: string) => Boolean(value && /^https?:\/\//i.test(value));
   for (const node of nodes) {
     const metadata = node.metadata;
-    if (node.type === CanvasNodeType.Image && metadata?.storageKey && !metadata.cloudAssetId) {
+    if (!metadata) continue;
+    const hasImageEntries = Boolean(metadata.images?.length);
+    if (node.type === CanvasNodeType.Image && !hasImageEntries && !metadata.cloudAssetId && (metadata.storageKey || isRemoteURL(metadata.content))) {
       tasks.push(async () => {
-        const blob = await getImageBlob(metadata.storageKey!);
-        if (!blob) return;
-        const thumbnail = await createImageThumbnail(blob).catch(() => undefined);
-        const asset = await uploadCloudCanvasAsset({
-          projectId,
-          nodeId: node.id,
-          kind: "image",
-          file: blob,
-          filename: canvasFilename(node.id, blob),
-          thumbnail,
-          width: metadata.naturalWidth,
-          height: metadata.naturalHeight,
-        });
+        const blob = metadata.storageKey ? await getImageBlob(metadata.storageKey) : undefined;
+        const asset = blob
+          ? await uploadCloudCanvasAsset({
+              projectId,
+              nodeId: node.id,
+              kind: "image",
+              file: blob,
+              filename: canvasFilename(node.id, blob),
+              thumbnail: await createImageThumbnail(blob).catch(() => undefined),
+              width: metadata.naturalWidth,
+              height: metadata.naturalHeight,
+            })
+          : await uploadCloudCanvasAssetFromURL({
+              projectId,
+              nodeId: node.id,
+              kind: "image",
+              sourceUrl: metadata.content || "",
+              width: metadata.naturalWidth,
+              height: metadata.naturalHeight,
+            });
+        if (!asset) return;
         onUploaded({ nodeId: node.id, asset });
       });
     }
-    for (const image of metadata?.images || []) {
-      if (!image.storageKey || image.cloudAssetId) continue;
+    for (const image of metadata.images || []) {
+      if (image.cloudAssetId || (!image.storageKey && !isRemoteURL(image.content))) continue;
       const imageID = image.id;
       tasks.push(async () => {
-        const blob = await getImageBlob(image.storageKey!);
-        if (!blob) return;
-        const thumbnail = await createImageThumbnail(blob).catch(() => undefined);
-        const asset = await uploadCloudCanvasAsset({
-          projectId,
-          nodeId: node.id,
-          kind: "image",
-          file: blob,
-          filename: canvasFilename(imageID, blob),
-          thumbnail,
-          width: image.naturalWidth,
-          height: image.naturalHeight,
-        });
+        const blob = image.storageKey ? await getImageBlob(image.storageKey) : undefined;
+        const asset = blob
+          ? await uploadCloudCanvasAsset({
+              projectId,
+              nodeId: node.id,
+              kind: "image",
+              file: blob,
+              filename: canvasFilename(imageID, blob),
+              thumbnail: await createImageThumbnail(blob).catch(() => undefined),
+              width: image.naturalWidth,
+              height: image.naturalHeight,
+            })
+          : await uploadCloudCanvasAssetFromURL({
+              projectId,
+              nodeId: node.id,
+              kind: "image",
+              sourceUrl: image.content || "",
+              width: image.naturalWidth,
+              height: image.naturalHeight,
+            });
+        if (!asset) return;
         onUploaded({ nodeId: node.id, imageId: imageID, asset });
       });
     }
@@ -267,9 +289,24 @@ function canvasFilename(id: string, blob: Blob, fallback = ".png") {
 }
 
 export function hydrateCloudProject(record: CloudCanvasProject): CanvasProject {
+  const project = hydrateCloudProjectState(record);
+  return {
+    ...project,
+    cloudSyncedFingerprint: canvasProjectCloudFingerprint(project),
+  };
+}
+
+function hydrateCloudProjectState(record: CloudCanvasProject): CanvasProject {
   const graph = record.graph || {};
   const assetMap = new Map(record.assets.map((asset) => [asset.id, asset]));
-  const nodes = hydrateCloudNodes(graph.nodes || [], assetMap);
+  const assetsByNode = new Map<string, CloudCanvasAsset[]>();
+  for (const asset of record.assets) {
+    if (!asset.node_id) continue;
+    const items = assetsByNode.get(asset.node_id) || [];
+    items.push(asset);
+    assetsByNode.set(asset.node_id, items);
+  }
+  const nodes = hydrateCloudNodes(graph.nodes || [], assetMap, assetsByNode);
   return {
     id: record.id,
     title: record.title || graph.title || "Untitled",
@@ -286,42 +323,42 @@ export function hydrateCloudProject(record: CloudCanvasProject): CanvasProject {
   };
 }
 
-export function projectGraphForCloud(project: CanvasProject) {
-  return {
-    nodes: project.nodes.map(sanitizeNodeForCloud),
-    connections: project.connections,
-    chatSessions: project.chatSessions,
-    activeChatId: project.activeChatId,
-    backgroundMode: project.backgroundMode,
-    showImageInfo: project.showImageInfo,
-    viewport: project.viewport,
-    createdAt: project.createdAt,
-    updatedAt: project.updatedAt,
-  };
+export function cloudCanvasProjectFingerprint(project: CloudCanvasProject) {
+  return canvasProjectCloudFingerprint(hydrateCloudProjectState(project));
 }
 
-function hydrateCloudNodes(nodes: CanvasNodeData[], assets: Map<string, CloudCanvasAsset>) {
+function hydrateCloudNodes(
+  nodes: CanvasNodeData[],
+  assets: Map<string, CloudCanvasAsset>,
+  assetsByNode: Map<string, CloudCanvasAsset[]>,
+) {
   return nodes.map((node) => {
-    const hydratedImages = node.metadata?.images?.map((image) => {
-      const asset = image.cloudAssetId ? assets.get(image.cloudAssetId) : undefined;
+    const nodeAssets = assetsByNode.get(node.id) || [];
+    const hydratedImages = node.metadata?.images?.map((image, index) => {
+      const asset = (image.cloudAssetId ? assets.get(image.cloudAssetId) : undefined)
+        || nodeAssets[index]
+        || (nodeAssets.length === 1 ? nodeAssets[0] : undefined);
       if (!asset) return image;
-      const previewURL = asset.thumb_url || asset.url;
+      const previewURL = asset.thumb_url || asset.url || image.cloudPreviewURL || image.content;
+      const content = asset.url || previewURL || image.content;
       return {
         ...image,
-        content: asset.url,
-        cloudURL: asset.url,
+        cloudAssetId: asset.id,
+        content,
+        cloudURL: asset.url || image.cloudURL,
         cloudPreviewURL: previewURL,
         cloudSyncState: "uploaded" as const,
       };
     });
     const primaryImage = hydratedImages?.find((image) => image.id === node.metadata?.primaryImageId)
-      || hydratedImages?.find((image) => image.cloudAssetId);
+      || hydratedImages?.find((image) => image.cloudAssetId || image.content);
     const cloudAssetId = node.metadata?.cloudAssetId as string | undefined;
-    const asset = cloudAssetId ? assets.get(cloudAssetId) : undefined;
+    const asset = (cloudAssetId ? assets.get(cloudAssetId) : undefined)
+      || nodeAssets[0];
     if (!asset && !primaryImage) return { ...node, metadata: { ...node.metadata, images: hydratedImages } };
     const resolvedAsset = asset || (primaryImage?.cloudAssetId ? assets.get(primaryImage.cloudAssetId) : undefined);
     const previewURL = primaryImage?.cloudPreviewURL || resolvedAsset?.thumb_url || resolvedAsset?.url || "";
-    const fullURL = primaryImage?.cloudURL || resolvedAsset?.url || node.metadata?.content || "";
+    const fullURL = primaryImage?.cloudURL || primaryImage?.content || resolvedAsset?.url || node.metadata?.content || "";
     return {
       ...node,
       metadata: {
@@ -337,33 +374,4 @@ function hydrateCloudNodes(nodes: CanvasNodeData[], assets: Map<string, CloudCan
       },
     };
   });
-}
-
-function sanitizeNodeForCloud(node: CanvasNodeData): CanvasNodeData {
-  if (!isMediaNode(node.type)) return node;
-  const metadata = node.metadata || {};
-  const cloudURL = typeof metadata.cloudURL === "string" ? metadata.cloudURL : "";
-  const cloudPreviewURL = typeof metadata.cloudPreviewURL === "string" ? metadata.cloudPreviewURL : "";
-  const content = cloudPreviewURL || cloudURL || (
-    typeof metadata.content === "string" && !metadata.content.startsWith("blob:") && !metadata.content.startsWith("data:")
-      ? metadata.content
-      : ""
-  );
-  return {
-    ...node,
-    metadata: {
-      ...metadata,
-      content,
-      images: metadata.images?.map((image) => ({
-        ...image,
-        content: image.cloudPreviewURL || image.cloudURL || (
-          !image.content?.startsWith("blob:") && !image.content?.startsWith("data:") ? image.content : ""
-        ),
-      })),
-    },
-  };
-}
-
-function isMediaNode(type: CanvasNodeTypeId) {
-  return type === CanvasNodeType.Image || type === CanvasNodeType.Video || type === CanvasNodeType.Audio;
 }

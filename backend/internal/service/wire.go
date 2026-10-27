@@ -697,6 +697,8 @@ func ProvideImageStorageSettingService(
 	backup *BackupService,
 	factory ImageStorageFactory,
 	cfg *config.Config,
+	identities UserStorageIdentityResolver,
+	localAssets *LocalImageAssetStore,
 ) *ImageStorageSettingService {
 	if cfg.ImageStorage.Enabled && !cfg.ImageStorage.Active() {
 		// 列出具体缺失的键。若这些键其实已在环境变量里设过，说明它们没被读进来，
@@ -704,7 +706,10 @@ func ProvideImageStorageSettingService(
 		logger.L().Warn("image_storage.enabled is true in config but object storage is not fully configured; configure it in the admin UI or complete the config file",
 			zap.Strings("missing_keys", cfg.ImageStorage.MissingCredentialKeys()))
 	}
-	return NewImageStorageSettingService(settingRepo, encryptor, backup, factory, cfg.ImageStorage)
+	svc := NewImageStorageSettingService(settingRepo, encryptor, backup, factory, cfg.ImageStorage)
+	svc.SetUserStorageIdentityResolver(identities)
+	svc.SetLocalAssetStore(localAssets)
+	return svc
 }
 
 // ProvideImageTaskService 构造异步图片任务服务。
@@ -867,11 +872,13 @@ var ProviderSet = wire.NewSet(
 	ProvideAuthService,
 	NewPasskeyService,
 	NewUserService,
+	NewUserStorageIdentityService,
 	ProvideAPIKeyService,
 	ProvideAPIKeyAuthCacheInvalidator,
 	ProvideAuthCacheInvalidationWorker,
 	NewGroupService,
 	NewCompositeRouteResolver,
+	NewUserStorageIdentityService,
 	NewAccountService,
 	NewProxyService,
 	NewRedeemService,
@@ -887,6 +894,7 @@ var ProviderSet = wire.NewSet(
 	NewGatewayService,
 	NewOpenAIGatewayService,
 	ProvideImageStorageSettingService,
+	ProvideLocalImageAssetStore,
 	ProvideImageTaskService,
 	// 用 Provide 版本：除了构造服务，还要起临时作品的过期清扫循环。
 	ProvideImageStudioGalleryService,

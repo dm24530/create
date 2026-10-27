@@ -109,15 +109,21 @@ type ImageStudioObjectURLResolver interface {
 	PresignImageObject(ctx context.Context, objectKey string) (string, error)
 }
 
+type ImageStudioObjectDownloadURLResolver interface {
+	PresignImageObjectDownload(ctx context.Context, objectKey, filename string) (string, error)
+}
+
 type ImageStudioObjectURLBatchResolver interface {
 	PresignImageObjects(ctx context.Context, objectKeys []string) (map[string]string, error)
 }
 
 type ImageStudioGalleryService struct {
-	store   ImageStudioGalleryStore
-	storage ImageStudioImageSaver
-	thumbMu sync.Mutex
-	thumbs  map[string]thumbnailCacheEntry
+	store       ImageStudioGalleryStore
+	storage     ImageStudioImageSaver
+	localAssets *LocalImageAssetStore
+	identities  UserStorageIdentityResolver
+	thumbMu     sync.Mutex
+	thumbs      map[string]thumbnailCacheEntry
 }
 
 func NewImageStudioGalleryService(store ImageStudioGalleryStore, storage ImageStudioImageSaver) *ImageStudioGalleryService {
@@ -128,13 +134,31 @@ func NewImageStudioGalleryService(store ImageStudioGalleryStore, storage ImageSt
 	}
 }
 
+func (s *ImageStudioGalleryService) SetLocalAssetStore(store *LocalImageAssetStore) {
+	if s == nil {
+		return
+	}
+	s.localAssets = store
+}
+
+func (s *ImageStudioGalleryService) SetUserStorageIdentityResolver(identities UserStorageIdentityResolver) {
+	if s == nil {
+		return
+	}
+	s.identities = identities
+}
+
 // ProvideImageStudioGalleryService 是 wire 用的版本：构造服务并启动临时作品的过期清扫，
 // 和其它后台循环一样在依赖注入阶段触发。单元测试直接用 New...，不会起 goroutine。
 func ProvideImageStudioGalleryService(
 	store ImageStudioGalleryStore,
 	storage ImageStudioImageSaver,
+	identities UserStorageIdentityResolver,
+	localAssets *LocalImageAssetStore,
 ) *ImageStudioGalleryService {
 	svc := NewImageStudioGalleryService(store, storage)
+	svc.SetUserStorageIdentityResolver(identities)
+	svc.SetLocalAssetStore(localAssets)
 	svc.StartExpirySweeper(context.Background(), studioWorksSweepInterval)
 	return svc
 }
@@ -179,7 +203,11 @@ func (s *ImageStudioGalleryService) Save(
 		return nil, ErrImageStudioGalleryQuotaExceeded
 	}
 
-	userPrefix := path.Join("users", strconv.FormatInt(userID, 10))
+	storageKey, err := s.userStorageKey(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	userPrefix := storageKey
 	key := path.Join(userPrefix, id+extensionForContentType(contentType))
 	url, objectKey, err := s.storage.SaveImageWithKey(ctx, key, contentType, data)
 	if err != nil {
@@ -259,6 +287,13 @@ func (s *ImageStudioGalleryService) Save(
 	return entry, nil
 }
 
+func (s *ImageStudioGalleryService) userStorageKey(ctx context.Context, userID int64) (string, error) {
+	if s != nil && s.identities != nil {
+		return s.identities.StorageKey(ctx, userID)
+	}
+	return path.Join("users", strconv.FormatInt(userID, 10)), nil
+}
+
 // SaveExistingObject turns an object already persisted by the image task
 // pipeline into a studio work without downloading or uploading the image again.
 func (s *ImageStudioGalleryService) SaveExistingObject(
@@ -318,6 +353,7 @@ func (s *ImageStudioGalleryService) SaveExistingObject(
 	if err := s.store.Save(ctx, entry, resolveStudioQuota(s.storage)); err != nil {
 		return nil, err
 	}
+	s.updateLocalAssetExpiry(ctx, entry.URL, entry.ExpiresAt)
 	return entry, nil
 }
 
@@ -371,6 +407,11 @@ func (s *ImageStudioGalleryService) List(
 			if entry == nil {
 				continue
 			}
+			if s.localAssets != nil &&
+				s.localAssets.IsAssetURL(entry.URL) &&
+				!s.localAssets.IsUploadedURL(entry.URL) {
+				continue
+			}
 			addObjectKey := func(key string) {
 				key = strings.TrimSpace(key)
 				if key == "" {
@@ -387,10 +428,18 @@ func (s *ImageStudioGalleryService) List(
 				addObjectKey(thumbnailObjectKey(entry.ObjectKey))
 			}
 		}
-		resolved, resolveErr := batchResolver.PresignImageObjects(ctx, keys)
-		if resolveErr == nil {
+		if len(keys) > 0 {
+			resolved, resolveErr := batchResolver.PresignImageObjects(ctx, keys)
+			if resolveErr != nil {
+				return entries, nil
+			}
 			for _, entry := range entries {
 				if entry == nil {
+					continue
+				}
+				if s.localAssets != nil &&
+					s.localAssets.IsAssetURL(entry.URL) &&
+					!s.localAssets.IsUploadedURL(entry.URL) {
 					continue
 				}
 				objectKey := strings.TrimSpace(entry.ObjectKey)
@@ -411,6 +460,11 @@ func (s *ImageStudioGalleryService) List(
 	if resolver, ok := s.storage.(ImageStudioObjectURLResolver); ok {
 		for _, entry := range entries {
 			if entry == nil {
+				continue
+			}
+			if s.localAssets != nil &&
+				s.localAssets.IsAssetURL(entry.URL) &&
+				!s.localAssets.IsUploadedURL(entry.URL) {
 				continue
 			}
 			objectKey := strings.TrimSpace(entry.ObjectKey)
@@ -446,6 +500,26 @@ func (s *ImageStudioGalleryService) Get(ctx context.Context, userID int64, id st
 	return nil, ErrStudioWorkNotFound
 }
 
+func (s *ImageStudioGalleryService) rawEntry(
+	ctx context.Context,
+	userID int64,
+	id string,
+) (*ImageStudioGalleryEntry, error) {
+	if s == nil || s.store == nil {
+		return nil, ErrImageStudioGalleryUnavailable
+	}
+	items, err := s.store.List(ctx, userID, 0, nil)
+	if err != nil {
+		return nil, err
+	}
+	for _, item := range items {
+		if item != nil && item.ID == id {
+			return item, nil
+		}
+	}
+	return nil, ErrStudioWorkNotFound
+}
+
 // ReadImage fetches the stored object through the server so browser downloads
 // are not blocked by the object store's missing CORS headers.
 func (s *ImageStudioGalleryService) ReadImage(ctx context.Context, userID int64, id string) (*ImageStudioGalleryEntry, []byte, string, error) {
@@ -456,11 +530,40 @@ func (s *ImageStudioGalleryService) ReadImage(ctx context.Context, userID int64,
 	if err != nil {
 		return nil, nil, "", err
 	}
-	data, contentType, err := s.storage.FetchImageURL(ctx, entry.URL)
+	data, contentType, err := s.fetchEntryImage(ctx, entry, entry.ObjectKey, entry.URL)
 	if err != nil {
 		return nil, nil, "", err
 	}
 	return entry, data, contentType, nil
+}
+
+func (s *ImageStudioGalleryService) DownloadURL(
+	ctx context.Context,
+	userID int64,
+	id string,
+	filename string,
+) (*ImageStudioGalleryEntry, string, error) {
+	if s == nil || s.store == nil || s.storage == nil || userID <= 0 {
+		return nil, "", ErrImageStudioGalleryUnavailable
+	}
+	entry, err := s.Get(ctx, userID, id)
+	if err != nil {
+		return nil, "", err
+	}
+	if s.localAssets != nil &&
+		s.localAssets.IsAssetURL(entry.URL) &&
+		!s.localAssets.IsUploadedURL(entry.URL) {
+		return entry, "", ErrImageStudioGalleryUnavailable
+	}
+	resolver, ok := s.storage.(ImageStudioObjectDownloadURLResolver)
+	if !ok {
+		return entry, "", ErrImageStudioGalleryUnavailable
+	}
+	url, err := resolver.PresignImageObjectDownload(ctx, entry.ObjectKey, filename)
+	if err != nil || strings.TrimSpace(url) == "" {
+		return entry, "", ErrImageStudioGalleryUnavailable
+	}
+	return entry, url, nil
 }
 
 type thumbnailCacheEntry struct {
@@ -488,7 +591,19 @@ func (s *ImageStudioGalleryService) Thumbnail(ctx context.Context, userID int64,
 	}
 	s.thumbMu.Unlock()
 
-	_, data, _, err := s.ReadImage(ctx, userID, id)
+	entry, err := s.Get(ctx, userID, id)
+	if err != nil {
+		return nil, err
+	}
+	if thumbURL := strings.TrimSpace(entry.ThumbURL); thumbURL != "" {
+		data, _, fetchErr := s.fetchEntryImage(ctx, entry, thumbnailObjectKey(entry.ObjectKey), thumbURL)
+		if fetchErr == nil {
+			s.cacheThumbnail(cacheKey, data, now)
+			return data, nil
+		}
+		logger.L().Warn("studio_work.thumbnail_fetch_failed", zap.String("work_id", id), zap.Error(fetchErr))
+	}
+	data, _, err := s.fetchEntryImage(ctx, entry, entry.ObjectKey, entry.URL)
 	if err != nil {
 		return nil, err
 	}
@@ -511,13 +626,41 @@ func (s *ImageStudioGalleryService) Thumbnail(ctx context.Context, userID int64,
 			_ = s.storage.DeleteObject(ctx, thumbKey)
 		}
 	}
+	s.cacheThumbnail(cacheKey, thumb, now)
+	return thumb, nil
+}
+
+func (s *ImageStudioGalleryService) fetchEntryImage(
+	ctx context.Context,
+	entry *ImageStudioGalleryEntry,
+	objectKey string,
+	rawURL string,
+) ([]byte, string, error) {
+	if s == nil || s.storage == nil {
+		return nil, "", ErrImageStudioGalleryUnavailable
+	}
+	if entry != nil &&
+		s.localAssets != nil &&
+		s.localAssets.IsAssetURL(entry.URL) &&
+		!s.localAssets.IsUploadedURL(entry.URL) {
+		return s.storage.FetchImageURL(ctx, entry.URL)
+	}
+	objectKey = strings.TrimSpace(objectKey)
+	if resolver, ok := s.storage.(ImageStudioObjectURLResolver); ok && objectKey != "" {
+		if resolved, err := resolver.PresignImageObject(ctx, objectKey); err == nil && strings.TrimSpace(resolved) != "" {
+			rawURL = resolved
+		}
+	}
+	return s.storage.FetchImageURL(ctx, rawURL)
+}
+
+func (s *ImageStudioGalleryService) cacheThumbnail(cacheKey string, data []byte, now time.Time) {
 	s.thumbMu.Lock()
+	defer s.thumbMu.Unlock()
 	if len(s.thumbs) > 512 {
 		s.thumbs = make(map[string]thumbnailCacheEntry)
 	}
-	s.thumbs[cacheKey] = thumbnailCacheEntry{data: append([]byte(nil), thumb...), expiresAt: now.Add(24 * time.Hour)}
-	s.thumbMu.Unlock()
-	return thumb, nil
+	s.thumbs[cacheKey] = thumbnailCacheEntry{data: append([]byte(nil), data...), expiresAt: now.Add(24 * time.Hour)}
 }
 
 func buildThumbnail(data []byte, maxEdge int) ([]byte, error) {
@@ -604,6 +747,9 @@ func (s *ImageStudioGalleryService) Pin(ctx context.Context, userID int64, id st
 		}
 		return err
 	}
+	if entry, err := s.rawEntry(ctx, userID, strings.TrimSpace(id)); err == nil && entry != nil {
+		s.updateLocalAssetExpiry(ctx, entry.URL, 0)
+	}
 	return nil
 }
 
@@ -617,7 +763,7 @@ func (s *ImageStudioGalleryService) Unpin(
 	if s == nil || s.store == nil || userID <= 0 || strings.TrimSpace(id) == "" {
 		return nil, ErrImageStudioGalleryUnavailable
 	}
-	entry, err := s.Get(ctx, userID, strings.TrimSpace(id))
+	entry, err := s.rawEntry(ctx, userID, strings.TrimSpace(id))
 	if err != nil {
 		return nil, err
 	}
@@ -631,9 +777,25 @@ func (s *ImageStudioGalleryService) Unpin(
 	if err := s.store.Unpin(ctx, userID, entry.ID, expiresAt); err != nil {
 		return nil, err
 	}
+	s.updateLocalAssetExpiry(ctx, entry.URL, expiresAt)
 	entry.Saved = false
 	entry.ExpiresAt = expiresAt
 	return entry, nil
+}
+
+func (s *ImageStudioGalleryService) updateLocalAssetExpiry(
+	ctx context.Context,
+	rawURL string,
+	expiresAt int64,
+) {
+	if s == nil || s.localAssets == nil {
+		return
+	}
+	if err := s.localAssets.SetExpiryByURL(rawURL, expiresAt); err != nil &&
+		!errors.Is(err, ErrLocalImageAssetNotFound) {
+		logger.L().Warn("studio_work.local_asset_expiry_update_failed",
+			zap.String("url", rawURL), zap.Error(err))
+	}
 }
 
 // SweepExpired 清扫到期未保存的内容：先删记录（store 返回对象键），再删桶里的文件。

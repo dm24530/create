@@ -59,6 +59,12 @@ describe('custom feature routes', () => {
     expect(studioRoutes.every((route) => route.meta?.immersive === true)).toBe(true)
   })
 
+  it('keeps the image studio mounted when navigating between studio pages', () => {
+    const imageStudioRoute = userCustomFeatureRoutesAfterKeys.find((route) => route.path === '/image-studio')
+
+    expect(imageStudioRoute?.meta?.keepAlive).toBe(true)
+  })
+
   it('mounts custom routes in the main router at stable positions', () => {
     const paths = routes.map((route) => route.path)
 

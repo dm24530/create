@@ -1,4 +1,5 @@
 import type { CanvasDeletedProject, CanvasProject } from "../../stores/canvas/use-canvas-store";
+import { reconcileCanvasProjectOnOpen } from "./canvas-project-sync";
 
 export type CanvasProjectMergeInput = {
     localProjects: CanvasProject[];
@@ -39,15 +40,11 @@ export function mergeCloudCanvasProjects(input: CanvasProjectMergeInput): Canvas
             continue;
         }
 
-        const cloudWon =
-            updatedAtMs(cloudProject) > updatedAtMs(localProject) &&
-            !(cloudProject.nodes.length === 0 && localProject.nodes.length > 0);
-        byID.set(
-            cloudProject.id,
-            cloudWon
-                ? cloudProject
-                : { ...localProject, cloudVersion: cloudProject.cloudVersion },
-        );
+        const reconciled = reconcileCanvasProjectOnOpen(localProject, cloudProject);
+        byID.set(cloudProject.id, reconciled.project);
+        if (reconciled.shouldUpload && !reuploadProjectIds.includes(cloudProject.id)) {
+            reuploadProjectIds.push(cloudProject.id);
+        }
     }
 
     for (const localProject of input.localProjects) {

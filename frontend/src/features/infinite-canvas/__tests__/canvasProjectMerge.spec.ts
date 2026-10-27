@@ -83,4 +83,96 @@ describe('mergeCloudCanvasProjects', () => {
     expect(result.projects[0].nodes).toHaveLength(3)
     expect(result.projects[0].cloudVersion).toBe(5)
   })
+
+  it('clears a keepalive-uncertain version after a full cloud snapshot arrives', () => {
+    const local = {
+      ...project('shared', '2026-10-26T07:00:00.000Z', 3, 4),
+      cloudVersionUncertain: true,
+    }
+    const cloud = project('shared', '2026-10-26T09:00:00.000Z', 3, 5)
+
+    const result = mergeCloudCanvasProjects(input({
+      localProjects: [local],
+      cloudProjects: [cloud],
+    }))
+
+    expect(result.projects[0].cloudVersion).toBe(5)
+    expect(result.projects[0].cloudVersionUncertain).toBe(false)
+  })
+
+  it('keeps local media when a newer cloud node has empty content', () => {
+    const local = project('shared', '2026-10-26T07:00:00.000Z', 1, 4)
+    local.nodes[0] = {
+      ...local.nodes[0],
+      type: 'image',
+      position: { x: 0, y: 0 },
+      width: 100,
+      height: 100,
+      title: 'image',
+      metadata: {
+        content: 'blob:cached-image',
+        storageKey: 'image:cached',
+        images: [{ id: 'image-1', status: 'success', content: 'blob:cached-image', storageKey: 'image:cached' }],
+        primaryImageId: 'image-1',
+      },
+    } as any
+    const cloud = project('shared', '2026-10-26T09:00:00.000Z', 1, 5)
+    cloud.nodes[0] = {
+      ...cloud.nodes[0],
+      type: 'image',
+      position: { x: 0, y: 0 },
+      width: 100,
+      height: 100,
+      title: 'image',
+      metadata: {
+        content: '',
+        images: [{ id: 'image-1', status: 'success', content: '', naturalWidth: 0, naturalHeight: 0, bytes: 0, mimeType: '' }],
+        primaryImageId: 'image-1',
+      },
+    } as any
+
+    const result = mergeCloudCanvasProjects(input({
+      localProjects: [local],
+      cloudProjects: [cloud],
+    }))
+
+    expect(result.projects[0].nodes[0].metadata.content).toBe('blob:cached-image')
+    expect(result.projects[0].nodes[0].metadata.storageKey).toBe('image:cached')
+    expect(result.projects[0].nodes[0].metadata.images?.[0].content).toBe('blob:cached-image')
+  })
+
+  it('promotes image entry content when the cloud node root content is empty', () => {
+    const local = project('shared', '2026-10-26T07:00:00.000Z', 1, 4)
+    local.nodes[0] = {
+      ...local.nodes[0],
+      type: 'image',
+      position: { x: 0, y: 0 },
+      width: 100,
+      height: 100,
+      title: 'image',
+      metadata: { content: '', images: [], primaryImageId: 'image-1' },
+    } as any
+    const cloud = project('shared', '2026-10-26T09:00:00.000Z', 1, 5)
+    cloud.nodes[0] = {
+      ...cloud.nodes[0],
+      type: 'image',
+      position: { x: 0, y: 0 },
+      width: 100,
+      height: 100,
+      title: 'image',
+      metadata: {
+        content: '',
+        primaryImageId: 'image-1',
+        images: [{ id: 'image-1', status: 'success', content: 'https://cdn.example.com/recovered.png' }],
+      },
+    } as any
+
+    const result = mergeCloudCanvasProjects(input({
+      localProjects: [local],
+      cloudProjects: [cloud],
+    }))
+
+    expect(result.projects[0].nodes[0].metadata.content).toBe('https://cdn.example.com/recovered.png')
+  })
+
 })

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"mime"
 	"sort"
 	"strings"
 	"sync"
@@ -26,13 +27,17 @@ type S3ImageStorage struct {
 }
 
 const (
-	imageMultipartThreshold   = 8 << 20
-	imageMultipartPartSize    = 8 << 20
-	imageMultipartConcurrency = 4
+	imageMultipartThreshold         = 5 << 20
+	imageMultipartPartSize          = 5 << 20
+	imageMultipartConcurrency       = 8
+	imageMultipartGlobalConcurrency = 16
 )
+
+var imageMultipartPartSlots = make(chan struct{}, imageMultipartGlobalConcurrency)
 
 var _ service.ImageStorage = (*S3ImageStorage)(nil)
 var _ service.ImageStorageURLResolver = (*S3ImageStorage)(nil)
+var _ service.ImageStorageDownloadURLResolver = (*S3ImageStorage)(nil)
 
 // NewS3ImageStorage 依据配置构造 S3 图片存储（调用方应先确认 cfg.Active()）。
 func NewS3ImageStorage(ctx context.Context, cfg *config.ImageStorageConfig) (*S3ImageStorage, error) {
@@ -161,6 +166,11 @@ func (s *S3ImageStorage) putMultipart(ctx context.Context, key, contentType stri
 				start := index * imageMultipartPartSize
 				end := min(start+imageMultipartPartSize, len(data))
 				partNumber := int32(index + 1)
+				select {
+				case imageMultipartPartSlots <- struct{}{}:
+				case <-uploadCtx.Done():
+					continue
+				}
 				part, uploadErr := s.client.UploadPart(uploadCtx, &s3.UploadPartInput{
 					Bucket:     &s.bucket,
 					Key:        &key,
@@ -168,6 +178,7 @@ func (s *S3ImageStorage) putMultipart(ctx context.Context, key, contentType stri
 					PartNumber: &partNumber,
 					Body:       bytes.NewReader(data[start:end]),
 				})
+				<-imageMultipartPartSlots
 				if uploadErr != nil {
 					errMu.Lock()
 					if firstErr == nil {
@@ -237,6 +248,26 @@ func (s *S3ImageStorage) PresignGet(ctx context.Context, key string) (string, er
 	}, s3.WithPresignExpires(s.presignExpiry))
 	if err != nil {
 		return "", fmt.Errorf("presign url: %w", err)
+	}
+	return result.URL, nil
+}
+
+func (s *S3ImageStorage) PresignGetDownload(ctx context.Context, key, filename string) (string, error) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return "", fmt.Errorf("S3 object key is required")
+	}
+	disposition := mime.FormatMediaType("attachment", map[string]string{
+		"filename": strings.TrimSpace(filename),
+	})
+	presignClient := s3.NewPresignClient(s.client)
+	result, err := presignClient.PresignGetObject(ctx, &s3.GetObjectInput{
+		Bucket:                     &s.bucket,
+		Key:                        &key,
+		ResponseContentDisposition: &disposition,
+	}, s3.WithPresignExpires(s.presignExpiry))
+	if err != nil {
+		return "", fmt.Errorf("presign download url: %w", err)
 	}
 	return result.URL, nil
 }

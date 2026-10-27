@@ -47,15 +47,18 @@ import { CanvasSidePanel } from "@/components/canvas/canvas-side-panel";
 import { CanvasZoomControls } from "@/components/canvas/canvas-zoom-controls";
 import { flushCanvasStorePersistence, useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import {
+    canvasProjectCloudFingerprint,
+    cloudCanvasProjectFingerprint,
     getCloudCanvasProject,
+    hydrateCloudProject,
     isCanvasCloudReady,
     putCloudCanvasProject,
-    putCloudCanvasProjectKeepalive,
     uploadPendingCanvasAssets,
 } from "@/services/canvas-cloud";
 import { useAgentBridge } from "@/pages/canvas/hooks/use-agent-bridge";
 import { usePluginHost } from "@/pages/canvas/hooks/use-plugin-host";
 import { buildNodeMentionReferences, getGroupResourceNodes, isCanvasReferenceNode, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
+import { mergeCanvasProjectContents, reconcileCanvasProjectOnOpen } from "@/lib/canvas/canvas-project-sync";
 import { exportCanvasProjects } from "@/lib/canvas/canvas-export";
 import { applyNodeConfigPatch, audioMetadata, buildAudioGenerationMetadata, buildImageGenerationMetadata, createCanvasNode, imageMetadata, videoMetadata } from "@/lib/canvas/canvas-node-factory";
 import { applyGroupSelection, applyUngroupSelection, canGroupSelectedNodes, canUngroupSelectedNodes, collectGroupMemberNodes, findContainingGroupId, findGroupDropTarget, focusViewportForNode, getConnectionTargetAnchor, getGroupWrapRect, normalizeConnection, snapNodesIntoGroup } from "@/lib/canvas/canvas-node-geometry";
@@ -180,15 +183,18 @@ function hasPendingCloudAsset(node: CanvasNodeData) {
     const metadata = node.metadata;
     if (!metadata) return false;
     const mediaNode = node.type === CanvasNodeType.Image || node.type === CanvasNodeType.Video || node.type === CanvasNodeType.Audio;
+    const isRemoteURL = (value?: string) => Boolean(value && /^https?:\/\//i.test(value));
+    const hasImageEntries = Boolean(metadata.images?.length);
     if (
         mediaNode &&
-        metadata.storageKey &&
+        (metadata.storageKey || (node.type === CanvasNodeType.Image && isRemoteURL(metadata.content))) &&
+        !(node.type === CanvasNodeType.Image && hasImageEntries) &&
         !metadata.cloudAssetId &&
         metadata.cloudSyncState !== "uploading" &&
         metadata.cloudSyncState !== "failed"
     ) return true;
     return Boolean(metadata.images?.some((image) => (
-        image.storageKey &&
+        (image.storageKey || (node.type === CanvasNodeType.Image && isRemoteURL(image.content))) &&
         !image.cloudAssetId &&
         image.cloudSyncState !== "uploading" &&
         image.cloudSyncState !== "failed"
@@ -281,6 +287,7 @@ function InfiniteCanvasPage() {
     const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
     const [assetPickerOpen, setAssetPickerOpen] = useState(false);
     const [projectLoaded, setProjectLoaded] = useState(false);
+    const [loadError, setLoadError] = useState("");
     const [toolbarNodeId, setToolbarNodeId] = useState<string | null>(null);
     const [nodeImageSettingsOpen, setNodeImageSettingsOpen] = useState(false);
     const [dialogNodeId, setDialogNodeId] = useState<string | null>(null);
@@ -646,29 +653,30 @@ function InfiniteCanvasPage() {
     useEffect(() => {
         if (!hydrated) return;
         setProjectLoaded(false);
-        const project = openProject(projectId);
-        if (!project) {
-            navigate("/canvas", { replace: true });
-            return;
-        }
+        setLoadError("");
 
         const restore = async () => {
-            const restoredNodes = await hydrateCanvasImages(resetInterruptedGeneration(applyPendingImageTasks(projectId, project.nodes)));
-            const restoredSessions = await hydrateAssistantImages(project.chatSessions || []);
+            const localProject = openProject(projectId);
+            let project = localProject;
             if (isCanvasCloudReady()) {
                 try {
                     const cloudProject = await getCloudCanvasProject(projectId);
-                    useCanvasStore.setState((state) => ({
-                        projects: state.projects.map((item) => (
-                            item.id === projectId
-                                ? { ...item, cloudVersion: cloudProject.version }
-                                : item
-                        )),
-                    }));
+                    project = reconcileCanvasProjectOnOpen(localProject, hydrateCloudProject(cloudProject)).project;
                 } catch {
-                    // A local-only canvas has no cloud version yet.
+                    // Keep the local project route recoverable while cloud data is unavailable.
                 }
             }
+            if (!project) {
+                setLoadError(t("canvas.projectPage.notFound"));
+                return;
+            }
+            useCanvasStore.setState((state) => ({
+                projects: state.projects.some((item) => item.id === projectId)
+                    ? state.projects.map((item) => item.id === projectId ? project! : item)
+                    : [project!, ...state.projects],
+            }));
+            const restoredNodes = await hydrateCanvasImages(resetInterruptedGeneration(applyPendingImageTasks(projectId, project.nodes)));
+            const restoredSessions = await hydrateAssistantImages(project.chatSessions || []);
             setNodes(restoredNodes);
             setConnections(project.connections);
             setChatSessions(restoredSessions);
@@ -692,7 +700,15 @@ function InfiniteCanvasPage() {
             setHistoryState({ canUndo: false, canRedo: false });
             setProjectLoaded(true);
         };
-        void restore();
+        void restore().catch((error) => {
+            console.error("Failed to restore canvas project", error);
+            const message = error instanceof Error ? error.message : "";
+            setLoadError(
+                /failed to fetch|network error|load failed/i.test(message)
+                    ? t("canvas.projectPage.loadFailedDescription")
+                    : message || t("canvas.projectPage.loadFailedDescription"),
+            );
+        });
     }, [hydrated, navigate, openProject, projectId]);
 
     useEffect(() => {
@@ -784,27 +800,87 @@ function InfiniteCanvasPage() {
                 const project = useCanvasStore.getState().projects.find((item) => item.id === projectId);
                 if (!project) return;
                 try {
-                    const saved = await putCloudCanvasProject(project);
+                    let currentProject = project;
+                    if (
+                        currentProject.cloudVersion &&
+                        currentProject.cloudSyncedFingerprint === canvasProjectCloudFingerprint(currentProject)
+                    ) {
+                        return;
+                    }
+                    if (currentProject.cloudVersionUncertain) {
+                        const cloudProject = await getCloudCanvasProject(projectId);
+                        const cloudFingerprint = cloudCanvasProjectFingerprint(cloudProject);
+                        useCanvasStore.setState((state) => ({
+                            projects: state.projects.map((item) => (
+                                item.id === projectId
+                                    ? {
+                                        ...item,
+                                        cloudVersion: cloudProject.version,
+                                        cloudVersionUncertain: false,
+                                        ...(canvasProjectCloudFingerprint(item) === cloudFingerprint
+                                            ? { cloudSyncedFingerprint: cloudFingerprint }
+                                            : {}),
+                                    }
+                                    : item
+                            )),
+                        }));
+                        currentProject = useCanvasStore.getState().projects.find((item) => item.id === projectId) || currentProject;
+                        if (currentProject.cloudSyncedFingerprint === cloudFingerprint) return;
+                    }
+                    const fingerprint = canvasProjectCloudFingerprint(currentProject);
+                    const saved = await putCloudCanvasProject(currentProject);
                     useCanvasStore.setState((state) => ({
                         projects: state.projects.map((item) => (
                             item.id === projectId
-                                ? { ...item, cloudVersion: saved.version, cloudSyncedAt: saved.updated_at || new Date().toISOString() }
+                                ? {
+                                    ...item,
+                                    cloudVersion: saved.version,
+                                    cloudSyncedAt: saved.updated_at || new Date().toISOString(),
+                                    cloudVersionUncertain: false,
+                                    cloudSyncedFingerprint: fingerprint,
+                                }
                                 : item
                         )),
                     }));
                 } catch (error) {
                     if ((error as Error & { status?: number }).status === 409) {
                         try {
-                            const cloudProject = await getCloudCanvasProject(projectId);
+                            const cloudProject = hydrateCloudProject(await getCloudCanvasProject(projectId));
                             const current = useCanvasStore.getState().projects.find((item) => item.id === projectId);
                             if (!current) return;
+                            const cloudFingerprint = canvasProjectCloudFingerprint(cloudProject);
+                            const localFingerprint = canvasProjectCloudFingerprint(current);
+                            const sameContent = localFingerprint === cloudFingerprint;
+                            if (sameContent) {
+                                useCanvasStore.setState((state) => ({
+                                    projects: state.projects.map((item) => (
+                                        item.id === projectId
+                                            ? {
+                                                ...item,
+                                                cloudVersion: cloudProject.cloudVersion,
+                                                cloudVersionUncertain: false,
+                                                cloudSyncedFingerprint: cloudFingerprint,
+                                            }
+                                            : item
+                                    )),
+                                }));
+                                return;
+                            }
+                            const merged = mergeCanvasProjectContents(current, cloudProject);
+                            const mergedNodes = await hydrateCanvasImages(merged.nodes);
+                            const mergedSessions = await hydrateAssistantImages(merged.chatSessions);
                             useCanvasStore.setState((state) => ({
                                 projects: state.projects.map((item) => (
-                                    item.id === projectId
-                                        ? { ...item, cloudVersion: cloudProject.version }
-                                        : item
+                                    item.id === projectId ? merged : item
                                 )),
                             }));
+                            setNodes(mergedNodes);
+                            setConnections(merged.connections);
+                            setChatSessions(mergedSessions);
+                            setActiveChatId(merged.activeChatId || null);
+                            setBackgroundMode(merged.backgroundMode);
+                            setShowImageInfo(merged.showImageInfo);
+                            setViewport(merged.viewport);
                             const now = Date.now();
                             if (now - cloudConflictNoticeAtRef.current > 30_000) {
                                 cloudConflictNoticeAtRef.current = now;
@@ -834,14 +910,26 @@ function InfiniteCanvasPage() {
         if (cloudAssetTimerRef.current) clearTimeout(cloudAssetTimerRef.current);
         cloudAssetTimerRef.current = setTimeout(() => {
             void (async () => {
-                await syncCanvasProjectToCloud();
+                let project = useCanvasStore.getState().projects.find((item) => item.id === projectId);
+                if (!project?.cloudVersion) {
+                    if (cloudSaveInFlightRef.current) await cloudSaveInFlightRef.current;
+                    project = useCanvasStore.getState().projects.find((item) => item.id === projectId);
+                    if (!project?.cloudVersion) await syncCanvasProjectToCloud();
+                    project = useCanvasStore.getState().projects.find((item) => item.id === projectId);
+                }
+                if (!project?.cloudVersion) return;
                 if (!isCanvasCloudReady()) return;
                 const candidates = nodes.filter(hasPendingCloudAsset);
                 if (!candidates.length) return;
+                const isRemoteURL = (value?: string) => Boolean(value && /^https?:\/\//i.test(value));
                 for (const node of candidates) {
                     pendingCloudAssetsRef.current.add(`${node.id}:primary`);
                     for (const image of node.metadata?.images || []) {
-                        if (image.storageKey && !image.cloudAssetId && image.cloudSyncState !== "uploading") {
+                        if (
+                            (image.storageKey || (node.type === CanvasNodeType.Image && isRemoteURL(image.content))) &&
+                            !image.cloudAssetId &&
+                            image.cloudSyncState !== "uploading"
+                        ) {
                             pendingCloudAssetsRef.current.add(`${node.id}:${image.id}`);
                         }
                     }
@@ -854,7 +942,7 @@ function InfiniteCanvasPage() {
                             ...node.metadata,
                             cloudSyncState: "uploading",
                             images: node.metadata?.images?.map((image) => (
-                                image.storageKey && !image.cloudAssetId
+                                (image.storageKey || (node.type === CanvasNodeType.Image && isRemoteURL(image.content))) && !image.cloudAssetId
                                     ? { ...image, cloudSyncState: "uploading" }
                                     : image
                             )),
@@ -902,7 +990,7 @@ function InfiniteCanvasPage() {
                                 ...node.metadata,
                                 cloudSyncState: "failed",
                                 images: node.metadata?.images?.map((image) => (
-                                    image.storageKey && !image.cloudAssetId
+                                    (image.storageKey || (node.type === CanvasNodeType.Image && /^https?:\/\//i.test(image.content || ""))) && !image.cloudAssetId
                                         ? { ...image, cloudSyncState: "failed" }
                                         : image
                                 )),
@@ -939,9 +1027,8 @@ function InfiniteCanvasPage() {
         if (!projectLoaded) return;
         const flush = () => {
             flushCanvasStorePersistence();
-            if (!isCanvasCloudReady()) return;
-            const project = useCanvasStore.getState().projects.find((item) => item.id === projectId);
-            if (project) putCloudCanvasProjectKeepalive(project);
+            // pagehide keepalive writes cannot read the incremented cloud version.
+            // Persist locally and let the next normal autosave reconcile the cloud.
         };
         const handleVisibility = () => {
             if (document.visibilityState === "hidden") flush();
@@ -1621,7 +1708,7 @@ function InfiniteCanvasPage() {
     const deleteCurrentProject = useCallback(() => {
         deleteProjects([projectId]);
         cleanupAssetImages();
-        navigate("/canvas");
+        navigate(`/canvas${window.location.search}`);
     }, [cleanupAssetImages, deleteProjects, navigate, projectId]);
 
     const exportCurrentProject = useCallback(async () => {
@@ -3841,6 +3928,36 @@ function InfiniteCanvasPage() {
     }
     const retainedPreview = retainedPreviewRef.current;
 
+    if (loadError) {
+        return (
+            <CanvasRefreshShell>
+                <section className="relative z-50 flex h-full flex-col items-center justify-center px-6 text-center" data-testid="canvas-load-error">
+                    <h1 className="text-lg font-semibold">{t("canvas.projectPage.loadFailedTitle")}</h1>
+                    <p className="mt-3 max-w-md text-sm text-stone-500 dark:text-stone-400">
+                        {loadError || t("canvas.projectPage.loadFailedDescription")}
+                    </p>
+                    <div className="mt-6 flex items-center gap-2">
+                        <button
+                            type="button"
+                            className="rounded-lg bg-stone-950 px-4 py-2 text-sm font-medium text-white dark:bg-stone-100 dark:text-stone-950"
+                            data-testid="canvas-load-error-retry"
+                            onClick={() => window.location.reload()}
+                        >
+                            {t("canvas.projectPage.retry")}
+                        </button>
+                        <button
+                            type="button"
+                            className="rounded-lg border border-stone-300 px-4 py-2 text-sm font-medium dark:border-stone-700"
+                            data-testid="canvas-load-error-back"
+                            onClick={() => navigate(`/canvas${window.location.search}`)}
+                        >
+                            {t("canvas.projectPage.backToLibrary")}
+                        </button>
+                    </div>
+                </section>
+            </CanvasRefreshShell>
+        );
+    }
     if (!projectLoaded) return <CanvasRefreshShell />;
 
     return (
@@ -3857,7 +3974,7 @@ function InfiniteCanvasPage() {
                     onCancelTitleEditing={() => setTitleEditing(false)}
                     canUndo={historyState.canUndo}
                     canRedo={historyState.canRedo}
-                    onProjects={() => navigate("/canvas")}
+                    onProjects={() => navigate(`/canvas${window.location.search}`)}
                     onCreateProject={createAndOpenProject}
                     onDeleteProject={deleteCurrentProject}
                     onExportProject={exportCurrentProject}

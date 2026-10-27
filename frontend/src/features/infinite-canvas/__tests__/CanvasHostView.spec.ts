@@ -125,4 +125,35 @@ describe('CanvasHostView account switching', () => {
     }))
     expect(listKeys).toHaveBeenCalledTimes(2)
   })
+
+  it('retries a transient canvas context network failure', async () => {
+    getPublicSettings
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      .mockResolvedValueOnce({ api_base_url: 'https://api.example.com' })
+
+    const wrapper = mountHost()
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('后端正在重启')
+
+    await vi.advanceTimersByTimeAsync(800)
+    await flushPromises()
+
+    expect(wrapper.find('iframe').exists()).toBe(true)
+    expect(wrapper.text()).not.toContain('画布加载失败')
+  })
+
+  it('shows an actionable message when the canvas origin stays unavailable', async () => {
+    getPublicSettings.mockRejectedValue(new TypeError('Failed to fetch'))
+    listKeys.mockRejectedValue(new TypeError('Failed to fetch'))
+
+    const wrapper = mountHost()
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(800)
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(2000)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('画布加载失败')
+    expect(wrapper.text()).toContain('源站返回 502')
+  })
 })

@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
@@ -43,4 +44,16 @@ func TestGatewayHandlerRecordsSyncGeminiInlineImageAsDataURL(t *testing.T) {
 	require.NotNil(t, store.link)
 	require.Equal(t, "local:local-image-request", store.link.RequestID)
 	require.Equal(t, "data:image/png;base64,YWJj", store.link.ImageURL)
+}
+
+func TestUsageImageObjectKeyUsesOpaqueUserNamespace(t *testing.T) {
+	first := usageImageObjectKey("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "client:req-1", "image/png")
+	second := usageImageObjectKey("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "client:req-1", "image/png")
+
+	require.True(t, strings.HasPrefix(first, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/usage-"))
+	require.True(t, strings.HasPrefix(second, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/usage-"))
+	require.NotEqual(t, first, second)
+	require.NotContains(t, first, "users/")
+	require.NotContains(t, first, "client:req-1")
+	require.True(t, strings.HasSuffix(first, ".png"))
 }

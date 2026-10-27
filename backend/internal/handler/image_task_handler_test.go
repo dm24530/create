@@ -755,6 +755,26 @@ func TestAsyncImageHandlerRecordsGeneratedImageLinkByUsageRequestID(t *testing.T
 	require.Equal(t, "https://cdn.example.test/generated.png", links.link.ImageURL)
 }
 
+func TestAsyncImageHandlerPrefersGeneratedPreviewForUsageImageLink(t *testing.T) {
+	store := &asyncImageMemoryStore{tasks: make(map[string]*service.ImageTaskRecord)}
+	tasks := service.NewImageTaskServiceWithUploader(store, nil, time.Hour, time.Minute)
+	created, err := tasks.Create(context.Background(), service.ImageTaskOwner{UserID: 7, APIKeyID: 9})
+	require.NoError(t, err)
+	require.NoError(t, tasks.Complete(
+		context.Background(),
+		created.ID,
+		http.StatusOK,
+		json.RawMessage(`{"data":[{"url":"https://cdn.example.test/generated.png","preview_data_url":"data:image/jpeg;base64,cHJldmlldw=="}]}`),
+	))
+	links := &asyncImageLinkStore{}
+	h := &AsyncImageHandler{tasks: tasks, imageLinks: links}
+
+	h.recordUsageImageLink(created.ID, "client:req-image-preview")
+
+	require.NotNil(t, links.link)
+	require.Equal(t, "data:image/jpeg;base64,cHJldmlldw==", links.link.ImageURL)
+}
+
 func TestAsyncImageHandlerRecoveryRestoresExecutionAndCompletesTask(t *testing.T) {
 	body := []byte(`{"model":"grok-imagine-image","prompt":"cat"}`)
 	store := &asyncImageMemoryStore{tasks: map[string]*service.ImageTaskRecord{
@@ -806,7 +826,7 @@ func TestAsyncImageHandlerRecoveryRestoresExecutionAndCompletesTask(t *testing.T
 	require.Equal(t, "https://example.test/restored.png", got.ImageURL)
 }
 
-func TestAsyncImageHandlerRetriesTransientUpstreamFailure(t *testing.T) {
+func TestAsyncImageHandlerFailsTransientUpstreamFailureImmediately(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	body := []byte(`{"contents":[{"parts":[{"text":"cat"}]}]}`)
 	store := &asyncImageMemoryStore{tasks: map[string]*service.ImageTaskRecord{
@@ -828,30 +848,19 @@ func TestAsyncImageHandlerRetriesTransientUpstreamFailure(t *testing.T) {
 	}}
 	tasks := service.NewImageTaskServiceWithUploader(store, nil, time.Hour, time.Minute)
 	h := &AsyncImageHandler{
-		tasks:                tasks,
-		apiKeys:              asyncImageAPIKeyLoader{key: &service.APIKey{ID: 9, UserID: 7, Key: "sk-retry"}},
-		imageTaskRetryDelays: []time.Duration{0},
+		tasks:   tasks,
+		apiKeys: asyncImageAPIKeyLoader{key: &service.APIKey{ID: 9, UserID: 7, Key: "sk-retry"}},
 	}
 	attempts := 0
 	h.execute = func(platform string, c *gin.Context) {
 		attempts++
 		require.Equal(t, service.PlatformGemini, platform)
-		if attempts == 1 {
-			c.JSON(http.StatusBadGateway, gin.H{
-				"error": gin.H{
-					"code":    http.StatusBadGateway,
-					"message": "Upstream service temporarily unavailable",
-					"status":  "INTERNAL",
-				},
-			})
-			return
-		}
-		c.JSON(http.StatusOK, gin.H{
-			"candidates": []gin.H{{
-				"content": gin.H{"parts": []gin.H{{
-					"inlineData": gin.H{"mimeType": "image/png", "data": "aGVsbG8="},
-				}}},
-			}},
+		c.JSON(http.StatusBadGateway, gin.H{
+			"error": gin.H{
+				"code":    http.StatusBadGateway,
+				"message": "Upstream service temporarily unavailable",
+				"status":  "INTERNAL",
+			},
 		})
 	}
 
@@ -865,10 +874,11 @@ func TestAsyncImageHandlerRetriesTransientUpstreamFailure(t *testing.T) {
 	}
 	h.run(task.ID, service.PlatformGemini, taskCtx, recorder, runCancel)
 
-	require.Equal(t, 2, attempts)
+	require.Equal(t, 1, attempts)
 	got, err := tasks.Get(context.Background(), service.ImageTaskOwner{UserID: 7, APIKeyID: 9}, task.ID)
 	require.NoError(t, err)
-	require.Equal(t, service.ImageTaskStatusCompleted, got.Status)
+	require.Equal(t, service.ImageTaskStatusFailed, got.Status)
+	require.Equal(t, http.StatusBadGateway, got.HTTPStatus)
 }
 
 func TestAsyncImageHandlerDoesNotRetryInvalidRequest(t *testing.T) {
@@ -893,9 +903,8 @@ func TestAsyncImageHandlerDoesNotRetryInvalidRequest(t *testing.T) {
 	tasks := service.NewImageTaskServiceWithUploader(store, nil, time.Hour, time.Minute)
 	apiKeyLoader := asyncImageAPIKeyLoader{key: &service.APIKey{ID: 9, UserID: 7, Key: "sk-invalid"}}
 	h := &AsyncImageHandler{
-		tasks:                tasks,
-		apiKeys:              apiKeyLoader,
-		imageTaskRetryDelays: []time.Duration{0},
+		tasks:   tasks,
+		apiKeys: apiKeyLoader,
 	}
 	attempts := 0
 	h.execute = func(_ string, c *gin.Context) {

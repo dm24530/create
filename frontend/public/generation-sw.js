@@ -2,10 +2,8 @@ const DB_NAME = 'sub2api-image-generation'
 const DB_VERSION = 1
 const STORE_NAME = 'tasks'
 const RESPONSE_CACHE = 'sub2api-image-generation-responses-v1'
-const TASK_TIMEOUT_MS = 5 * 60 * 1000
-const RETRY_WINDOW_MS = 5 * 60 * 1000
-const MIN_RETRY_DELAY_MS = 1500
-const MAX_RETRY_DELAY_MS = 30 * 1000
+const TASK_TIMEOUT_MS = 3 * 60 * 1000
+const TASK_DEADLINE_MS = 3 * 60 * 1000
 
 const runningTasks = new Set()
 
@@ -85,21 +83,6 @@ function bodyFromRecord(body) {
   return form
 }
 
-function isRetryableStatus(status) {
-  // Only retry statuses that indicate the request was rejected before
-  // generation. Timeouts and 5xx responses are ambiguous for a POST and may
-  // already have been accepted and billed upstream.
-  return status === 425 || status === 429
-}
-
-function retryDelay(attempt, response) {
-  const retryAfter = Number(response?.headers?.get?.('retry-after') || 0)
-  if (Number.isFinite(retryAfter) && retryAfter > 0) {
-    return Math.min(MAX_RETRY_DELAY_MS, Math.max(MIN_RETRY_DELAY_MS, retryAfter * 1000))
-  }
-  return Math.min(MAX_RETRY_DELAY_MS, MIN_RETRY_DELAY_MS * (2 ** Math.max(0, attempt - 1)))
-}
-
 function errorMessageFromResponse(body, status, statusText) {
   try {
     const payload = JSON.parse(body)
@@ -112,10 +95,6 @@ function errorMessageFromResponse(body, status, statusText) {
   } catch {
     return String(body || `${status} ${statusText}` || '图片生成请求失败').slice(0, 1000)
   }
-}
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 async function runTask(taskId) {
@@ -138,125 +117,101 @@ async function runTask(taskId) {
       return
     }
 
-    let task = initial
-    let attempts = Number(task.attempts || 0)
-    const deadlineAt = Number(task.deadlineAt || 0) || Date.now() + RETRY_WINDOW_MS
-
-    while (Date.now() < deadlineAt) {
-      attempts += 1
-      const processingRecord = {
-        ...task,
-        status: 'processing',
-        attempts,
-        deadlineAt,
-        nextRetryAt: 0,
+    const deadlineAt = Number(initial.deadlineAt || 0) || Date.now() + TASK_DEADLINE_MS
+    if (Date.now() >= deadlineAt) {
+      const failedRecord = {
+        ...initial,
+        status: 'failed',
         updatedAt: Date.now(),
+        error: '图片生成超过 3 分钟，已停止等待，请重新生成',
       }
-      await putTask(processingRecord)
-      await notifyClients(processingRecord)
-
-      const controller = new AbortController()
-      const timeout = setTimeout(() => controller.abort('image generation timeout'), TASK_TIMEOUT_MS)
-      let response = null
-      let responseBody = ''
-      let requestError = null
-
-      try {
-        response = await fetch(task.request.url, {
-          method: task.request.init.method || 'POST',
-          headers: task.request.init.headers,
-          body: bodyFromRecord(task.request.init.body),
-          cache: 'no-store',
-          signal: controller.signal,
-        })
-        responseBody = await response.text()
-      } catch (error) {
-        requestError = error
-      } finally {
-        clearTimeout(timeout)
-      }
-
-      // A missing response may mean the upstream already accepted the request.
-      // Retrying it without an idempotency key can generate and bill twice.
-      const retryable = response != null && isRetryableStatus(response.status)
-      if (!retryable) {
-        if (!response) {
-          const failedRecord = {
-            ...processingRecord,
-            status: 'failed',
-            updatedAt: Date.now(),
-            error: requestError instanceof Error
-              ? requestError.message
-              : '图片生成请求中断；为避免重复扣费，未自动重试',
-          }
-          await putTask(failedRecord)
-          await notifyClients(failedRecord)
-          return
-        }
-        const failureMessage = response.ok ? '' : errorMessageFromResponse(
-          responseBody,
-          response.status,
-          response.statusText,
-        )
-        const completedRecord = {
-          ...processingRecord,
-          status: response.ok ? 'completed' : 'failed',
-          updatedAt: Date.now(),
-          response: response.ok
-            ? {
-                ok: true,
-                status: response.status,
-                statusText: response.statusText,
-                cacheKey: task.id,
-              }
-            : undefined,
-          error: response.ok ? undefined : failureMessage,
-        }
-        if (response.ok) {
-          const cache = await caches.open(RESPONSE_CACHE)
-          await cache.put(
-            responseCacheRequest(task.id),
-            new Response(responseBody, {
-              headers: { 'Content-Type': 'application/json' },
-            }),
-          )
-        }
-        await putTask(completedRecord)
-        await notifyClients(completedRecord)
-        return
-      }
-
-      const delay = retryDelay(
-        attempts,
-        response?.ok === false ? response : null,
-      )
-      if (Date.now() + delay >= deadlineAt) break
-
-      const retryRecord = {
-        ...processingRecord,
-        status: 'queued',
-        nextRetryAt: Date.now() + delay,
-        updatedAt: Date.now(),
-        error: requestError instanceof Error
-          ? requestError.message
-          : response
-            ? errorMessageFromResponse(responseBody, response.status, response.statusText)
-            : '网络连接中断',
-      }
-      await putTask(retryRecord)
-      await notifyClients(retryRecord)
-      task = retryRecord
-      await sleep(delay)
+      await putTask(failedRecord)
+      await notifyClients(failedRecord)
+      return
     }
 
-    const failedRecord = {
-      ...task,
-      status: 'failed',
+    const attempts = Number(initial.attempts || 0) + 1
+    const processingRecord = {
+      ...initial,
+      status: 'processing',
+      attempts,
+      deadlineAt,
       updatedAt: Date.now(),
-      error: '网络持续不可用，图片生成已暂停。网络恢复后可重新发起生成。',
     }
-    await putTask(failedRecord)
-    await notifyClients(failedRecord)
+    await putTask(processingRecord)
+    await notifyClients(processingRecord)
+
+    const controller = new AbortController()
+    const remainingMs = Math.max(1, deadlineAt - Date.now())
+    const timeout = setTimeout(
+      () => controller.abort('image generation timeout'),
+      Math.min(TASK_TIMEOUT_MS, remainingMs),
+    )
+    let response = null
+    let responseBody = ''
+    let requestError = null
+
+    try {
+      response = await fetch(processingRecord.request.url, {
+        method: processingRecord.request.init.method || 'POST',
+        headers: processingRecord.request.init.headers,
+        body: bodyFromRecord(processingRecord.request.init.body),
+        cache: 'no-store',
+        signal: controller.signal,
+      })
+      responseBody = await response.text()
+    } catch (error) {
+      requestError = error
+    } finally {
+      clearTimeout(timeout)
+    }
+
+    if (!response) {
+      const failedRecord = {
+        ...processingRecord,
+        status: 'failed',
+        updatedAt: Date.now(),
+        error: requestError?.name === 'AbortError'
+          ? '图片生成超过 3 分钟，已停止等待，请重新生成'
+          : requestError instanceof Error
+            ? requestError.message
+            : '图片生成请求中断',
+      }
+      await putTask(failedRecord)
+      await notifyClients(failedRecord)
+      return
+    }
+
+    const failureMessage = response.ok ? '' : errorMessageFromResponse(
+      responseBody,
+      response.status,
+      response.statusText,
+    )
+    const completedRecord = {
+      ...processingRecord,
+      status: response.ok ? 'completed' : 'failed',
+      updatedAt: Date.now(),
+      response: response.ok
+        ? {
+            ok: true,
+            status: response.status,
+            statusText: response.statusText,
+            cacheKey: processingRecord.id,
+          }
+        : undefined,
+      error: response.ok ? undefined : failureMessage,
+    }
+    if (response.ok) {
+      const cache = await caches.open(RESPONSE_CACHE)
+      await cache.put(
+        responseCacheRequest(processingRecord.id),
+        new Response(responseBody, {
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      )
+    }
+    await putTask(completedRecord)
+    await notifyClients(completedRecord)
   } catch (error) {
     const current = await getTask(taskId).catch(() => null)
     const failedRecord = {

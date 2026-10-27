@@ -2,13 +2,12 @@ package repository
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"fmt"
 	"strings"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/google/uuid"
 )
 
 type usageLogImageLinkStore struct {
@@ -29,7 +28,7 @@ func (s *usageLogImageLinkStore) Upsert(ctx context.Context, link *service.Usage
 	if link.UserID <= 0 || link.APIKeyID <= 0 || requestID == "" || imageURL == "" {
 		return nil
 	}
-	linkToken := usageLogImageLinkToken(link.UserID, link.APIKeyID, requestID)
+	linkToken := newUsageLogImageLinkToken()
 	expiresAt := link.ExpiresAt
 	if expiresAt.IsZero() {
 		expiresAt = time.Now().Add(service.UsageLogImageLinkTTL)
@@ -101,7 +100,6 @@ func (s *usageLogImageLinkStore) DeleteExpired(ctx context.Context, now time.Tim
 	return result.RowsAffected()
 }
 
-func usageLogImageLinkToken(userID, apiKeyID int64, requestID string) string {
-	sum := sha256.Sum256([]byte(fmt.Sprintf("%d:%d:%s", userID, apiKeyID, strings.TrimSpace(requestID))))
-	return fmt.Sprintf("%x", sum[:])
+func newUsageLogImageLinkToken() string {
+	return strings.ReplaceAll(uuid.NewString(), "-", "")
 }

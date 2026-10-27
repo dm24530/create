@@ -17,6 +17,10 @@ func RegisterUserRoutes(
 	settingService *service.SettingService,
 	panelRateLimiter *middleware.PanelRateLimiter,
 ) {
+	// Opaque expiring capability links let the browser open generated images
+	// directly instead of waiting for an authenticated API client to buffer them.
+	v1.GET("/usage-images/:token", h.Usage.OpenImageLink)
+
 	authenticated := v1.Group("")
 	authenticated.Use(gin.HandlerFunc(jwtAuth))
 	authenticated.Use(middleware.BackendModeUserGuard(settingService))
@@ -110,6 +114,7 @@ func RegisterUserRoutes(
 			imageStudio.POST("/gallery/from-task", h.ImageStudioGallery.SaveFromTask)
 			imageStudio.GET("/gallery/:id/thumbnail", h.ImageStudioGallery.Thumbnail)
 			imageStudio.GET("/gallery/:id/download", h.ImageStudioGallery.Download)
+			imageStudio.GET("/gallery/:id/download-url", h.ImageStudioGallery.DownloadURL)
 			imageStudio.POST("/gallery/:id/pin", h.ImageStudioGallery.Pin)
 			imageStudio.POST("/gallery/:id/unpin", h.ImageStudioGallery.Unpin)
 			imageStudio.DELETE("/gallery/:id", h.ImageStudioGallery.Delete)

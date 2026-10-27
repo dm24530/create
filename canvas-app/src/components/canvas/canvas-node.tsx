@@ -712,7 +712,11 @@ function TextSlotStatus({ text, startedAt }: { text: CanvasNodeText; startedAt?:
 }
 
 function ImageNodeContent(props: NodeContentRendererProps) {
-    if (!props.node.metadata?.content && !props.isBatchRoot) return <EmptyImageContent {...props} />;
+    const hasImageContent = Boolean(
+        props.node.metadata?.content
+        || props.node.metadata?.images?.some((image) => image.content),
+    );
+    if (!hasImageContent && !props.isBatchRoot) return <EmptyImageContent {...props} />;
 
     return (
         <ImageContent

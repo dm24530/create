@@ -28,6 +28,15 @@ type canvasStorageStub struct {
 	deleteErr   error
 }
 
+type canvasIdentityStub struct {
+	key string
+	err error
+}
+
+func (s canvasIdentityStub) StorageKey(context.Context, int64) (string, error) {
+	return s.key, s.err
+}
+
 func (s *canvasStorageStub) SaveImageWithKey(
 	_ context.Context,
 	key string,
@@ -38,6 +47,15 @@ func (s *canvasStorageStub) SaveImageWithKey(
 	return "https://r2.example.test/" + key, key, nil
 }
 
+func (s *canvasStorageStub) SaveImageWithFullKey(
+	ctx context.Context,
+	key string,
+	contentType string,
+	data []byte,
+) (string, string, error) {
+	return s.SaveImageWithKey(ctx, key, contentType, data)
+}
+
 func (s *canvasStorageStub) DeleteObject(_ context.Context, key string) error {
 	s.deletedKeys = append(s.deletedKeys, key)
 	return s.deleteErr
@@ -45,6 +63,10 @@ func (s *canvasStorageStub) DeleteObject(_ context.Context, key string) error {
 
 func (s *canvasStorageStub) PresignImageObject(_ context.Context, objectKey string) (string, error) {
 	return "https://r2.example.test/" + objectKey, nil
+}
+
+func (s *canvasStorageStub) FetchImageURL(_ context.Context, _ string) ([]byte, string, error) {
+	return []byte("remote-image"), "image/png", nil
 }
 
 type canvasObjectKeyMatcher struct {
@@ -57,15 +79,15 @@ func (m canvasObjectKeyMatcher) Match(value driver.Value) bool {
 }
 
 func TestCanvasAssetObjectKeysAreUserIsolated(t *testing.T) {
-	first := canvasAssetObjectKey(101, "project-a", "asset-a", ".png")
-	second := canvasAssetObjectKey(202, "project-a", "asset-a", ".png")
+	first := canvasAssetObjectKey("key101", "project-a", "asset-a", ".png")
+	second := canvasAssetObjectKey("key202", "project-a", "asset-a", ".png")
 
-	require.True(t, strings.HasPrefix(first, "canvas/users/101/projects/project-a/"))
-	require.True(t, strings.HasPrefix(second, "canvas/users/202/projects/project-a/"))
+	require.True(t, strings.HasPrefix(first, "canvas/key101/project-a/"))
+	require.True(t, strings.HasPrefix(second, "canvas/key202/project-a/"))
 	require.NotEqual(t, first, second)
 	require.Equal(t,
-		"canvas/users/101/projects/project-a/thumbs/asset-a.webp",
-		canvasAssetThumbKey(101, "project-a", "asset-a", ".webp"),
+		"canvas/key101/project-a/thumbs/asset-a.webp",
+		canvasAssetThumbKey("key101", "project-a", "asset-a", ".webp"),
 	)
 }
 
@@ -76,7 +98,11 @@ func TestCanvasUploadAssetUsesAuthenticatedUsersObjectPrefix(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 
 	storage := &canvasStorageStub{}
-	handler := &CanvasHandler{db: db, storage: storage}
+	handler := &CanvasHandler{
+		db:         db,
+		storage:    storage,
+		identities: canvasIdentityStub{key: "key101"},
+	}
 	const userID int64 = 101
 	const projectID = "project-a"
 	const nodeID = "node-a"
@@ -129,7 +155,7 @@ func TestCanvasUploadAssetUsesAuthenticatedUsersObjectPrefix(t *testing.T) {
 			projectID,
 			nodeID,
 			"image",
-			canvasObjectKeyMatcher{prefix: "canvas/users/101/projects/project-a/assets/"},
+			canvasObjectKeyMatcher{prefix: "canvas/key101/project-a/assets/"},
 			"",
 			640,
 			480,
@@ -164,11 +190,13 @@ func TestCanvasUploadAssetUsesAuthenticatedUsersObjectPrefix(t *testing.T) {
 
 	handler.UploadAsset(c)
 
-	require.Equal(t, http.StatusCreated, w.Code)
+	if w.Code != http.StatusCreated {
+		require.Equal(t, http.StatusCreated, w.Code, "body=%s keys=%v", w.Body.String(), storage.savedKeys)
+	}
 	require.Len(t, storage.savedKeys, 1)
 	require.True(t, strings.HasPrefix(
 		storage.savedKeys[0],
-		"canvas/users/101/projects/project-a/assets/",
+		"canvas/key101/project-a/assets/",
 	))
 	require.NoError(t, mock.ExpectationsWereMet())
 }
@@ -275,6 +303,11 @@ func TestCanvasPutProjectReturnsConflictForStaleVersion(t *testing.T) {
 		`)).
 		WithArgs(projectID, userID, "画布", sqlmock.AnyArg(), 3).
 		WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery(regexp.QuoteMeta(`
+			SELECT version FROM canvas_projects WHERE id = $1 AND user_id = $2
+		`)).
+		WithArgs(projectID, userID).
+		WillReturnRows(sqlmock.NewRows([]string{"version"}).AddRow(5))
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)

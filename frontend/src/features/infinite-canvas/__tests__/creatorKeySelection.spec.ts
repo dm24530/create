@@ -41,16 +41,16 @@ describe('selectCanvasCreatorKey', () => {
     expect(storage.getItem).toHaveBeenCalledWith('sub2api:image-studio:preferences:42')
   })
 
-  it('returns null when the saved key is unavailable or cannot generate images', () => {
+  it('falls back when the saved key cannot generate images', () => {
     const blocked = key(2, 20, false)
     const storage = {
       getItem: vi.fn(() => JSON.stringify({ keyId: '2' })),
     } as unknown as Storage
 
-    expect(selectCanvasCreatorKey([key(1, 10), blocked], storage)).toBeNull()
+    expect(selectCanvasCreatorKey([key(1, 10), blocked], storage)?.id).toBe(1)
   })
 
-  it('does not fall back when no selection is saved', () => {
+  it('automatically selects a composite key when no selection is saved', () => {
     const composite = {
       ...key(1, 10),
       group: { ...key(1, 10).group!, platform: 'composite' },
@@ -60,7 +60,15 @@ describe('selectCanvasCreatorKey', () => {
       getItem: vi.fn(() => null),
     } as unknown as Storage
 
-    expect(selectCanvasCreatorKey([composite, regular], storage)).toBeNull()
+    expect(selectCanvasCreatorKey([regular, composite], storage)).toBe(composite)
+  })
+
+  it('returns null only when no active image-capable key exists', () => {
+    const storage = {
+      getItem: vi.fn(() => null),
+    } as unknown as Storage
+
+    expect(selectCanvasCreatorKey([key(1, 10, false)], storage)).toBeNull()
   })
 
   it('uses the selected API key name as the managed channel name', () => {

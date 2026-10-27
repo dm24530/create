@@ -29,7 +29,7 @@ const (
 	ImageTaskStatusFailed       = "failed"
 
 	defaultImageTaskTTL              = 24 * time.Hour
-	defaultImageTaskExecutionTimeout = 5 * time.Minute
+	defaultImageTaskExecutionTimeout = 3 * time.Minute
 )
 
 var (

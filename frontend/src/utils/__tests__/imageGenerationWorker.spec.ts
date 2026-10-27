@@ -36,7 +36,7 @@ describe('image generation worker persistence', () => {
     expect((image as Blob).type).toBe('image/png')
   })
 
-  it('persists the full request, retry window, and task identifiers', () => {
+  it('persists the full request and task identifiers', () => {
     const request = persistableImageGenerationRequest({
       id: 'task-1',
       url: '/v1/images/generations',
@@ -60,20 +60,20 @@ describe('image generation worker persistence', () => {
     })
   })
 
-  it('only retries queued tasks and fails ambiguous processing tasks closed', () => {
+  it('fails upstream errors immediately without resubmitting the image request', () => {
     expect(workerSource).toContain('recoverTasks(taskIds)')
-    expect(workerSource).toContain('task.request.url')
+    expect(workerSource).toContain('processingRecord.request.url')
     expect(workerSource).toContain('attempts')
-    expect(workerSource).toContain('nextRetryAt')
-    expect(workerSource).toContain('isRetryableStatus')
+    expect(workerSource).not.toContain('isRetryableStatus')
+    expect(workerSource).not.toContain('retryDelay')
     expect(workerSource).not.toContain('status >= 500')
-    expect(workerSource).toContain("status: 'queued'")
+    expect(workerSource).toContain("task.status === 'queued'")
     expect(workerSource).toContain("task.status === 'processing'")
     expect(workerSource).toContain('为避免重复扣费未自动重试')
   })
 
-  it('keeps the browser worker and retry window at five minutes', () => {
-    expect(workerSource).toContain('const TASK_TIMEOUT_MS = 5 * 60 * 1000')
-    expect(workerSource).toContain('const RETRY_WINDOW_MS = 5 * 60 * 1000')
+  it('stops the browser worker after three minutes', () => {
+    expect(workerSource).toContain('const TASK_TIMEOUT_MS = 3 * 60 * 1000')
+    expect(workerSource).toContain('const TASK_DEADLINE_MS = 3 * 60 * 1000')
   })
 })

@@ -43,16 +43,19 @@ RUN --mount=type=cache,id=create-pnpm-store,target=/root/.local/share/pnpm/store
 # Copy only that subtree to keep the build dependency minimal.
 COPY frontend/ ./
 COPY docs/legal/ /app/docs/legal/
-RUN pnpm run build
 
-# Build the original React canvas as a managed sub-application. Its Vite config
-# writes to backend/internal/web/dist/canvas-app so the Go embed step includes it.
+# The frontend build script also builds the managed canvas sub-application, so
+# prepare canvas-app source/dependencies before invoking it.
 WORKDIR /app/canvas-app
-COPY canvas-app/package.json canvas-app/pnpm-lock.yaml ./
+COPY canvas-app/package.json canvas-app/pnpm-lock.yaml canvas-app/pnpm-workspace.yaml ./
 RUN --mount=type=cache,id=create-canvas-pnpm-store,target=/root/.local/share/pnpm/store \
     if [ -n "${NPM_CONFIG_REGISTRY}" ]; then pnpm config set registry "${NPM_CONFIG_REGISTRY}"; fi && \
     pnpm install --frozen-lockfile --prefer-offline
 COPY canvas-app/ /app/canvas-app/
+
+# Build both the main frontend and canvas. The main build script delegates the
+# canvas build to ../canvas-app and writes both outputs into backend/internal/web/dist.
+WORKDIR /app/frontend
 RUN pnpm run build
 
 # -----------------------------------------------------------------------------
@@ -78,7 +81,8 @@ ENV GOPROXY=${GOPROXY}
 ENV GOSUMDB=${GOSUMDB}
 
 # Install build dependencies
-RUN apk add --no-cache git ca-certificates tzdata
+RUN sed -i 's#https://dl-cdn.alpinelinux.org#https://mirrors.aliyun.com#g' /etc/apk/repositories && \
+    apk add --no-cache git ca-certificates tzdata
 
 WORKDIR /app/backend
 
@@ -125,7 +129,8 @@ LABEL description="Create - AI Video & Image Generation Platform"
 LABEL org.opencontainers.image.source="https://github.com/diminglucky/create"
 
 # Install runtime dependencies
-RUN apk add --no-cache \
+RUN sed -i 's#https://dl-cdn.alpinelinux.org#https://mirrors.aliyun.com#g' /etc/apk/repositories && \
+    apk add --no-cache \
     ca-certificates \
     tzdata \
     su-exec \

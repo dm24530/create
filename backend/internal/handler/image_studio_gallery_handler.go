@@ -6,6 +6,7 @@ import (
 	"errors"
 	"mime"
 	"net/http"
+	"path"
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
@@ -182,6 +183,7 @@ func (h *ImageStudioGalleryHandler) List(c *gin.Context) {
 		response.Unauthorized(c, "User not found in context")
 		return
 	}
+	c.Header("Cache-Control", "no-store")
 	// 0 = 条数由后台配额决定（配额调大后不能还只给 100 条，否则更早的作品看不到也删不掉）。
 	items, err := h.gallery.List(c.Request.Context(), subject.UserID, 0, studioWorksScopeSaved(c))
 	if err != nil {
@@ -208,7 +210,40 @@ func (h *ImageStudioGalleryHandler) Download(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
-	ext := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(entry.Format)), ".")
+	filename := imageStudioDownloadFilename(entry)
+	if strings.TrimSpace(contentType) == "" {
+		contentType = "application/octet-stream"
+	}
+	c.Header("Content-Disposition", `attachment; filename="`+filename+`"`)
+	c.Data(http.StatusOK, contentType, data)
+}
+
+func (h *ImageStudioGalleryHandler) DownloadURL(c *gin.Context) {
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not found in context")
+		return
+	}
+	projectID := strings.TrimSpace(c.Param("id"))
+	entry, err := h.gallery.Get(c.Request.Context(), subject.UserID, projectID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	filename := imageStudioDownloadFilename(entry)
+	_, url, err := h.gallery.DownloadURL(c.Request.Context(), subject.UserID, projectID, filename)
+	if err != nil || strings.TrimSpace(url) == "" {
+		response.Error(c, http.StatusServiceUnavailable, "直接下载地址暂时不可用")
+		return
+	}
+	response.Success(c, gin.H{"url": url, "filename": filename})
+}
+
+func imageStudioDownloadFilename(entry *service.ImageStudioGalleryEntry) string {
+	ext := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(path.Ext(entry.ObjectKey))), ".")
+	if ext == "" {
+		ext = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(entry.Format)), ".")
+	}
 	ext = strings.Map(func(r rune) rune {
 		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
 			return r
@@ -221,11 +256,7 @@ func (h *ImageStudioGalleryHandler) Download(c *gin.Context) {
 	if ext == "" {
 		ext = "png"
 	}
-	if strings.TrimSpace(contentType) == "" {
-		contentType = "application/octet-stream"
-	}
-	c.Header("Content-Disposition", `attachment; filename="image-`+entry.ID+`.`+ext+`"`)
-	c.Data(http.StatusOK, contentType, data)
+	return `image-` + entry.ID + `.` + ext
 }
 
 // Thumbnail returns a cached small JPEG preview for list views. Loading the
@@ -318,6 +349,7 @@ func (h *ImageStudioGalleryHandler) Quota(c *gin.Context) {
 		response.Unauthorized(c, "User not found in context")
 		return
 	}
+	c.Header("Cache-Control", "no-store")
 	quota, err := h.gallery.Quota(c.Request.Context(), subject.UserID)
 	if err != nil {
 		response.ErrorFrom(c, err)

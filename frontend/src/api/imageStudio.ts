@@ -101,6 +101,19 @@ export async function downloadImageStudioGallery(id: string): Promise<Blob> {
   return data
 }
 
+export interface ImageStudioGalleryDownloadURL {
+  url: string
+  filename: string
+}
+
+export async function downloadURLImageStudioGallery(id: string): Promise<ImageStudioGalleryDownloadURL> {
+  const { data } = await apiClient.get<ImageStudioGalleryDownloadURL>(
+    `/image-studio/gallery/${encodeURIComponent(id)}/download-url`,
+    { timeout: 15 * 1000 },
+  )
+  return data
+}
+
 export async function thumbnailImageStudioGallery(id: string): Promise<Blob> {
   const { data } = await apiClient.get<Blob>(
     `/image-studio/gallery/${encodeURIComponent(id)}/thumbnail`,
@@ -128,6 +141,7 @@ export const imageStudioGalleryAPI = {
   pin: pinImageStudioGallery,
   unpin: unpinImageStudioGallery,
   download: downloadImageStudioGallery,
+  downloadURL: downloadURLImageStudioGallery,
   thumbnail: thumbnailImageStudioGallery,
   quota: fetchStudioWorksQuota,
 }

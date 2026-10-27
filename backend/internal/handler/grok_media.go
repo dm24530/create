@@ -416,6 +416,10 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 					h.handleFailoverExhausted(c, failoverErr, true)
 					return
 				}
+				if isAsyncImageTaskContext(c.Request.Context()) {
+					h.handleFailoverExhausted(c, failoverErr, false)
+					return
+				}
 				if !failoverErr.ShouldRetryNextAccount() {
 					h.handleFailoverExhausted(c, failoverErr, false)
 					return
