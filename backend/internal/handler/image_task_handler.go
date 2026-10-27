@@ -32,6 +32,7 @@ type AsyncImageHandler struct {
 	imageLinks service.UsageLogImageLinkStore
 	execute    func(platform string, c *gin.Context)
 	running    sync.Map
+	failureLog sync.Map
 }
 
 type imageTaskAPIKeyLoader interface {
@@ -1051,7 +1052,121 @@ func (h *AsyncImageHandler) failTask(taskID string, statusCode int, taskErr json
 	if err := h.tasks.Fail(context.Background(), taskID, statusCode, taskErr); err != nil {
 		logger.L().Error("image_task.failure_store_failed", zap.String("task_id", taskID), zap.Error(err))
 	}
+	if _, loaded := h.failureLog.LoadOrStore(taskID, struct{}{}); !loaded {
+		h.recordAsyncTaskFailure(taskID, statusCode, taskErr)
+	}
 	h.refundFailedImageTask(taskID)
+}
+
+func (h *AsyncImageHandler) recordAsyncTaskFailure(taskID string, statusCode int, taskErr json.RawMessage) {
+	if h == nil || h.tasks == nil || h.openAI == nil || h.openAI.opsService == nil {
+		return
+	}
+	record, err := h.tasks.GetRecord(context.Background(), taskID)
+	if err != nil || record == nil {
+		return
+	}
+	entry := buildAsyncTaskFailureEntry(record, statusCode, taskErr)
+	if entry == nil {
+		return
+	}
+	enqueueOpsErrorLog(h.openAI.opsService, entry)
+}
+
+func buildAsyncTaskFailureEntry(
+	record *service.ImageTaskRecord,
+	statusCode int,
+	taskErr json.RawMessage,
+) *service.OpsInsertErrorLogInput {
+	if record == nil {
+		return nil
+	}
+	usageRequestID := ""
+	if record.Execution != nil {
+		usageRequestID = strings.TrimSpace(record.Execution.UsageRequestID)
+	}
+	rawRequestID := usageRequestID
+	clientRequestID := ""
+	switch {
+	case strings.HasPrefix(rawRequestID, "client:"):
+		clientRequestID = strings.TrimPrefix(rawRequestID, "client:")
+		rawRequestID = clientRequestID
+	case strings.HasPrefix(rawRequestID, "local:"):
+		rawRequestID = strings.TrimPrefix(rawRequestID, "local:")
+	}
+	errorType, errorMessage := imageTaskFailureDetails(taskErr)
+	userID := record.UserID
+	apiKeyID := record.APIKeyID
+	requestType := int16(service.RequestTypeAsync)
+	return &service.OpsInsertErrorLogInput{
+		RequestID:         rawRequestID,
+		ClientRequestID:   clientRequestID,
+		UsageRequestID:    usageRequestID,
+		RequestInstanceID: imageTaskRequestInstanceID(record),
+		UserID:            &userID,
+		APIKeyID:          &apiKeyID,
+		RequestPath:       imageTaskRequestPath(record),
+		InboundEndpoint:   imageTaskRequestPath(record),
+		Platform:          imageTaskPlatform(record),
+		Model:             imageTaskModel(record),
+		RequestedModel:    imageTaskModel(record),
+		RequestType:       &requestType,
+		ErrorPhase:        "request",
+		ErrorType:         errorType,
+		Severity:          "P2",
+		StatusCode:        statusCode,
+		ErrorMessage:      errorMessage,
+		ErrorSource:       "gateway",
+		ErrorOwner:        "provider",
+		CreatedAt:         time.Now().UTC(),
+	}
+}
+
+func imageTaskFailureDetails(taskErr json.RawMessage) (string, string) {
+	var payload struct {
+		Type    string `json:"type"`
+		Message string `json:"message"`
+	}
+	if len(taskErr) > 0 && json.Unmarshal(taskErr, &payload) == nil {
+		errorType := strings.TrimSpace(payload.Type)
+		if errorType == "" {
+			errorType = "api_error"
+		}
+		message := strings.TrimSpace(payload.Message)
+		if message == "" {
+			message = "image generation failed"
+		}
+		return errorType, message
+	}
+	return "api_error", "image generation failed"
+}
+
+func imageTaskRequestPath(record *service.ImageTaskRecord) string {
+	if record != nil && record.Execution != nil && strings.TrimSpace(record.Execution.RequestPath) != "" {
+		return strings.TrimSpace(record.Execution.RequestPath)
+	}
+	return "/v1/images/generations"
+}
+
+func imageTaskPlatform(record *service.ImageTaskRecord) string {
+	if record != nil && record.Execution != nil {
+		return strings.TrimSpace(record.Execution.Platform)
+	}
+	return ""
+}
+
+func imageTaskModel(record *service.ImageTaskRecord) string {
+	if record != nil && record.Execution != nil {
+		return strings.TrimSpace(record.Execution.GeminiModel)
+	}
+	return ""
+}
+
+func imageTaskRequestInstanceID(record *service.ImageTaskRecord) string {
+	if record != nil && record.Execution != nil {
+		return strings.TrimSpace(record.Execution.RequestInstanceID)
+	}
+	return ""
 }
 
 func (h *AsyncImageHandler) refundFailedImageTask(taskID string) {

@@ -94,6 +94,12 @@ func TestMigrationsRunner_IsIdempotent_AndSchemaIsUpToDate(t *testing.T) {
 	requireColumn(t, tx, "usage_log_image_links", "image_url", "text", 0, false)
 	requireColumn(t, tx, "usage_log_image_links", "object_key", "text", 0, true)
 	requireColumn(t, tx, "usage_log_image_links", "expires_at", "timestamp with time zone", 0, false)
+	requireColumn(t, tx, "usage_log_image_links", "displayed_at", "timestamp with time zone", 0, true)
+	requireColumn(t, tx, "usage_log_image_links", "generation_duration_ms", "integer", 0, true)
+	var imageGenerationMetricsRegclass sql.NullString
+	require.NoError(t, tx.QueryRowContext(context.Background(), "SELECT to_regclass('public.image_generation_metrics')").Scan(&imageGenerationMetricsRegclass))
+	require.True(t, imageGenerationMetricsRegclass.Valid, "expected image_generation_metrics table to exist")
+	requireColumn(t, tx, "image_generation_metrics", "generation_duration_ms", "integer", 0, false)
 	requireColumn(t, tx, "studio_works", "duration_ms", "integer", 0, true)
 
 	var mismatchIndexDef string

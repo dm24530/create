@@ -204,6 +204,7 @@ func (h *UsageHandler) List(c *gin.Context) {
 		UpstreamModelMismatch: upstreamModelMismatch,
 		StartTime:             startTime,
 		EndTime:               endTime,
+		IncludeErrors:         true,
 		ExactTotal:            exactTotal,
 	}
 
@@ -363,6 +364,7 @@ func (h *UsageHandler) Stats(c *gin.Context) {
 		UpstreamModelMismatch: upstreamModelMismatch,
 		StartTime:             &startTime,
 		EndTime:               &endTime,
+		IncludeErrors:         true,
 	}
 
 	var stats *usagestats.UsageStats

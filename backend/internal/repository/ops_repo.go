@@ -1090,6 +1090,7 @@ func buildOpsErrorLogsWhere(filter *service.OpsErrorLogFilter) (string, []any) {
 	if filter.ExcludeCountTokens {
 		clauses = append(clauses, "COALESCE(e.is_count_tokens, false) = false")
 	}
+	clauses = append(clauses, "NOT (COALESCE(e.request_path, '') IN ('/v1/images/batches/models', '/v1/images/batches/models/') AND COALESCE(e.error_message, '') ILIKE 'batch image API is disabled%')")
 	if len(filter.ErrorPhasesAny) > 0 {
 		args = append(args, pq.Array(filter.ErrorPhasesAny))
 		clauses = append(clauses, "e.error_phase = ANY($"+itoa(len(args))+")")

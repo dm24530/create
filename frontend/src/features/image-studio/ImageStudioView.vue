@@ -713,6 +713,7 @@ import { resolvePlaygroundApiEndpoint } from '@/utils/apiEndpoint'
 
 const IMAGE_GENERATION_TIMEOUT_MS = 3 * 60 * 1000
 const IMAGE_GENERATION_TIMEOUT_MESSAGE = '图片生成超过 3 分钟，已停止等待，请重新生成'
+const IMAGE_MEDIA_LOAD_TIMEOUT_MS = 3_000
 
 interface GeneratedImage {
   id: number | string
@@ -1222,6 +1223,7 @@ const localToGalleryId = ref<Map<string, string>>(new Map())
 const pendingGalleryImageIds = new Map<string, Promise<string>>()
 const galleryRemoteThumbUrls = new Map<string, string>()
 const galleryThumbnailDataUrls = new Map<string, string>()
+const galleryThumbnailRecoveryIds = new Set<string>()
 const imageMediaTimeoutIds = new Map<string, ReturnType<typeof setTimeout>>()
 const studioQuota = ref<{ used: number; limit: number } | null>(null)
 const resumedGenerationBatches = new Set<string>()
@@ -1257,6 +1259,7 @@ function clearStudioUserState() {
   pendingGalleryImageIds.clear()
   galleryRemoteThumbUrls.clear()
   galleryThumbnailDataUrls.clear()
+  galleryThumbnailRecoveryIds.clear()
   resumedGenerationBatches.clear()
   resumedGatewayBatches.clear()
   pendingDeleteImage.value = null
@@ -1756,7 +1759,7 @@ function isInlineImageSource(value: string | undefined) {
   return Boolean(value && (/^data:image\//i.test(value) || /^blob:/i.test(value)))
 }
 
-async function loadGalleryThumbnail(id: string) {
+async function loadGalleryThumbnail(id: string, forceServer = false) {
   const image = images.value.find((item) => (
     String(item.id) === id
     || localToGalleryId.value.get(String(item.id)) === id
@@ -1771,7 +1774,7 @@ async function loadGalleryThumbnail(id: string) {
   }
   // The object store already serves a 720px thumbnail. Use it directly instead
   // of asking the backend to download and resize the original image.
-  if (/^https?:\/\//i.test(image.thumbSrc || '')) {
+  if (!forceServer && /^https?:\/\//i.test(image.thumbSrc || '')) {
     resetImageMediaState(image)
     armImageMediaTimeout(image)
     return
@@ -1786,7 +1789,7 @@ async function loadGalleryThumbnail(id: string) {
     armImageMediaTimeout(image)
     if (previewImage.value?.id === image.id) void loadPreviewDisplay(image)
   } catch {
-    image.thumbSrc = galleryRemoteThumbUrls.get(id) || ''
+    image.thumbSrc = forceServer ? '' : (galleryRemoteThumbUrls.get(id) || '')
     image.thumbSrcSet = ''
     resetImageMediaState(image)
     armImageMediaTimeout(image)
@@ -2230,6 +2233,18 @@ function markImageMediaLoaded(image: GeneratedImage) {
   clearImageMediaTimeout(image)
   failedImageMediaIds.value.delete(id)
   loadedImageMediaIds.value.add(id)
+  reportImageDisplay(image)
+}
+
+const reportedImageDisplayTaskIds = new Set<string>()
+
+function reportImageDisplay(image: GeneratedImage) {
+  const taskId = String(image.gatewayTaskId || '').trim()
+  if (!taskId || reportedImageDisplayTaskIds.has(taskId)) return
+  reportedImageDisplayTaskIds.add(taskId)
+  void imageStudioGalleryAPI.reportDisplay(taskId, image.durationMs).catch(() => {
+    reportedImageDisplayTaskIds.delete(taskId)
+  })
 }
 
 function markImageMediaFailed(image: GeneratedImage) {
@@ -2258,6 +2273,21 @@ function handleImageMediaError(image: GeneratedImage) {
     return
   }
   if (image.thumbSrc && image.thumbSrc !== image.src) {
+    const galleryID = galleryIdFor(image)
+    const mediaID = imageMediaId(image)
+    if (
+      /^https?:\/\//i.test(image.thumbSrc)
+      && galleryID
+      && galleryBackedIds.value.has(galleryID)
+      && !galleryThumbnailRecoveryIds.has(mediaID)
+    ) {
+      galleryThumbnailRecoveryIds.add(mediaID)
+      resetImageMediaState(image)
+      void loadGalleryThumbnail(galleryID, true).finally(() => {
+        galleryThumbnailRecoveryIds.delete(mediaID)
+      })
+      return
+    }
     image.thumbSrc = ''
     resetImageMediaState(image)
     return
@@ -2290,10 +2320,10 @@ function armImageMediaTimeout(image: GeneratedImage) {
   const timer = setTimeout(() => {
     imageMediaTimeoutIds.delete(id)
     if (image.pending || isImageMediaLoaded(image) || isImageMediaFailed(image)) return
-    // Drop the slow thumbnail/source once, which triggers the existing
-    // fallback chain. A second timeout marks the card failed and shows retry.
+    // Drop the slow thumbnail/source once, which triggers the server-side
+    // thumbnail recovery chain before falling back to the original.
     handleImageMediaError(image)
-  }, 15_000)
+  }, IMAGE_MEDIA_LOAD_TIMEOUT_MS)
   imageMediaTimeoutIds.set(id, timer)
 }
 

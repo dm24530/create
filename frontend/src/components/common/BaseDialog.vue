@@ -11,7 +11,7 @@
         @click.self="handleClose"
       >
         <!-- Modal panel -->
-        <div ref="dialogRef" :class="['modal-content', 'relative', widthClasses]" @click.stop>
+        <div ref="dialogRef" :class="['modal-content', 'relative', widthClasses]" :style="widthStyle" @click.stop>
           <!-- Header -->
           <div v-if="!headerless" class="modal-header">
             <h3 :id="dialogId" class="modal-title">
@@ -70,7 +70,7 @@ const dialogRef = ref<HTMLElement | null>(null)
 const modalBodyRef = ref<HTMLElement | null>(null)
 let previousActiveElement: HTMLElement | null = null
 
-type DialogWidth = 'narrow' | 'normal' | 'wide' | 'extra-wide' | 'full'
+type DialogWidth = 'narrow' | 'normal' | 'wide' | 'extra-wide' | 'full' | 'screen'
 
 interface Props {
   show: boolean
@@ -113,10 +113,17 @@ const widthClasses = computed(() => {
     normal: 'max-w-lg',
     wide: 'w-full sm:max-w-2xl md:max-w-3xl lg:max-w-4xl',
     'extra-wide': 'w-full sm:max-w-3xl md:max-w-4xl lg:max-w-5xl xl:max-w-6xl',
-    full: 'w-full sm:max-w-4xl md:max-w-5xl lg:max-w-6xl xl:max-w-7xl'
+    full: 'w-full sm:max-w-4xl md:max-w-5xl lg:max-w-6xl xl:max-w-7xl',
+    screen: 'w-full'
   }
   return widths[props.width]
 })
+
+const widthStyle = computed(() => (
+  props.width === 'screen'
+    ? { width: 'calc(100vw - 8px)', maxWidth: '1800px' }
+    : undefined
+))
 
 const handleClose = () => {
   if (props.closeOnClickOutside) {

@@ -162,6 +162,236 @@ func (r *usageLogRepository) ListWithFilters(ctx context.Context, params paginat
 	return logs, page, nil
 }
 
+// ListUsageErrors returns client-visible failed requests in the same record
+// shape as usage logs so callers can merge both sources into one timeline.
+func (r *usageLogRepository) ListUsageErrors(
+	ctx context.Context,
+	params pagination.PaginationParams,
+	filters UsageLogFilters,
+) ([]service.UsageLog, *pagination.PaginationResult, error) {
+	whereClause, args, supported := buildUsageErrorsWhere(filters)
+	if !supported {
+		return []service.UsageLog{}, emptyPaginationResult(params), nil
+	}
+
+	var total int64
+	if err := scanSingleRow(ctx, r.sql, "SELECT COUNT(*) FROM ops_error_logs e "+whereClause, args, &total); err != nil {
+		return nil, nil, err
+	}
+
+	limitPos := len(args) + 1
+	offsetPos := len(args) + 2
+	listArgs := append(append([]any{}, args...), params.Limit(), params.Offset())
+	query := fmt.Sprintf(`
+		SELECT
+			e.id,
+			COALESCE(e.user_id, 0),
+			COALESCE(e.api_key_id, 0),
+			COALESCE(e.account_id, 0),
+			e.group_id,
+			COALESCE(NULLIF(e.request_id, ''), NULLIF(e.client_request_id, ''), ''),
+			COALESCE(NULLIF(e.requested_model, ''), NULLIF(e.model, ''), ''),
+			COALESCE(NULLIF(e.requested_model, ''), NULLIF(e.model, ''), ''),
+			e.upstream_model,
+			e.inbound_endpoint,
+			e.upstream_endpoint,
+			e.request_type,
+			e.stream,
+			e.duration_ms,
+			e.time_to_first_token_ms,
+			e.user_agent,
+			e.status_code,
+			e.error_message,
+			e.error_phase,
+			e.error_type,
+			e.refund_status,
+			e.refund_amount,
+			e.resolved,
+			e.created_at
+		FROM ops_error_logs e
+		%s
+		ORDER BY %s
+		LIMIT $%d OFFSET $%d`,
+		whereClause,
+		opsErrorLogsOrderBy(&service.OpsErrorLogFilter{
+			SortBy:    params.SortBy,
+			SortOrder: params.SortOrder,
+		}),
+		limitPos,
+		offsetPos,
+	)
+	rows, err := r.sql.QueryContext(ctx, query, listArgs...)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	logs := make([]service.UsageLog, 0, params.Limit())
+	for rows.Next() {
+		var item service.UsageLog
+		var errorID int64
+		var groupID sql.NullInt64
+		var upstreamModel, inboundEndpoint, upstreamEndpoint sql.NullString
+		var requestType sql.NullInt64
+		var durationMs, firstTokenMs sql.NullInt64
+		var userAgent, errorMessage, refundStatus sql.NullString
+		var statusCode sql.NullInt64
+		var refundAmount sql.NullFloat64
+		var errorPhase, errorType string
+		var resolved bool
+		if err := rows.Scan(
+			&errorID,
+			&item.UserID,
+			&item.APIKeyID,
+			&item.AccountID,
+			&groupID,
+			&item.RequestID,
+			&item.Model,
+			&item.RequestedModel,
+			&upstreamModel,
+			&inboundEndpoint,
+			&upstreamEndpoint,
+			&requestType,
+			&item.Stream,
+			&durationMs,
+			&firstTokenMs,
+			&userAgent,
+			&statusCode,
+			&errorMessage,
+			&errorPhase,
+			&errorType,
+			&refundStatus,
+			&refundAmount,
+			&resolved,
+			&item.CreatedAt,
+		); err != nil {
+			return nil, nil, err
+		}
+		item.ID = -errorID
+		item.RecordKind = "error"
+		item.ErrorID = &errorID
+		if groupID.Valid {
+			item.GroupID = &groupID.Int64
+		}
+		if upstreamModel.Valid {
+			item.UpstreamModel = &upstreamModel.String
+		}
+		if inboundEndpoint.Valid {
+			item.InboundEndpoint = &inboundEndpoint.String
+		}
+		if upstreamEndpoint.Valid {
+			item.UpstreamEndpoint = &upstreamEndpoint.String
+		}
+		if requestType.Valid {
+			item.RequestType = service.RequestTypeFromInt16(int16(requestType.Int64))
+		}
+		if durationMs.Valid {
+			value := int(durationMs.Int64)
+			item.DurationMs = &value
+		}
+		if firstTokenMs.Valid {
+			value := int(firstTokenMs.Int64)
+			item.FirstTokenMs = &value
+		}
+		if userAgent.Valid {
+			item.UserAgent = &userAgent.String
+		}
+		if statusCode.Valid {
+			value := int(statusCode.Int64)
+			item.ErrorStatusCode = &value
+		}
+		if errorMessage.Valid {
+			item.ErrorMessage = &errorMessage.String
+		}
+		item.ErrorPhase = &errorPhase
+		item.ErrorType = &errorType
+		if refundStatus.Valid {
+			item.RefundStatus = &refundStatus.String
+		}
+		if refundAmount.Valid {
+			item.RefundAmount = &refundAmount.Float64
+		}
+		item.ErrorResolved = &resolved
+		item.RateMultiplier = 1
+		item.BillingType = service.BillingTypeBalance
+		logs = append(logs, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+	if err := r.hydrateUsageLogAssociations(ctx, logs); err != nil {
+		return nil, nil, err
+	}
+	return logs, paginationResultFromTotal(total, params), nil
+}
+
+func (r *usageLogRepository) GetUsageErrorCount(
+	ctx context.Context,
+	filters UsageLogFilters,
+) (int64, error) {
+	whereClause, args, supported := buildUsageErrorsWhere(filters)
+	if !supported {
+		return 0, nil
+	}
+	var count int64
+	query := `SELECT COUNT(*) FROM ops_error_logs e ` + whereClause
+	if err := scanSingleRow(ctx, r.sql, query, args, &count); err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+func buildUsageErrorsWhere(filters UsageLogFilters) (string, []any, bool) {
+	if filters.NativeCompactionV2 != nil ||
+		filters.BillingType != nil ||
+		strings.TrimSpace(filters.BillingMode) != "" ||
+		filters.UpstreamModelMismatch != nil {
+		return "", nil, false
+	}
+	errorFilter := &service.OpsErrorLogFilter{
+		StartTime:          filters.StartTime,
+		EndTime:            filters.EndTime,
+		GroupID:            positiveInt64Ptr(filters.GroupID),
+		AccountID:          positiveInt64Ptr(filters.AccountID),
+		UserID:             positiveInt64Ptr(filters.UserID),
+		APIKeyID:           positiveInt64Ptr(filters.APIKeyID),
+		RequestID:          strings.TrimSpace(filters.RequestID),
+		Model:              strings.TrimSpace(filters.Model),
+		View:               "all",
+		ExcludeCountTokens: true,
+	}
+	whereClause, args := buildOpsErrorLogsWhere(errorFilter)
+	clauses := make([]string, 0, 2)
+	if filters.RequestType != nil {
+		args = append(args, int16(*filters.RequestType))
+		clauses = append(clauses, "e.request_type = $"+fmt.Sprint(len(args)))
+	}
+	if filters.Stream != nil {
+		args = append(args, *filters.Stream)
+		clauses = append(clauses, "e.stream = $"+fmt.Sprint(len(args)))
+	}
+	if len(clauses) > 0 {
+		whereClause += " AND " + strings.Join(clauses, " AND ")
+	}
+	return whereClause, args, true
+}
+
+func positiveInt64Ptr(value int64) *int64 {
+	if value <= 0 {
+		return nil
+	}
+	return &value
+}
+
+func emptyPaginationResult(params pagination.PaginationParams) *pagination.PaginationResult {
+	return &pagination.PaginationResult{
+		Total:    0,
+		Page:     params.Page,
+		PageSize: params.Limit(),
+		Pages:    0,
+	}
+}
+
 func upstreamModelMismatchCondition(column string, mismatch bool) string {
 	if mismatch {
 		return column + " IS TRUE"
@@ -300,7 +530,11 @@ func (r *usageLogRepository) hydrateUsageLogAssociations(ctx context.Context, lo
 	if err != nil {
 		return err
 	}
-	imageURLs, err := r.loadUsageLogImageURLs(ctx, ids.imageLinks)
+	imageLinks, err := r.loadUsageLogImageLinks(ctx, ids.imageLinks)
+	if err != nil {
+		return err
+	}
+	generationDurations, err := r.loadImageGenerationDurations(ctx, ids.imageLinks)
 	if err != nil {
 		return err
 	}
@@ -325,11 +559,55 @@ func (r *usageLogRepository) hydrateUsageLogAssociations(ctx context.Context, lo
 				logs[i].Subscription = sub
 			}
 		}
-		if imageURL, ok := imageURLs[usageLogImageLinkKeyFromLog(&logs[i])]; ok {
+		if link, ok := imageLinks[usageLogImageLinkKeyFromLog(&logs[i])]; ok {
+			imageURL := link.url
 			logs[i].ImageURL = &imageURL
+			logs[i].ImageDisplayedAt = link.displayedAt
+			logs[i].ImageGenerationDurationMs = link.generationDurationMs
+		}
+		if duration, ok := generationDurations[usageLogImageLinkKeyFromLog(&logs[i])]; ok {
+			logs[i].ImageGenerationDurationMs = &duration
 		}
 	}
 	return nil
+}
+
+func (r *usageLogRepository) loadImageGenerationDurations(
+	ctx context.Context,
+	links []usageLogImageLinkKey,
+) (map[usageLogImageLinkKey]int, error) {
+	out := make(map[usageLogImageLinkKey]int)
+	if len(links) == 0 {
+		return out, nil
+	}
+	placeholders := make([]string, len(links))
+	args := make([]any, 0, len(links)*3)
+	for i, link := range links {
+		base := i*3 + 1
+		placeholders[i] = fmt.Sprintf("($%d,$%d,$%d)", base, base+1, base+2)
+		args = append(args, link.UserID, link.APIKeyID, link.RequestID)
+	}
+	rows, err := r.sql.QueryContext(ctx, `
+		SELECT user_id, api_key_id, request_id, generation_duration_ms
+		FROM image_generation_metrics
+		WHERE (user_id, api_key_id, request_id) IN (`+strings.Join(placeholders, ",")+`)
+	`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var userID, apiKeyID int64
+		var requestID string
+		var durationMs int
+		if err := rows.Scan(&userID, &apiKeyID, &requestID, &durationMs); err != nil {
+			return nil, err
+		}
+		if durationMs > 0 {
+			out[usageLogImageLinkKey{UserID: userID, APIKeyID: apiKeyID, RequestID: requestID}] = durationMs
+		}
+	}
+	return out, rows.Err()
 }
 
 type usageLogIDs struct {
@@ -397,8 +675,14 @@ func collectUsageLogIDs(logs []service.UsageLog) usageLogIDs {
 	}
 }
 
-func (r *usageLogRepository) loadUsageLogImageURLs(ctx context.Context, links []usageLogImageLinkKey) (map[usageLogImageLinkKey]string, error) {
-	out := make(map[usageLogImageLinkKey]string)
+type usageLogImageLinkHydration struct {
+	url                  string
+	displayedAt          *time.Time
+	generationDurationMs *int
+}
+
+func (r *usageLogRepository) loadUsageLogImageLinks(ctx context.Context, links []usageLogImageLinkKey) (map[usageLogImageLinkKey]usageLogImageLinkHydration, error) {
+	out := make(map[usageLogImageLinkKey]usageLogImageLinkHydration)
 	if len(links) == 0 {
 		return out, nil
 	}
@@ -410,7 +694,7 @@ func (r *usageLogRepository) loadUsageLogImageURLs(ctx context.Context, links []
 		args = append(args, link.UserID, link.APIKeyID, link.RequestID)
 	}
 	query := `
-		SELECT user_id, api_key_id, request_id, link_token
+		SELECT user_id, api_key_id, request_id, link_token, displayed_at, generation_duration_ms
 		FROM usage_log_image_links
 		WHERE (user_id, api_key_id, request_id) IN (` + strings.Join(placeholders, ",") + `)
 		  AND expires_at > NOW()
@@ -425,12 +709,28 @@ func (r *usageLogRepository) loadUsageLogImageURLs(ctx context.Context, links []
 		var apiKeyID int64
 		var requestID string
 		var linkToken string
-		if err := rows.Scan(&userID, &apiKeyID, &requestID, &linkToken); err != nil {
+		var displayedAt sql.NullTime
+		var generationDurationMs sql.NullInt64
+		if err := rows.Scan(&userID, &apiKeyID, &requestID, &linkToken, &displayedAt, &generationDurationMs); err != nil {
 			return nil, err
 		}
 		if strings.TrimSpace(linkToken) != "" {
+			var displayedAtPtr *time.Time
+			if displayedAt.Valid {
+				value := displayedAt.Time
+				displayedAtPtr = &value
+			}
+			var generationDurationPtr *int
+			if generationDurationMs.Valid {
+				value := int(generationDurationMs.Int64)
+				generationDurationPtr = &value
+			}
 			out[usageLogImageLinkKey{UserID: userID, APIKeyID: apiKeyID, RequestID: requestID}] =
-				"/api/v1/usage/image-links/" + linkToken
+				usageLogImageLinkHydration{
+					url:                  "/api/v1/usage/image-links/" + linkToken,
+					displayedAt:          displayedAtPtr,
+					generationDurationMs: generationDurationPtr,
+				}
 		}
 	}
 	return out, rows.Err()
@@ -666,6 +966,7 @@ func scanUsageLog(scanner interface{ Scan(...any) error }) (*service.UsageLog, e
 
 	log := &service.UsageLog{
 		ID:                        id,
+		RecordKind:                "usage",
 		UserID:                    userID,
 		APIKeyID:                  apiKeyID,
 		AccountID:                 accountID,

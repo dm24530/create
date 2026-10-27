@@ -70,7 +70,7 @@
                 <span class="mr-0.5">↳</span>{{ row.upstream_model }}
               </div>
             </div>
-            <span v-else class="font-medium text-gray-900 dark:text-white">{{ row.model }}</span>
+            <span v-else class="font-medium text-gray-900 dark:text-white">{{ row.model || '-' }}</span>
             <div
               v-if="row.upstream_model_mismatch === true && row.upstream_response_model"
               class="break-all pl-3 text-[11px]"
@@ -125,7 +125,30 @@
         </template>
 
         <template #cell-stream="{ row }">
-          <div class="flex flex-wrap items-center gap-1">
+          <div
+            v-if="statusInTypeColumn && isFailedUsage(row)"
+            class="space-y-1"
+            :title="row.error_message || undefined"
+          >
+            <div class="flex flex-wrap items-center gap-1">
+              <span class="inline-flex items-center rounded bg-rose-100 px-2 py-0.5 text-xs font-medium text-rose-700 ring-1 ring-inset ring-rose-200 dark:bg-rose-500/15 dark:text-rose-300 dark:ring-rose-500/30">
+                {{ t('usage.failed') }}
+              </span>
+              <span v-if="errorStatusCodeLabel(row)" class="font-mono text-[11px] text-rose-600 dark:text-rose-400">
+                {{ errorStatusCodeLabel(row) }}
+              </span>
+              <span v-if="isRefundedUsage(row)" class="inline-flex items-center rounded bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700 ring-1 ring-inset ring-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-500/30">
+                {{ t('usage.refunded') }}
+              </span>
+            </div>
+            <div
+              data-testid="usage-error-detail"
+              class="max-w-[18rem] text-[11px] leading-snug text-gray-500 dark:text-gray-400"
+            >
+              {{ usageErrorDetail(row) }}
+            </div>
+          </div>
+          <div v-else class="flex flex-wrap items-center gap-1">
             <span data-testid="request-type-badge" class="inline-flex items-center rounded px-2 py-0.5 text-xs font-medium" :class="getRequestTypeBadgeClass(row)">
               {{ getRequestTypeLabel(row) }}
             </span>
@@ -139,6 +162,32 @@
           </div>
         </template>
 
+        <template #cell-status="{ row }">
+          <div v-if="isFailedUsage(row)" class="max-w-[220px] space-y-1 text-xs">
+            <div class="flex flex-wrap items-center gap-1">
+              <span class="inline-flex items-center rounded bg-rose-100 px-2 py-0.5 font-medium text-rose-700 ring-1 ring-inset ring-rose-200 dark:bg-rose-500/15 dark:text-rose-300 dark:ring-rose-500/30">
+                {{ t('usage.failed') }}
+              </span>
+              <span v-if="errorStatusCodeLabel(row)" class="font-mono text-[11px] text-rose-600 dark:text-rose-400">
+                {{ errorStatusCodeLabel(row) }}
+              </span>
+              <span v-if="isRefundedUsage(row)" class="inline-flex items-center rounded bg-emerald-100 px-2 py-0.5 font-medium text-emerald-700 ring-1 ring-inset ring-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-500/30">
+                {{ t('usage.refunded') }}
+              </span>
+            </div>
+            <div
+              v-if="row.error_message"
+              class="truncate text-[11px] text-gray-500 dark:text-gray-400"
+              :title="row.error_message"
+            >
+              {{ row.error_message }}
+            </div>
+          </div>
+          <span v-else class="inline-flex items-center rounded bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700 ring-1 ring-inset ring-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-500/30">
+            {{ t('usage.succeeded') }}
+          </span>
+        </template>
+
         <template #cell-billing_mode="{ row }">
           <span class="inline-flex items-center rounded px-2 py-0.5 text-xs font-medium" :class="getBillingModeBadgeClass(getDisplayBillingMode(row))">
             {{ getBillingModeLabel(getDisplayBillingMode(row), t) }}
@@ -147,7 +196,21 @@
 
         <template #cell-tokens="{ row }">
           <!-- 图片生成请求（仅按次计费时显示图片格式） -->
-          <div v-if="isImageUsage(row)" class="flex items-center gap-1.5">
+          <button
+            v-if="isImageUsage(row) && safeImageURL(row.image_url)"
+            type="button"
+            data-testid="open-usage-count-image"
+            class="-ml-1 flex cursor-pointer items-center gap-1.5 rounded-md px-1 py-0.5 text-left transition-colors hover:bg-indigo-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/50 dark:hover:bg-indigo-900/20"
+            title="点击查看生成图片"
+            @click="openUsageImage(row)"
+          >
+            <svg class="h-4 w-4 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+            </svg>
+            <span class="font-medium text-gray-900 dark:text-white">{{ row.image_count }}{{ t('usage.imageUnit') }}</span>
+            <span class="text-gray-400">({{ formatImageBillingSize(row, t) }})</span>
+          </button>
+          <div v-else-if="isImageUsage(row)" class="flex items-center gap-1.5">
             <svg class="h-4 w-4 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
             </svg>
@@ -254,8 +317,20 @@
           </div>
         </template>
 
-        <template #cell-created_at="{ value }">
-          <span class="text-sm text-gray-600 dark:text-gray-400">{{ formatDateTime(value) }}</span>
+        <template #cell-created_at="{ value, row }">
+          <div class="space-y-0.5 text-sm text-gray-600 dark:text-gray-400">
+            <div
+              data-testid="usage-created-at"
+              class="whitespace-nowrap font-medium tabular-nums"
+            >{{ formatDateTimeParts(value).text }}</div>
+            <div v-if="isImageUsage(row)" class="text-[11px]">
+              <span class="text-gray-400 dark:text-gray-500">生成耗时：</span>
+              <span v-if="imageGenerationDuration(row)" class="font-medium text-emerald-600 dark:text-emerald-400">
+                {{ formatDuration(imageGenerationDuration(row)) }}
+              </span>
+              <span v-else class="text-amber-500 dark:text-amber-400">未记录</span>
+            </div>
+          </div>
         </template>
 
         <template #cell-image_url="{ row }">
@@ -543,11 +618,12 @@
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
-import { formatDateTime, formatReasoningEffort, reasoningEffortValuesEqual } from '@/utils/format'
+import { formatReasoningEffort, reasoningEffortValuesEqual } from '@/utils/format'
 import { formatCacheTokens, formatMultiplier } from '@/utils/formatters'
 import { formatTokenPricePerMillion } from '@/utils/usagePricing'
 import { getUsageServiceTierLabel } from '@/utils/usageServiceTier'
 import { resolveUsageRequestType } from '@/utils/usageRequestType'
+import { errorStatusCodeLabel, isFailedUsage, isRefundedUsage, usageErrorDetail } from '@/utils/usageStatus'
 import {
   LATENCY_BAR_CLASSES,
   LATENCY_BAR_FROM_CLASSES,
@@ -586,6 +662,9 @@ function accountBilled(row: { total_cost?: number | null; account_stats_cost?: n
   return Number.isNaN(result) ? 0 : result
 }
 
+function imageGenerationDuration(row: AdminUsageLog): number | null {
+  return row.image_generation_duration_ms ?? row.duration_ms ?? null
+}
 
 import DataTable from '@/components/common/DataTable.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
@@ -604,6 +683,7 @@ interface Props {
   defaultSortOrder?: 'asc' | 'desc'
   showAccountBilling?: boolean
   showUpstreamEndpoint?: boolean
+  statusInTypeColumn?: boolean
   /** 嵌入统一卡片内使用：去掉自身卡片外观 */
   flat?: boolean
 }
@@ -615,6 +695,7 @@ const props = withDefaults(defineProps<Props>(), {
   defaultSortOrder: 'asc',
   showAccountBilling: true,
   showUpstreamEndpoint: true,
+  statusInTypeColumn: false,
   flat: false
 })
 const emit = defineEmits<{
@@ -733,6 +814,20 @@ const getRequestTypeBadgeClass = (row: AdminUsageLog): string => {
 
 const formatUserAgent = (ua: string): string => {
   return ua
+}
+
+const formatDateTimeParts = (value?: string | number | Date | null) => {
+  if (value == null || value === '') return { date: '-', time: '', text: '-' }
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return { date: String(value), time: '', text: String(value) }
+  const pad = (part: number) => String(part).padStart(2, '0')
+  const dateText = `${date.getFullYear()}/${pad(date.getMonth() + 1)}/${pad(date.getDate())}`
+  const timeText = `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+  return {
+    date: dateText,
+    time: timeText,
+    text: `${dateText} ${timeText}`,
+  }
 }
 
 const safeImageURL = (value?: string | null): string => {

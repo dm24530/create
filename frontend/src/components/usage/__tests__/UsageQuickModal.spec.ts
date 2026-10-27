@@ -31,7 +31,7 @@ const stubs = {
   },
   UsageStatsCards: true,
   UsageTable: {
-    props: ['data', 'loading', 'columns', 'serverSideSort', 'showAccountBilling', 'showUpstreamEndpoint', 'defaultSortKey', 'defaultSortOrder', 'flat'],
+    props: ['data', 'loading', 'columns', 'serverSideSort', 'showAccountBilling', 'showUpstreamEndpoint', 'statusInTypeColumn', 'defaultSortKey', 'defaultSortOrder', 'flat'],
     template: '<div data-testid="usage-table" />',
   },
   Pagination: {
@@ -57,6 +57,7 @@ describe('UsageQuickModal', () => {
     })
     await flushPromises()
 
+    expect(wrapper.findComponent(stubs.BaseDialog).props('width')).toBe('screen')
     expect(wrapper.findComponent(stubs.BaseDialog).props('closeOnClickOutside')).toBe(true)
     await wrapper.get('[data-testid="backdrop"]').trigger('click')
     expect(wrapper.emitted('close')).toHaveLength(1)
@@ -83,6 +84,32 @@ describe('UsageQuickModal', () => {
 
     const columnKeys = wrapper.findComponent(stubs.UsageTable).props('columns').map((column: { key: string }) => column.key)
     expect(columnKeys).toContain('cost')
+    expect(columnKeys).not.toContain('status')
+    expect(wrapper.findComponent(stubs.UsageTable).props('statusInTypeColumn')).toBe(true)
+  })
+
+  it('passes failed requests returned by the merged usage endpoint to the table', async () => {
+    queryUsage.mockResolvedValue({
+      items: [{
+        id: -7,
+        record_kind: 'error',
+        error_status_code: 500,
+        error_message: 'upstream failed',
+      }],
+      total: 1,
+      page: 1,
+      page_size: 20,
+      pages: 1,
+    })
+    const wrapper = mount(UsageQuickModal, {
+      props: { show: true },
+      global: { stubs },
+    })
+    await flushPromises()
+
+    expect(wrapper.findComponent(stubs.UsageTable).props('data')).toEqual([
+      expect.objectContaining({ record_kind: 'error', error_status_code: 500 }),
+    ])
   })
 
   it('uses selectable dates and keeps the start date before the end date', async () => {

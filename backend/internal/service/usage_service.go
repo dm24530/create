@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
+	"strings"
 	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
@@ -16,6 +18,18 @@ import (
 var (
 	ErrUsageLogNotFound = infraerrors.NotFound("USAGE_LOG_NOT_FOUND", "usage log not found")
 )
+
+type UsageErrorLogRepository interface {
+	ListUsageErrors(
+		ctx context.Context,
+		params pagination.PaginationParams,
+		filters usagestats.UsageLogFilters,
+	) ([]UsageLog, *pagination.PaginationResult, error)
+	GetUsageErrorCount(
+		ctx context.Context,
+		filters usagestats.UsageLogFilters,
+	) (int64, error)
+}
 
 // CreateUsageLogRequest 创建使用日志请求
 type CreateUsageLogRequest struct {
@@ -441,11 +455,109 @@ func (s *UsageService) GetBatchAPIKeyUsageStats(ctx context.Context, apiKeyIDs [
 
 // ListWithFilters lists usage logs with admin filters.
 func (s *UsageService) ListWithFilters(ctx context.Context, params pagination.PaginationParams, filters usagestats.UsageLogFilters) ([]UsageLog, *pagination.PaginationResult, error) {
-	logs, result, err := s.usageRepo.ListWithFilters(ctx, params, filters)
+	if !filters.IncludeErrors {
+		logs, result, err := s.usageRepo.ListWithFilters(ctx, params, filters)
+		if err != nil {
+			return nil, nil, fmt.Errorf("list usage logs with filters: %w", err)
+		}
+		return logs, result, nil
+	}
+
+	errorRepo, ok := s.usageRepo.(UsageErrorLogRepository)
+	if !ok {
+		logs, result, err := s.usageRepo.ListWithFilters(ctx, params, filters)
+		if err != nil {
+			return nil, nil, fmt.Errorf("list usage logs with filters: %w", err)
+		}
+		return logs, result, nil
+	}
+
+	offset := params.Offset()
+	limit := params.Limit()
+	need := min(offset+limit, 1000)
+	sourceParams := params
+	sourceParams.Page = 1
+	sourceParams.PageSize = need
+
+	usageFilters := filters
+	usageFilters.IncludeErrors = false
+	usageFilters.ExactTotal = true
+	logs, usagePage, err := s.usageRepo.ListWithFilters(ctx, sourceParams, usageFilters)
 	if err != nil {
 		return nil, nil, fmt.Errorf("list usage logs with filters: %w", err)
 	}
-	return logs, result, nil
+	errors, errorPage, err := errorRepo.ListUsageErrors(ctx, sourceParams, filters)
+	if err != nil {
+		return nil, nil, fmt.Errorf("list failed usage requests: %w", err)
+	}
+
+	merged := append(make([]UsageLog, 0, len(logs)+len(errors)), logs...)
+	merged = append(merged, errors...)
+	sortUsageRecords(merged, params)
+	if offset < len(merged) {
+		end := min(offset+limit, len(merged))
+		merged = merged[offset:end]
+	} else {
+		merged = []UsageLog{}
+	}
+
+	total := usagePage.Total + errorPage.Total
+	pages := int((total + int64(limit) - 1) / int64(limit))
+	return merged, &pagination.PaginationResult{
+		Total:    total,
+		Page:     params.Page,
+		PageSize: limit,
+		Pages:    pages,
+	}, nil
+}
+
+func sortUsageRecords(logs []UsageLog, params pagination.PaginationParams) {
+	sortBy := strings.ToLower(strings.TrimSpace(params.SortBy))
+	descending := params.NormalizedSortOrder(pagination.SortOrderDesc) == pagination.SortOrderDesc
+	sort.SliceStable(logs, func(i, j int) bool {
+		left, right := &logs[i], &logs[j]
+		cmp := 0
+		switch sortBy {
+		case "model":
+			cmp = strings.Compare(strings.ToLower(effectiveUsageModel(left)), strings.ToLower(effectiveUsageModel(right)))
+		default:
+			cmp = left.CreatedAt.Compare(right.CreatedAt)
+		}
+		if cmp == 0 {
+			cmp = left.CreatedAt.Compare(right.CreatedAt)
+		}
+		if cmp == 0 {
+			cmp = strings.Compare(left.RecordKind, right.RecordKind)
+		}
+		if cmp == 0 {
+			cmp = compareInt64(left.ID, right.ID)
+		}
+		if descending {
+			return cmp > 0
+		}
+		return cmp < 0
+	})
+}
+
+func effectiveUsageModel(log *UsageLog) string {
+	if log == nil {
+		return ""
+	}
+	if value := strings.TrimSpace(log.RequestedModel); value != "" {
+		return value
+	}
+	return strings.TrimSpace(log.Model)
+}
+
+func compareInt64(left, right int64) int {
+	switch {
+	case left < right:
+		return -1
+	case left > right:
+		return 1
+	default:
+		return 0
+	}
 }
 
 // GetGlobalStats returns global usage stats for a time range.
@@ -463,5 +575,17 @@ func (s *UsageService) GetStatsWithFilters(ctx context.Context, filters usagesta
 	if err != nil {
 		return nil, fmt.Errorf("get usage stats with filters: %w", err)
 	}
+	if !filters.IncludeErrors {
+		return stats, nil
+	}
+	errorRepo, ok := s.usageRepo.(UsageErrorLogRepository)
+	if !ok {
+		return stats, nil
+	}
+	count, err := errorRepo.GetUsageErrorCount(ctx, filters)
+	if err != nil {
+		return nil, fmt.Errorf("get failed usage stats: %w", err)
+	}
+	stats.TotalRequests += count
 	return stats, nil
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -41,6 +42,14 @@ func (s *usageImageLinkStoreStub) GetByToken(context.Context, string) (*service.
 
 func (s *usageImageLinkStoreStub) DeleteExpired(context.Context, time.Time, int) (int64, error) {
 	return 0, nil
+}
+
+func (s *usageImageLinkStoreStub) MarkDisplayed(context.Context, int64, int64, string, time.Time) error {
+	return nil
+}
+
+func (s *usageImageLinkStoreStub) MarkGenerationDuration(context.Context, int64, int64, string, int) error {
+	return nil
 }
 
 func (s *usageImageStorageStub) ImageObjectExists(context.Context, string) (bool, error) {
@@ -96,6 +105,50 @@ func TestUsageHandlerImageLinkStreamsInlineDataURL(t *testing.T) {
 	require.Equal(t, http.StatusOK, recorder.Code)
 	require.Equal(t, "image/png", recorder.Header().Get("Content-Type"))
 	require.Equal(t, []byte("abc"), recorder.Body.Bytes())
+}
+
+func TestUsageHandlerReportImageDisplayMarksUsageLink(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	taskStore := &asyncImageMemoryStore{tasks: map[string]*service.ImageTaskRecord{
+		"imgtask_display": {
+			ID:        "imgtask_display",
+			UserID:    7,
+			APIKeyID:  9,
+			StartedAt: 100,
+			CompletedAt: func() *int64 {
+				value := int64(171)
+				return &value
+			}(),
+			Execution: &service.ImageTaskExecution{
+				UsageRequestID: "client:req-display",
+			},
+		},
+	}}
+	taskService := service.NewImageTaskServiceWithOptions(taskStore, time.Hour, time.Minute)
+	linkStore := &asyncImageLinkStore{}
+	handler := NewUsageHandler(nil, nil, nil, nil)
+	handler.SetImageLinkDeps(linkStore, nil)
+	handler.SetImageTaskService(taskService)
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set(string(middleware2.ContextKeyUser), middleware2.AuthSubject{UserID: 7})
+		c.Next()
+	})
+	router.POST("/usage/image-display", handler.ReportImageDisplay)
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(
+		http.MethodPost,
+		"/usage/image-display",
+		strings.NewReader(`{"task_id":"imgtask_display","duration_ms":71000}`),
+	))
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Equal(t, int64(7), linkStore.displayedUserID)
+	require.Equal(t, int64(9), linkStore.displayedAPIKeyID)
+	require.Equal(t, "client:req-display", linkStore.displayedRequest)
+	require.False(t, linkStore.displayedAt.IsZero())
+	require.Equal(t, 71000, linkStore.generationDurationMs)
 }
 
 func TestUsageHandlerImageLinkStreamsOwnedObject(t *testing.T) {

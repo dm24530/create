@@ -33,8 +33,13 @@ type asyncImageAPIKeyLoader struct {
 }
 
 type asyncImageLinkStore struct {
-	link *service.UsageLogImageLink
-	err  error
+	link                 *service.UsageLogImageLink
+	err                  error
+	displayedUserID      int64
+	displayedAPIKeyID    int64
+	displayedRequest     string
+	displayedAt          time.Time
+	generationDurationMs int
 }
 
 func (s *asyncImageLinkStore) Upsert(_ context.Context, link *service.UsageLogImageLink) error {
@@ -51,6 +56,19 @@ func (s *asyncImageLinkStore) GetByToken(context.Context, string) (*service.Usag
 
 func (s *asyncImageLinkStore) DeleteExpired(context.Context, time.Time, int) (int64, error) {
 	return 0, nil
+}
+
+func (s *asyncImageLinkStore) MarkDisplayed(_ context.Context, userID, apiKeyID int64, requestID string, displayedAt time.Time) error {
+	s.displayedUserID = userID
+	s.displayedAPIKeyID = apiKeyID
+	s.displayedRequest = requestID
+	s.displayedAt = displayedAt
+	return nil
+}
+
+func (s *asyncImageLinkStore) MarkGenerationDuration(_ context.Context, _ int64, _ int64, _ string, durationMs int) error {
+	s.generationDurationMs = durationMs
+	return nil
 }
 
 func (l asyncImageAPIKeyLoader) GetByID(context.Context, int64) (*service.APIKey, error) {
@@ -1022,4 +1040,39 @@ func mustContextString(c *gin.Context, key string) string {
 	}
 	text, _ := value.(string)
 	return text
+}
+
+func TestBuildAsyncTaskFailureEntry(t *testing.T) {
+	record := &service.ImageTaskRecord{
+		ID:       "imgtask_failed",
+		UserID:   42,
+		APIKeyID: 7,
+		Execution: &service.ImageTaskExecution{
+			Platform:          service.PlatformGemini,
+			RequestPath:       "/v1/images/generations",
+			GeminiModel:       "gemini-3.1-flash-image-preview",
+			UsageRequestID:    "client:req-123",
+			RequestInstanceID: "instance-123",
+		},
+	}
+	entry := buildAsyncTaskFailureEntry(
+		record,
+		http.StatusBadGateway,
+		imageTaskErrorPayload("api_error", "upstream returned no image"),
+	)
+
+	require.NotNil(t, entry)
+	require.Equal(t, "req-123", entry.RequestID)
+	require.Equal(t, "req-123", entry.ClientRequestID)
+	require.Equal(t, "client:req-123", entry.UsageRequestID)
+	require.Equal(t, "instance-123", entry.RequestInstanceID)
+	require.Equal(t, int64(42), *entry.UserID)
+	require.Equal(t, int64(7), *entry.APIKeyID)
+	require.Equal(t, "/v1/images/generations", entry.RequestPath)
+	require.Equal(t, service.PlatformGemini, entry.Platform)
+	require.Equal(t, "gemini-3.1-flash-image-preview", entry.Model)
+	require.Equal(t, int16(service.RequestTypeAsync), *entry.RequestType)
+	require.Equal(t, "api_error", entry.ErrorType)
+	require.Equal(t, "upstream returned no image", entry.ErrorMessage)
+	require.Equal(t, http.StatusBadGateway, entry.StatusCode)
 }

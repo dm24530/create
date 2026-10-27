@@ -199,7 +199,7 @@ func (s *gallerySaverStub) PresignImageObjects(
 	return resolved, nil
 }
 
-func TestImageStudioGalleryListResolvesStoredObjectsToCurrentPublicURLs(t *testing.T) {
+func TestImageStudioGalleryListResolvesStoredOriginalsAndPreservesThumbURLs(t *testing.T) {
 	store := &galleryStoreStub{entries: []*ImageStudioGalleryEntry{{
 		ID:        "work-1",
 		ObjectKey: "images/work-1.png",
@@ -216,7 +216,7 @@ func TestImageStudioGalleryListResolvesStoredObjectsToCurrentPublicURLs(t *testi
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 	require.Equal(t, "https://gen.example.com/images/work-1.png", entries[0].URL)
-	require.Equal(t, "https://gen.example.com/images/thumbs/work-1.jpg", entries[0].ThumbURL)
+	require.Equal(t, "https://old-r2.example.com/thumbs/work-1.jpg?X-Amz-Signature=old", entries[0].ThumbURL)
 	require.Equal(t, 1, saver.batchCalls)
 	require.Zero(t, saver.presignCalls)
 }
@@ -503,6 +503,31 @@ func TestImageStudioGalleryThumbnailPrefersExistingThumbnailObject(t *testing.T)
 	require.Equal(t, saver.fetchData, thumb)
 	require.Equal(t, "https://cdn.example.com/work-1-thumb.jpg", saver.fetchedURL)
 	require.Equal(t, 1, saver.fetchCalls)
+}
+
+func TestImageStudioGalleryThumbnailUsesStoredThumbURLInsteadOfDerivedObjectKey(t *testing.T) {
+	store := &galleryStoreStub{entries: []*ImageStudioGalleryEntry{
+		{
+			ID:        "work-1",
+			ObjectKey: "images/users/42/task-1.png",
+			URL:       "https://cdn.example.com/work-1-original.png",
+			ThumbURL:  "https://cdn.example.com/images/thumbs/work-1.jpg",
+		},
+	}}
+	saver := &gallerySaverStub{
+		fetchData: []byte{0xFF, 0xD8, 0xFF, 0x00},
+		fetchType: "image/jpeg",
+		resolvedURLs: map[string]string{
+			"images/users/42/thumbs/task-1.jpg": "https://cdn.example.com/wrong-derived-thumb.jpg",
+		},
+	}
+	svc := NewImageStudioGalleryService(store, saver)
+
+	thumb, err := svc.Thumbnail(context.Background(), 7, "work-1", 120)
+	require.NoError(t, err)
+	require.Equal(t, saver.fetchData, thumb)
+	require.Equal(t, "https://cdn.example.com/images/thumbs/work-1.jpg", saver.fetchedURL)
+	require.Zero(t, saver.presignCalls)
 }
 
 // 删除作品：先把对象存储里的文件删掉，再删记录。

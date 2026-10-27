@@ -96,6 +96,11 @@ var migrationChecksumCompatibilityRules = map[string]migrationChecksumCompatibil
 	"220_clear_non_grok_video_generation_config.sql": newMigrationChecksumCompatibilityRule("85e320b9ec64f2d3fcd8cf705b2b4e76a7b49f7a57140c14bff97f32691c818b", "3da48c8fdffe6390325f43d08b8e353e0a365df43d44a78dbbe655d0deb18402"),
 	"219_group_search_price_per_1k.sql":              newMigrationChecksumCompatibilityRule("e86786ebcc3b14206fd2d321380a4e50e80cdadbfcf4962c639255e6a14008db", "df6ffd71b97e30ec2c8fe7b95e15783042dea58c553e32701ee7c42a5619af80"),
 	"218_group_audio_voice_pricing.sql":              newMigrationChecksumCompatibilityRule("40ee9f3a2af0e0a5e99dabc878fd0fe98be1011f26bcfcefcac7197f7081f0e7", "c2a5e5b4ffd6968ad1c10593289fbc11192cdea19fec3ed9bce3a84eff9a8351"),
+	// 259 briefly used a broadened URL regex before the repair was moved into
+	// migration 261. Accept both checksums so either already-applied variant can
+	// start the fixed image.
+	"259_backfill_canvas_assets_from_graph_urls.sql": newMigrationChecksumCompatibilityRule("0bdf0b80b494471c36f2d2f4c797421f351e9b382e0e172b7df7c0fb8b692f98", "6749c90024ed90d8fabc136ca1f31ae8a170550882e7ee8a6427d785526ec411"),
+	"263_usage_log_image_generation_timing.sql":      newMigrationChecksumCompatibilityRule("1333bdd28dea5e90e688753c9ff410548a10e368ea2d81c6fa279ee1eda5acec", "71edd1bf293eaa2f0cbba562f35f0d03b617dd72762652f9d5830b6da4c50620"),
 }
 
 // ApplyMigrations 将嵌入的 SQL 迁移文件应用到指定的数据库。

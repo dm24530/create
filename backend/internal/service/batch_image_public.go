@@ -616,12 +616,24 @@ func (s *BatchImagePublicService) DeleteRecord(ctx context.Context, owner BatchI
 
 func (s *BatchImagePublicService) ListModels(ctx context.Context, owner BatchImageOwner) (*BatchImagePublicModelsResponse, error) {
 	if !s.enabled() {
-		return nil, ErrBatchImageDisabled
+		// Model discovery is used by the image studio even when batch generation
+		// itself is disabled. Return an empty list so callers can fall back to the
+		// generic model endpoint without producing a client-visible 404 on every load.
+		return &BatchImagePublicModelsResponse{
+			Object: "list",
+			Data:   []BatchImagePublicModel{},
+		}, nil
 	}
 	if s.Pricing == nil {
 		return nil, ErrBatchImageSettlementPricingMissing
 	}
 	if err := s.ensureGroupAllowsBatchImage(ctx, owner.GroupID); err != nil {
+		if errors.Is(err, ErrBatchImageGroupDisabled) {
+			return &BatchImagePublicModelsResponse{
+				Object: "list",
+				Data:   []BatchImagePublicModel{},
+			}, nil
+		}
 		return nil, err
 	}
 

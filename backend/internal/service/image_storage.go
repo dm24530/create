@@ -102,7 +102,11 @@ func (u *ImageResultUploader) SetUserStorageIdentityResolver(identities UserStor
 }
 
 func defaultImageDownloadHTTPClient() *http.Client {
-	transport := http.DefaultTransport.(*http.Transport).Clone()
+	baseTransport, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		baseTransport = &http.Transport{}
+	}
+	transport := baseTransport.Clone()
 	// Do not let an environment proxy bypass the socket-level SSRF checks.
 	transport.Proxy = nil
 	transport.DialContext = safeDialContext

@@ -424,9 +424,6 @@ func (s *ImageStudioGalleryService) List(
 				keys = append(keys, key)
 			}
 			addObjectKey(entry.ObjectKey)
-			if strings.TrimSpace(entry.ThumbURL) != "" {
-				addObjectKey(thumbnailObjectKey(entry.ObjectKey))
-			}
 		}
 		if len(keys) > 0 {
 			resolved, resolveErr := batchResolver.PresignImageObjects(ctx, keys)
@@ -445,12 +442,6 @@ func (s *ImageStudioGalleryService) List(
 				objectKey := strings.TrimSpace(entry.ObjectKey)
 				if resolvedURL := resolved[objectKey]; resolvedURL != "" {
 					entry.URL = resolvedURL
-				}
-				if strings.TrimSpace(entry.ThumbURL) != "" {
-					thumbKey := thumbnailObjectKey(objectKey)
-					if resolvedURL := resolved[thumbKey]; resolvedURL != "" {
-						entry.ThumbURL = resolvedURL
-					}
 				}
 			}
 		}
@@ -471,13 +462,6 @@ func (s *ImageStudioGalleryService) List(
 			if objectKey != "" {
 				if resolved, resolveErr := resolver.PresignImageObject(ctx, objectKey); resolveErr == nil && resolved != "" {
 					entry.URL = resolved
-				}
-			}
-			if strings.TrimSpace(entry.ThumbURL) != "" {
-				if thumbKey := thumbnailObjectKey(objectKey); thumbKey != "" {
-					if resolved, resolveErr := resolver.PresignImageObject(ctx, thumbKey); resolveErr == nil && resolved != "" {
-						entry.ThumbURL = resolved
-					}
 				}
 			}
 		}
@@ -596,7 +580,7 @@ func (s *ImageStudioGalleryService) Thumbnail(ctx context.Context, userID int64,
 		return nil, err
 	}
 	if thumbURL := strings.TrimSpace(entry.ThumbURL); thumbURL != "" {
-		data, _, fetchErr := s.fetchEntryImage(ctx, entry, thumbnailObjectKey(entry.ObjectKey), thumbURL)
+		data, _, fetchErr := s.fetchEntryImage(ctx, entry, "", thumbURL)
 		if fetchErr == nil {
 			s.cacheThumbnail(cacheKey, data, now)
 			return data, nil

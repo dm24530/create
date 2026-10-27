@@ -46,3 +46,20 @@ func TestBuildOpsErrorLogsWhere_UserQueryUsesExistsSubquery(t *testing.T) {
 		t.Fatalf("where should include EXISTS user email condition: %s", where)
 	}
 }
+
+func TestBuildOpsErrorLogsWhere_ExcludesDisabledBatchModelDiscovery(t *testing.T) {
+	where, _ := buildOpsErrorLogsWhere(&service.OpsErrorLogFilter{})
+	if !strings.Contains(where, "/v1/images/batches/models") {
+		t.Fatalf("where should exclude batch model discovery rows: %s", where)
+	}
+}
+
+func TestBuildUsageErrorsWhere_ExcludesBatchModelDiscovery(t *testing.T) {
+	where, _, supported := buildUsageErrorsWhere(UsageLogFilters{})
+	if !supported {
+		t.Fatal("unfiltered usage errors should be supported")
+	}
+	if !strings.Contains(where, "/v1/images/batches/models") {
+		t.Fatalf("usage history should exclude batch model discovery rows: %s", where)
+	}
+}

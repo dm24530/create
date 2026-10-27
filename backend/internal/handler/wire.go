@@ -221,6 +221,7 @@ func ProvideHandlers(
 	paymentWebhookHandler *PaymentWebhookHandler,
 	availableChannelHandler *AvailableChannelHandler,
 	modelPlazaHandler *ModelPlazaHandler,
+	imageTaskService *service.ImageTaskService,
 	asyncImageHandler *AsyncImageHandler,
 	batchImageHandler *BatchImageHandler,
 	imageStudioGalleryHandler *ImageStudioGalleryHandler,
@@ -235,6 +236,8 @@ func ProvideHandlers(
 	_ *service.OpenAIQuotaAutoResetService,
 ) *Handlers {
 	usageHandler.SetImageLinkDeps(imageLinks, imageStorage)
+	usageHandler.SetImageTaskService(imageTaskService)
+	imageStudioGalleryHandler.SetImageLinkStore(imageLinks)
 	asyncImageHandler.Configure(gatewayHandler, apiKeyService, imageLinks)
 	return &Handlers{
 		Auth:               authHandler,

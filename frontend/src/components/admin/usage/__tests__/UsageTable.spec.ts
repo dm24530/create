@@ -81,6 +81,10 @@ const messages: Record<string, string> = {
   'usage.stream': 'Stream',
   'usage.sync': 'Sync',
   'usage.async': 'Async',
+  'usage.status': 'Status',
+  'usage.succeeded': 'Succeeded',
+  'usage.failed': 'Failed',
+  'usage.refunded': 'Refunded',
   'usage.nativeCompactionV2': 'Compaction',
   'admin.usage.billingModeToken': 'Token',
   'admin.usage.billingModePerRequest': 'Per request',
@@ -112,13 +116,16 @@ const DataTableStub = {
     <div>
       <div v-for="row in data" :key="row.request_id" :data-request-id="row.request_id">
         <slot name="cell-model" :row="row" :value="row.model" />
+        <slot name="cell-stream" :row="row" />
         <slot name="cell-reasoning_effort" :row="row" :value="row.reasoning_effort" />
         <slot name="cell-billing_mode" :row="row" />
+        <slot name="cell-status" :row="row" />
         <slot name="cell-tokens" :row="row" />
         <slot name="cell-latency" :row="row" />
         <slot name="cell-cost" :row="row" />
         <slot name="cell-image_url" :row="row" />
         <slot name="cell-request_id" :row="row" />
+        <slot name="cell-created_at" :row="row" :value="row.created_at" />
       </div>
     </div>
   `,
@@ -181,6 +188,30 @@ describe('admin UsageTable tooltip', () => {
     )
   })
 
+  it('opens the linked image when clicking the image count', async () => {
+    const open = vi.spyOn(window, 'open').mockReturnValue(null)
+
+    const wrapper = mount(UsageTable, {
+      props: {
+        data: [{ ...baseImageRow, image_url: '/api/v1/usage/image-links/token' }],
+        loading: false,
+        columns: [{ key: 'tokens', label: 'Tokens' }],
+      },
+      global: { stubs: { DataTable: DataTableStub, EmptyState: true, Icon: true, Teleport: true } },
+    })
+
+    const imageCount = wrapper.get('[data-testid="open-usage-count-image"]')
+    expect(imageCount.text()).toContain('2 images')
+
+    await imageCount.trigger('click')
+
+    expect(open).toHaveBeenCalledWith(
+      '/api/v1/usage-images/token',
+      '_blank',
+      'noopener,noreferrer',
+    )
+  })
+
   it('shows output TPS in the latency cell using total duration', () => {
     const row = { ...baseImageRow, image_count: 0, billing_mode: 'token', output_tokens: 1000, duration_ms: 20_000, first_token_ms: 10_000 }
     const wrapper = mount(UsageTable, {
@@ -193,6 +224,38 @@ describe('admin UsageTable tooltip', () => {
     })
     expect(wrapper.findAll('[data-testid="output-tps"]').map(cell => cell.text())).toEqual(['50.0 tok/s', '—', '—'])
     expect(wrapper.text()).toContain('Output TPS')
+  })
+
+  it('shows the full created date and time on one line', () => {
+    const wrapper = mount(UsageTable, {
+      props: {
+        data: [{ ...baseImageRow, created_at: '2026-10-27T10:55:02+08:00' }],
+        loading: false,
+        columns: [{ key: 'created_at', label: 'Time' }],
+      },
+      global: { stubs: { DataTable: DataTableStub, EmptyState: true, Icon: true, Teleport: true } },
+    })
+
+    expect(wrapper.get('[data-testid="usage-created-at"]').text()).toBe('2026/10/27 10:55:02')
+  })
+
+  it('shows the retained image generation duration for image usage', () => {
+    const wrapper = mount(UsageTable, {
+      props: {
+        data: [{
+          ...baseImageRow,
+          created_at: '2026-10-27T09:00:00Z',
+          image_generation_duration_ms: 71_000,
+        }],
+        loading: false,
+        columns: [{ key: 'created_at', label: 'Time' }],
+      },
+      global: { stubs: { DataTable: DataTableStub, EmptyState: true, Icon: true, Teleport: true } },
+    })
+
+    const row = wrapper.get('[data-request-id="req-admin-image"]')
+    expect(row.text()).toContain('生成耗时：')
+    expect(row.text()).toContain('1m 11s')
   })
 
   beforeEach(() => {
@@ -774,6 +837,70 @@ describe('admin UsageTable tooltip', () => {
     expect(text).toContain('Per-image price')
     expect(text).toContain('not recorded')
     expect(text).not.toContain('(2K)')
+  })
+})
+
+describe('admin UsageTable failed usage rows', () => {
+  it('renders merged failed requests with their HTTP status and message', () => {
+    const wrapper = mount(UsageTable, {
+      props: {
+        data: [{
+          ...baseImageRow,
+          id: -1031,
+          request_id: 'req-failed',
+          record_kind: 'error',
+          error_status_code: 500,
+          error_message: 'upstream failed',
+          refund_status: 'refunded',
+        }],
+        loading: false,
+        columns: [{ key: 'status', label: 'Status' }],
+      },
+      global: {
+        stubs: {
+          DataTable: DataTableStub,
+          EmptyState: true,
+          Icon: true,
+          Teleport: true,
+        },
+      },
+    })
+
+    expect(wrapper.text()).toContain('Failed')
+    expect(wrapper.text()).toContain('HTTP 500')
+    expect(wrapper.text()).toContain('Refunded')
+    expect(wrapper.text()).toContain('upstream failed')
+  })
+
+  it('can show failure status inside the type column for the compact modal', () => {
+    const wrapper = mount(UsageTable, {
+      props: {
+        data: [{
+          ...baseImageRow,
+          id: -1031,
+          request_id: 'req-failed-compact',
+          record_kind: 'error',
+          error_status_code: 404,
+          error_message: 'batch image API is disabled',
+        }],
+        loading: false,
+        columns: [{ key: 'stream', label: 'Type' }],
+        statusInTypeColumn: true,
+      },
+      global: {
+        stubs: {
+          DataTable: DataTableStub,
+          EmptyState: true,
+          Icon: true,
+          Teleport: true,
+        },
+      },
+    })
+
+    expect(wrapper.text()).toContain('Failed')
+    expect(wrapper.text()).toContain('HTTP 404')
+    expect(wrapper.get('[data-testid="usage-error-detail"]').text()).toBe('batch image API is disabled')
+    expect(wrapper.html()).toContain('title="batch image API is disabled"')
   })
 })
 

@@ -499,6 +499,15 @@ func TestBatchImagePublicService_List(t *testing.T) {
 func TestBatchImagePublicService_ListModels(t *testing.T) {
 	ctx := context.Background()
 
+	t.Run("returns an empty list when batch image is disabled", func(t *testing.T) {
+		svc, _, _, _, _ := newTestBatchImagePublicService(false)
+
+		got, err := svc.ListModels(ctx, testBatchImageOwner())
+		require.NoError(t, err)
+		require.Equal(t, "list", got.Object)
+		require.Empty(t, got.Data)
+	})
+
 	t.Run("requires explicit account model mapping", func(t *testing.T) {
 		svc, _, _, _, _ := newTestBatchImagePublicService(true)
 
@@ -581,15 +590,16 @@ func TestBatchImagePublicService_ListModels(t *testing.T) {
 		require.NotContains(t, ids, "gemini-3.1-flash-lite-image")
 	})
 
-	t.Run("rejects when group disables batch image", func(t *testing.T) {
+	t.Run("returns an empty model list when group disables batch image", func(t *testing.T) {
 		svc, _, _, _, _ := newTestBatchImagePublicService(true)
 		groupID := int64(7)
 		svc.GroupRepo = &publicBatchImageGroupRepo{groups: map[int64]*Group{
 			groupID: {ID: groupID, AllowBatchImageGeneration: false},
 		}}
 
-		_, err := svc.ListModels(ctx, BatchImageOwner{UserID: 11, APIKeyID: 22, GroupID: &groupID})
-		require.ErrorIs(t, err, ErrBatchImageGroupDisabled)
+		got, err := svc.ListModels(ctx, BatchImageOwner{UserID: 11, APIKeyID: 22, GroupID: &groupID})
+		require.NoError(t, err)
+		require.Empty(t, got.Data)
 	})
 }
 

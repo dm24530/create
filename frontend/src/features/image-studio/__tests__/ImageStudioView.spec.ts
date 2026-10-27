@@ -11,7 +11,7 @@ import { IMAGE_STUDIO_DEFAULT_PROMPT, imageStudioDraft, resetImageStudioDraft } 
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 
-const { listKeys, getPublicSettings, listGallery, saveGallery, saveGalleryFromTask, pinGallery, deleteGallery, downloadGallery, downloadURLGallery, thumbnailGallery, galleryQuota, copyToClipboard, imageNeedsLocalResize, processImageForDisplay, tryStartPersistent, waitForPersistent } = vi.hoisted(() => ({
+const { listKeys, getPublicSettings, listGallery, saveGallery, saveGalleryFromTask, pinGallery, deleteGallery, downloadGallery, downloadURLGallery, thumbnailGallery, galleryQuota, reportDisplay, copyToClipboard, imageNeedsLocalResize, processImageForDisplay, tryStartPersistent, waitForPersistent } = vi.hoisted(() => ({
   listKeys: vi.fn(),
   getPublicSettings: vi.fn(),
   listGallery: vi.fn(),
@@ -23,6 +23,7 @@ const { listKeys, getPublicSettings, listGallery, saveGallery, saveGalleryFromTa
   downloadURLGallery: vi.fn(),
   thumbnailGallery: vi.fn(),
   galleryQuota: vi.fn(),
+  reportDisplay: vi.fn(),
   copyToClipboard: vi.fn(),
   imageNeedsLocalResize: vi.fn(),
   processImageForDisplay: vi.fn(),
@@ -47,6 +48,7 @@ vi.mock('@/api', () => ({
     downloadURL: downloadURLGallery,
     thumbnail: thumbnailGallery,
     quota: galleryQuota,
+    reportDisplay,
   },
 }))
 
@@ -160,6 +162,7 @@ function resetCommonMocks() {
   downloadURLGallery.mockReset()
   thumbnailGallery.mockReset()
   galleryQuota.mockReset()
+  reportDisplay.mockReset()
   copyToClipboard.mockReset()
   imageNeedsLocalResize.mockReset()
   processImageForDisplay.mockReset()
@@ -177,6 +180,7 @@ function resetCommonMocks() {
   })
   thumbnailGallery.mockResolvedValue(new Blob(['thumb'], { type: 'image/jpeg' }))
   galleryQuota.mockResolvedValue({ used: 0, limit: 100 })
+  reportDisplay.mockResolvedValue(undefined)
   copyToClipboard.mockResolvedValue(true)
   imageNeedsLocalResize.mockImplementation((value: string, upstreamMaxEdge: number) => {
     const match = /^(\d+)x(\d+)$/i.exec(value.trim())
@@ -2149,6 +2153,8 @@ describe('ImageStudioView gallery', () => {
     await vi.waitFor(() => {
       expect(wrapper.findAll('.image-pending-card')).toHaveLength(0)
     }, { timeout: 2000, interval: 50 })
+    await wrapper.get('img[alt="生成结果 1"]').trigger('load')
+    expect(reportDisplay).toHaveBeenCalledWith('imgtask_preview_ready', expect.any(Number))
     expect(saveGalleryFromTask).toHaveBeenCalledWith(expect.objectContaining({
       task_id: 'imgtask_preview_ready',
     }))
@@ -2771,6 +2777,7 @@ describe('ImageStudioView gallery', () => {
   })
 
   it('falls back to the original image when a thumbnail fails', async () => {
+    thumbnailGallery.mockRejectedValueOnce(new Error('thumbnail unavailable'))
     listGallery.mockResolvedValue([{
       id: 'gallery-fallback',
       url: 'https://cdn.example.com/original.png',
@@ -2793,6 +2800,66 @@ describe('ImageStudioView gallery', () => {
     expect(wrapper.find('[data-testid="image-media-error"]').exists()).toBe(false)
   })
 
+  it('recovers a failed remote thumbnail through the backend thumbnail endpoint', async () => {
+    listGallery.mockResolvedValue([{
+      id: 'gallery-recover',
+      url: 'https://cdn.example.com/original.png',
+      thumb_url: 'https://cdn.example.com/temporarily-missing-thumb.jpg',
+      prompt: 'a cat',
+      model: 'gpt-image-1',
+      size: '1024x1024',
+      format: 'png',
+      created_at: 1,
+      expires_at: 9999999999,
+    }])
+
+    const wrapper = mountImageStudio()
+    await flushPromises()
+
+    expect(wrapper.get('img[alt="历史图片 1"]').attributes('src'))
+      .toBe('https://cdn.example.com/temporarily-missing-thumb.jpg')
+
+    await wrapper.get('img[alt="历史图片 1"]').trigger('error')
+    await flushPromises()
+
+    expect(thumbnailGallery).toHaveBeenCalledWith('gallery-recover')
+    await vi.waitFor(() => {
+      expect(wrapper.get('img[alt="历史图片 1"]').attributes('src'))
+        .toBe('data:image/jpeg;base64,dGh1bWI=')
+    })
+  })
+
+  it('recovers a stalled remote thumbnail after the short timeout', async () => {
+    vi.useFakeTimers()
+    try {
+      listGallery.mockResolvedValue([{
+        id: 'gallery-stalled',
+        url: 'https://cdn.example.com/original.png',
+        thumb_url: 'https://cdn.example.com/stalled-thumb.jpg',
+        prompt: 'a cat',
+        model: 'gpt-image-1',
+        size: '1024x1024',
+        format: 'png',
+        created_at: 1,
+        expires_at: 9999999999,
+      }])
+
+      const wrapper = mountImageStudio()
+      await flushPromises()
+
+      await vi.advanceTimersByTimeAsync(3_000)
+      await flushPromises()
+
+      expect(thumbnailGallery).toHaveBeenCalledWith('gallery-stalled')
+      await vi.waitFor(() => {
+        expect(wrapper.get('img[alt="历史图片 1"]').attributes('src'))
+          .toBe('data:image/jpeg;base64,dGh1bWI=')
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('marks a media card failed after both thumbnail and original time out', async () => {
     vi.useFakeTimers()
     thumbnailGallery.mockRejectedValueOnce(new Error('thumbnail unavailable'))
@@ -2812,13 +2879,13 @@ describe('ImageStudioView gallery', () => {
       await flushPromises()
       expect(wrapper.find('[data-testid="image-media-loading"]').exists()).toBe(true)
 
-      await vi.advanceTimersByTimeAsync(15_000)
+      await vi.advanceTimersByTimeAsync(3_000)
       await flushPromises()
       expect(wrapper.get('img[alt="历史图片 1"]').attributes('src')).toBe(
         'https://cdn.example.com/slow-original.png',
       )
 
-      await vi.advanceTimersByTimeAsync(15_000)
+      await vi.advanceTimersByTimeAsync(3_000)
       await flushPromises()
       expect(wrapper.find('[data-testid="image-media-error"]').exists()).toBe(true)
     } finally {

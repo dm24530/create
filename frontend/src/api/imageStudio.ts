@@ -133,6 +133,14 @@ export async function fetchStudioWorksQuota(): Promise<StudioWorksQuota> {
   return { used: Number(data?.used || 0), limit: Number(data?.limit || 0) }
 }
 
+export async function reportImageStudioDisplay(taskId: string, durationMs?: number): Promise<void> {
+  await apiClient.post(
+    '/usage/image-display',
+    { task_id: taskId, duration_ms: durationMs },
+    { timeout: 10_000 },
+  )
+}
+
 export const imageStudioGalleryAPI = {
   list: listImageStudioGallery,
   save: saveImageStudioGallery,
@@ -144,6 +152,7 @@ export const imageStudioGalleryAPI = {
   downloadURL: downloadURLImageStudioGallery,
   thumbnail: thumbnailImageStudioGallery,
   quota: fetchStudioWorksQuota,
+  reportDisplay: reportImageStudioDisplay,
 }
 
 export default imageStudioGalleryAPI

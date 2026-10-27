@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -18,8 +19,9 @@ import (
 const maxImageStudioGalleryBytes = 32 << 20
 
 type ImageStudioGalleryHandler struct {
-	gallery *service.ImageStudioGalleryService
-	tasks   *service.ImageTaskService
+	gallery    *service.ImageStudioGalleryService
+	tasks      *service.ImageTaskService
+	imageLinks service.UsageLogImageLinkStore
 }
 
 type saveImageStudioGalleryRequest struct {
@@ -53,6 +55,13 @@ func NewImageStudioGalleryHandler(
 	tasks *service.ImageTaskService,
 ) *ImageStudioGalleryHandler {
 	return &ImageStudioGalleryHandler{gallery: gallery, tasks: tasks}
+}
+
+func (h *ImageStudioGalleryHandler) SetImageLinkStore(store service.UsageLogImageLinkStore) {
+	if h == nil {
+		return
+	}
+	h.imageLinks = store
 }
 
 func (h *ImageStudioGalleryHandler) Save(c *gin.Context) {
@@ -131,6 +140,7 @@ func (h *ImageStudioGalleryHandler) SaveFromTask(c *gin.Context) {
 		response.Error(c, http.StatusConflict, "Image task is not ready to save")
 		return
 	}
+	h.markImageGenerationDuration(c.Request.Context(), record, request.DurationMs)
 	var payload struct {
 		Data []struct {
 			ObjectKey string `json:"object_key"`
@@ -175,6 +185,36 @@ func (h *ImageStudioGalleryHandler) SaveFromTask(c *gin.Context) {
 		return
 	}
 	response.Success(c, entry)
+}
+
+func (h *ImageStudioGalleryHandler) markImageGenerationDuration(
+	ctx context.Context,
+	record *service.ImageTaskRecord,
+	requestedDurationMs int,
+) {
+	if h == nil || h.imageLinks == nil || record == nil || record.Execution == nil {
+		return
+	}
+	requestID := strings.TrimSpace(record.Execution.UsageRequestID)
+	if requestID == "" {
+		return
+	}
+	durationMs := max(requestedDurationMs, 0)
+	if durationMs == 0 && record.CompletedAt != nil && record.StartedAt > 0 {
+		durationMs = int(max(*record.CompletedAt-record.StartedAt, 0) * 1000)
+	}
+	if durationMs == 0 && record.CompletedAt != nil && record.CreatedAt > 0 {
+		durationMs = int(max(*record.CompletedAt-record.CreatedAt, 0) * 1000)
+	}
+	if err := h.imageLinks.MarkGenerationDuration(
+		ctx,
+		record.UserID,
+		record.APIKeyID,
+		requestID,
+		durationMs,
+	); err != nil {
+		return
+	}
 }
 
 func (h *ImageStudioGalleryHandler) List(c *gin.Context) {

@@ -55,8 +55,11 @@ func (s *usageLogImageLinkStore) GetByToken(ctx context.Context, token string) (
 	}
 	var link service.UsageLogImageLink
 	var objectKey sql.NullString
+	var displayedAt sql.NullTime
+	var generationDurationMs sql.NullInt64
 	err := s.sqlDB.QueryRowContext(ctx, `
-		SELECT user_id, api_key_id, request_id, link_token, image_url, object_key, expires_at
+		SELECT user_id, api_key_id, request_id, link_token, image_url, object_key, expires_at,
+		       displayed_at, generation_duration_ms
 		FROM usage_log_image_links
 		WHERE link_token = $1 AND expires_at > NOW()
 	`, token).Scan(
@@ -67,6 +70,8 @@ func (s *usageLogImageLinkStore) GetByToken(ctx context.Context, token string) (
 		&link.ImageURL,
 		&objectKey,
 		&link.ExpiresAt,
+		&displayedAt,
+		&generationDurationMs,
 	)
 	if err == sql.ErrNoRows {
 		return nil, service.ErrUsageLogImageLinkNotFound
@@ -77,7 +82,72 @@ func (s *usageLogImageLinkStore) GetByToken(ctx context.Context, token string) (
 	if objectKey.Valid {
 		link.ObjectKey = objectKey.String
 	}
+	if displayedAt.Valid {
+		value := displayedAt.Time
+		link.DisplayedAt = &value
+	}
+	if generationDurationMs.Valid {
+		value := int(generationDurationMs.Int64)
+		link.GenerationDurationMs = &value
+	}
 	return &link, nil
+}
+
+func (s *usageLogImageLinkStore) MarkGenerationDuration(
+	ctx context.Context,
+	userID, apiKeyID int64,
+	requestID string,
+	durationMs int,
+) error {
+	requestID = strings.TrimSpace(requestID)
+	if userID <= 0 || apiKeyID <= 0 || requestID == "" || durationMs <= 0 {
+		return nil
+	}
+	_, err := s.sqlDB.ExecContext(ctx, `
+		INSERT INTO image_generation_metrics (
+			user_id, api_key_id, request_id, generation_duration_ms, completed_at
+		)
+		VALUES ($1, $2, $3, $4, NOW())
+		ON CONFLICT (user_id, api_key_id, request_id) DO UPDATE
+		SET generation_duration_ms = GREATEST(
+		        image_generation_metrics.generation_duration_ms,
+		        EXCLUDED.generation_duration_ms
+		    ),
+		    completed_at = COALESCE(image_generation_metrics.completed_at, EXCLUDED.completed_at),
+		    updated_at = NOW()
+	`, userID, apiKeyID, requestID, durationMs)
+	if err != nil {
+		return err
+	}
+	_, err = s.sqlDB.ExecContext(ctx, `
+		UPDATE usage_log_image_links
+		SET generation_duration_ms = GREATEST(COALESCE(generation_duration_ms, 0), $4),
+		    updated_at = NOW()
+		WHERE user_id = $1 AND api_key_id = $2 AND request_id = $3
+	`, userID, apiKeyID, requestID, durationMs)
+	return err
+}
+
+func (s *usageLogImageLinkStore) MarkDisplayed(
+	ctx context.Context,
+	userID, apiKeyID int64,
+	requestID string,
+	displayedAt time.Time,
+) error {
+	requestID = strings.TrimSpace(requestID)
+	if userID <= 0 || apiKeyID <= 0 || requestID == "" {
+		return nil
+	}
+	if displayedAt.IsZero() {
+		displayedAt = time.Now().UTC()
+	}
+	_, err := s.sqlDB.ExecContext(ctx, `
+		UPDATE usage_log_image_links
+		SET displayed_at = COALESCE(displayed_at, $4),
+		    updated_at = NOW()
+		WHERE user_id = $1 AND api_key_id = $2 AND request_id = $3
+	`, userID, apiKeyID, requestID, displayedAt)
+	return err
 }
 
 func (s *usageLogImageLinkStore) DeleteExpired(ctx context.Context, now time.Time, limit int) (int64, error) {

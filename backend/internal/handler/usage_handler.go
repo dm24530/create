@@ -56,12 +56,20 @@ type UsageHandler struct {
 	settingService *service.SettingService
 	imageLinks     service.UsageLogImageLinkStore
 	imageStorage   usageImageStorage
+	imageTasks     *service.ImageTaskService
 }
 
 type usageImageStorage interface {
 	ImageObjectExists(ctx context.Context, objectKey string) (bool, error)
 	PresignImageObject(ctx context.Context, objectKey string) (string, error)
 	FetchImageURL(ctx context.Context, rawURL string) ([]byte, string, error)
+}
+
+func (h *UsageHandler) SetImageTaskService(tasks *service.ImageTaskService) {
+	if h == nil {
+		return
+	}
+	h.imageTasks = tasks
 }
 
 func (h *UsageHandler) SetImageLinkDeps(
@@ -141,6 +149,81 @@ func (h *UsageHandler) ImageLink(c *gin.Context) {
 		}
 	}
 	writeExpiredUsageImage(c)
+}
+
+type reportImageDisplayRequest struct {
+	TaskID     string `json:"task_id" binding:"required"`
+	DurationMs int    `json:"duration_ms"`
+}
+
+// ReportImageDisplay records when the browser actually rendered a generated
+// image. Admin usage history uses this to distinguish request time from the
+// time the user could finally see the image.
+func (h *UsageHandler) ReportImageDisplay(c *gin.Context) {
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not authenticated")
+		return
+	}
+	if h.imageTasks == nil || h.imageLinks == nil {
+		response.Error(c, http.StatusServiceUnavailable, "Image display tracking is unavailable")
+		return
+	}
+	var request reportImageDisplayRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		response.BadRequest(c, "Invalid image display request")
+		return
+	}
+	record, err := h.imageTasks.GetRecord(c.Request.Context(), strings.TrimSpace(request.TaskID))
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	if record == nil || record.UserID != subject.UserID {
+		response.NotFound(c, "Image task not found")
+		return
+	}
+	requestID := ""
+	if record.Execution != nil {
+		requestID = strings.TrimSpace(record.Execution.UsageRequestID)
+	}
+	if requestID == "" {
+		response.Success(c, gin.H{"tracked": false})
+		return
+	}
+	displayedAt := time.Now().UTC()
+	if err := h.imageLinks.MarkDisplayed(
+		c.Request.Context(),
+		record.UserID,
+		record.APIKeyID,
+		requestID,
+		displayedAt,
+	); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	durationMs := max(request.DurationMs, 0)
+	if durationMs == 0 && record.CompletedAt != nil && record.StartedAt > 0 {
+		durationMs = int(max(*record.CompletedAt-record.StartedAt, 0) * 1000)
+	}
+	if durationMs == 0 && record.CompletedAt != nil && record.CreatedAt > 0 {
+		durationMs = int(max(*record.CompletedAt-record.CreatedAt, 0) * 1000)
+	}
+	if err := h.imageLinks.MarkGenerationDuration(
+		c.Request.Context(),
+		record.UserID,
+		record.APIKeyID,
+		requestID,
+		durationMs,
+	); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, gin.H{
+		"tracked":                true,
+		"displayed_at":           displayedAt,
+		"generation_duration_ms": durationMs,
+	})
 }
 
 // OpenImageLink is a capability URL for browser image viewers. The opaque,
@@ -381,6 +464,7 @@ func (h *UsageHandler) parseUserUsageFilters(c *gin.Context, requireRange bool) 
 			BillingMode:        billingMode,
 			StartTime:          startPtr,
 			EndTime:            endPtr,
+			IncludeErrors:      true,
 		},
 		StartTime: derefTime(startPtr),
 		EndTime:   derefTime(endPtr),

@@ -2,7 +2,7 @@
   <BaseDialog
     :show="show"
     title="使用记录"
-    width="extra-wide"
+    width="screen"
     body-class="usage-quick-modal-body"
     :close-on-click-outside="true"
     @close="emit('close')"
@@ -74,6 +74,7 @@
           :server-side-sort="false"
           :show-account-billing="false"
           :show-upstream-endpoint="false"
+          :status-in-type-column="true"
           default-sort-key="created_at"
           default-sort-order="desc"
           flat
@@ -237,6 +238,7 @@ async function loadData() {
 
 .usage-quick-modal {
   display: flex;
+  min-width: 0;
   height: calc(90vh - 8rem);
   min-height: 0;
   flex-direction: column;
@@ -251,12 +253,34 @@ async function loadData() {
 }
 
 .usage-quick-modal__table {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
   min-height: 0;
   flex: 1;
   overflow: auto;
   border: 1px solid rgb(229 231 235);
   border-radius: 0.75rem;
   background: rgb(255 255 255);
+}
+
+.usage-quick-modal__table :deep(table) {
+  width: 100%;
+  min-width: 1180px;
+  table-layout: fixed;
+}
+
+.usage-quick-modal__table :deep(.table-wrapper) {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.usage-quick-modal__table :deep(th),
+.usage-quick-modal__table :deep(td) {
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .usage-quick-modal__pagination {

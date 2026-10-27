@@ -130,6 +130,18 @@ type UsageLog struct {
 	// UpstreamModelMismatch is nil when no upstream model was observed. Otherwise
 	// it compares UpstreamResponseModel with the actual model sent upstream.
 	UpstreamModelMismatch *bool
+	// RecordKind is "usage" for billed usage rows and "error" for failed
+	// requests merged from ops_error_logs.
+	RecordKind string
+	// ErrorID is the ops_error_logs primary key for failed requests.
+	ErrorID         *int64
+	ErrorStatusCode *int
+	ErrorMessage    *string
+	ErrorPhase      *string
+	ErrorType       *string
+	RefundStatus    *string
+	RefundAmount    *float64
+	ErrorResolved   *bool
 	// ChannelID 渠道 ID
 	ChannelID *int64
 	// ModelMappingChain 模型映射链，如 "a→b→c"
@@ -215,6 +227,12 @@ type UsageLog struct {
 	// ImageURL is the durable generated-image link associated with this usage record.
 	// It is hydrated from usage_log_image_links and is not stored on usage_logs itself.
 	ImageURL *string
+	// ImageDisplayedAt is when the browser first confirmed the generated image
+	// was rendered. It is hydrated from usage_log_image_links.
+	ImageDisplayedAt *time.Time
+	// ImageGenerationDurationMs is the user-visible generation duration stored
+	// with the usable image link.
+	ImageGenerationDurationMs *int
 
 	// 视频生成字段（Grok 视频按秒计费；video_count>0 的行不要求 image_size）
 	VideoCount           int
@@ -234,6 +252,8 @@ type UsageLogImageLinkStore interface {
 	Upsert(ctx context.Context, link *UsageLogImageLink) error
 	GetByToken(ctx context.Context, token string) (*UsageLogImageLink, error)
 	DeleteExpired(ctx context.Context, now time.Time, limit int) (int64, error)
+	MarkDisplayed(ctx context.Context, userID, apiKeyID int64, requestID string, displayedAt time.Time) error
+	MarkGenerationDuration(ctx context.Context, userID, apiKeyID int64, requestID string, durationMs int) error
 }
 
 const UsageLogImageLinkTTL = 90 * 24 * time.Hour
@@ -245,13 +265,15 @@ var ErrUsageLogImageLinkNotFound = infraerrors.New(
 )
 
 type UsageLogImageLink struct {
-	UserID    int64
-	APIKeyID  int64
-	RequestID string
-	LinkToken string
-	ImageURL  string
-	ObjectKey string
-	ExpiresAt time.Time
+	UserID               int64
+	APIKeyID             int64
+	RequestID            string
+	LinkToken            string
+	ImageURL             string
+	ObjectKey            string
+	ExpiresAt            time.Time
+	DisplayedAt          *time.Time
+	GenerationDurationMs *int
 }
 
 func (u *UsageLog) TotalTokens() int {

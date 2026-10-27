@@ -639,18 +639,32 @@ type UsageLog struct {
 	FirstTokenMs       *int `json:"first_token_ms"`
 
 	// 图片生成字段
-	ImageCount         int            `json:"image_count"`
-	ImageSize          *string        `json:"image_size"`
-	ImageInputSize     *string        `json:"image_input_size"`
-	ImageOutputSize    *string        `json:"image_output_size"`
-	ImageInputTokens   int            `json:"image_input_tokens"`
-	ImageInputCost     float64        `json:"image_input_cost"`
-	ImageOutputTokens  int            `json:"image_output_tokens"`
-	ImageOutputCost    float64        `json:"image_output_cost"`
-	ImageSizeSource    *string        `json:"image_size_source"`
-	ImageSizeBreakdown map[string]int `json:"image_size_breakdown"`
-	MediaType          *string        `json:"media_type"`
-	ImageURL           *string        `json:"image_url,omitempty"`
+	ImageCount                int            `json:"image_count"`
+	ImageSize                 *string        `json:"image_size"`
+	ImageInputSize            *string        `json:"image_input_size"`
+	ImageOutputSize           *string        `json:"image_output_size"`
+	ImageInputTokens          int            `json:"image_input_tokens"`
+	ImageInputCost            float64        `json:"image_input_cost"`
+	ImageOutputTokens         int            `json:"image_output_tokens"`
+	ImageOutputCost           float64        `json:"image_output_cost"`
+	ImageSizeSource           *string        `json:"image_size_source"`
+	ImageSizeBreakdown        map[string]int `json:"image_size_breakdown"`
+	MediaType                 *string        `json:"media_type"`
+	ImageURL                  *string        `json:"image_url,omitempty"`
+	ImageDisplayedAt          *time.Time     `json:"image_displayed_at,omitempty"`
+	ImageGenerationDurationMs *int           `json:"image_generation_duration_ms,omitempty"`
+
+	// Failed requests merged from ops_error_logs use the same row shape so the
+	// usage list can render successful and failed requests in one timeline.
+	RecordKind      string   `json:"record_kind"`
+	ErrorID         *int64   `json:"error_id,omitempty"`
+	ErrorStatusCode *int     `json:"error_status_code,omitempty"`
+	ErrorMessage    *string  `json:"error_message,omitempty"`
+	ErrorPhase      *string  `json:"error_phase,omitempty"`
+	ErrorType       *string  `json:"error_type,omitempty"`
+	RefundStatus    *string  `json:"refund_status,omitempty"`
+	RefundAmount    *float64 `json:"refund_amount,omitempty"`
+	ErrorResolved   *bool    `json:"error_resolved,omitempty"`
 
 	// User-Agent
 	UserAgent *string `json:"user_agent"`

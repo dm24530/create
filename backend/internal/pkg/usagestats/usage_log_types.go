@@ -285,6 +285,10 @@ type UsageLogFilters struct {
 	UpstreamModelMismatch *bool
 	StartTime             *time.Time
 	EndTime               *time.Time
+	// IncludeErrors merges client-visible failed requests from ops_error_logs
+	// into the usage listing and totals. Aggregations keep using successful
+	// usage_logs unless the caller explicitly asks for a merged view.
+	IncludeErrors bool
 	// ExactTotal requests exact COUNT(*) for pagination. Default false for fast large-table paging.
 	ExactTotal bool
 }

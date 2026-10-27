@@ -157,6 +157,7 @@ func RegisterUserRoutes(
 		usage.Use(panelRateLimiter.Heavy())
 		{
 			usage.GET("", h.Usage.List)
+			usage.POST("/image-display", h.Usage.ReportImageDisplay)
 			usage.GET("/image-links/:token", h.Usage.ImageLink)
 			usage.GET("/errors", h.Usage.ListErrors)
 			usage.GET("/errors/:id", h.Usage.GetErrorDetail)

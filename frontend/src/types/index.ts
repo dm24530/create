@@ -1790,6 +1790,15 @@ export type ImageSizeBreakdown = Record<string, number>
 
 export interface UsageLog {
   id: number
+  record_kind?: 'usage' | 'error'
+  error_id?: number | null
+  error_status_code?: number | null
+  error_message?: string | null
+  error_phase?: string | null
+  error_type?: string | null
+  refund_status?: string | null
+  refund_amount?: number | null
+  error_resolved?: boolean | null
   user_id: number
   api_key_id: number
   account_id: number | null
@@ -1835,6 +1844,8 @@ export interface UsageLog {
   image_size_source: ImageSizeSource | null
   image_size_breakdown: ImageSizeBreakdown | null
   image_url?: string | null
+  image_displayed_at?: string | null
+  image_generation_duration_ms?: number | null
   image_input_tokens: number
   image_input_cost: number
   image_output_tokens: number
