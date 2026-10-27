@@ -7,11 +7,11 @@ import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import ImageStudioView from '../ImageStudioView.vue'
-import { resetImageStudioDraft } from '../imageStudioDraft'
+import { IMAGE_STUDIO_DEFAULT_PROMPT, imageStudioDraft, resetImageStudioDraft } from '../imageStudioDraft'
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 
-const { listKeys, getPublicSettings, listGallery, saveGallery, saveGalleryFromTask, pinGallery, deleteGallery, downloadGallery, thumbnailGallery, galleryQuota, copyToClipboard, imageNeedsLocalResize, processImageForDisplay, tryStartPersistent, waitForPersistent } = vi.hoisted(() => ({
+const { listKeys, getPublicSettings, listGallery, saveGallery, saveGalleryFromTask, pinGallery, deleteGallery, downloadGallery, downloadURLGallery, thumbnailGallery, galleryQuota, copyToClipboard, imageNeedsLocalResize, processImageForDisplay, tryStartPersistent, waitForPersistent } = vi.hoisted(() => ({
   listKeys: vi.fn(),
   getPublicSettings: vi.fn(),
   listGallery: vi.fn(),
@@ -20,6 +20,7 @@ const { listKeys, getPublicSettings, listGallery, saveGallery, saveGalleryFromTa
   pinGallery: vi.fn(),
   deleteGallery: vi.fn(),
   downloadGallery: vi.fn(),
+  downloadURLGallery: vi.fn(),
   thumbnailGallery: vi.fn(),
   galleryQuota: vi.fn(),
   copyToClipboard: vi.fn(),
@@ -43,6 +44,7 @@ vi.mock('@/api', () => ({
     pin: pinGallery,
     delete: deleteGallery,
     download: downloadGallery,
+    downloadURL: downloadURLGallery,
     thumbnail: thumbnailGallery,
     quota: galleryQuota,
   },
@@ -92,12 +94,20 @@ function imageStudioPendingStorageKey(userId = 2) {
 
 const mountedWrappers = new Set<VueWrapper<any>>()
 
-function mountImageStudio(options: { isAdmin?: boolean; userId?: number } = {}) {
+function mountImageStudio(options: { isAdmin?: boolean; userId?: number; prompt?: string } = {}) {
   const pinia = createPinia()
   setActivePinia(pinia)
+  const userId = options.userId ?? (options.isAdmin ? 1 : 2)
+  const ownerId = String(userId)
+  if (!imageStudioDraft.initialized || imageStudioDraft.ownerId !== ownerId) {
+    imageStudioDraft.ownerId = ownerId
+    imageStudioDraft.initialized = true
+    imageStudioDraft.prompt = options.prompt ?? 'test image prompt'
+    imageStudioDraft.references = []
+  }
   const authStore = useAuthStore(pinia)
   authStore.user = {
-    id: options.userId ?? (options.isAdmin ? 1 : 2),
+    id: userId,
     email: options.isAdmin ? 'admin@example.com' : 'user@example.com',
     role: options.isAdmin ? 'admin' : 'user',
   } as any
@@ -147,6 +157,7 @@ function resetCommonMocks() {
   pinGallery.mockReset()
   deleteGallery.mockReset()
   downloadGallery.mockReset()
+  downloadURLGallery.mockReset()
   thumbnailGallery.mockReset()
   galleryQuota.mockReset()
   copyToClipboard.mockReset()
@@ -160,6 +171,10 @@ function resetCommonMocks() {
   pinGallery.mockResolvedValue(undefined)
   deleteGallery.mockResolvedValue(undefined)
   downloadGallery.mockResolvedValue(new Blob(['image'], { type: 'image/png' }))
+  downloadURLGallery.mockResolvedValue({
+    url: 'https://cdn.example.com/image-download-url',
+    filename: 'image-download.png',
+  })
   thumbnailGallery.mockResolvedValue(new Blob(['thumb'], { type: 'image/jpeg' }))
   galleryQuota.mockResolvedValue({ used: 0, limit: 100 })
   copyToClipboard.mockResolvedValue(true)
@@ -208,6 +223,12 @@ describe('ImageStudioView API key selector', () => {
   it('shows only the API key name', () => {
     expect(componentSource).toContain('label: key.name')
     expect(componentSource).not.toContain('maskApiKey')
+  })
+})
+
+describe('ImageStudioView prompt defaults', () => {
+  it('starts with an empty prompt', () => {
+    expect(IMAGE_STUDIO_DEFAULT_PROMPT).toBe('')
   })
 })
 
@@ -828,6 +849,163 @@ describe('ImageStudioView gallery', () => {
     expect(wrapper.get('article').text()).not.toContain('a cat')
   })
 
+  it('uses a signed direct download URL for gallery images', async () => {
+    let clickedHref = ''
+    let clickedTarget = ''
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+      clickedHref = this.href
+      clickedTarget = this.target
+    })
+    listGallery.mockResolvedValue([{
+      id: 'gallery-download',
+      url: 'https://cdn.example.com/gallery-download.png',
+      thumb_url: 'https://cdn.example.com/gallery-download-thumb.jpg',
+      prompt: 'a cat',
+      model: 'gpt-image-1',
+      size: '3840x3840',
+      format: 'png',
+      saved: false,
+      created_at: 1,
+      expires_at: 9999999999,
+    }])
+    let resolveDownloadURL!: (value: { url: string; filename: string }) => void
+    downloadURLGallery.mockReturnValueOnce(new Promise((resolve) => {
+      resolveDownloadURL = resolve
+    }))
+
+    const wrapper = mountImageStudio()
+    await flushPromises()
+    const button = wrapper.get('[data-testid="gallery-image-download"]')
+    await button.trigger('click')
+    await flushPromises()
+
+    expect(button.attributes('disabled')).toBeDefined()
+    expect(downloadURLGallery).toHaveBeenCalledWith('gallery-download')
+    expect(fetch).not.toHaveBeenCalled()
+
+    resolveDownloadURL({ url: 'https://cdn.example.com/image-download-url', filename: 'image-download.jpg' })
+    await flushPromises()
+    expect(clickedHref).toBe('https://cdn.example.com/image-download-url')
+    expect(clickedTarget).toBe('')
+    expect(downloadGallery).not.toHaveBeenCalled()
+  })
+
+  it('waits for a newly generated image to be saved before requesting its direct R2 download URL', async () => {
+    let clickedHref = ''
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+      clickedHref = this.href
+    })
+    listKeys.mockResolvedValue({
+      items: [{ id: 1, name: 'dd', key: 'sk-local', status: 'active', group_id: 2 }],
+    })
+    getPublicSettings.mockResolvedValue({ api_base_url: '/v1' })
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/images/batches/models')) {
+        return { ok: true, json: async () => ({ data: [{ id: 'gpt-image-1' }] }) } as Response
+      }
+      if (url.endsWith('/images/generations/async')) return asyncImageUnavailableResponse()
+      if (url.endsWith('/images/generations')) {
+        return { ok: true, json: async () => ({ data: [{ b64_json: 'aGVsbG8=' }] }) } as Response
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    let resolveSave!: (entry: any) => void
+    saveGallery.mockReturnValueOnce(new Promise((resolve) => {
+      resolveSave = resolve
+    }))
+
+    const wrapper = mountImageStudio()
+    await flushPromises()
+    await flushPromises()
+    void wrapper.get('form').trigger('submit')
+    await vi.waitFor(() => {
+      expect(wrapper.find('img[alt="生成结果 1"]').exists()).toBe(true)
+    })
+    vi.mocked(fetch).mockClear()
+
+    await wrapper.get('[data-testid="gallery-image-download"]').trigger('click')
+    await flushPromises()
+
+    expect(downloadURLGallery).not.toHaveBeenCalled()
+    expect(fetch).not.toHaveBeenCalled()
+
+    resolveSave({
+      id: 'gallery-new',
+      url: 'https://cdn.example.com/gallery-new.png',
+      prompt: '',
+      model: 'gpt-image-1',
+      size: '1024x1024',
+      format: 'png',
+      created_at: 0,
+      expires_at: 0,
+    })
+    await vi.waitFor(() => {
+      expect(downloadURLGallery).toHaveBeenCalledWith('gallery-new')
+    })
+    await flushPromises()
+
+    expect(clickedHref).toBe('https://cdn.example.com/image-download-url')
+    expect(fetch).not.toHaveBeenCalled()
+    expect(downloadGallery).not.toHaveBeenCalled()
+  })
+
+  it('falls back to a direct fetch when the signed download URL is unavailable', async () => {
+    const originalCreateObjectURL = URL.createObjectURL
+    const originalRevokeObjectURL = URL.revokeObjectURL
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      value: vi.fn(() => 'blob:gallery-download'),
+    })
+    Object.defineProperty(URL, 'revokeObjectURL', {
+      configurable: true,
+      value: vi.fn(),
+    })
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+    listGallery.mockResolvedValue([{
+      id: 'gallery-signed-download',
+      url: 'https://cdn.example.com/gallery-signed.png',
+      thumb_url: 'https://cdn.example.com/gallery-signed-thumb.jpg',
+      prompt: 'a cat',
+      model: 'gpt-image-1',
+      size: '3840x3840',
+      format: 'png',
+      saved: false,
+      created_at: 1,
+      expires_at: 9999999999,
+    }])
+    downloadURLGallery.mockRejectedValueOnce(new Error('signed URL unavailable'))
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      blob: async () => new Blob(['image'], { type: 'image/png' }),
+    } as Response)
+    try {
+      const wrapper = mountImageStudio()
+      await flushPromises()
+      await wrapper.get('[data-testid="gallery-image-download"]').trigger('click')
+      await flushPromises()
+
+      expect(downloadURLGallery).toHaveBeenCalledWith('gallery-signed-download')
+      expect(fetch).toHaveBeenCalledWith(
+        'https://cdn.example.com/gallery-signed.png',
+        expect.objectContaining({ credentials: 'omit' }),
+      )
+      expect(URL.createObjectURL).toHaveBeenCalled()
+      expect(downloadGallery).not.toHaveBeenCalled()
+    } finally {
+      Object.defineProperty(URL, 'createObjectURL', {
+        configurable: true,
+        value: originalCreateObjectURL,
+      })
+      Object.defineProperty(URL, 'revokeObjectURL', {
+        configurable: true,
+        value: originalRevokeObjectURL,
+      })
+    }
+  })
+
   it('renders the cached gallery immediately when remounting', async () => {
     listKeys.mockResolvedValue({
       items: [{ id: 1, name: 'dd', key: 'sk-local', status: 'active', group_id: 2 }],
@@ -853,9 +1031,7 @@ describe('ImageStudioView gallery', () => {
     await flushPromises()
     await flushPromises()
     expect(firstWrapper.find('img[src="https://cdn.example.com/gallery-1-thumb.jpg"]').exists()).toBe(true)
-    await vi.waitFor(() => {
-      expect(firstWrapper.find('img[src="data:image/jpeg;base64,dGh1bWI="]').exists()).toBe(true)
-    })
+    expect(thumbnailGallery).not.toHaveBeenCalledWith('gallery-1')
     firstWrapper.unmount()
 
     listGallery.mockReturnValue(new Promise(() => {}))
@@ -863,7 +1039,7 @@ describe('ImageStudioView gallery', () => {
     fetchMock.mockClear()
     const secondWrapper = mountImageStudio()
 
-    expect(secondWrapper.find('img[src="data:image/jpeg;base64,dGh1bWI="]').exists()).toBe(true)
+    expect(secondWrapper.find('img[src="https://cdn.example.com/gallery-1-thumb.jpg"]').exists()).toBe(true)
     await vi.waitFor(() => {
       expect(secondWrapper.get('[data-testid="api-key-select"]').text()).toContain('dd')
     })
@@ -1159,7 +1335,7 @@ describe('ImageStudioView gallery', () => {
     expect(image.classes()).toContain('object-cover')
     expect(image.classes()).not.toContain('object-contain')
     expect(componentSource).toContain('aspect-ratio: 16 / 10')
-    expect(thumbnailGallery).toHaveBeenCalledWith('gallery-1')
+    expect(thumbnailGallery).not.toHaveBeenCalledWith('gallery-1')
 
     await media.trigger('click')
     await flushPromises()
@@ -1343,6 +1519,7 @@ describe('ImageStudioView gallery', () => {
     const wrapper = mountImageStudio()
     await flushPromises()
     await flushPromises()
+    await wrapper.get('[data-testid="image-prompt-input"]').setValue('一只趴在桌上的橙色小猫，柔和窗边自然光，电影感，极简背景')
     await wrapper.get('form').trigger('submit')
     await flushPromises()
 
@@ -1404,7 +1581,7 @@ describe('ImageStudioView gallery', () => {
     expect(wrapper.findAll('img[alt^="生成结果"]')).toHaveLength(0)
   })
 
-  it('shows an explicit timeout failure when a sync image request exceeds four minutes', async () => {
+  it('shows an explicit timeout failure when a sync image request exceeds three minutes', async () => {
     vi.useFakeTimers()
     try {
       listKeys.mockResolvedValue({
@@ -1435,11 +1612,225 @@ describe('ImageStudioView gallery', () => {
       await flushPromises()
       await wrapper.get('form').trigger('submit')
       await flushPromises()
-      await vi.advanceTimersByTimeAsync(4 * 60_000 + 1_000)
+      await vi.advanceTimersByTimeAsync(3 * 60_000 + 1_000)
       await flushPromises()
 
       expect(wrapper.get('[data-testid="image-generation-failure"]').text()).toContain('请求超时')
-      expect(wrapper.get('[data-testid="image-generation-failure"]').text()).toContain('4 分钟')
+      expect(wrapper.get('[data-testid="image-generation-failure"]').text()).toContain('3 分钟')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not resubmit an upstream failure and keeps the failure record', async () => {
+    listKeys.mockResolvedValue({
+      items: [{ id: 1, name: 'dd', key: 'sk-local', status: 'active', group_id: 2 }],
+    })
+    getPublicSettings.mockResolvedValue({ api_base_url: '/v1' })
+    const generationBodies: Array<Record<string, any>> = []
+    let syncCalls = 0
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = String(input)
+      if (url.endsWith('/images/batches/models')) {
+        return { ok: true, json: async () => ({ data: [] }) } as Response
+      }
+      if (url.endsWith('/models')) {
+        return { ok: true, json: async () => ({ data: [{ id: 'gpt-image-1' }] }) } as Response
+      }
+      if (url.endsWith('/images/generations/async')) return asyncImageUnavailableResponse()
+      if (url.endsWith('/images/generations')) {
+        generationBodies.push(JSON.parse(String(init?.body || '{}')))
+        syncCalls += 1
+        return {
+          ok: false,
+          status: 502,
+          statusText: 'Bad Gateway',
+          json: async () => ({ error: { message: 'upstream temporarily unavailable' } }),
+        } as Response
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountImageStudio()
+    await flushPromises()
+    await flushPromises()
+    await wrapper.get('[data-testid="image-prompt-input"]').setValue('一只趴在桌上的橙色小猫，柔和窗边自然光，电影感，极简背景')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(generationBodies).toHaveLength(1)
+    const failure = wrapper.get('[data-testid="image-generation-failure"]')
+    expect(failure.text()).toContain('upstream temporarily unavailable')
+    expect(syncCalls).toBe(1)
+    expect(wrapper.findAll('[data-testid="image-generation-failure"]')).toHaveLength(1)
+    expect(wrapper.findAll('img[alt^="生成结果"]')).toHaveLength(0)
+  })
+
+  it('manual retry reuses the failed request and keeps the original failure card', async () => {
+    listKeys.mockResolvedValue({
+      items: [{ id: 1, name: 'dd', key: 'sk-local', status: 'active', group_id: 2 }],
+    })
+    getPublicSettings.mockResolvedValue({ api_base_url: '/v1' })
+    const generationBodies: Array<Record<string, any>> = []
+    let syncCalls = 0
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = String(input)
+      if (url.endsWith('/images/batches/models')) {
+        return { ok: true, json: async () => ({ data: [] }) } as Response
+      }
+      if (url.endsWith('/models')) {
+        return { ok: true, json: async () => ({ data: [{ id: 'gpt-image-1' }] }) } as Response
+      }
+      if (url.endsWith('/images/generations/async')) return asyncImageUnavailableResponse()
+      if (url.endsWith('/images/generations')) {
+        generationBodies.push(JSON.parse(String(init?.body || '{}')))
+        syncCalls += 1
+        if (syncCalls === 1) {
+          return {
+            ok: false,
+            status: 502,
+            statusText: 'Bad Gateway',
+            json: async () => ({ error: { message: 'upstream temporarily unavailable' } }),
+          } as Response
+        }
+        return {
+          ok: true,
+          json: async () => ({ data: [{ b64_json: 'cmV0cnktb2s=' }] }),
+        } as Response
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountImageStudio()
+    await flushPromises()
+    await flushPromises()
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    const originalPrompt = generationBodies[0].prompt
+    expect(wrapper.get('[data-testid="image-generation-failure"]').text())
+      .toContain('upstream temporarily unavailable')
+
+    await wrapper.get('textarea').setValue('edited after failure')
+    await wrapper.get('[data-testid="image-retry-generation"]').trigger('click')
+    await flushPromises()
+    await flushPromises()
+
+    expect(syncCalls).toBe(2)
+    expect(generationBodies[1]).toEqual(expect.objectContaining({
+      prompt: originalPrompt,
+      model: 'gpt-image-1',
+      size: '1024x1024',
+    }))
+    expect(wrapper.findAll('[data-testid="image-generation-failure"]')).toHaveLength(1)
+    expect(wrapper.findAll('img[alt^="生成结果"]')).toHaveLength(1)
+  })
+
+  it('stops polling and marks an async image task failed at the three minute deadline', async () => {
+    vi.useFakeTimers()
+    try {
+      listKeys.mockResolvedValue({
+        items: [{ id: 1, name: 'dd', key: 'sk-local', status: 'active', group_id: 2 }],
+      })
+      getPublicSettings.mockResolvedValue({ api_base_url: '/v1' })
+      vi.mocked(fetch).mockImplementation(async (input) => {
+        const url = String(input)
+        if (url.endsWith('/images/batches/models')) {
+          return { ok: true, json: async () => ({ data: [] }) } as Response
+        }
+        if (url.endsWith('/models')) {
+          return { ok: true, json: async () => ({ data: [{ id: 'gpt-image-1' }] }) } as Response
+        }
+        if (url.endsWith('/images/generations/async')) {
+          return {
+            ok: true,
+            status: 202,
+            json: async () => ({
+              task_id: 'imgtask_three_minute_deadline',
+              status: 'processing',
+              poll_url: '/v1/images/tasks/imgtask_three_minute_deadline',
+            }),
+          } as Response
+        }
+        if (url.endsWith('/images/tasks/imgtask_three_minute_deadline')) {
+          return {
+            ok: true,
+            json: async () => ({
+              task_id: 'imgtask_three_minute_deadline',
+              status: 'processing',
+            }),
+          } as Response
+        }
+        throw new Error(`Unexpected request: ${url}`)
+      })
+
+      const wrapper = mountImageStudio()
+      await flushPromises()
+      await flushPromises()
+      await wrapper.get('form').trigger('submit')
+      await flushPromises()
+      await vi.advanceTimersByTimeAsync(3 * 60_000 + 1_000)
+      await flushPromises()
+
+      expect(wrapper.get('[data-testid="image-generation-failure"]').text())
+        .toContain('图片生成超过 3 分钟')
+      expect(wrapper.find('[data-testid="image-pending-timer"]').exists()).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('shows an async upstream failure immediately without retrying the poll', async () => {
+    vi.useFakeTimers()
+    try {
+      listKeys.mockResolvedValue({
+        items: [{ id: 1, name: 'dd', key: 'sk-local', status: 'active', group_id: 2 }],
+      })
+      getPublicSettings.mockResolvedValue({ api_base_url: '/v1' })
+      let pollCalls = 0
+      vi.mocked(fetch).mockImplementation(async (input) => {
+        const url = String(input)
+        if (url.endsWith('/images/batches/models')) {
+          return { ok: true, json: async () => ({ data: [] }) } as Response
+        }
+        if (url.endsWith('/models')) {
+          return { ok: true, json: async () => ({ data: [{ id: 'gpt-image-1' }] }) } as Response
+        }
+        if (url.endsWith('/images/generations/async')) {
+          return {
+            ok: true,
+            status: 202,
+            json: async () => ({
+              task_id: 'imgtask_immediate_failure',
+              status: 'processing',
+              poll_url: '/v1/images/tasks/imgtask_immediate_failure',
+            }),
+          } as Response
+        }
+        if (url.endsWith('/images/tasks/imgtask_immediate_failure')) {
+          pollCalls += 1
+          return {
+            ok: true,
+            json: async () => ({
+              task_id: 'imgtask_immediate_failure',
+              status: 'failed',
+              http_status: 502,
+              error: { message: 'upstream rejected immediately' },
+            }),
+          } as Response
+        }
+        throw new Error(`Unexpected request: ${url}`)
+      })
+
+      const wrapper = mountImageStudio()
+      await flushPromises()
+      await flushPromises()
+      await wrapper.get('form').trigger('submit')
+      await flushPromises()
+
+      expect(wrapper.get('[data-testid="image-generation-failure"]').text())
+        .toContain('upstream rejected immediately')
+      expect(pollCalls).toBe(1)
     } finally {
       vi.useRealTimers()
     }
@@ -1997,7 +2388,7 @@ describe('ImageStudioView gallery', () => {
     await new Promise((resolve) => window.setTimeout(resolve, 600))
     await flushPromises()
 
-    expect(submitCalls).toBe(3)
+    expect(submitCalls).toBe(2)
     expect(fetchMock).toHaveBeenCalledWith(
       expect.stringContaining('/v1/images/tasks/imgtask_partial'),
       expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer sk-original' }) }),
@@ -2112,7 +2503,7 @@ describe('ImageStudioView gallery', () => {
     await new Promise((resolve) => window.setTimeout(resolve, 600))
     await flushPromises()
 
-    expect(asyncCalls).toBe(2)
+    expect(asyncCalls).toBe(1)
     expect(syncCalls).toBe(0)
     expect(wrapper.findAll('.image-pending-card')).toHaveLength(0)
   })
@@ -2271,7 +2662,7 @@ describe('ImageStudioView gallery', () => {
     await flushPromises()
 
     expect(wrapper.get('img[alt="生成结果 1"]').attributes('src')).toBe('https://cdn.example.com/gallery-1-thumb.jpg')
-    expect(thumbnailGallery).toHaveBeenCalledWith('gallery-1')
+    expect(thumbnailGallery).not.toHaveBeenCalledWith('gallery-1')
   })
 
   it('keeps an inline preview as the immediate card source after saving', async () => {
@@ -2352,6 +2743,7 @@ describe('ImageStudioView gallery', () => {
     listGallery.mockResolvedValue([{
       id: 'gallery-loading',
       url: 'https://cdn.example.com/loading.png',
+      thumb_url: 'https://cdn.example.com/loading-thumb.jpg',
       prompt: 'a cat',
       model: 'gpt-image-1',
       size: '1024x1024',
@@ -2367,8 +2759,12 @@ describe('ImageStudioView gallery', () => {
     expect(wrapper.find('[data-testid="image-media-loading"]').exists()).toBe(true)
     await card.trigger('click')
     expect(wrapper.find('[data-testid="preview-image-loading"]').exists()).toBe(true)
+    const preview = wrapper.get('.image-detail-dialog__media img')
+    expect(preview.attributes('src')).toBe('https://cdn.example.com/loading-thumb.jpg')
+    expect(preview.classes()).not.toContain('opacity-0')
+    expect(wrapper.get('[data-testid="preview-image-loading"]').text()).toContain('已显示预览')
 
-    await wrapper.get('.image-detail-dialog__media img').trigger('load')
+    await preview.trigger('load')
 
     expect(wrapper.find('[data-testid="preview-image-loading"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="image-media-loading"]').exists()).toBe(false)
@@ -2456,6 +2852,7 @@ describe('ImageStudioView gallery', () => {
     const wrapper = mountImageStudio()
     await flushPromises()
     await flushPromises()
+    await wrapper.get('[data-testid="image-prompt-input"]').setValue('一只趴在桌上的橙色小猫，柔和窗边自然光，电影感，极简背景')
     await wrapper.get('form').trigger('submit')
     await flushPromises()
     await flushPromises()
@@ -2962,6 +3359,32 @@ describe('ImageStudioView gallery', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('正在生成')
+  })
+
+  it('marks a restored pending task as timed out after three minutes', async () => {
+    localStorage.setItem(imageStudioPendingStorageKey(), JSON.stringify([
+      {
+        id: 56,
+        title: '正在生成',
+        src: '',
+        meta: 'PNG · 1024x1024 · gpt-image-1',
+        pending: true,
+        taskId: 'imgtask_restore_timed_out',
+        batchId: 'batch_restore_timed_out',
+        startedAt: Date.now() - 3 * 60 * 1000 - 1,
+        prompt: '一只猫',
+        model: 'gpt-image-1',
+        size: '1024x1024',
+        format: 'png',
+      },
+    ]))
+
+    const wrapper = mountImageStudio()
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="image-generation-failure"]').text())
+      .toContain('图片生成超过 3 分钟')
+    expect(wrapper.findAll('.image-pending-card')).toHaveLength(0)
   })
 
   it('does not restore another user pending image task', async () => {

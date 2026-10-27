@@ -1,6 +1,6 @@
 import { reactive } from 'vue'
 
-export const IMAGE_STUDIO_DEFAULT_PROMPT = '一只趴在桌上的橙色小猫，柔和窗边自然光，电影感，极简背景'
+export const IMAGE_STUDIO_DEFAULT_PROMPT = ''
 
 export interface ImageStudioDraftReference {
   id: number
