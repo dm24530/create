@@ -169,6 +169,41 @@ func TestCalculateCostUnified_ImageMode(t *testing.T) {
 	require.Equal(t, string(BillingModeImage), cost.BillingMode)
 }
 
+func TestCalculateCostUnified_GroupVideoSecondMode(t *testing.T) {
+	bs := &BillingService{
+		cfg:            &config.Config{},
+		fallbackPrices: map[string]*ModelPricing{},
+	}
+	resolver := NewModelPricingResolver(nil, bs)
+	groupID := int64(4)
+	perSecond := 0.33
+	group := &Group{
+		ID: groupID,
+		ModelPricing: []ChannelModelPricing{{
+			Models:      []string{"dreamina-seedance-2-5-260628"},
+			BillingMode: BillingModeVideo,
+			Intervals: []PricingInterval{{
+				TierLabel:       VideoBillingResolution720P,
+				PerRequestPrice: &perSecond,
+			}},
+		}},
+	}
+
+	cost, err := bs.CalculateCostUnified(CostInput{
+		Ctx:            context.Background(),
+		Model:          "dreamina-seedance-2-5-260628",
+		GroupID:        &groupID,
+		Group:          group,
+		UsageUnits:     20,
+		SizeTier:       VideoBillingResolution720P,
+		RateMultiplier: 1,
+		Resolver:       resolver,
+	})
+	require.NoError(t, err)
+	require.InDelta(t, 6.6, cost.TotalCost, 1e-10)
+	require.Equal(t, string(BillingModeVideo), cost.BillingMode)
+}
+
 func channelTimeResolvedForTest(base *ModelPricing, intervals []PricingInterval) *ResolvedPricing {
 	return &ResolvedPricing{
 		Mode:        BillingModeToken,

@@ -41,11 +41,16 @@ func (e GrokMediaEndpoint) RequiresRequestBody() bool {
 }
 
 func (e GrokMediaEndpoint) IsVideoLookupRequest() bool {
-	return e == GrokMediaEndpointVideoStatus || e == GrokMediaEndpointVideoContent || e == SeedanceEndpointStatus || e == SeedanceEndpointDelete
+	return e == GrokMediaEndpointVideoStatus ||
+		e == GrokMediaEndpointVideoContent ||
+		e == SeedanceEndpointStatus ||
+		e == SeedanceEndpointDelete ||
+		e == SeedanceVideoEndpointStatus ||
+		e == SeedanceVideoEndpointContent
 }
 
 func (e GrokMediaEndpoint) IsGenerationRequest() bool {
-	if e == SeedanceEndpointCreate {
+	if e == SeedanceEndpointCreate || e == SeedanceVideoEndpointCreate {
 		return true
 	}
 	switch e {
@@ -461,7 +466,7 @@ func (s *OpenAIGatewayService) StoreGrokVideoPendingBilling(
 		pending.VideoResolution = NormalizeVideoBillingResolutionOrDefault(pending.VideoResolution)
 	}
 	if pending.VideoDurationSeconds > 0 {
-		pending.VideoDurationSeconds = NormalizeVideoBillingDurationSecondsOrDefault(pending.VideoDurationSeconds)
+		pending.VideoDurationSeconds = NormalizeVideoBillingDurationSecondsForModelOrDefault(pending.Model, pending.VideoDurationSeconds)
 	}
 	// Always stamp create-accept time when missing so deferred duration_ms is E2E.
 	if strings.TrimSpace(pending.CreatedAt) == "" {
@@ -626,7 +631,7 @@ func ExtractGrokVideoBillingFromStatusBody(statusBody []byte, pending *GrokVideo
 		resolution = NormalizeVideoBillingResolutionOrDefault(resolution)
 	}
 	if durationSeconds > 0 {
-		durationSeconds = NormalizeVideoBillingDurationSecondsOrDefault(durationSeconds)
+		durationSeconds = NormalizeVideoBillingDurationSecondsForModelOrDefault(model, durationSeconds)
 	}
 	responseID := extractGrokMediaVideoRequestID(statusBody)
 	if responseID == "" {
@@ -655,6 +660,9 @@ func (s *OpenAIGatewayService) ForwardGrokMedia(
 	startTime := time.Now()
 	if account == nil {
 		return nil, fmt.Errorf("grok account is required")
+	}
+	if endpoint.IsSeedanceVideo() {
+		return s.ForwardSeedanceVideo(ctx, c, account, endpoint, requestID, body)
 	}
 	if account.Platform != PlatformGrok {
 		return nil, fmt.Errorf("account platform %s is not supported for grok media", account.Platform)

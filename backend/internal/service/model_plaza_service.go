@@ -234,6 +234,10 @@ func (s *ModelPlazaService) fillDisplayPricing(ctx context.Context, m *PlazaMode
 	if groupPricing := matchGroupModelPricing(g, m.Name); groupPricing != nil {
 		m.Pricing = groupPricing
 	}
+	if m.Pricing != nil && m.Pricing.BillingMode == BillingModeVideo {
+		m.Pricing = s.plazaVideoDisplayPricing(m.Name, m.Pricing, g)
+		return
+	}
 	if s.billingService != nil && s.resolver != nil {
 		sched, err := s.billingService.ResolveContextPricingSchedule(ctx, s.resolver, ContextPricingScheduleInput{
 			Model:    m.Name,
@@ -250,6 +254,72 @@ func (s *ModelPlazaService) fillDisplayPricing(ctx context.Context, m *PlazaMode
 		}
 	}
 	m.Pricing = plazaImageDisplayPricing(m.Pricing, g)
+}
+
+// plazaVideoDisplayPricing 把视频模型的每秒单价合成为分辨率档位。
+//
+// 优先级与真实计费一致：分组按模型覆盖 > 分组通用视频价 > 渠道分辨率档位 >
+// 渠道视频平价 > 已知模型的代码默认价。不同来源缺失解析时跳过该档，
+// 避免把未知模型图片兜底价误展示成视频每秒价。
+func (s *ModelPlazaService) plazaVideoDisplayPricing(model string, p *ChannelModelPricing, g *Group) *ChannelModelPricing {
+	if p == nil {
+		return nil
+	}
+	clone := *p
+	clone.BillingMode = BillingModeVideo
+	clone.Intervals = make([]PricingInterval, 0, 3)
+
+	for _, resolution := range []string{
+		VideoBillingResolution480P,
+		VideoBillingResolution720P,
+		VideoBillingResolution1080P,
+	} {
+		price, ok := plazaVideoPerSecondPrice(model, p, g, resolution, s.billingService)
+		if !ok {
+			continue
+		}
+		value := price
+		clone.Intervals = append(clone.Intervals, PricingInterval{
+			TierLabel:       resolution,
+			PerRequestPrice: &value,
+			SortOrder:       len(clone.Intervals),
+		})
+	}
+	if len(clone.Intervals) > 0 {
+		first := *clone.Intervals[0].PerRequestPrice
+		clone.PerRequestPrice = &first
+	}
+	return &clone
+}
+
+func plazaVideoPerSecondPrice(
+	model string,
+	channelPricing *ChannelModelPricing,
+	group *Group,
+	resolution string,
+	billing *BillingService,
+) (float64, bool) {
+	if group != nil {
+		if price := group.GetVideoPriceForModel(model, resolution); price != nil {
+			return *price, true
+		}
+	}
+	if channelPricing != nil {
+		for i := range channelPricing.Intervals {
+			interval := &channelPricing.Intervals[i]
+			tier, ok := LookupVideoBillingResolution(interval.TierLabel)
+			if ok && tier == resolution && interval.PerRequestPrice != nil {
+				return *interval.PerRequestPrice, true
+			}
+		}
+		if channelPricing.PerRequestPrice != nil {
+			return *channelPricing.PerRequestPrice, true
+		}
+	}
+	if billing == nil {
+		return 0, false
+	}
+	return getDefaultGrokImagineVideoPrice(model, resolution)
 }
 
 // plazaPricingFromSchedule 把阶梯表压成展示用的 ChannelModelPricing：

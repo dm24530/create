@@ -642,6 +642,7 @@ func shouldBypassEmbeddedFrontend(path string) bool {
 		strings.HasPrefix(trimmed, "/v3/contents/generations/tasks/") ||
 		strings.HasPrefix(trimmed, "/images/") ||
 		trimmed == "/videos" ||
+		trimmed == "/video/generations" ||
 		strings.HasPrefix(trimmed, "/videos/")
 }
 

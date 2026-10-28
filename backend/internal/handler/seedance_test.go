@@ -95,3 +95,69 @@ func TestSeedanceHandlerLifecycleAndOwnership(t *testing.T) {
 	}
 	require.Len(t, bindings.billed, 1)
 }
+
+func TestSeedancePerSecondBillingUsesCreateSnapshot(t *testing.T) {
+	h, _, bindings, upstream := newGrokMediaSlotHandler(t, false, false, service.PlatformOpenAI)
+	upstream.call = func(req *http.Request, _ int64) (*http.Response, error) {
+		body := `{"id":"task-second","status":"succeeded","usage":{"completion_tokens":999}}`
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(body)),
+		}, nil
+	}
+
+	perSecond := 0.5
+	groupPricing := []service.ChannelModelPricing{{
+		Models:      []string{"doubao-seedance"},
+		BillingMode: service.BillingModeVideo,
+		Intervals: []service.PricingInterval{{
+			TierLabel:       service.VideoBillingResolution720P,
+			PerRequestPrice: &perSecond,
+		}},
+	}}
+	c, w := grokMediaSlotContext(context.Background(), true)
+	key, _ := middleware.GetAPIKeyFromContext(c)
+	key.Group.Platform = service.PlatformOpenAI
+	key.Group.ModelPricing = groupPricing
+	c.Request = httptest.NewRequest(
+		http.MethodPost,
+		"/api/v3/contents/generations/tasks",
+		strings.NewReader(`{"model":"doubao-seedance","content":[{"type":"text","text":"waves"}],"duration":20,"resolution":"720p"}`),
+	)
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	h.SeedanceTasks(c)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.Len(t, bindings.pending, 1)
+
+	subject, _ := middleware.GetAuthSubjectFromContext(c)
+	billed := prepareSeedanceCompletionBilling(
+		context.Background(),
+		h,
+		key,
+		subject,
+		"seedance:task-second",
+		&service.OpenAIForwardResult{
+			ResponseID: "seedance:task-second",
+			Usage:      service.OpenAIUsage{OutputTokens: 999},
+		},
+	)
+	require.NotNil(t, billed)
+	require.Equal(t, "doubao-seedance", billed.BillingModel)
+	require.Equal(t, 1, billed.VideoCount)
+	require.Equal(t, service.VideoBillingResolution720P, billed.VideoResolution)
+	require.Equal(t, 20, billed.VideoDurationSeconds)
+	require.Zero(t, billed.Usage.OutputTokens, "per-second billing must not also charge completion tokens")
+	require.Equal(t, service.StableGrokVideoBillingRequestID("seedance:task-second"), billed.RequestID)
+
+	repeated := prepareSeedanceCompletionBilling(
+		context.Background(),
+		h,
+		key,
+		subject,
+		"seedance:task-second",
+		&service.OpenAIForwardResult{Usage: service.OpenAIUsage{OutputTokens: 999}},
+	)
+	require.Nil(t, repeated)
+}

@@ -325,6 +325,50 @@ func TestListPlazaGroups_GroupImagePriceIgnoredForNonImageModes(t *testing.T) {
 	require.Nil(t, p.PerRequestPrice)
 }
 
+func TestListPlazaGroups_GroupVideoPricesExposeResolutionIntervals(t *testing.T) {
+	channelPrice := 9.0
+	price480 := 0.28
+	price720 := 0.50
+	price1080 := 0.90
+	modelOverride480 := 0.18
+	modelOverride720 := 0.38
+	channels := []Channel{{
+		ID: 1, Name: "video-ch", Status: StatusActive, GroupIDs: []int64{10},
+		ModelPricing: []ChannelModelPricing{{
+			Platform: PlatformGrok, Models: []string{"grok-imagine-video-1.5"},
+			BillingMode: BillingModeVideo, PerRequestPrice: &channelPrice,
+		}},
+	}}
+	groups := []Group{{
+		ID: 10, Name: "video", Platform: PlatformGrok, RateMultiplier: 1,
+		VideoPrice480P: &price480, VideoPrice720P: &price720, VideoPrice1080P: &price1080,
+		VideoModelPrices: map[string]map[string]float64{
+			VideoPriceFamilyGrokImagineVideo15: {
+				VideoBillingResolution480P: modelOverride480,
+				VideoBillingResolution720P: modelOverride720,
+			},
+		},
+	}}
+
+	out, err := newPlazaService(channels, groups, nil).ListGroups(context.Background())
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+	require.Len(t, out[0].Models, 1)
+	pricing := out[0].Models[0].Pricing
+	require.NotNil(t, pricing)
+	require.Equal(t, BillingModeVideo, pricing.BillingMode)
+	require.Len(t, pricing.Intervals, 3)
+
+	byResolution := map[string]float64{}
+	for _, interval := range pricing.Intervals {
+		require.NotNil(t, interval.PerRequestPrice)
+		byResolution[interval.TierLabel] = *interval.PerRequestPrice
+	}
+	require.InDelta(t, modelOverride480, byResolution[VideoBillingResolution480P], 1e-12)
+	require.InDelta(t, modelOverride720, byResolution[VideoBillingResolution720P], 1e-12)
+	require.InDelta(t, price1080, byResolution[VideoBillingResolution1080P], 1e-12)
+}
+
 func TestListPlazaGroups_RepoErrorsPropagate(t *testing.T) {
 	sentinel := errors.New("boom")
 	repo := &mockChannelRepository{

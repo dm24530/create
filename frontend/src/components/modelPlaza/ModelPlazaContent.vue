@@ -33,20 +33,13 @@
       {{ t('modelPlaza.loadFailed') }}
     </div>
     <template v-else>
-      <!-- 筛选区:平台 → 分组 → 倍率 -->
+      <!-- 筛选区:分组 → 倍率 -->
       <PlazaFilterBar
-        :platforms="platforms"
         :groups="groupOptions"
-        :rates="rates"
         :compact="compactFilters"
-        :show-group-and-rate-filters="showGroupAndRateFilters"
-        :platform="selectedPlatform"
         :group-id="selectedGroupId"
-        :rate="selectedRate"
         :search="searchQuery"
-        @update:platform="selectedPlatform = $event"
         @update:group-id="selectedGroupId = $event"
-        @update:rate="selectedRate = $event"
         @update:search="searchQuery = $event"
       />
 
@@ -83,17 +76,13 @@ const props = defineProps<{
   embedded?: boolean
   /** 弹窗形态:筛选选项横向滚动，不换行。 */
   compactFilters?: boolean
-  /** 是否展示分组和倍率筛选。 */
-  showGroupAndRateFilters?: boolean
 }>()
 
 const { t } = useI18n()
 const authStore = useAuthStore()
 const isAuthenticated = computed(() => authStore.isAuthenticated)
 
-const selectedPlatform = ref<string>('all')
 const selectedGroupId = ref<number | 'all'>('all')
-const selectedRate = ref<number | 'all'>('all')
 const searchQuery = ref('')
 
 const searchActive = computed(() => searchQuery.value.trim() !== '')
@@ -109,41 +98,27 @@ function effectiveRate(g: ModelPlazaGroup): number {
   return g.user_rate_multiplier ?? g.rate_multiplier
 }
 
-const platforms = computed(() =>
-  [...new Set((props.response?.groups ?? []).map((g) => g.platform).filter(Boolean))].sort()
-)
-
 const groupOptions = computed(() =>
   (props.response?.groups ?? []).map((g) => ({
     id: g.id,
     name: g.name,
-    platform: g.platform,
-    rate: effectiveRate(g)
+    modelCount: g.models.length
   }))
 )
 
-/** 全量生效倍率;当前组合下不可用的项由 FilterBar 置灰而非隐藏。 */
-const rates = computed(() =>
-  [...new Set((props.response?.groups ?? []).map(effectiveRate))].sort((a, b) => a - b)
-)
-
-/** 数据刷新后选中的倍率可能不复存在,重置为全部。 */
-watch(rates, (list) => {
-  if (selectedRate.value !== 'all' && !list.includes(selectedRate.value)) {
-    selectedRate.value = 'all'
+watch(groupOptions, (list) => {
+  if (
+    selectedGroupId.value !== 'all' &&
+    !list.some((group) => group.id === selectedGroupId.value)
+  ) {
+    selectedGroupId.value = 'all'
   }
 })
 
 const filteredGroups = computed(() => {
   let groups = props.response?.groups ?? []
-  if (selectedPlatform.value !== 'all') {
-    groups = groups.filter((g) => g.platform === selectedPlatform.value)
-  }
   if (selectedGroupId.value !== 'all') {
     groups = groups.filter((g) => g.id === selectedGroupId.value)
-  }
-  if (selectedRate.value !== 'all') {
-    groups = groups.filter((g) => effectiveRate(g) === selectedRate.value)
   }
   // 模型名搜索:分组内只留命中的模型,整组无命中则隐藏该分组。
   const q = searchQuery.value.trim().toLowerCase()

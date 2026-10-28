@@ -14,12 +14,20 @@ const { listKeys, getPublicSettings, copyToClipboard, routeQuery } = vi.hoisted(
   routeQuery: { value: {} as Record<string, string> },
 }))
 
-const { archiveVideo } = vi.hoisted(() => ({ archiveVideo: vi.fn() }))
+const {
+  archiveVideo,
+  deleteArchivedVideo,
+  listArchivedVideos,
+} = vi.hoisted(() => ({
+  archiveVideo: vi.fn(),
+  deleteArchivedVideo: vi.fn(),
+  listArchivedVideos: vi.fn(),
+}))
 
 vi.mock('../videoArchiveApi', () => ({
   archiveVideo,
-  listArchivedVideos: vi.fn().mockResolvedValue([]),
-  deleteArchivedVideo: vi.fn(),
+  listArchivedVideos,
+  deleteArchivedVideo,
   fetchStudioWorksQuota: vi.fn().mockResolvedValue({ used: 0, limit: 100 }),
   isStudioQuotaError: () => false,
   fetchOnlineInspirationsFromServer: vi.fn().mockResolvedValue([]),
@@ -90,6 +98,9 @@ function resetMocks() {
   getPublicSettings.mockReset()
   copyToClipboard.mockReset()
   archiveVideo.mockReset()
+  deleteArchivedVideo.mockReset()
+  listArchivedVideos.mockReset()
+  listArchivedVideos.mockResolvedValue([])
   // 默认按"对象存储没配"处理：归档失败只提示，不影响生成结果本身。
   archiveVideo.mockRejectedValue({ reason: 'IMAGE_STORAGE_DISABLED', message: 'image storage is not enabled' })
   routeQuery.value = {}
@@ -123,6 +134,7 @@ describe('VideoStudioView model loading', () => {
         return jsonResponse({
           data: [
             { id: 'gpt-image-1' },
+            { id: 'wanx2.1-t2i-turbo' },
             { id: 'seedance-2-720p' },
             { id: 'grok-imagine-video' },
             { id: 'gpt-5' },
@@ -140,6 +152,7 @@ describe('VideoStudioView model loading', () => {
     expect(modelSelect.text()).toContain('seedance-2-720p')
     expect(modelSelect.text()).toContain('grok-imagine-video')
     expect(modelSelect.text()).not.toContain('gpt-image-1')
+    expect(modelSelect.text()).not.toContain('wanx2.1-t2i-turbo')
     expect(modelSelect.text()).not.toContain('gpt-5')
   })
 
@@ -171,6 +184,116 @@ describe('VideoStudioView model loading', () => {
     expect(fetchMock).toHaveBeenCalledWith('/v1/models', {
       headers: { Authorization: 'Bearer sk-composite' },
     })
+  })
+
+  it('keeps the selected API key across page refresh and manual key refresh', async () => {
+    localStorage.setItem(
+      'sub2api:video-studio:preferences',
+      JSON.stringify({ keyId: '8' }),
+    )
+    listKeys.mockResolvedValue({
+      items: [
+        {
+          id: 7,
+          name: 'video-key-default',
+          key: 'sk-default',
+          status: 'active',
+          group_id: 1,
+          group: { platform: 'openai', video_capable: true },
+        },
+        {
+          id: 8,
+          name: 'video-key-selected',
+          key: 'sk-selected',
+          status: 'active',
+          group_id: 4,
+          group: { platform: 'openai', video_capable: true },
+        },
+      ],
+    })
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockResolvedValue(jsonResponse({ data: [{ id: 'seedance-2-720p' }] }))
+
+    const wrapper = mountStudio()
+    await flushPromises()
+    await flushPromises()
+
+    const modelCalls = () =>
+      fetchMock.mock.calls.filter((call) => String(call[0]).endsWith('/models'))
+    const allUseSelectedKey = () => modelCalls().every((call) => {
+      const headers = (call[1] as RequestInit | undefined)?.headers as Record<string, string> | undefined
+      return headers?.Authorization === 'Bearer sk-selected'
+    })
+    expect(allUseSelectedKey()).toBe(true)
+
+    await wrapper.get('[data-testid="video-refresh"]').trigger('click')
+    await flushPromises()
+    await flushPromises()
+
+    expect(modelCalls().length).toBeGreaterThan(0)
+    expect(allUseSelectedKey()).toBe(true)
+  })
+
+  it('loads models when settings resolve before the saved API key', async () => {
+    localStorage.setItem(
+      'sub2api:video-studio:preferences',
+      JSON.stringify({ keyId: '8' }),
+    )
+    let resolveKeys: ((value: { items: unknown[] }) => void) | undefined
+    listKeys.mockImplementation(() => new Promise((resolve) => {
+      resolveKeys = resolve
+    }))
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockResolvedValue(jsonResponse({ data: [{ id: 'seedance-2-720p' }] }))
+
+    const wrapper = mountStudio()
+    await flushPromises()
+    resolveKeys?.({
+      items: [{
+        id: 8,
+        name: 'video-key-selected',
+        key: 'sk-selected',
+        status: 'active',
+        group_id: 4,
+        group: { platform: 'openai', video_capable: true },
+      }],
+    })
+    await flushPromises()
+    await flushPromises()
+
+    expect(fetchMock).toHaveBeenCalledWith('/v1/models', {
+      headers: { Authorization: 'Bearer sk-selected' },
+    })
+    expect(wrapper.get('[data-testid="video-model-select"]').text()).toContain('seedance-2-720p')
+  })
+
+  it('loads archived videos into the results grid with playback controls', async () => {
+    listArchivedVideos.mockResolvedValue([{
+      id: 'archived-result-1',
+      url: 'https://cdn.example.com/archived-result.mp4',
+      prompt: '已归档的测试视频',
+      model: 'seedance-2-720p',
+      format: 'mp4',
+      duration_seconds: 5,
+      saved: false,
+      created_at: 1_700_000_000,
+      expires_at: 1_800_000_000,
+    }])
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/models')) return jsonResponse({ data: [] })
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountStudio()
+    await flushPromises()
+    await flushPromises()
+
+    expect(listArchivedVideos).toHaveBeenCalledWith('temp')
+    expect(wrapper.text()).toContain('已归档的测试视频')
+    const video = wrapper.get('[data-testid="video-result-player"]')
+    expect(video.attributes('src')).toBe('https://cdn.example.com/archived-result.mp4')
+    expect(video.attributes('controls')).toBeDefined()
   })
 
   it('does not expose raw no-service errors in the composer', async () => {
@@ -298,6 +421,23 @@ describe('VideoStudioView seedance generation', () => {
     expect((durationInput.element as HTMLInputElement).value).toBe('15')
   })
 
+  it('does not offer one-second or two-second duration presets', async () => {
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/models')) return jsonResponse({ data: [{ id: 'seedance-2-720p' }] })
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountStudio()
+    await flushPromises()
+    await flushPromises()
+
+    const buttons = wrapper.findAll('[data-testid="video-duration-control"] button')
+      .map((button) => button.text())
+    expect(buttons).not.toContain('1秒')
+    expect(buttons).not.toContain('2秒')
+  })
+
   // 查看类弹窗点外面关掉，带输入的表单弹窗不能：误点会丢掉刚填的链接/类型。
   it('keeps the reference-material dialog open when clicking outside', async () => {
     vi.mocked(fetch).mockImplementation(async (input) => {
@@ -357,6 +497,243 @@ describe('VideoStudioView seedance generation', () => {
   })
 })
 
+describe('VideoStudioView Seedance model controls', () => {
+  beforeEach(() => {
+    resetMocks()
+    localStorage.clear()
+    vi.stubGlobal('fetch', vi.fn())
+    vi.stubGlobal('URL', { ...URL, createObjectURL: vi.fn(() => 'blob:seedance-video'), revokeObjectURL: vi.fn() })
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      value: { hostname: 'localhost' },
+    })
+  })
+
+  it('submits model-specific duration, resolution and reference fields through the video endpoint', async () => {
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = String(input)
+      if (url.endsWith('/models')) return jsonResponse({ data: [{ id: 'seedance-2.5' }] })
+      if (url.endsWith('/video/generations') && init?.method === 'POST') {
+        return jsonResponse({ id: 'task-seedance', task_id: 'task-seedance', status: 'queued' })
+      }
+      if (url.endsWith('/videos/task-seedance')) {
+        return jsonResponse({
+          id: 'task-seedance',
+          status: 'completed',
+          duration: 30,
+          metadata: { url: '/v1/videos/task-seedance/content' },
+        })
+      }
+      if (url.endsWith('/videos/task-seedance/content')) {
+        return { ok: true, status: 200, statusText: 'OK', blob: async () => new Blob(['video']) } as unknown as Response
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountStudio()
+    await flushPromises()
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="video-resolution-control"]').attributes('style'))
+      .toContain('--video-segment-count: 3')
+    expect(wrapper.get('[data-testid="video-duration-control"] .video-composer__segmented').attributes('style'))
+      .toContain('--video-segment-count: 5')
+
+    await wrapper.get('textarea').setValue('雨夜车窗外的霓虹缓慢后退')
+    const durationInput = wrapper.get('[data-testid="video-duration-control"] input')
+    await durationInput.setValue('30')
+    await durationInput.trigger('blur')
+    await wrapper.findAll('[data-testid="video-resolution-control"] button')
+      .find((button) => button.text() === '1080P')!
+      .trigger('click')
+
+    await wrapper.get('[data-testid="video-reference-trigger"]').trigger('click')
+    await wrapper.get('[data-testid="reference-url-input"]').setValue('https://cdn.example.com/frame.png')
+    const addButton = wrapper.findAll('button').find((button) => button.text() === '添加')
+    await addButton!.trigger('click')
+    await flushPromises()
+
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    await flushPromises()
+
+    const createCall = fetchMock.mock.calls.find(
+      (call) => String(call[0]).endsWith('/video/generations') && call[1]?.method === 'POST',
+    )
+    expect(createCall).toBeDefined()
+    const payload = JSON.parse(String(createCall?.[1]?.body))
+    expect(payload).toMatchObject({
+      model: 'seedance-2.5',
+      mode: 'image-to-video',
+      duration: 30,
+      resolution: '1080p',
+      aspect_ratio: '16:9',
+      images: ['https://cdn.example.com/frame.png'],
+    })
+    expect(payload.prompt).toBe('雨夜车窗外的霓虹缓慢后退')
+    expect(wrapper.get('video').attributes('src')).toBe('blob:seedance-video')
+    expect(wrapper.get('[data-testid="video-model-select"]').text()).toContain('seedance-2.5')
+    expect((wrapper.get('[data-testid="video-duration-control"] input').element as HTMLInputElement).value).toBe('30')
+    expect(wrapper.findAll('[data-testid="video-resolution-control"] button')
+      .find((button) => button.classes('is-active'))?.text()).toBe('1080P')
+  })
+
+  it('archives authenticated Momo video bytes instead of asking the server to refetch', async () => {
+    archiveVideo.mockResolvedValue({
+      id: 'arch-seedance',
+      url: 'https://r2.example.com/seedance.mp4',
+      prompt: '',
+      model: 'seedance-2.5',
+      format: 'mp4',
+      duration_seconds: 5,
+      created_at: 1,
+      expires_at: 2,
+    })
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = String(input)
+      if (url.endsWith('/models')) return jsonResponse({ data: [{ id: 'seedance-2.5' }] })
+      if (url.endsWith('/video/generations') && init?.method === 'POST') {
+        return jsonResponse({ id: 'task-momo-archive', task_id: 'task-momo-archive', status: 'queued' })
+      }
+      if (url.endsWith('/videos/task-momo-archive')) {
+        return jsonResponse({
+          id: 'task-momo-archive',
+          status: 'completed',
+          metadata: { url: '/v1/videos/task-momo-archive/content' },
+        })
+      }
+      if (url.endsWith('/videos/task-momo-archive/content')) {
+        return { ok: true, status: 200, statusText: 'OK', blob: async () => new Blob(['video']) } as unknown as Response
+      }
+      if (url === 'blob:seedance-video') {
+        return { ok: true, blob: async () => new Blob(['video']) } as unknown as Response
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountStudio()
+    await flushPromises()
+    await flushPromises()
+    await wrapper.get('textarea').setValue('归档这条 Momo 视频')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    await flushPromises()
+
+    await vi.waitFor(() => {
+      expect(archiveVideo).toHaveBeenCalledWith(expect.objectContaining({
+        video_data_url: expect.stringContaining('data:'),
+      }))
+    })
+    expect(archiveVideo).not.toHaveBeenCalledWith(expect.objectContaining({
+      video_url: '/v1/videos/task-momo-archive/content',
+    }))
+  })
+
+  it('recovers and archives a succeeded Momo task when its saved blob URL expired after refresh', async () => {
+    saveVideoWork({
+      id: 'vw-refresh-momo',
+      provider: 'seedance_video',
+      requestId: 'task-refresh-momo',
+      keyId: 7,
+      model: 'seedance-2.5',
+      prompt: '刷新后继续取回',
+      durationSeconds: 5,
+      resolution: '720p',
+      aspectRatio: '16:9',
+      generateAudio: false,
+      referenceCounts: { images: 0, videos: 0, audios: 0 },
+      videoUrl: 'blob:expired-after-refresh',
+      createdAt: Date.now(),
+      status: 'succeeded',
+      statusMessage: '',
+    })
+    archiveVideo.mockResolvedValue({
+      id: 'arch-refresh',
+      url: 'https://r2.example.com/refreshed.mp4',
+      prompt: '',
+      model: 'seedance-2.5',
+      format: 'mp4',
+      duration_seconds: 5,
+      created_at: 1,
+      expires_at: 2,
+    })
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/models')) return jsonResponse({ data: [{ id: 'seedance-2.5' }] })
+      if (url.endsWith('/videos/task-refresh-momo')) {
+        return jsonResponse({
+          id: 'task-refresh-momo',
+          status: 'completed',
+          metadata: { url: '/v1/videos/task-refresh-momo/content' },
+        })
+      }
+      if (url.endsWith('/videos/task-refresh-momo/content')) {
+        return { ok: true, status: 200, statusText: 'OK', blob: async () => new Blob(['video']) } as unknown as Response
+      }
+      if (url === 'blob:seedance-video') {
+        return { ok: true, blob: async () => new Blob(['video']) } as unknown as Response
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountStudio()
+    await flushPromises()
+    await flushPromises()
+    await flushPromises()
+
+    await vi.waitFor(() => {
+      expect(wrapper.get('video').attributes('src')).toBe('https://r2.example.com/refreshed.mp4')
+    })
+  })
+
+  it('restores the selected model and generation parameters after remounting', async () => {
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/models')) {
+        return jsonResponse({ data: [{ id: 'grok-imagine-video' }, { id: 'seedance-2.5' }] })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const first = mountStudio()
+    await flushPromises()
+    await flushPromises()
+    const modelButton = first.get('[data-testid="video-model-select"]')
+      .findAll('button')
+      .find((button) => button.text() === 'seedance-2.5')
+    expect(modelButton).toBeDefined()
+    await modelButton!.trigger('click')
+    await first.findAll('[data-testid="video-resolution-control"] button')
+      .find((button) => button.text() === '1080P')!
+      .trigger('click')
+    const durationInput = first.get('[data-testid="video-duration-control"] input')
+    await durationInput.setValue('30')
+    await durationInput.trigger('blur')
+    const taskCountInput = first.get('[data-testid="video-task-count"]')
+    await taskCountInput.setValue('2')
+    await taskCountInput.trigger('blur')
+    await first.get('[role="switch"]').trigger('click')
+    await flushPromises()
+    first.unmount()
+
+    const second = mountStudio()
+    await flushPromises()
+    await flushPromises()
+    expect(second.get('[data-testid="video-model-select"]').text()).toContain('seedance-2.5')
+    expect((second.get('[data-testid="video-duration-control"] input').element as HTMLInputElement).value).toBe('30')
+    expect(second.findAll('[data-testid="video-resolution-control"] button')
+      .find((button) => button.classes('is-active'))?.text()).toBe('1080P')
+    expect((second.get('[data-testid="video-task-count"]').element as HTMLInputElement).value).toBe('2')
+    expect(second.get('[role="switch"]').attributes('aria-checked')).toBe('true')
+    second.unmount()
+  })
+
+})
+
 describe('VideoStudioView grok generation', () => {
   beforeEach(() => {
     resetMocks()
@@ -391,6 +768,11 @@ describe('VideoStudioView grok generation', () => {
     const wrapper = mountStudio()
     await flushPromises()
     await flushPromises()
+
+    expect(wrapper.get('[data-testid="video-resolution-control"]').attributes('style'))
+      .toContain('--video-segment-count: 2')
+    expect(wrapper.get('[data-testid="video-duration-control"] .video-composer__segmented').attributes('style'))
+      .toContain('--video-segment-count: 3')
 
     await wrapper.get('textarea').setValue('海浪拍打礁石')
     await wrapper.get('form').trigger('submit')
@@ -488,6 +870,51 @@ describe('VideoStudioView references', () => {
     const secondWrapper = mountStudio()
     expect((secondWrapper.get('textarea').element as HTMLTextAreaElement).value).toBe('保留这个视频镜头描述')
     expect(secondWrapper.get('[aria-label="移除 keep-ref.mp4"]').exists()).toBe(true)
+  })
+
+  it('moves delete to the right and asks for confirmation before removing a result', async () => {
+    saveVideoWork({
+      id: 'vw-delete-confirm',
+      provider: 'seedance_video',
+      requestId: 'task-delete-confirm',
+      keyId: 7,
+      model: 'seedance-2.5',
+      prompt: '需要删除的视频',
+      durationSeconds: 5,
+      resolution: '720p',
+      aspectRatio: '16:9',
+      generateAudio: false,
+      referenceCounts: { images: 0, videos: 0, audios: 0 },
+      videoUrl: '',
+      createdAt: Date.now(),
+      status: 'queued',
+      statusMessage: '',
+    })
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/models')) return jsonResponse({ data: [{ id: 'seedance-2.5' }] })
+      if (url.endsWith('/videos/task-delete-confirm')) {
+        return jsonResponse({ status: 'failed', error: { message: 'test failure' } })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountStudio()
+    await flushPromises()
+    await flushPromises()
+
+    const deleteButton = wrapper.get('[title="删除记录"]')
+    expect(wrapper.get('.video-card__actions button:last-child').attributes('title')).toBe('删除记录')
+    await deleteButton.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('确定删除这条视频记录吗？')
+    expect(wrapper.get('.video-card').exists()).toBe(true)
+    await wrapper.get('[data-testid="confirm-delete-task"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('video').exists()).toBe(false)
+    expect(localStorage.getItem('sub2api:video-studio:works')).toBe('[]')
   })
 })
 

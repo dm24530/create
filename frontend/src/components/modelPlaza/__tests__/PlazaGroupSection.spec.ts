@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import PlazaGroupSection from '../PlazaGroupSection.vue'
 import PlazaModelPricingTable from '../PlazaModelPricingTable.vue'
+import PlazaVideoPricingTable from '../PlazaVideoPricingTable.vue'
+import GroupBadge from '@/components/common/GroupBadge.vue'
 import type { ModelPlazaGroup, PlazaModel } from '@/api/modelPlaza'
 
 vi.mock('vue-i18n', async () => {
@@ -83,7 +85,8 @@ function mountSection(g: ModelPlazaGroup) {
       stubs: {
         GroupBadge: true,
         Icon: true,
-        PlazaModelPricingTable: true
+        PlazaModelPricingTable: true,
+        PlazaVideoPricingTable: true
       }
     }
   })
@@ -92,9 +95,21 @@ function mountSection(g: ModelPlazaGroup) {
 const NOTE = 'modelPlaza.detail.longContextDisabledNote'
 
 describe('PlazaGroupSection 长上下文说明', () => {
-  it('passes video-specific rates to the pricing table', () => {
-    const wrapper = mountSection(group({ video_rate_independent: true, video_rate_multiplier: 0 }))
-    expect(wrapper.findComponent(PlazaModelPricingTable).props()).toMatchObject({
+  it('hides the rate badge in the consumer-facing group header', () => {
+    const wrapper = mountSection(group())
+    expect(wrapper.findComponent(GroupBadge).props('showRate')).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('passes video-specific rates to the video pricing table', () => {
+    const video = ladderModel(1)
+    video.pricing!.billing_mode = 'video'
+    const wrapper = mountSection(group({
+      models: [video],
+      video_rate_independent: true,
+      video_rate_multiplier: 0
+    }))
+    expect(wrapper.findComponent(PlazaVideoPricingTable).props()).toMatchObject({
       videoRateIndependent: true,
       videoRateMultiplier: 0
     })

@@ -217,6 +217,67 @@ func (g *Group) GetVideoPriceForModel(model, resolution string) *float64 {
 	return g.GetVideoPrice(resolution)
 }
 
+// ModelPricingFor returns the group-level pricing rule matching a model.
+func (g *Group) ModelPricingFor(model string) *ChannelModelPricing {
+	if g == nil {
+		return nil
+	}
+	return matchGroupModelPricing(g, model)
+}
+
+// UsesVideoSecondBilling reports whether a model is explicitly configured to
+// bill video output by duration instead of upstream token usage.
+func (g *Group) UsesVideoSecondBilling(model string) bool {
+	pricing := g.ModelPricingFor(model)
+	return pricing != nil && pricing.BillingMode == BillingModeVideo
+}
+
+// HasConfiguredVideoSecondPrice reports whether the selected video pricing
+// rule can price the requested resolution. Missing tiers fail closed instead
+// of silently recording a zero-cost task.
+func (g *Group) HasConfiguredVideoSecondPrice(model, resolution string) bool {
+	pricing := g.ModelPricingFor(model)
+	if pricing == nil || pricing.BillingMode != BillingModeVideo {
+		return false
+	}
+	tier := NormalizeVideoBillingResolutionOrDefault(resolution)
+	for i := range pricing.Intervals {
+		interval := &pricing.Intervals[i]
+		if strings.EqualFold(strings.TrimSpace(interval.TierLabel), tier) && interval.PerRequestPrice != nil {
+			return true
+		}
+	}
+	return pricing.PerRequestPrice != nil
+}
+
+// HasVideoPricing reports whether a group exposes any video billing path.
+// Composite groups are handled separately because routing may select a video
+// provider at request time.
+func (g *Group) HasVideoPricing() bool {
+	if g == nil {
+		return false
+	}
+	if g.VideoPrice480P != nil || g.VideoPrice720P != nil || g.VideoPrice1080P != nil ||
+		len(g.VideoModelPrices) > 0 {
+		return true
+	}
+	for i := range g.ModelPricing {
+		pricing := &g.ModelPricing[i]
+		if pricing.BillingMode != BillingModeVideo {
+			continue
+		}
+		if pricing.PerRequestPrice != nil {
+			return true
+		}
+		for j := range pricing.Intervals {
+			if pricing.Intervals[j].PerRequestPrice != nil {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // VideoPriceConfig builds billing config including optional per-model map.
 func (g *Group) VideoPriceConfig() *VideoPriceConfig {
 	if g == nil {

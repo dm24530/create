@@ -16,6 +16,7 @@ function supportsImage(group: Group | null | undefined): boolean {
 
 function supportsVideo(group: Group | null | undefined): boolean {
   if (!group) return false
+  if (group.video_capable) return true
   if (group.platform === 'composite') return true
   return (
     group.video_price_480p != null ||

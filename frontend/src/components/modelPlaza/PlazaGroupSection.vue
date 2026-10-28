@@ -16,7 +16,8 @@
           :peak-start="group.peak_start"
           :peak-end="group.peak_end"
           :peak-rate-multiplier="group.peak_rate_multiplier"
-          always-show-rate
+          :show-rate="false"
+          hide-platform-icon
         />
         <span
           v-if="group.is_exclusive"
@@ -54,8 +55,8 @@
     <!-- 模型价格表:整行(含 hover 底色/分区底色)顶到卡片边缘,左右留白由表格首列/末列的 padding 提供 -->
     <div>
       <PlazaModelPricingTable
-        v-if="group.models.length > 0"
-        :models="group.models"
+        v-if="nonVideoModels.length > 0"
+        :models="nonVideoModels"
         :platform="group.platform"
         :rate-multiplier="group.rate_multiplier"
         :user-rate-multiplier="group.user_rate_multiplier ?? null"
@@ -66,7 +67,19 @@
         :peak-window="peakWindow"
         :peak-rate-multiplier="group.peak_rate_multiplier"
       />
-      <p v-else class="px-5 py-4 text-center text-sm text-gray-400 dark:text-dark-500">
+      <PlazaVideoPricingTable
+        v-if="videoModels.length > 0"
+        :models="videoModels"
+        :platform="group.platform"
+        :rate-multiplier="group.rate_multiplier"
+        :user-rate-multiplier="group.user_rate_multiplier ?? null"
+        :video-rate-independent="group.video_rate_independent"
+        :video-rate-multiplier="group.video_rate_multiplier"
+      />
+      <p
+        v-if="group.models.length === 0"
+        class="px-5 py-4 text-center text-sm text-gray-400 dark:text-dark-500"
+      >
         {{ t('modelPlaza.detail.noModels') }}
       </p>
     </div>
@@ -79,8 +92,10 @@ import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
 import GroupBadge from '@/components/common/GroupBadge.vue'
 import PlazaModelPricingTable from './PlazaModelPricingTable.vue'
+import PlazaVideoPricingTable from './PlazaVideoPricingTable.vue'
 import type { ModelPlazaGroup } from '@/api/modelPlaza'
 import type { GroupPlatform, SubscriptionType } from '@/types'
+import { BILLING_MODE_VIDEO } from '@/constants/channel'
 import { platformBorderStrongClass } from '@/utils/platformColors'
 import { hasPeakRate, formatPeakRateWindow, serverTimezoneLabel } from '@/utils/peak-rate'
 import { useAppStore } from '@/stores/app'
@@ -91,6 +106,13 @@ const props = defineProps<{
 
 const { t } = useI18n()
 const appStore = useAppStore()
+
+const videoModels = computed(() =>
+  props.group.models.filter((model) => model.pricing?.billing_mode === BILLING_MODE_VIDEO)
+)
+const nonVideoModels = computed(() =>
+  props.group.models.filter((model) => model.pricing?.billing_mode !== BILLING_MODE_VIDEO)
+)
 
 /** 高峰窗口描述(含倍率与服务器时区标注);分组未启用高峰为空串。 */
 const peakWindow = computed(() => {

@@ -673,11 +673,9 @@ export default {
     empty: 'No groups to display',
     loadFailed: 'Failed to load model plaza',
     noSearchResult: 'No matching models',
-    anonymousHint: 'Sign in to see your exclusive groups and personal rates',
+      anonymousHint: 'Sign in to see your exclusive groups and personal pricing',
     filters: {
-      platformLabel: 'Platform',
       groupLabel: 'Group',
-      rateLabel: 'Rate',
       modelLabel: 'Model',
       searchPlaceholder: 'Search models',
       all: 'All'
@@ -690,7 +688,7 @@ export default {
       noModels: 'No models configured for this group',
       noPricing: 'Pricing not configured',
       peakNote: 'Peak hours {window}: billing rate ×{multiplier}',
-      longContextDisabledNote: 'Long-context tier pricing is disabled for this group: requests above the threshold are billed at the base tier; official tiers are for reference only'
+        longContextDisabledNote: 'Long-context tier pricing is disabled for this group: requests above the threshold are billed at the base tier'
     },
     table: {
       model: 'Model',
@@ -712,15 +710,15 @@ export default {
       timePricingRowHintPeak:
         '; prices in this row exclude the peak-hour rate — where this period overlaps the peak hours {window}, the overlapping portion is additionally multiplied by ×{multiplier}',
       timePricingWeekdays: 'Weekdays',
-      timePricingRateHint: 'Effective rate {rate} × period multiplier {multiplier}',
       paidPrice: 'Your Price (Discounted)',
-      officialPrice: 'Official Price',
-      rate: 'Rate',
       unitPerMillion: '$ / 1M tokens',
       perUnitRequest: '/ request',
       perUnitImage: '/ image',
+        perUnitSecond: '/ sec',
       perRequest: 'Per request',
-      perImage: 'Per image'
+        perImage: 'Per image',
+        perVideo: 'Video generation',
+        standard: 'Standard'
     },
     nav: {
       login: 'Sign In',

@@ -31,7 +31,6 @@ const stubs = {
       error: Boolean,
       embedded: Boolean,
       compactFilters: Boolean,
-      showGroupAndRateFilters: Boolean,
     },
     template: '<div data-testid="plaza-content" />',
   },
@@ -55,7 +54,6 @@ describe('ModelPlazaQuickModal', () => {
     expect(wrapper.findComponent(stubs.ModelPlazaContent).props()).toMatchObject({
       embedded: true,
       compactFilters: true,
-      showGroupAndRateFilters: false,
       error: false,
     })
   })

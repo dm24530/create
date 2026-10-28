@@ -258,6 +258,28 @@ describe('admin UsageTable tooltip', () => {
     expect(row.text()).toContain('1m 11s')
   })
 
+  it('shows the end-to-end generation duration for video usage', () => {
+    const wrapper = mount(UsageTable, {
+      props: {
+        data: [{
+          ...baseImageRow,
+          request_id: 'req-admin-video',
+          model: 'seedance-2.5',
+          inbound_endpoint: '/v1/videos',
+          image_count: 0,
+          duration_ms: 447_691,
+        }],
+        loading: false,
+        columns: [{ key: 'created_at', label: 'Time' }],
+      },
+      global: { stubs: { DataTable: DataTableStub, EmptyState: true, Icon: true, Teleport: true } },
+    })
+
+    const row = wrapper.get('[data-request-id="req-admin-video"]')
+    expect(row.text()).toContain('生成耗时：')
+    expect(row.text()).toContain('7m 28s')
+  })
+
   beforeEach(() => {
     locale = 'en'
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({

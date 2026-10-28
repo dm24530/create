@@ -1126,6 +1126,7 @@ export default {
       modelPricing: {
         title: 'Per-model group pricing',
         description: 'Overrides channel and built-in prices for matching models. Long-context tiers come from official presets — do not enter custom intervals. Use per-request tiers such as realtime, tts, and stt for audio.',
+        seedanceBillingHint: 'Choose Token or Video (Per Second) for each Seedance model. Per-second billing uses 480p, 720p and 1080p tiers in USD/s; token billing uses input and output USD/MTok.',
         longContext: 'Enable long-context tier pricing',
         longContextHint: 'When checked, channel intervals or official preset tiers apply. Otherwise the first tier is used unless the account explicitly enables long-context billing.',
         add: 'Add model price'

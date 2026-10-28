@@ -105,10 +105,27 @@ func RegisterGatewayRoutes(
 			},
 		})
 	}
+	seedanceVideoGenerationHandler := func(c *gin.Context) {
+		if platform := getGroupPlatform(c); platform == service.PlatformOpenAI || platform == service.PlatformComposite {
+			h.OpenAIGateway.SeedanceVideoGeneration(c)
+			return
+		}
+		service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalFeatureGate)
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": gin.H{
+				"type":    "not_found_error",
+				"message": "Videos API is not supported for this platform",
+			},
+		})
+	}
 	videoStatusHandler := func(c *gin.Context) {
 		// Video status requests do not carry a model, so composite groups cannot
 		// be resolved by compositeTargetPlatformMiddleware. Route them through
 		// the Grok handler and let scheduler/account selection enforce capacity.
+		if getGroupPlatform(c) == service.PlatformOpenAI && isSeedanceVideoLookupPath(c.Request.URL.Path) {
+			h.OpenAIGateway.SeedanceVideoStatus(c)
+			return
+		}
 		if getGroupPlatform(c) == service.PlatformGrok || getGroupPlatform(c) == service.PlatformComposite {
 			h.OpenAIGateway.GrokVideoStatus(c)
 			return
@@ -125,6 +142,10 @@ func RegisterGatewayRoutes(
 		// Video content requests do not carry a model, so composite groups cannot
 		// be resolved by compositeTargetPlatformMiddleware. Route them through
 		// the Grok handler just like video status lookups.
+		if getGroupPlatform(c) == service.PlatformOpenAI && isSeedanceVideoLookupPath(c.Request.URL.Path) {
+			h.OpenAIGateway.SeedanceVideoContent(c)
+			return
+		}
 		if getGroupPlatform(c) == service.PlatformGrok || getGroupPlatform(c) == service.PlatformComposite {
 			h.OpenAIGateway.GrokVideoContent(c)
 			return
@@ -269,6 +290,7 @@ func RegisterGatewayRoutes(
 		// canonical /videos/generations route inside the Grok media forwarder.
 		gateway.POST("/videos", videoGenerationHandler)
 		gateway.POST("/videos/generations", videoGenerationHandler)
+		gateway.POST("/video/generations", seedanceVideoGenerationHandler)
 		gateway.POST("/videos/edits", videoEditHandler)
 		gateway.POST("/videos/extensions", videoExtensionHandler)
 		gateway.GET("/videos/generations/:request_id/content", videoContentHandler)
@@ -419,6 +441,7 @@ func RegisterGatewayRoutes(
 	rootRoute(http.MethodGet, "/images/tasks/:task_id", bodyLimit, h.AsyncImage.Get)
 	rootRoute(http.MethodPost, "/videos", bodyLimit, videoGenerationHandler)
 	rootRoute(http.MethodPost, "/videos/generations", bodyLimit, videoGenerationHandler)
+	rootRoute(http.MethodPost, "/video/generations", bodyLimit, seedanceVideoGenerationHandler)
 	rootRoute(http.MethodPost, "/videos/edits", bodyLimit, videoEditHandler)
 	rootRoute(http.MethodPost, "/videos/extensions", bodyLimit, videoExtensionHandler)
 	rootRoute(http.MethodGet, "/videos/generations/:request_id/content", bodyLimit, videoContentHandler)
@@ -678,4 +701,14 @@ func compositeRouteEndpointForPath(path string) string {
 	default:
 		return service.CompositeRouteEndpointAny
 	}
+}
+
+func isSeedanceVideoLookupPath(path string) bool {
+	normalized := strings.TrimSuffix(strings.TrimSpace(path), "/content")
+	parts := strings.Split(strings.Trim(normalized, "/"), "/")
+	return len(parts) >= 2 &&
+		parts[len(parts)-2] == "videos" &&
+		parts[len(parts)-1] != "generations" &&
+		parts[len(parts)-1] != "edits" &&
+		parts[len(parts)-1] != "extensions"
 }

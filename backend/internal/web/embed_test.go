@@ -734,6 +734,7 @@ func TestFrontendServer_Middleware(t *testing.T) {
 func TestEmbeddedFrontendBypassesBareVideoAPIRoutes(t *testing.T) {
 	for _, path := range []string{
 		"/videos/generations",
+		"/video/generations",
 		"/videos/edits",
 		"/videos/extensions",
 		"/videos/request-123",
@@ -749,6 +750,7 @@ func TestEmbeddedFrontendBypassesBareAPIAliases(t *testing.T) {
 		"/messages/count_tokens",
 		"/models/gpt-5.5",
 		"/videos",
+		"/video/generations",
 		"/tts",
 		"/stt",
 		"/custom-voices",

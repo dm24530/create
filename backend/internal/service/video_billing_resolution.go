@@ -14,19 +14,41 @@ const (
 	VideoBillingMinDurationSeconds     = 1
 	VideoBillingMaxDurationSeconds     = 15
 	VideoBillingDefaultDurationSeconds = 8
+	SeedanceBillingMaxDurationSeconds  = 30
 )
 
 // NormalizeVideoBillingDurationSecondsOrDefault 归一化计费用视频时长：
 // 未指定（<=0）按上游默认 8 秒计，超出上游允许区间按边界收敛。
 func NormalizeVideoBillingDurationSecondsOrDefault(durationSeconds int) int {
+	return normalizeVideoBillingDurationSeconds(durationSeconds, VideoBillingMaxDurationSeconds)
+}
+
+// NormalizeVideoBillingDurationSecondsForModelOrDefault uses the provider's
+// supported output window. Seedance 2.5 supports videos up to 30 seconds,
+// while the Grok video API remains capped at 15 seconds.
+func NormalizeVideoBillingDurationSecondsForModelOrDefault(model string, durationSeconds int) int {
+	maxSeconds := VideoBillingMaxDurationSeconds
+	if IsSeedanceVideoModel(model) {
+		maxSeconds = SeedanceBillingMaxDurationSeconds
+	}
+	return normalizeVideoBillingDurationSeconds(durationSeconds, maxSeconds)
+}
+
+// IsSeedanceVideoModel identifies Seedance model aliases used for billing
+// duration normalization.
+func IsSeedanceVideoModel(model string) bool {
+	return strings.Contains(strings.ToLower(strings.TrimSpace(model)), "seedance")
+}
+
+func normalizeVideoBillingDurationSeconds(durationSeconds, maxSeconds int) int {
 	if durationSeconds <= 0 {
 		return VideoBillingDefaultDurationSeconds
 	}
 	if durationSeconds < VideoBillingMinDurationSeconds {
 		return VideoBillingMinDurationSeconds
 	}
-	if durationSeconds > VideoBillingMaxDurationSeconds {
-		return VideoBillingMaxDurationSeconds
+	if durationSeconds > maxSeconds {
+		return maxSeconds
 	}
 	return durationSeconds
 }

@@ -1481,6 +1481,12 @@
             <div class="min-w-0 flex-1">
               <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ t("admin.groups.modelPricing.title") }}</h4>
               <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t("admin.groups.modelPricing.description") }}</p>
+              <p
+                v-if="editForm.platform === 'openai' || editForm.platform === 'composite'"
+                class="mt-1 text-xs text-primary-600 dark:text-primary-400"
+              >
+                {{ t("admin.groups.modelPricing.seedanceBillingHint") }}
+              </p>
             </div>
             <button type="button" class="btn btn-secondary shrink-0 whitespace-nowrap" @click="addGroupPricing(createForm.model_pricing)">
               <Icon name="plus" size="sm" class="mr-1" />{{ t("admin.groups.modelPricing.add") }}
@@ -3131,6 +3137,12 @@
             <div class="min-w-0 flex-1">
               <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ t("admin.groups.modelPricing.title") }}</h4>
               <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t("admin.groups.modelPricing.description") }}</p>
+              <p
+                v-if="createForm.platform === 'openai' || createForm.platform === 'composite'"
+                class="mt-1 text-xs text-primary-600 dark:text-primary-400"
+              >
+                {{ t("admin.groups.modelPricing.seedanceBillingHint") }}
+              </p>
             </div>
             <button type="button" class="btn btn-secondary shrink-0 whitespace-nowrap" @click="addGroupPricing(editForm.model_pricing)">
               <Icon name="plus" size="sm" class="mr-1" />{{ t("admin.groups.modelPricing.add") }}
@@ -5883,6 +5895,23 @@ const validateGroupReasoningMultipliers = (pricing: PricingFormEntry[]): boolean
   return true;
 };
 
+const validateGroupVideoSecondPricing = (pricing: PricingFormEntry[]): boolean => {
+  for (const entry of pricing) {
+    if (entry.billing_mode !== "video") continue;
+    const hasDefaultPrice = toNullableNumber(entry.per_request_price) != null;
+    const hasTierPrice = (entry.intervals || []).some(
+      (interval) => toNullableNumber(interval.per_request_price) != null,
+    );
+    if (!hasDefaultPrice && !hasTierPrice) {
+      appStore.showError(
+        `${entry.models.join(", ") || t("admin.channels.form.unnamed")}: ${t("admin.channels.form.perRequestPriceRequired")}`,
+      );
+      return false;
+    }
+  }
+  return true;
+};
+
 const handleCreateGroup = async () => {
   if (!createForm.name.trim()) {
     appStore.showError(t("admin.groups.nameRequired"));
@@ -5899,6 +5928,7 @@ const handleCreateGroup = async () => {
     return;
   }
   if (!validateGroupReasoningMultipliers(createForm.model_pricing)) return;
+  if (!validateGroupVideoSecondPricing(createForm.model_pricing)) return;
   // 模型白名单：开启且没有任何条目时阻止提交，与后端 400 对齐。
   if (
     createModelAllowlistState.enabled &&
@@ -6238,6 +6268,7 @@ const handleUpdateGroup = async () => {
     return;
   }
   if (!validateGroupReasoningMultipliers(editForm.model_pricing)) return;
+  if (!validateGroupVideoSecondPricing(editForm.model_pricing)) return;
   // 模型白名单：开启且没有任何条目时阻止提交，与后端 400 对齐。
   if (
     editModelAllowlistState.enabled &&

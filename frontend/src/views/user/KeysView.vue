@@ -1523,7 +1523,7 @@ function groupCapabilityLabel(group: Group): string {
   if (group.allow_image_generation || group.allow_batch_image_generation) {
     capabilities.push(t('keys.capabilities.image'))
   }
-  if (group.platform === 'composite' || (
+  if (group.video_capable || group.platform === 'composite' || (
     group.video_price_480p != null ||
     group.video_price_720p != null ||
     group.video_price_1080p != null

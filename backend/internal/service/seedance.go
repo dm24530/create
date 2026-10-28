@@ -5,6 +5,8 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -41,6 +43,18 @@ func ParseSeedanceRequest(body []byte) (GrokMediaRequestInfo, error) {
 		return info, fmt.Errorf("content must be a non-empty array")
 	}
 	info.Model = strings.TrimSpace(model.String())
+	info.Resolution = strings.TrimSpace(gjson.GetBytes(body, "resolution").String())
+	duration := gjson.GetBytes(body, "duration")
+	if duration.Exists() {
+		switch duration.Type {
+		case gjson.Number:
+			info.DurationSeconds = int(duration.Int())
+		case gjson.String:
+			if parsed, parseErr := strconv.Atoi(strings.TrimSpace(duration.String())); parseErr == nil {
+				info.DurationSeconds = parsed
+			}
+		}
+	}
 	var texts []string
 	for _, item := range content.Array() {
 		switch item.Get("type").String() {
@@ -70,6 +84,151 @@ func buildSeedanceURL(base string, endpoint GrokMediaEndpoint, taskID string) (s
 	return base, nil
 }
 
+func isMomoVideoBaseURL(base string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(base))
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(parsed.Hostname())
+	return host == "momoapi.xin" || strings.HasSuffix(host, ".momoapi.xin")
+}
+
+func buildMomoVideoBodyFromArk(body []byte) ([]byte, error) {
+	info, err := ParseSeedanceRequest(body)
+	if err != nil {
+		return nil, err
+	}
+	content := gjson.GetBytes(body, "content")
+	var images []string
+	var referenceImages []string
+	var referenceVideos []string
+	firstFrame := ""
+	lastFrame := ""
+	for _, item := range content.Array() {
+		switch strings.ToLower(strings.TrimSpace(item.Get("type").String())) {
+		case "image_url":
+			imageURL := strings.TrimSpace(item.Get("image_url.url").String())
+			if imageURL == "" {
+				imageURL = strings.TrimSpace(item.Get("image_url").String())
+			}
+			if imageURL == "" {
+				continue
+			}
+			switch strings.ToLower(strings.TrimSpace(item.Get("role").String())) {
+			case "first_frame", "first-frame":
+				firstFrame = imageURL
+			case "last_frame", "last-frame":
+				lastFrame = imageURL
+			case "reference_image", "reference-image":
+				referenceImages = append(referenceImages, imageURL)
+			default:
+				images = append(images, imageURL)
+			}
+		case "video_url":
+			if videoURL := strings.TrimSpace(item.Get("video_url.url").String()); videoURL != "" {
+				referenceVideos = append(referenceVideos, videoURL)
+			}
+		}
+	}
+	if firstFrame != "" {
+		images = append([]string{firstFrame}, images...)
+	}
+	if lastFrame != "" {
+		images = append(images, lastFrame)
+	}
+
+	mode := "text-to-video"
+	switch {
+	case len(referenceVideos) > 0:
+		mode = "reference-video"
+	case firstFrame != "" && lastFrame != "":
+		mode = "first-last-frame"
+	case firstFrame != "" || lastFrame != "" || len(images) > 0:
+		mode = "image-to-video"
+	case len(referenceImages) > 0:
+		mode = "reference-images"
+	}
+
+	translated := []byte(`{}`)
+	translated, _ = sjson.SetBytes(translated, "model", info.Model)
+	translated, _ = sjson.SetBytes(translated, "mode", mode)
+	translated, _ = sjson.SetBytes(translated, "prompt", info.Prompt)
+	if len(images) > 0 {
+		translated, _ = sjson.SetBytes(translated, "images", images)
+	}
+	if len(referenceImages) > 0 {
+		translated, _ = sjson.SetBytes(translated, "reference_image_urls", referenceImages)
+	}
+	if len(referenceVideos) > 0 {
+		translated, _ = sjson.SetBytes(translated, "reference_video_urls", referenceVideos)
+	}
+	if duration := gjson.GetBytes(body, "duration"); duration.Exists() {
+		switch duration.Type {
+		case gjson.Number:
+			translated, _ = sjson.SetBytes(translated, "duration", duration.Int())
+		case gjson.String:
+			if seconds, parseErr := strconv.Atoi(strings.TrimSpace(duration.String())); parseErr == nil {
+				translated, _ = sjson.SetBytes(translated, "duration", seconds)
+			}
+		}
+	}
+	if resolution := strings.TrimSpace(gjson.GetBytes(body, "resolution").String()); resolution != "" {
+		translated, _ = sjson.SetBytes(translated, "resolution", resolution)
+	}
+	if aspectRatio := strings.TrimSpace(gjson.GetBytes(body, "ratio").String()); aspectRatio != "" {
+		translated, _ = sjson.SetBytes(translated, "aspect_ratio", aspectRatio)
+	}
+	return translated, nil
+}
+
+func normalizeSeedanceVideoResponseForArk(base string, endpoint GrokMediaEndpoint, body []byte) []byte {
+	if len(body) == 0 || !gjson.ValidBytes(body) {
+		return body
+	}
+	normalized := append([]byte(nil), body...)
+	responseID := strings.TrimSpace(gjson.GetBytes(normalized, "id").String())
+	if responseID == "" {
+		responseID = strings.TrimSpace(gjson.GetBytes(normalized, "task_id").String())
+		if responseID != "" {
+			normalized, _ = sjson.SetBytes(normalized, "id", responseID)
+		}
+	}
+	if endpoint != SeedanceEndpointStatus && endpoint != SeedanceVideoEndpointStatus {
+		return normalized
+	}
+	switch strings.ToLower(strings.TrimSpace(gjson.GetBytes(normalized, "status").String())) {
+	case "completed", "done":
+		normalized, _ = sjson.SetBytes(normalized, "status", "succeeded")
+	}
+	videoURL := strings.TrimSpace(gjson.GetBytes(normalized, "content.video_url").String())
+	if videoURL == "" {
+		videoURL = strings.TrimSpace(gjson.GetBytes(normalized, "metadata.url").String())
+	}
+	if videoURL == "" {
+		videoURL = strings.TrimSpace(gjson.GetBytes(normalized, "video.url").String())
+	}
+	if videoURL != "" {
+		normalized, _ = sjson.SetBytes(normalized, "content.video_url", resolveMomoVideoResourceURL(base, videoURL))
+	}
+	return normalized
+}
+
+func resolveMomoVideoResourceURL(base, raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	resource, err := url.Parse(raw)
+	if err != nil || resource.IsAbs() {
+		return raw
+	}
+	upstream, err := url.Parse(strings.TrimSpace(base))
+	if err != nil {
+		return raw
+	}
+	return upstream.ResolveReference(resource).String()
+}
+
 // ForwardSeedance preserves the Ark protocol, including multimodal content and
 // future fields. Only model is rewritten using the account's configured mapping.
 func (s *OpenAIGatewayService) ForwardSeedance(ctx context.Context, c *gin.Context, account *Account, endpoint GrokMediaEndpoint, taskID string, body []byte) (*OpenAIForwardResult, error) {
@@ -80,11 +239,34 @@ func (s *OpenAIGatewayService) ForwardSeedance(ctx context.Context, c *gin.Conte
 	if err != nil {
 		return nil, err
 	}
+	if isMomoVideoBaseURL(base) {
+		upstreamTaskID := strings.TrimPrefix(taskID, "seedance:")
+		var videoEndpoint GrokMediaEndpoint
+		switch endpoint {
+		case SeedanceEndpointCreate:
+			body, err = buildMomoVideoBodyFromArk(body)
+			if err != nil {
+				return nil, err
+			}
+			videoEndpoint = SeedanceVideoEndpointCreate
+		case SeedanceEndpointStatus:
+			videoEndpoint = SeedanceVideoEndpointStatus
+		default:
+			return nil, fmt.Errorf("Momo video API does not support task deletion")
+		}
+		result, forwardErr := s.forwardSeedanceVideo(ctx, c, account, videoEndpoint, upstreamTaskID, body, true)
+		if result != nil {
+			result.ResponseID = SeedanceTaskKey(strings.TrimPrefix(result.ResponseID, "seedance:"))
+		}
+		return result, forwardErr
+	}
 	target, err := buildSeedanceURL(base, endpoint, strings.TrimPrefix(taskID, "seedance:"))
 	if err != nil {
 		return nil, err
 	}
 	model, upstreamModel := "", ""
+	videoResolution := ""
+	videoDurationSeconds := 0
 	method := http.MethodGet
 	switch endpoint {
 	case SeedanceEndpointCreate:
@@ -93,6 +275,8 @@ func (s *OpenAIGatewayService) ForwardSeedance(ctx context.Context, c *gin.Conte
 			return nil, parseErr
 		}
 		model = info.Model
+		videoResolution = info.Resolution
+		videoDurationSeconds = info.DurationSeconds
 		upstreamModel = account.GetMappedModel(model)
 		body, err = sjson.SetBytes(body, "model", upstreamModel)
 		if err != nil {
@@ -142,6 +326,8 @@ func (s *OpenAIGatewayService) ForwardSeedance(ctx context.Context, c *gin.Conte
 			return nil, fmt.Errorf("seedance create response missing task ID")
 		}
 		result.ResponseID = SeedanceTaskKey(id)
+		result.VideoResolution = NormalizeVideoBillingResolutionOrDefault(videoResolution)
+		result.VideoDurationSeconds = NormalizeVideoBillingDurationSecondsForModelOrDefault(model, videoDurationSeconds)
 	}
 	if endpoint == SeedanceEndpointStatus {
 		result.ResponseID = taskID

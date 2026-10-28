@@ -110,10 +110,30 @@
             <h2>全部结果</h2>
             <span>{{ tasks.length }}</span>
           </div>
-          <RouterLink to="/video-works" class="studio-results__action">
-            <Icon name="bookmark" size="sm" />
-            <span>我的作品</span>
-          </RouterLink>
+          <div class="studio-results__actions">
+            <span
+              v-if="activeTaskCount > 0"
+              class="video-generation-status"
+              data-testid="video-active-generations"
+              aria-live="polite"
+            >
+              <Icon name="refresh" size="xs" class="is-spinning" />
+              <span>{{ activeTaskCount }} 个任务进行中</span>
+            </span>
+            <button
+              type="button"
+              class="studio-results__action"
+              :disabled="loadingResults"
+              @click="loadArchivedResults"
+            >
+              <Icon name="refresh" size="sm" :class="{ 'is-spinning': loadingResults }" />
+              <span>加载历史记录</span>
+            </button>
+            <RouterLink to="/video-works" class="studio-results__action">
+              <Icon name="bookmark" size="sm" />
+              <span>我的作品</span>
+            </RouterLink>
+          </div>
         </div>
         <div class="studio-results__body">
         <div v-if="!tasks.length" class="video-studio__empty">
@@ -131,6 +151,7 @@
                 v-if="task.videoUrl"
                 :src="task.videoUrl"
                 class="video-card__video"
+                data-testid="video-result-player"
                 controls
                 playsinline
                 preload="metadata"
@@ -142,7 +163,9 @@
               </div>
               <div v-else class="video-card__state">
                 <span class="video-card__spinner" aria-hidden="true"></span>
-                <strong>{{ task.stageText }}</strong>
+                <strong>
+                  {{ task.stageText }} · {{ formatVideoElapsedSeconds(taskElapsedSeconds(task)) }}
+                </strong>
                 <small>{{ task.requestId ? `任务 ${task.requestId}` : '正在提交任务' }}</small>
               </div>
             </div>
@@ -178,7 +201,12 @@
               >
                 <Icon name="sync" size="sm" />
               </button>
-              <button type="button" class="mini-action" title="删除记录" @click="discardTask(task)">
+              <button
+                type="button"
+                class="mini-action video-card__delete"
+                title="删除记录"
+                @click="requestDiscardTask(task)"
+              >
                 <Icon name="trash" size="sm" />
               </button>
             </div>
@@ -312,14 +340,15 @@
             </button>
           </div>
           <p class="video-composer__helper">
-            可拖拽或粘贴参考图，也可添加参考视频和音频。参考图最多 {{ MAX_IMAGES }} 张。
+            可拖拽或粘贴参考图，也可添加参考视频和音频。参考图最多 {{ maxImages }} 张。
           </p>
         </section>
 
         <div class="video-composer__field">
           <span class="video-composer__field-label">清晰度</span>
           <div
-            class="video-composer__segmented video-composer__segmented--three"
+            class="video-composer__segmented"
+            :style="{ '--video-segment-count': resolutionOptions.length }"
             data-testid="video-resolution-control"
             role="group"
             aria-label="清晰度"
@@ -350,7 +379,12 @@
         <div class="video-composer__field">
           <span class="video-composer__field-label">秒数</span>
           <div class="video-composer__duration" data-testid="video-duration-control">
-            <div class="video-composer__segmented" role="group" aria-label="时长">
+            <div
+              class="video-composer__segmented"
+              :style="{ '--video-segment-count': durationPresetOptions.length }"
+              role="group"
+              aria-label="时长"
+            >
               <button
                 v-for="duration in durationPresetOptions"
                 :key="duration"
@@ -391,12 +425,12 @@
           </label>
           <div class="video-composer__audio-row">
             <span>生成音频</span>
-            <div :class="{ 'pointer-events-none opacity-45': isGrokVideoProvider }">
+            <div :class="{ 'pointer-events-none opacity-45': !supportsGenerateAudioToggle }">
               <Toggle v-model="generateAudio" />
             </div>
           </div>
-          <p v-if="isGrokVideoProvider" class="mt-1 text-xs text-gray-400 dark:text-gray-500">
-            当前 Grok 视频模型不支持单独的音频开关。
+          <p v-if="!supportsGenerateAudioToggle" class="mt-1 text-xs text-gray-400 dark:text-gray-500">
+            当前视频协议不支持单独的音频开关。
           </p>
         </div>
 
@@ -550,6 +584,26 @@
         </div>
       </template>
     </BaseDialog>
+
+    <BaseDialog
+      :show="!!deleteTaskCandidate"
+      title="删除视频"
+      :close-on-click-outside="false"
+      @close="deleteTaskCandidate = null"
+    >
+      <div class="delete-task-confirm">
+        <p>确定删除这条视频记录吗？</p>
+        <p>删除后无法恢复；如果已归档，对象存储中的视频文件也会一起删除。</p>
+      </div>
+      <template #footer>
+        <div class="delete-task-confirm__footer">
+          <button type="button" class="secondary-button" @click="deleteTaskCandidate = null">取消</button>
+          <button type="button" class="danger-button" data-testid="confirm-delete-task" @click="confirmDiscardTask">
+            确认删除
+          </button>
+        </div>
+      </template>
+    </BaseDialog>
   </AppLayout>
 </template>
 
@@ -578,7 +632,9 @@ import {
   cancelVideoTask,
   createVideoTask,
   fetchVideoPlayableUrl,
+  getVideoModelProfile,
   isVideoModel,
+  materializeSeedanceReferences,
   pollVideoTask,
   resolveVideoProvider,
   type VideoProvider,
@@ -587,7 +643,9 @@ import {
 } from './videoStudioApi'
 import {
   archiveVideo,
+  deleteArchivedVideo,
   isStudioQuotaError,
+  listArchivedVideos,
   type ArchivedVideoEntry,
 } from './videoArchiveApi'
 import {
@@ -600,6 +658,7 @@ import {
 } from './videoWorks'
 import { videoStudioDraft } from './videoStudioDraft'
 import { findVideoInspiration } from './videoInspiration'
+import { formatVideoElapsedSeconds } from './videoElapsed'
 
 interface StudioTask {
   localId: string
@@ -622,14 +681,10 @@ interface StudioTask {
   revokeUrl: boolean
   error: string
   createdAt: number
+  archivedId?: string
 }
 
-const MIN_DURATION = 1
-const MAX_DURATION = 15
 const MAX_TASK_COUNT = 4
-const MAX_IMAGES = 3
-const MAX_VIDEOS = 1
-const MAX_AUDIOS = 1
 // 参考素材限制对齐自家灵感站：单件体积 + 合计体积。
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024
 const MAX_VIDEO_BYTES = 20 * 1024 * 1024
@@ -648,26 +703,79 @@ const ACCEPTED_TYPES: Record<'image' | 'video' | 'audio', string[]> = {
 const PENDING_PROMPT_STORAGE_KEY = 'sub2api:video-studio:pending-prompt'
 // 自定义渠道的地址与模型名可以留在本地方便复用；密钥不落盘。
 const PROVIDER_STORAGE_KEY = 'sub2api:video-studio:provider'
+const PREFERENCES_STORAGE_KEY = 'sub2api:video-studio:preferences'
+
+interface VideoStudioPreferences {
+  keyId?: string
+  providerMode?: 'platform' | 'custom'
+  videoModel?: string
+  customModel?: string
+  resolution?: string
+  aspectRatio?: string
+  durationSeconds?: number
+  taskCount?: number
+  generateAudio?: boolean
+}
+
+function preferencesStorageKey(userId = authStore.user?.id) {
+  return userId == null ? PREFERENCES_STORAGE_KEY : `${PREFERENCES_STORAGE_KEY}:${userId}`
+}
+
+function readVideoStudioPreferences(): VideoStudioPreferences {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(preferencesStorageKey()) || '{}')
+    return parsed && typeof parsed === 'object' ? parsed as VideoStudioPreferences : {}
+  } catch {
+    return {}
+  }
+}
+
+function writeVideoStudioPreferences(patch: VideoStudioPreferences) {
+  try {
+    localStorage.setItem(preferencesStorageKey(), JSON.stringify({
+      ...readVideoStudioPreferences(),
+      ...patch,
+    }))
+  } catch {
+    // Persisting UI preferences is optional.
+  }
+}
+
+function readPreferredKeyId(): string {
+  const keyId = readVideoStudioPreferences().keyId
+  return typeof keyId === 'string' ? keyId : ''
+}
+
+function writePreferredKeyId(keyId: string) {
+  if (!keyId) return
+  writeVideoStudioPreferences({ keyId })
+}
 
 const route = useRoute()
 const appStore = useAppStore()
 const authStore = useAuthStore()
 const { copyToClipboard } = useClipboard()
+const storedPreferences = readVideoStudioPreferences()
 
 const keys = ref<ApiKey[]>([])
-const selectedKeyId = ref('')
+const selectedKeyId = ref(typeof storedPreferences.keyId === 'string' ? storedPreferences.keyId : '')
 const apiBaseUrl = ref('')
 // 生成渠道：默认走本站密钥；自定义渠道让用户直接填别家平台的地址与密钥。
-const providerMode = ref<'platform' | 'custom'>('platform')
+const providerMode = ref<'platform' | 'custom'>(
+  storedPreferences.providerMode === 'custom' ? 'custom' : 'platform',
+)
 const customBaseUrl = ref('')
 const customApiKey = ref('')
-const customModel = ref('')
+const customModel = ref(typeof storedPreferences.customModel === 'string' ? storedPreferences.customModel : '')
 const customModels = ref<string[]>([])
 const customLoadingModels = ref(false)
-const videoModel = ref('')
+const videoModel = ref(typeof storedPreferences.videoModel === 'string' ? storedPreferences.videoModel : '')
 const videoModels = ref<string[]>([])
 const loadingModels = ref(false)
 const refreshing = ref(false)
+const loadingResults = ref(false)
+const generationClockNow = ref(Date.now())
+let generationClockTimer: number | undefined
 
 const errorMessage = ref('')
 const inspirationHint = ref('')
@@ -677,12 +785,19 @@ const promptTextareaRef = ref<HTMLTextAreaElement | null>(null)
 const { height: promptHeight, startResize: startPromptResize } = usePromptResize(promptTextareaRef, {
   storageKey: 'sub2api:video-studio:prompt-height',
 })
-const durationSeconds = ref(5)
-const durationPresetOptions = [1, 5, 10, 15]
-const taskCount = ref(1)
-const resolution = ref('720p')
-const aspectRatio = ref('16:9')
-const generateAudio = ref(false)
+const durationSeconds = ref(
+  Number.isFinite(storedPreferences.durationSeconds)
+    ? Math.min(30, Math.max(1, Math.round(Number(storedPreferences.durationSeconds))))
+    : 5,
+)
+const taskCount = ref(
+  Number.isFinite(storedPreferences.taskCount)
+    ? Math.min(MAX_TASK_COUNT, Math.max(1, Math.round(Number(storedPreferences.taskCount))))
+    : 1,
+)
+const resolution = ref(typeof storedPreferences.resolution === 'string' ? storedPreferences.resolution : '720p')
+const aspectRatio = ref(typeof storedPreferences.aspectRatio === 'string' ? storedPreferences.aspectRatio : '16:9')
+const generateAudio = ref(storedPreferences.generateAudio === true)
 
 const references = ref<VideoReferenceAsset[]>([])
 const referenceDialogOpen = ref(false)
@@ -706,7 +821,9 @@ if (videoStudioDraft.ownerId !== draftOwnerId) {
 const tasks = ref<StudioTask[]>([])
 const works = ref<VideoWorkRecord[]>([])
 const previewTask = ref<StudioTask | null>(null)
+const deleteTaskCandidate = ref<StudioTask | null>(null)
 const activeGenerations = ref(0)
+const preparingReferences = ref(false)
 const cancelledTasks = new Set<string>()
 // 换成归档地址后退役的 blob URL：等离开页面再统一释放。
 const retiredObjectURLs: string[] = []
@@ -717,6 +834,7 @@ let modelRequestId = 0
 const activeKeys = computed(() => keys.value.filter((key) => key.status === 'active'))
 const videoCapableKeys = computed(() => activeKeys.value.filter((key) => {
   if (!key.group) return true
+  if (key.group.video_capable) return true
   if (key.group.platform === 'composite') return true
   return (
     key.group.video_price_480p != null ||
@@ -739,35 +857,100 @@ const effectiveApiKey = computed(() =>
 const effectiveModel = computed(() =>
   providerMode.value === 'custom' ? customModel.value.trim() : videoModel.value.trim(),
 )
-const isGrokVideoProvider = computed(() => resolveVideoProvider(effectiveModel.value) === 'grok')
+const providerHint = computed(() => ({
+  baseUrl: effectiveBaseUrl.value,
+  platform: providerMode.value === 'platform' ? selectedKey.value?.group?.platform : '',
+}))
+const effectiveProvider = computed(() => resolveVideoProvider(effectiveModel.value, providerHint.value))
+const videoModelProfile = computed(() => getVideoModelProfile(effectiveModel.value, effectiveProvider.value))
+const MIN_DURATION = computed(() => videoModelProfile.value.minDuration)
+const MAX_DURATION = computed(() => videoModelProfile.value.maxDuration)
+const maxImages = computed(() => videoModelProfile.value.maxImages)
+const maxVideos = computed(() => videoModelProfile.value.maxVideos)
+const maxAudios = computed(() =>
+  effectiveProvider.value === 'seedance' && videoModelProfile.value.supportsAudio ? 1 : 0,
+)
+const supportsGenerateAudioToggle = computed(() =>
+  effectiveProvider.value === 'seedance' && videoModelProfile.value.supportsAudio,
+)
+const durationPresetOptions = computed(() => {
+  const presets = [5, 8, 10, 15, 30]
+  const values = presets.filter((value) => value >= MIN_DURATION.value && value <= MAX_DURATION.value)
+  if (!values.includes(videoModelProfile.value.defaultDuration)) {
+    values.push(videoModelProfile.value.defaultDuration)
+    values.sort((a, b) => a - b)
+  }
+  return values
+})
 const modelSelectPlaceholder = computed(() => {
   if (loadingModels.value) return '正在加载...'
   return '选择模型'
 })
 const canGenerate = computed(() =>
-  Boolean(effectiveBaseUrl.value && effectiveApiKey.value && effectiveModel.value && prompt.value.trim()),
+  Boolean(effectiveBaseUrl.value && effectiveApiKey.value && effectiveModel.value && prompt.value.trim()) &&
+  !preparingReferences.value,
 )
 const generating = computed(() => activeGenerations.value > 0)
+const activeTaskCount = computed(() =>
+  tasks.value.filter((task) => task.status === 'queued' || task.status === 'running').length,
+)
+
+watch(
+  activeTaskCount,
+  (count) => {
+    if (generationClockTimer) {
+      window.clearInterval(generationClockTimer)
+      generationClockTimer = undefined
+    }
+    generationClockNow.value = Date.now()
+    if (count > 0) {
+      generationClockTimer = window.setInterval(() => {
+        generationClockNow.value = Date.now()
+      }, 1000)
+    }
+  },
+  { immediate: true },
+)
 
 const aspectRatioOptions = computed(() =>
-  VIDEO_ASPECT_RATIOS.map((item) => ({
+  VIDEO_ASPECT_RATIOS
+    .filter((item) => videoModelProfile.value.aspectRatios.includes(item.value))
+    .map((item) => ({
     value: item.value,
     label: videoSizeLabel(item.value, resolution.value),
     preview: item.css,
-  })),
+    })),
 )
-const resolutionOptions = VIDEO_RESOLUTIONS.map((item) => ({ value: item, label: item.toUpperCase() }))
+const resolutionOptions = computed(() =>
+  VIDEO_RESOLUTIONS
+    .filter((item) => videoModelProfile.value.resolutions.includes(item))
+    .map((item) => ({ value: item, label: item.toUpperCase() })),
+)
 
-const referenceKindOptions = [
+const allReferenceKindOptions = [
   { value: 'image' as const, label: '参考图', icon: 'grid' },
   { value: 'video' as const, label: '参考视频', icon: 'play' },
   { value: 'audio' as const, label: '参考音频', icon: 'bell' },
 ] as const
-const imageRoleOptions = [
+const referenceKindOptions = computed(() =>
+  allReferenceKindOptions.filter((option) =>
+    option.value !== 'video' || videoModelProfile.value.maxVideos > 0
+  ).filter((option) =>
+    option.value !== 'audio' || maxAudios.value > 0
+  ),
+)
+const allImageRoleOptions = [
   { value: 'first_frame' as const, label: '首帧' },
   { value: 'last_frame' as const, label: '尾帧' },
   { value: 'reference_image' as const, label: '参考图' },
 ]
+const imageRoleOptions = computed(() =>
+  allImageRoleOptions.filter((option) => {
+    if (option.value === 'first_frame') return videoModelProfile.value.modes.includes('image-to-video')
+    if (option.value === 'last_frame') return videoModelProfile.value.modes.includes('first-last-frame')
+    return videoModelProfile.value.modes.includes('reference-images')
+  }),
+)
 const imageRoleHint = computed(() => {
   switch (referenceRole.value) {
     case 'first_frame':
@@ -790,10 +973,10 @@ const referenceFileLabel = computed(() => {
 })
 const referenceLimitHint = computed(() => {
   if (referenceKind.value === 'image') {
-    return `参考图最多 ${MAX_IMAGES} 张，每张不超过 5MB，可上传本地图片或粘贴链接。`
+    return `参考图最多 ${maxImages.value} 张，每张不超过 5MB，可上传本地图片或粘贴链接。`
   }
-  if (referenceKind.value === 'video') return `参考视频最多 ${MAX_VIDEOS} 个，不超过 20MB，可上传本地视频或粘贴链接。`
-  return `参考音频最多 ${MAX_AUDIOS} 个，不超过 8MB，可上传本地音频或粘贴链接。`
+  if (referenceKind.value === 'video') return `参考视频最多 ${maxVideos.value} 个，不超过 20MB，可上传本地视频或粘贴链接。`
+  return `参考音频最多 ${maxAudios.value} 个，不超过 8MB，可上传本地音频或粘贴链接。`
 })
 
 function resolveEndpoint(configured: string) {
@@ -836,6 +1019,9 @@ function restoreProviderSettings() {
   try {
     const stored = JSON.parse(localStorage.getItem(PROVIDER_STORAGE_KEY) || 'null')
     if (!stored || typeof stored !== 'object') return
+    if (stored.mode === 'platform' || stored.mode === 'custom') {
+      providerMode.value = stored.mode
+    }
     if (typeof stored.baseUrl === 'string') customBaseUrl.value = stored.baseUrl
     if (typeof stored.model === 'string') customModel.value = stored.model
   } catch {
@@ -877,11 +1063,17 @@ function kindName(kind: 'image' | 'video' | 'audio'): string {
 function taskMeta(task: StudioTask): string {
   return [
     task.model,
-    `${task.durationSeconds}秒`,
+    task.durationSeconds ? `${task.durationSeconds}秒` : '',
     task.resolution,
     task.aspectRatio,
     task.generateAudio ? '含音频' : '',
   ].filter(Boolean).join(' · ')
+}
+
+function taskElapsedSeconds(task: StudioTask): number {
+  const startedAt = Number(task.createdAt || 0)
+  if (!startedAt) return 0
+  return Math.max(0, Math.floor((generationClockNow.value - startedAt) / 1000))
 }
 
 function formatTaskTime(timestamp: number): string {
@@ -896,7 +1088,14 @@ async function loadData() {
   const keysPromise = ensureCreatorKey('video')
     .then((result) => {
       keys.value = result.keys
-      selectedKeyId.value = String(result.key.id)
+      const preferredKey = videoCapableKeys.value.find(
+        (key) => String(key.id) === readPreferredKeyId(),
+      )
+      const fallbackKey =
+        videoCapableKeys.value.find((key) => key.id === result.key.id) ||
+        videoCapableKeys.value[0] ||
+        result.key
+      selectedKeyId.value = String(preferredKey?.id ?? fallbackKey.id)
     })
     .catch((error) => {
       if (!isCreationServiceUnavailable(error)) {
@@ -951,7 +1150,11 @@ function resumeWorks() {
   const records = listVideoWorks()
   works.value = records
   for (const record of records) {
-    if (record.status === 'succeeded' || record.status === 'failed') continue
+    if (record.status === 'failed') continue
+    if (
+      record.status === 'succeeded' &&
+      (record.archivedUrl || (record.videoUrl && !record.videoUrl.startsWith('blob:')))
+    ) continue
     // 这个会话里已经挂着的任务不要再挂一次，否则会重复弹卡片、重复轮询。
     if (tasks.value.some((task) => task.localId === record.id)) continue
     const task = taskFromRecord(record)
@@ -986,6 +1189,36 @@ function taskFromRecord(record: VideoWorkRecord): StudioTask {
   }
 }
 
+function archivedTaskLocalId(id: string): string {
+  return `archive:${id}`
+}
+
+function taskFromArchived(entry: ArchivedVideoEntry): StudioTask {
+  const model = entry.model || 'seedance'
+  return {
+    localId: archivedTaskLocalId(entry.id),
+    provider: resolveVideoProvider(model),
+    requestId: '',
+    keyId: 0,
+    baseUrl: '',
+    apiKeyRef: '',
+    model,
+    prompt: entry.prompt || '',
+    durationSeconds: Number(entry.duration_seconds || 0),
+    resolution: '',
+    aspectRatio: '',
+    generateAudio: false,
+    referenceCounts: { images: 0, videos: 0, audios: 0 },
+    status: 'succeeded',
+    stageText: '已完成',
+    videoUrl: entry.url,
+    revokeUrl: false,
+    error: '',
+    createdAt: Number(entry.created_at || 0) * 1000,
+    archivedId: entry.id,
+  }
+}
+
 function recordFromTask(task: StudioTask, status: VideoTaskStatus, statusMessage: string): VideoWorkRecord {
   return {
     id: task.localId,
@@ -1015,7 +1248,7 @@ async function loadModels() {
   const requestId = ++modelRequestId
   loadingModels.value = true
   videoModels.value = []
-  videoModel.value = ''
+  const preferredModel = videoModel.value || readVideoStudioPreferences().videoModel || ''
   const key = selectedKey.value
   const endpoint = apiBaseUrl.value
   if (!key || !endpoint) {
@@ -1027,13 +1260,37 @@ async function loadModels() {
     const names = await fetchModelNames(`${endpoint}/models`, key.key)
     if (requestId !== modelRequestId) return
     videoModels.value = deduplicateModelNames(names.filter(isVideoModel))
-    videoModel.value = videoModels.value[0] || ''
+    videoModel.value = videoModels.value.includes(preferredModel)
+      ? preferredModel
+      : videoModels.value[0] || ''
   } catch (error) {
     if (requestId === modelRequestId) {
       showModelHint(errorMessageFrom(error, '加载视频模型失败'), 'error')
     }
   } finally {
     if (requestId === modelRequestId) loadingModels.value = false
+  }
+}
+
+async function loadArchivedResults() {
+  if (loadingResults.value) return
+  loadingResults.value = true
+  try {
+    const entries = await listArchivedVideos('temp')
+    const existingArchivedIds = new Set(
+      tasks.value
+        .map((task) => task.archivedId)
+        .filter((id): id is string => Boolean(id)),
+    )
+    const imported = entries
+      .filter((entry) => entry.url && !existingArchivedIds.has(entry.id))
+      .map(taskFromArchived)
+    if (!imported.length) return
+    tasks.value = [...tasks.value, ...imported].sort((a, b) => b.createdAt - a.createdAt)
+  } catch {
+    // 对象存储未启用时仍保留当前会话结果，不阻断生成。
+  } finally {
+    loadingResults.value = false
   }
 }
 
@@ -1161,16 +1418,16 @@ function referenceSizeLimitLabel(kind: 'image' | 'video' | 'audio'): string {
 }
 
 function addReference(asset: Omit<VideoReferenceAsset, 'id'>): boolean {
-  if (asset.kind === 'image' && referenceCount('image') >= MAX_IMAGES) {
-    referenceDialogError.value = `参考图最多 ${MAX_IMAGES} 张。`
+  if (asset.kind === 'image' && referenceCount('image') >= maxImages.value) {
+    referenceDialogError.value = `参考图最多 ${maxImages.value} 张。`
     return false
   }
-  if (asset.kind === 'video' && referenceCount('video') >= MAX_VIDEOS) {
-    referenceDialogError.value = `参考视频最多 ${MAX_VIDEOS} 个。`
+  if (asset.kind === 'video' && referenceCount('video') >= maxVideos.value) {
+    referenceDialogError.value = `参考视频最多 ${maxVideos.value} 个。`
     return false
   }
-  if (asset.kind === 'audio' && referenceCount('audio') >= MAX_AUDIOS) {
-    referenceDialogError.value = `参考音频最多 ${MAX_AUDIOS} 个。`
+  if (asset.kind === 'audio' && referenceCount('audio') >= maxAudios.value) {
+    referenceDialogError.value = `参考音频最多 ${maxAudios.value} 个。`
     return false
   }
   if (asset.sizeBytes && asset.sizeBytes > referenceSizeLimit(asset.kind)) {
@@ -1251,7 +1508,7 @@ function onPaste(event: ClipboardEvent) {
 function onDropReferences(event: DragEvent) {
   const files = Array.from(event.dataTransfer?.files || [])
     .filter((file) => ACCEPTED_TYPES.image.includes(file.type))
-    .slice(0, Math.max(0, MAX_IMAGES - referenceCount('image')))
+    .slice(0, Math.max(0, maxImages.value - referenceCount('image')))
   files.forEach((file) => {
     if (file.size > MAX_IMAGE_BYTES) {
       errorMessage.value = `单个参考图不能超过 ${referenceSizeLimitLabel('image')}。`
@@ -1275,6 +1532,45 @@ function removeReference(id: number) {
   references.value = references.value.filter((asset) => asset.id !== id)
 }
 
+function applyVideoModelConstraints() {
+  const profile = videoModelProfile.value
+  durationSeconds.value = clampDuration(durationSeconds.value)
+  if (!profile.resolutions.includes(resolution.value)) {
+    resolution.value = profile.resolutions[0] || '720p'
+  }
+  if (!profile.aspectRatios.includes(aspectRatio.value)) {
+    aspectRatio.value = profile.aspectRatios[0] || '16:9'
+  }
+
+  references.value = references.value
+    .filter((asset) => asset.kind !== 'image')
+    .concat(
+      references.value
+        .filter((asset) => asset.kind === 'image')
+        .slice(0, profile.maxImages)
+        .map((asset) => {
+          if (asset.role === 'last_frame' && !profile.modes.includes('first-last-frame')) {
+            return { ...asset, role: 'first_frame' as const }
+          }
+          if (asset.role === 'reference_image' && !profile.modes.includes('reference-images')) {
+            return { ...asset, role: 'first_frame' as const }
+          }
+          return asset
+        }),
+    )
+    .filter((asset) => asset.kind !== 'video' || profile.maxVideos > 0)
+    .filter((asset) => asset.kind !== 'audio' || maxAudios.value > 0)
+    .slice(0, profile.maxImages + profile.maxVideos + maxAudios.value)
+
+  if (!supportsGenerateAudioToggle.value) generateAudio.value = false
+  if (!referenceKindOptions.value.some((option) => option.value === referenceKind.value)) {
+    referenceKind.value = referenceKindOptions.value[0]?.value || 'image'
+  }
+  if (!imageRoleOptions.value.some((option) => option.value === referenceRole.value)) {
+    referenceRole.value = imageRoleOptions.value[0]?.value || 'first_frame'
+  }
+}
+
 /* -------------------------------- 生成流程 -------------------------------- */
 
 function normalizeDuration() {
@@ -1283,7 +1579,7 @@ function normalizeDuration() {
 
 function clampDuration(value: number): number {
   if (!Number.isFinite(value)) return 5
-  return Math.min(Math.max(Math.round(value), MIN_DURATION), MAX_DURATION)
+  return Math.min(Math.max(Math.round(value), MIN_DURATION.value), MAX_DURATION.value)
 }
 
 function normalizeTaskCount() {
@@ -1320,15 +1616,33 @@ async function generate() {
   if (!canGenerate.value) return
 
   const model = effectiveModel.value
-  const provider = resolveVideoProvider(model)
-  const platformKey = providerMode.value === 'platform' ? selectedKey.value : null
   const baseUrl = effectiveBaseUrl.value
+  const provider = resolveVideoProvider(model, {
+    baseUrl,
+    platform: providerMode.value === 'platform' ? selectedKey.value?.group?.platform : '',
+  })
+  const platformKey = providerMode.value === 'platform' ? selectedKey.value : null
   const apiKeyRef = effectiveApiKey.value
   const count = clampTaskCount(Number(taskCount.value))
   const referencesSnapshot = references.value.slice()
   const trackedTasks: StudioTask[] = []
 
   errorMessage.value = ''
+  let preparedReferences = referencesSnapshot
+  if (provider === 'seedance_video' && referencesSnapshot.some((asset) =>
+    (asset.kind === 'image' && asset.url.startsWith('data:image/')) ||
+    (asset.kind === 'video' && asset.url.startsWith('data:video/')),
+  )) {
+    preparingReferences.value = true
+    try {
+      preparedReferences = await materializeSeedanceReferences(referencesSnapshot, model)
+    } catch (error) {
+      errorMessage.value = errorMessageFrom(error, '参考图上传失败')
+      return
+    } finally {
+      preparingReferences.value = false
+    }
+  }
   for (let index = 0; index < count; index += 1) {
     const task: StudioTask = {
       localId: createVideoWorkId(),
@@ -1366,7 +1680,7 @@ async function generate() {
         key: platformKey,
         baseUrl,
         apiKey: apiKeyRef,
-        references: referencesSnapshot,
+        references: preparedReferences,
       }),
     ),
   )
@@ -1396,7 +1710,11 @@ async function runTask(
   }
 
   activeGenerations.value += 1
-  const context = { baseUrl, apiKey }
+  const context = {
+    baseUrl,
+    apiKey,
+    platform: task.provider === 'grok' ? 'grok' : 'openai',
+  }
   try {
     if (!task.requestId) {
       const created = await createVideoTask(context, {
@@ -1477,8 +1795,8 @@ async function refreshTask(task: StudioTask) {
 }
 
 // 归档成对象存储的长期地址：换浏览器/清缓存后「我的作品」还能播放。
-// Seedance 给的是公开直链，交给服务端抓取；Grok 的内容接口需要密钥，
-// 浏览器已经拿到字节，直接上传。
+// 只有公开可抓的 Seedance 直链交给服务端；需要 Bearer Key 的 Momo/Grok
+// 内容接口先在浏览器下载字节，再上传归档。
 async function archiveTaskVideo(task: StudioTask, upstreamUrl: string) {
   archiveHint.value = ''
   try {
@@ -1491,7 +1809,7 @@ async function archiveTaskVideo(task: StudioTask, upstreamUrl: string) {
       saved: false,
     }
     let entry: ArchivedVideoEntry
-    if (/^https?:\/\//i.test(upstreamUrl)) {
+    if (task.provider === 'seedance' && /^https?:\/\//i.test(upstreamUrl)) {
       entry = await archiveVideo({ ...request, video_url: upstreamUrl })
     } else {
       const dataURL = await blobUrlToDataURL(task.videoUrl)
@@ -1506,6 +1824,7 @@ async function archiveTaskVideo(task: StudioTask, upstreamUrl: string) {
     if (task.revokeUrl && task.videoUrl) retiredObjectURLs.push(task.videoUrl)
     task.videoUrl = entry.url
     task.revokeUrl = false
+    task.archivedId = entry.id
     updateVideoWork(task.localId, { videoUrl: entry.url, archivedUrl: entry.url })
     works.value = listVideoWorks()
   } catch (error) {
@@ -1541,12 +1860,30 @@ async function blobUrlToDataURL(url: string): Promise<string | null> {
   })
 }
 
-function discardTask(task: StudioTask) {
+async function discardTask(task: StudioTask) {
+  if (task.archivedId) {
+    try {
+      await deleteArchivedVideo(task.archivedId)
+    } catch (error) {
+      errorMessage.value = errorMessageFrom(error, '删除视频失败')
+      return
+    }
+  }
   cancelledTasks.add(task.localId)
   if (task.revokeUrl && task.videoUrl) URL.revokeObjectURL(task.videoUrl)
   tasks.value = tasks.value.filter((item) => item.localId !== task.localId)
   works.value = removeVideoWork(task.localId)
   if (previewTask.value?.localId === task.localId) previewTask.value = null
+}
+
+function requestDiscardTask(task: StudioTask) {
+  deleteTaskCandidate.value = task
+}
+
+async function confirmDiscardTask() {
+  const task = deleteTaskCandidate.value
+  deleteTaskCandidate.value = null
+  if (task) await discardTask(task)
 }
 
 async function downloadTask(task: StudioTask) {
@@ -1591,9 +1928,41 @@ function closePreview() {
   previewTask.value = null
 }
 
-watch([selectedKeyId, apiBaseUrl], () => {
+watch([selectedKeyId, apiBaseUrl, () => selectedKey.value?.key], () => {
   void loadModels()
 })
+
+watch(videoModelProfile, applyVideoModelConstraints, { immediate: true })
+
+watch(selectedKeyId, (keyId) => {
+  writePreferredKeyId(keyId)
+})
+
+watch(
+  [
+    providerMode,
+    videoModel,
+    customModel,
+    resolution,
+    aspectRatio,
+    durationSeconds,
+    taskCount,
+    generateAudio,
+  ],
+  () => {
+    writeVideoStudioPreferences({
+      providerMode: providerMode.value,
+      videoModel: videoModel.value.trim(),
+      customModel: customModel.value.trim(),
+      resolution: resolution.value,
+      aspectRatio: aspectRatio.value,
+      durationSeconds: Number(durationSeconds.value),
+      taskCount: Number(taskCount.value),
+      generateAudio: generateAudio.value,
+    })
+  },
+  { flush: 'post' },
+)
 
 watch([customBaseUrl, customModel], () => {
   if (providerMode.value === 'custom') persistProviderSettings()
@@ -1620,9 +1989,11 @@ onMounted(async () => {
   await loadData()
   applyInspirationFromRoute()
   resumeWorks()
+  await loadArchivedResults()
 })
 
 onBeforeUnmount(() => {
+  if (generationClockTimer) window.clearInterval(generationClockTimer)
   for (const task of tasks.value) {
     if (task.revokeUrl && task.videoUrl) URL.revokeObjectURL(task.videoUrl)
   }
@@ -1831,6 +2202,33 @@ onBeforeUnmount(() => {
   font-size: 0.875rem;
 }
 
+.studio-results__actions {
+  display: flex;
+  min-width: 0;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.video-generation-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border-radius: 9999px;
+  background: rgb(240 253 250);
+  padding: 0.3rem 0.58rem;
+  color: rgb(15 118 110);
+  font-size: 0.72rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+  .video-generation-status span {
+    display: none;
+  }
+}
+
 .video-grid {
   display: grid;
   grid-template-columns: repeat(1, minmax(0, 1fr));
@@ -1929,6 +2327,50 @@ onBeforeUnmount(() => {
   display: flex;
   gap: 0.25rem;
   padding: 0 0.6rem 0.6rem;
+}
+
+.video-card__delete {
+  margin-left: auto;
+  border-color: rgb(254 202 202);
+  color: rgb(185 28 28);
+}
+
+.video-card__delete:hover {
+  border-color: rgb(239 68 68);
+  background: rgb(254 242 242);
+  color: rgb(220 38 38);
+}
+
+.delete-task-confirm {
+  display: grid;
+  gap: 0.45rem;
+  color: rgb(51 65 85);
+  font-size: 0.9rem;
+}
+
+.delete-task-confirm p:last-child {
+  color: rgb(100 116 139);
+  font-size: 0.8rem;
+}
+
+.delete-task-confirm__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.6rem;
+}
+
+.danger-button {
+  display: inline-flex;
+  height: 2.35rem;
+  align-items: center;
+  border-radius: 0.75rem;
+  background: rgb(220 38 38);
+  padding: 0 0.9rem;
+  color: white;
+}
+
+.danger-button:hover {
+  background: rgb(185 28 28);
 }
 
 .video-composer {
@@ -2460,6 +2902,11 @@ onBeforeUnmount(() => {
   background: rgb(20 19 18);
 }
 
+:global(.dark .video-generation-status) {
+  background: rgb(19 78 74 / 0.45);
+  color: rgb(153 246 228);
+}
+
 :global(.dark .segmented) {
   background: rgb(35 33 30);
 }
@@ -2832,14 +3279,10 @@ onBeforeUnmount(() => {
 
 .video-composer__segmented {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(var(--video-segment-count, 1), minmax(0, 1fr));
   overflow: hidden;
   border-radius: 0.55rem;
   background: rgb(232 232 229);
-}
-
-.video-composer__segmented--three {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .video-composer__segmented button {

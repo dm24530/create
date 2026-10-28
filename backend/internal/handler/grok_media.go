@@ -51,10 +51,22 @@ func (h *OpenAIGatewayHandler) GrokVideoContent(c *gin.Context) {
 	h.handleGrokMedia(c, service.GrokMediaEndpointVideoContent, c.Param("request_id"))
 }
 
+func (h *OpenAIGatewayHandler) SeedanceVideoGeneration(c *gin.Context) {
+	h.handleGrokMedia(c, service.SeedanceVideoEndpointCreate, "")
+}
+
+func (h *OpenAIGatewayHandler) SeedanceVideoStatus(c *gin.Context) {
+	h.handleGrokMedia(c, service.SeedanceVideoEndpointStatus, c.Param("request_id"))
+}
+
+func (h *OpenAIGatewayHandler) SeedanceVideoContent(c *gin.Context) {
+	h.handleGrokMedia(c, service.SeedanceVideoEndpointContent, c.Param("request_id"))
+}
+
 func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.GrokMediaEndpoint, requestID string) {
 	platform := service.PlatformGrok
 	noAccountCode, noAccountMessage := "grok_media_no_eligible_account", "No eligible Grok media accounts"
-	if endpoint.IsSeedance() {
+	if endpoint.IsSeedance() || endpoint.IsSeedanceVideo() {
 		platform = service.PlatformOpenAI
 		noAccountCode, noAccountMessage = "seedance_no_eligible_account", "No eligible Seedance accounts"
 	}
@@ -281,7 +293,11 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 			if endpoint.IsGenerationRequest() && errors.Is(err, service.ErrNoAvailableAccounts) &&
 				(len(failedAccountIDs) == 0 || (mediaEligibilityRejected && lastFailoverErr == nil)) {
 				markOpsRoutingCapacityLimitedIfNoAvailable(c, err)
-				h.errorResponse(c, http.StatusServiceUnavailable, noAccountCode, noAccountMessage)
+				message := noAccountMessage
+				if detail := strings.TrimSpace(err.Error()); detail != "" {
+					message += ": " + detail
+				}
+				h.errorResponse(c, http.StatusServiceUnavailable, noAccountCode, message)
 				return
 			}
 			if len(failedAccountIDs) == 0 {
@@ -334,7 +350,7 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 		)
 
 		account := selection.Account
-		if endpoint.IsGenerationRequest() && !endpoint.IsSeedance() {
+		if endpoint.IsGenerationRequest() && !endpoint.IsSeedance() && !endpoint.IsSeedanceVideo() {
 			eligible, eligibilityReason, eligibilityErr := h.ensureGrokMediaAccountEligibility(requestCtx, account)
 			if !eligible {
 				releaseAccount()
@@ -526,7 +542,10 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 			if billResult := prepareSeedanceCompletionBilling(requestCtx, h, apiKey, subject, requestID, result); billResult != nil {
 				recordGrokMediaUsage(c, h, reqLog, apiKey, subject, subscription, account, billResult, billResult.Model, body, requestID)
 			}
-		} else if endpoint == service.GrokMediaEndpointVideoStatus || endpoint == service.GrokMediaEndpointVideoContent {
+		} else if endpoint == service.GrokMediaEndpointVideoStatus ||
+			endpoint == service.GrokMediaEndpointVideoContent ||
+			endpoint == service.SeedanceVideoEndpointStatus ||
+			endpoint == service.SeedanceVideoEndpointContent {
 			taskID := strings.TrimSpace(requestID)
 			if billResult := prepareGrokVideoCompletionBilling(requestCtx, h, reqLog, apiKey, subject, taskID, result); billResult != nil {
 				recordGrokMediaUsage(c, h, reqLog, apiKey, subject, subscription, account, billResult, billResult.Model, body, taskID)
@@ -557,7 +576,7 @@ func (h *OpenAIGatewayHandler) ensureGrokMediaAccountEligibility(ctx context.Con
 }
 
 func grokMediaRequiredCapability(endpoint service.GrokMediaEndpoint) service.OpenAIEndpointCapability {
-	if endpoint.IsSeedance() {
+	if endpoint.IsSeedance() || endpoint.IsSeedanceVideo() {
 		return service.OpenAIEndpointCapabilitySeedance
 	}
 	if endpoint.IsGenerationRequest() {
@@ -580,7 +599,8 @@ func isGrokVideoCreateEndpoint(endpoint service.GrokMediaEndpoint) bool {
 	switch endpoint {
 	case service.SeedanceEndpointCreate, service.GrokMediaEndpointVideosGenerations,
 		service.GrokMediaEndpointVideosEdits,
-		service.GrokMediaEndpointVideosExtensions:
+		service.GrokMediaEndpointVideosExtensions,
+		service.SeedanceVideoEndpointCreate:
 		return true
 	default:
 		return false
@@ -698,7 +718,8 @@ func prepareGrokVideoCompletionBilling(
 	// Official default resolution is 480p when the create request omitted it.
 	merged.VideoResolution = service.NormalizeVideoBillingResolutionOrDefault(merged.VideoResolution)
 	// Official default duration is 8s when neither status nor create provided it.
-	merged.VideoDurationSeconds = service.NormalizeVideoBillingDurationSecondsOrDefault(merged.VideoDurationSeconds)
+	// Seedance 2.5 supports up to 30s; Grok remains capped at 15s.
+	merged.VideoDurationSeconds = service.NormalizeVideoBillingDurationSecondsForModelOrDefault(merged.Model, merged.VideoDurationSeconds)
 	// E2E latency for async video: create accept → this discovery of done+url.
 	// Bill on discovery (status/content), not after further client polls; duration
 	// must not be only the single discovery hop (~hundreds of ms).

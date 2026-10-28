@@ -13,7 +13,6 @@
       :error="loadFailed"
       embedded
       compact-filters
-      :show-group-and-rate-filters="false"
     />
   </BaseDialog>
 </template>

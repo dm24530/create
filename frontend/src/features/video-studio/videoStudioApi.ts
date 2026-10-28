@@ -1,14 +1,27 @@
 // 视频工作台的接口封装：直接调用用户自己的 API Key，
 // 视频生成走异步任务协议，创建 + 轮询 + 取内容三步。
 //
-// 后端支持两族视频模型，前端按模型名选择协议：
+// 工作台支持三种视频协议，前端按模型和分组平台选择：
+//   - Seedance Video（OpenAI-compatible）：POST /video/generations
 //   - Seedance（Ark 任务协议）：POST /contents/generations/tasks
 //   - Grok（xAI 视频协议）：POST /videos/generations
-// 两族的状态查询与内容下载路径不同，统一在这里归一化。
+// 三种协议的状态查询与内容下载路径不同，统一在这里归一化。
 
-export type VideoProvider = 'seedance' | 'grok'
+import { saveImageStudioGallery } from '@/api/imageStudio'
+import { archiveVideo } from './videoArchiveApi'
+
+export type VideoProvider = 'seedance' | 'seedance_video' | 'grok'
 
 export type VideoTaskStatus = 'queued' | 'running' | 'succeeded' | 'failed'
+
+export type VideoMode =
+  | 'text-to-video'
+  | 'image-to-video'
+  | 'first-last-frame'
+  | 'reference-images'
+  | 'reference-video'
+  | 'video-edit'
+  | 'video-extension'
 
 export interface VideoReferenceAsset {
   id: number
@@ -43,6 +56,7 @@ export interface VideoTaskSnapshot {
 export interface VideoGatewayContext {
   baseUrl: string
   apiKey: string
+  platform?: string
 }
 
 export class VideoTaskRequestError extends Error {
@@ -74,24 +88,203 @@ export const VIDEO_ASPECT_RATIOS = [
   { value: '1:1', css: '1 / 1', label: '1:1 方形' },
   { value: '4:3', css: '4 / 3', label: '4:3 经典' },
   { value: '3:4', css: '3 / 4', label: '3:4 竖版' },
+  { value: '3:2', css: '3 / 2', label: '3:2 横向' },
+  { value: '2:3', css: '2 / 3', label: '2:3 竖向' },
   { value: '21:9', css: '21 / 9', label: '21:9 宽银幕' },
+  { value: '5:2', css: '5 / 2', label: '5:2 超宽屏' },
 ] as const
 
-export function resolveVideoProvider(model: string): VideoProvider {
-  const value = model.trim().toLowerCase()
+export interface VideoModelProfile {
+  provider: VideoProvider
+  minDuration: number
+  maxDuration: number
+  defaultDuration: number
+  resolutions: readonly string[]
+  aspectRatios: readonly string[]
+  maxImages: number
+  maxVideos: number
+  supportsAudio: boolean
+  modes: readonly VideoMode[]
+}
+
+const DOUBAO_ASPECT_RATIOS = ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'] as const
+const WAN_ASPECT_RATIOS = ['16:9', '9:16', '1:1'] as const
+const DEFAULT_PROFILE: VideoModelProfile = {
+  provider: 'seedance',
+  minDuration: 1,
+  maxDuration: 15,
+  defaultDuration: 5,
+  resolutions: ['480p', '720p', '1080p'],
+  aspectRatios: VIDEO_ASPECT_RATIOS.map((item) => item.value),
+  maxImages: 3,
+  maxVideos: 1,
+  supportsAudio: true,
+  modes: ['text-to-video', 'image-to-video', 'first-last-frame', 'reference-images', 'reference-video'],
+}
+
+const SEEDANCE_MODEL_PROFILES: Record<string, VideoModelProfile> = {
+  'grok-imagine-video': {
+    provider: 'seedance',
+    minDuration: 1,
+    maxDuration: 10,
+    defaultDuration: 8,
+    resolutions: ['480p', '720p'],
+    aspectRatios: VIDEO_ASPECT_RATIOS.map((item) => item.value),
+    maxImages: 7,
+    maxVideos: 1,
+    supportsAudio: false,
+    modes: ['text-to-video', 'image-to-video', 'reference-images', 'reference-video', 'video-edit', 'video-extension'],
+  },
+  'grok-imagine-video-1.5': {
+    provider: 'seedance',
+    minDuration: 1,
+    maxDuration: 15,
+    defaultDuration: 8,
+    resolutions: ['480p', '720p', '1080p'],
+    aspectRatios: VIDEO_ASPECT_RATIOS.map((item) => item.value),
+    maxImages: 14,
+    maxVideos: 1,
+    supportsAudio: true,
+    modes: ['text-to-video', 'image-to-video', 'first-last-frame', 'reference-images', 'reference-video'],
+  },
+  'grok-imagine-video-onece': {
+    provider: 'seedance',
+    minDuration: 1,
+    maxDuration: 10,
+    defaultDuration: 8,
+    resolutions: ['480p', '720p'],
+    aspectRatios: VIDEO_ASPECT_RATIOS.map((item) => item.value),
+    maxImages: 7,
+    maxVideos: 1,
+    supportsAudio: false,
+    modes: ['text-to-video', 'image-to-video', 'reference-images', 'reference-video', 'video-edit', 'video-extension'],
+  },
+  'seedance-2.0': {
+    provider: 'seedance',
+    minDuration: 5,
+    maxDuration: 15,
+    defaultDuration: 8,
+    resolutions: ['480p', '720p'],
+    aspectRatios: DOUBAO_ASPECT_RATIOS,
+    maxImages: 9,
+    maxVideos: 1,
+    supportsAudio: true,
+    modes: ['text-to-video', 'image-to-video', 'first-last-frame', 'reference-images', 'reference-video'],
+  },
+  'seedance-2.0-fast': {
+    provider: 'seedance',
+    minDuration: 5,
+    maxDuration: 15,
+    defaultDuration: 8,
+    resolutions: ['480p', '720p', '1080p'],
+    aspectRatios: DOUBAO_ASPECT_RATIOS,
+    maxImages: 9,
+    maxVideos: 1,
+    supportsAudio: true,
+    modes: ['text-to-video', 'image-to-video', 'first-last-frame', 'reference-images', 'reference-video'],
+  },
+  'seedance-2.5': {
+    provider: 'seedance',
+    minDuration: 5,
+    maxDuration: 30,
+    defaultDuration: 8,
+    resolutions: ['480p', '720p', '1080p'],
+    aspectRatios: DOUBAO_ASPECT_RATIOS,
+    maxImages: 30,
+    maxVideos: 1,
+    supportsAudio: true,
+    modes: ['text-to-video', 'image-to-video', 'first-last-frame', 'reference-images', 'reference-video'],
+  },
+  'wan3.0-video': {
+    provider: 'seedance',
+    minDuration: 2,
+    maxDuration: 30,
+    defaultDuration: 5,
+    resolutions: ['720p', '1080p'],
+    aspectRatios: WAN_ASPECT_RATIOS,
+    maxImages: 1,
+    maxVideos: 0,
+    supportsAudio: false,
+    modes: ['text-to-video', 'image-to-video'],
+  },
+  'wan3.0-yuanlian': {
+    provider: 'seedance',
+    minDuration: 2,
+    maxDuration: 30,
+    defaultDuration: 5,
+    resolutions: ['480p', '720p', '1080p'],
+    aspectRatios: WAN_ASPECT_RATIOS,
+    maxImages: 1,
+    maxVideos: 0,
+    supportsAudio: false,
+    modes: ['text-to-video', 'image-to-video'],
+  },
+}
+
+function normalizedModelName(model: string): string {
+  return model.trim().toLowerCase()
+}
+
+function isKnownSeedanceModel(model: string): boolean {
+  return normalizedModelName(model) in SEEDANCE_MODEL_PROFILES
+}
+
+export function resolveVideoProvider(
+  model: string,
+  hint: Partial<Pick<VideoGatewayContext, 'baseUrl' | 'platform'>> = {},
+): VideoProvider {
+  const value = normalizedModelName(model)
+  const platform = hint.platform?.trim().toLowerCase()
+  if (platform === 'grok') return 'grok'
+  if (isKnownSeedanceModel(value) && (platform === 'openai' || platform === 'composite')) {
+    return 'seedance_video'
+  }
+  try {
+    const host = new URL(hint.baseUrl || '').hostname.toLowerCase()
+    if ((host === 'openpix.cc' || host.endsWith('.openpix.cc') || host === 'momoapi.xin' || host.endsWith('.momoapi.xin')) &&
+      isKnownSeedanceModel(value)) {
+      return 'seedance_video'
+    }
+  } catch {
+    // Relative platform URLs are resolved by the gateway, not the browser.
+  }
+  if (isKnownSeedanceModel(value) && (platform === 'openai' || platform === 'composite')) {
+    return 'seedance'
+  }
   if (value.includes('grok')) return 'grok'
+  if (isKnownSeedanceModel(value) || value.startsWith('wan3.0-') || value.includes('seedance')) {
+    return 'seedance'
+  }
   return 'seedance'
 }
 
+export function getVideoModelProfile(model: string, provider?: VideoProvider): VideoModelProfile {
+  const value = normalizedModelName(model)
+  const seedanceProfile = SEEDANCE_MODEL_PROFILES[value]
+  if (seedanceProfile && provider !== 'grok') {
+    return seedanceProfile
+  }
+  if (provider === 'grok' || value.includes('grok')) {
+    return {
+      ...DEFAULT_PROFILE,
+      provider: 'grok',
+      minDuration: 1,
+      maxDuration: value.includes('1.5') ? 15 : 10,
+      defaultDuration: 8,
+      resolutions: value.includes('1.5') ? ['480p', '720p', '1080p'] : ['480p', '720p'],
+      maxImages: value.includes('1.5') ? 14 : 7,
+      supportsAudio: value.includes('1.5'),
+    }
+  }
+  return DEFAULT_PROFILE
+}
+
 export function isVideoModel(name: string): boolean {
-  const value = name.trim().toLowerCase()
-  return value.includes('video') ||
-    value.includes('seedance') ||
-    value.includes('veo') ||
-    value.includes('kling') ||
-    value.includes('wan') ||
-    value.includes('sora') ||
-    value.startsWith('cogvideo')
+  const value = normalizedModelName(name)
+  // Avoid broad matches such as "wan": Wanx image models start with "wanx".
+  return isKnownSeedanceModel(value) ||
+    value.includes('video') ||
+    value.includes('seedance')
 }
 
 function joinUrl(baseUrl: string, path: string): string {
@@ -111,10 +304,78 @@ async function readError(response: Response): Promise<string> {
   )
 }
 
+export async function materializeSeedanceReferences(
+  assets: VideoReferenceAsset[],
+  model: string,
+  uploadImage: typeof saveImageStudioGallery = saveImageStudioGallery,
+  uploadVideo: typeof archiveVideo = archiveVideo,
+): Promise<VideoReferenceAsset[]> {
+  return Promise.all(assets.map(async (asset) => {
+    if (asset.kind === 'image' && asset.url.startsWith('data:image/')) {
+      const format = asset.url.match(/^data:image\/([a-zA-Z0-9.+-]+);/)?.[1]?.replace('jpeg', 'jpg') || 'png'
+      const entry = await uploadImage({
+        image_data_url: asset.url,
+        prompt: 'Video reference image',
+        model,
+        size: 'reference',
+        format,
+        saved: false,
+      })
+      if (!entry.url) throw new Error('参考图上传后没有返回公开地址')
+      return { ...asset, url: entry.url }
+    }
+    if (asset.kind === 'video' && asset.url.startsWith('data:video/')) {
+      const format = asset.url.match(/^data:video\/([a-zA-Z0-9.+-]+);/)?.[1] || 'mp4'
+      const entry = await uploadVideo({
+        video_data_url: asset.url,
+        prompt: 'Video reference',
+        model,
+        format,
+        duration_seconds: 0,
+        saved: false,
+      })
+      if (!entry.url) throw new Error('参考视频上传后没有返回公开地址')
+      return { ...asset, url: entry.url }
+    }
+    return asset
+  }))
+}
+
 export function buildVideoRequest(
   provider: VideoProvider,
   params: VideoGenerationParams,
 ): { path: string; body: Record<string, unknown> } {
+  if (provider === 'seedance_video') {
+    const firstFrame = params.images.find((asset) => asset.role === 'first_frame')
+    const lastFrame = params.images.find((asset) => asset.role === 'last_frame')
+    const referenceImages = params.images.filter((asset) => asset.role === 'reference_image')
+    const body: Record<string, unknown> = {
+      model: params.model.trim(),
+      prompt: params.prompt.trim(),
+      duration: params.durationSeconds,
+      resolution: params.resolution,
+      aspect_ratio: params.aspectRatio,
+    }
+    if (params.videos.length) {
+      body.mode = 'reference-video'
+      body.reference_video_urls = params.videos.map((asset) => asset.url)
+      if (referenceImages.length) {
+        body.reference_image_urls = referenceImages.map((asset) => asset.url)
+      }
+    } else if (firstFrame || lastFrame) {
+      body.mode = firstFrame && lastFrame ? 'first-last-frame' : 'image-to-video'
+      body.images = [firstFrame, lastFrame]
+        .filter((asset): asset is VideoReferenceAsset => Boolean(asset))
+        .map((asset) => asset.url)
+    } else if (referenceImages.length) {
+      body.mode = 'reference-images'
+      body.reference_image_urls = referenceImages.map((asset) => asset.url)
+    } else {
+      body.mode = 'text-to-video'
+    }
+    return { path: '/video/generations', body }
+  }
+
   if (provider === 'grok') {
     const body: Record<string, unknown> = {
       model: params.model.trim(),
@@ -175,7 +436,7 @@ export async function createVideoTask(
   context: VideoGatewayContext,
   params: VideoGenerationParams,
 ): Promise<{ provider: VideoProvider; requestId: string }> {
-  const provider = resolveVideoProvider(params.model)
+  const provider = resolveVideoProvider(params.model, context)
   const { path, body } = buildVideoRequest(provider, params)
   const response = await fetch(joinUrl(context.baseUrl, path), {
     method: 'POST',
@@ -199,24 +460,36 @@ export async function createVideoTask(
 
 function normalizeStatus(provider: VideoProvider, raw: string): VideoTaskStatus {
   const value = raw.trim().toLowerCase()
-  if (provider === 'grok') {
+  if (provider === 'grok' || provider === 'seedance_video') {
     if (value === 'done' || value === 'succeeded' || value === 'completed') return 'succeeded'
     if (value === 'failed' || value === 'expired' || value === 'cancelled' || value === 'canceled') return 'failed'
-    return value === 'running' || value === 'processing' ? 'running' : 'queued'
+    return value === 'running' || value === 'processing' || value === 'in_progress' ? 'running' : 'queued'
   }
-  if (value === 'succeeded' || value === 'success' || value === 'done') return 'succeeded'
+  if (value === 'succeeded' || value === 'success' || value === 'done' || value === 'completed') return 'succeeded'
   if (value === 'failed' || value === 'cancelled' || value === 'canceled' || value === 'expired') return 'failed'
-  return value === 'running' || value === 'processing' ? 'running' : 'queued'
+  return value === 'running' || value === 'processing' || value === 'in_progress' ? 'running' : 'queued'
 }
 
 export function parseVideoTaskSnapshot(provider: VideoProvider, payload: any): VideoTaskSnapshot {
   const rawStatus = String(payload?.status ?? payload?.data?.status ?? '')
   const status = normalizeStatus(provider, rawStatus)
-  const videoUrl = provider === 'grok'
-    ? String(payload?.video?.url ?? payload?.data?.video?.url ?? '')
+  const videoUrl = provider === 'grok' || provider === 'seedance_video'
+    ? String(
+        payload?.video?.url ??
+        payload?.metadata?.url ??
+        payload?.data?.video?.url ??
+        payload?.data?.metadata?.url ??
+        '',
+      )
     : String(payload?.content?.video_url ?? payload?.data?.content?.video_url ?? '')
-  const duration = provider === 'grok'
-    ? Number(payload?.video?.duration ?? payload?.data?.video?.duration ?? 0)
+  const duration = provider === 'grok' || provider === 'seedance_video'
+    ? Number(
+        payload?.video?.duration ??
+        payload?.duration ??
+        payload?.data?.video?.duration ??
+        payload?.data?.duration ??
+        0,
+      )
     : Number(payload?.content?.duration ?? payload?.usage?.duration ?? 0)
   const errorMessage = String(
     payload?.error?.message ||
@@ -235,7 +508,7 @@ export function parseVideoTaskSnapshot(provider: VideoProvider, payload: any): V
 
 export function videoTaskPath(provider: VideoProvider, requestId: string): string {
   const id = encodeURIComponent(requestId)
-  return provider === 'grok'
+  return provider === 'grok' || provider === 'seedance_video'
     ? `/videos/${id}`
     : `/contents/generations/tasks/${id}`
 }
@@ -287,7 +560,7 @@ export async function cancelVideoTask(
   provider: VideoProvider,
   requestId: string,
 ): Promise<void> {
-  if (provider === 'grok') return
+  if (provider === 'grok' || provider === 'seedance_video') return
   await fetch(joinUrl(context.baseUrl, videoTaskPath(provider, requestId)), {
     method: 'DELETE',
     headers: authHeaders(context.apiKey),

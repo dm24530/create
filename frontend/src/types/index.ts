@@ -631,6 +631,8 @@ export interface Group {
   video_price_480p: number | null
   video_price_720p: number | null
   video_price_1080p: number | null
+  // User-safe summary of a usable video billing path (including per-model rules).
+  video_capable?: boolean
   // Optional model-family x resolution overrides for Grok video pricing.
   video_model_prices?: VideoModelPrices
   // Codex 网页搜索单次价格（USD/次）；null 表示使用默认价 0.01

@@ -323,10 +323,10 @@
               data-testid="usage-created-at"
               class="whitespace-nowrap font-medium tabular-nums"
             >{{ formatDateTimeParts(value).text }}</div>
-            <div v-if="isImageUsage(row)" class="text-[11px]">
+            <div v-if="isImageUsage(row) || isVideoUsage(row)" class="text-[11px]">
               <span class="text-gray-400 dark:text-gray-500">生成耗时：</span>
-              <span v-if="imageGenerationDuration(row)" class="font-medium text-emerald-600 dark:text-emerald-400">
-                {{ formatDuration(imageGenerationDuration(row)) }}
+              <span v-if="generationDuration(row)" class="font-medium text-emerald-600 dark:text-emerald-400">
+                {{ formatDuration(generationDuration(row)) }}
               </span>
               <span v-else class="text-amber-500 dark:text-amber-400">未记录</span>
             </div>
@@ -664,6 +664,17 @@ function accountBilled(row: { total_cost?: number | null; account_stats_cost?: n
 
 function imageGenerationDuration(row: AdminUsageLog): number | null {
   return row.image_generation_duration_ms ?? row.duration_ms ?? null
+}
+
+function isVideoUsage(row: AdminUsageLog): boolean {
+  const endpoint = `${row.inbound_endpoint || ''} ${row.upstream_endpoint || ''}`.toLowerCase()
+  return endpoint.includes('/video')
+    || endpoint.includes('/videos')
+    || /(^|[-_.])(seedance|dreamina-seedance|wan3\.0|grok-imagine-video)/i.test(row.model || '')
+}
+
+function generationDuration(row: AdminUsageLog): number | null {
+  return isVideoUsage(row) ? row.duration_ms : imageGenerationDuration(row)
 }
 
 import DataTable from '@/components/common/DataTable.vue'

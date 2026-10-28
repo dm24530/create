@@ -1163,6 +1163,33 @@ func TestBuildSchedulerMetadataAccount_KeepsOpenAIPassthroughForModelGate(t *tes
 	}
 }
 
+func TestBuildSchedulerMetadataAccount_KeepsSeedanceCapabilityForCandidateFilter(t *testing.T) {
+	account := service.Account{
+		ID:       808,
+		Platform: service.PlatformOpenAI,
+		Type:     service.AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key":             "test",
+			"base_url":            "https://example.com/v1",
+			"openai_capabilities": []string{"chat_completions", "seedance"},
+			"model_mapping": map[string]any{
+				"dreamina-seedance-2-0-fast-260128": "dreamina-seedance-2-0-fast-260128",
+			},
+		},
+	}
+	require.True(t, account.SupportsOpenAIEndpointCapability(service.OpenAIEndpointCapabilitySeedance))
+
+	payload, err := json.Marshal(buildSchedulerMetadataAccount(account))
+	require.NoError(t, err)
+	var restored service.Account
+	require.NoError(t, json.Unmarshal(payload, &restored))
+
+	require.Equal(t, "https://example.com/v1", restored.GetCredential("base_url"))
+	require.True(t, restored.SupportsOpenAIEndpointCapability(service.OpenAIEndpointCapabilitySeedance),
+		"投影裁掉 base_url/openai_capabilities 会让 Seedance 账号在候选阶段被判为 capability_mismatch")
+	require.True(t, restored.IsModelSupported("dreamina-seedance-2-0-fast-260128"))
+}
+
 // 调度投影必须保留账号的 RPM 配置。
 //
 // 候选过滤走 ListSchedulableAccounts，读的是 buildSchedulerMetadataAccount 产出的精简投影；
