@@ -89,7 +89,8 @@ func TestSeedanceMomoCompatibilityTranslatesArkCreateRequest(t *testing.T) {
 			{"type":"image_url","image_url":{"url":"https://example.com/first.png"},"role":"first_frame"},
 			{"type":"image_url","image_url":{"url":"https://example.com/last.png"},"role":"last_frame"},
 			{"type":"image_url","image_url":{"url":"https://example.com/ref.png"},"role":"reference_image"},
-			{"type":"video_url","video_url":{"url":"https://example.com/ref.mp4"}}
+			{"type":"video_url","video_url":{"url":"https://example.com/ref.mp4"}},
+			{"type":"audio_url","audio_url":{"url":"https://example.com/ref.mp3"}}
 		],
 		"duration":12,
 		"resolution":"720p",
@@ -116,8 +117,9 @@ func TestSeedanceMomoCompatibilityTranslatesArkCreateRequest(t *testing.T) {
 	require.Equal(t, []string{"https://example.com/first.png", "https://example.com/last.png"}, gjsonArrayStrings(gjson.GetBytes(forwarded, "images")))
 	require.Equal(t, []string{"https://example.com/ref.png"}, gjsonArrayStrings(gjson.GetBytes(forwarded, "reference_image_urls")))
 	require.Equal(t, []string{"https://example.com/ref.mp4"}, gjsonArrayStrings(gjson.GetBytes(forwarded, "reference_video_urls")))
+	require.Equal(t, []string{"https://example.com/ref.mp3"}, gjsonArrayStrings(gjson.GetBytes(forwarded, "reference_audio_urls")))
 	require.False(t, gjson.GetBytes(forwarded, "content").Exists())
-	require.False(t, gjson.GetBytes(forwarded, "generate_audio").Exists())
+	require.True(t, gjson.GetBytes(forwarded, "generate_audio").Bool())
 	require.JSONEq(t, `{"id":"task-1","status":"queued"}`, w.Body.String())
 }
 

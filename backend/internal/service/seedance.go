@@ -102,6 +102,7 @@ func buildMomoVideoBodyFromArk(body []byte) ([]byte, error) {
 	var images []string
 	var referenceImages []string
 	var referenceVideos []string
+	var referenceAudios []string
 	firstFrame := ""
 	lastFrame := ""
 	for _, item := range content.Array() {
@@ -127,6 +128,10 @@ func buildMomoVideoBodyFromArk(body []byte) ([]byte, error) {
 		case "video_url":
 			if videoURL := strings.TrimSpace(item.Get("video_url.url").String()); videoURL != "" {
 				referenceVideos = append(referenceVideos, videoURL)
+			}
+		case "audio_url":
+			if audioURL := strings.TrimSpace(item.Get("audio_url.url").String()); audioURL != "" {
+				referenceAudios = append(referenceAudios, audioURL)
 			}
 		}
 	}
@@ -162,6 +167,9 @@ func buildMomoVideoBodyFromArk(body []byte) ([]byte, error) {
 	if len(referenceVideos) > 0 {
 		translated, _ = sjson.SetBytes(translated, "reference_video_urls", referenceVideos)
 	}
+	if len(referenceAudios) > 0 {
+		translated, _ = sjson.SetBytes(translated, "reference_audio_urls", referenceAudios)
+	}
 	if duration := gjson.GetBytes(body, "duration"); duration.Exists() {
 		switch duration.Type {
 		case gjson.Number:
@@ -177,6 +185,11 @@ func buildMomoVideoBodyFromArk(body []byte) ([]byte, error) {
 	}
 	if aspectRatio := strings.TrimSpace(gjson.GetBytes(body, "ratio").String()); aspectRatio != "" {
 		translated, _ = sjson.SetBytes(translated, "aspect_ratio", aspectRatio)
+	}
+	if generateAudio := gjson.GetBytes(body, "generate_audio"); generateAudio.Exists() && generateAudio.Type == gjson.True {
+		translated, _ = sjson.SetBytes(translated, "generate_audio", true)
+	} else if generateAudio.Exists() && generateAudio.Type == gjson.False {
+		translated, _ = sjson.SetBytes(translated, "generate_audio", false)
 	}
 	return translated, nil
 }

@@ -397,9 +397,20 @@ func (s *ImageStudioGalleryService) List(
 	if err != nil {
 		return nil, err
 	}
-	if entries == nil {
-		entries = []*ImageStudioGalleryEntry{}
+	visible := make([]*ImageStudioGalleryEntry, 0, len(entries))
+	for _, entry := range entries {
+		// Reference images uploaded by older video-studio clients were written
+		// through the image gallery endpoint. They are not image generations,
+		// so keep the already-expiring rows out of the image workbench.
+		if entry != nil &&
+			!entry.Saved &&
+			strings.TrimSpace(entry.Size) == "reference" &&
+			strings.TrimSpace(entry.Prompt) == "Video reference image" {
+			continue
+		}
+		visible = append(visible, entry)
 	}
+	entries = visible
 	if batchResolver, ok := s.storage.(ImageStudioObjectURLBatchResolver); ok {
 		keys := make([]string, 0, len(entries)*2)
 		seen := make(map[string]struct{}, len(entries)*2)
@@ -492,7 +503,7 @@ func (s *ImageStudioGalleryService) rawEntry(
 	if s == nil || s.store == nil {
 		return nil, ErrImageStudioGalleryUnavailable
 	}
-	items, err := s.store.List(ctx, userID, 0, nil)
+	items, err := s.store.List(ctx, userID, studioWorksListLimit(s.storage), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -737,8 +748,7 @@ func (s *ImageStudioGalleryService) Pin(ctx context.Context, userID int64, id st
 	return nil
 }
 
-// Unpin 取消保存。未过期的内容转回临时内容；已超过临时保留期的内容返回
-// ErrStudioWorkExpired，由前端确认后调用 Delete 彻底删除。
+// Unpin 取消保存。取消后从当前时间重新开始临时保留期。
 func (s *ImageStudioGalleryService) Unpin(
 	ctx context.Context,
 	userID int64,
@@ -754,10 +764,7 @@ func (s *ImageStudioGalleryService) Unpin(
 	if !entry.Saved {
 		return entry, nil
 	}
-	expiresAt := entry.CreatedAt + int64(s.tempRetention().Seconds())
-	if expiresAt <= time.Now().UTC().Unix() {
-		return nil, ErrStudioWorkExpired
-	}
+	expiresAt := time.Now().UTC().Add(s.tempRetention()).Unix()
 	if err := s.store.Unpin(ctx, userID, entry.ID, expiresAt); err != nil {
 		return nil, err
 	}

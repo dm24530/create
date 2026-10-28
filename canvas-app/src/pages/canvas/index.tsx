@@ -10,7 +10,7 @@ import { setImageBlob } from "@/services/image-storage";
 import { CanvasDeleteProjectsDialog } from "@/components/canvas/canvas-delete-projects-dialog";
 import { CanvasProjectCard } from "@/components/canvas/canvas-project-card";
 import type { CanvasExportFile } from "@/types/canvas-export";
-import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
+import { flushCanvasStorePersistence, useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { useCanvasUiStore } from "@/stores/canvas/use-canvas-ui-store";
 import { exportCanvasProjects } from "@/lib/canvas/canvas-export";
 import { mergeCloudCanvasProjects } from "@/lib/canvas/merge-canvas-projects";
@@ -96,13 +96,19 @@ export default function CanvasPage() {
                     deletedProjects: currentState.deletedProjects,
                     cloudProjects,
                 });
-                for (const id of merged.deletedCloudProjectIds) {
-                    void deleteCloudCanvasProject(id);
+                const deletedCloud = await Promise.allSettled(
+                    merged.deletedCloudProjectIds.map((id) => deleteCloudCanvasProject(id)),
+                );
+                for (const result of deletedCloud) {
+                    if (result.status === "rejected") {
+                        console.warn("Failed to delete cloud canvas project", result.reason);
+                    }
                 }
                 currentState.replaceProjects(
                     merged.projects,
                     currentState.deletedProjects,
                 );
+                flushCanvasStorePersistence();
                 for (const id of merged.reuploadProjectIds) {
                     const project = useCanvasStore.getState().projects.find((item) => item.id === id);
                     if (!project) continue;

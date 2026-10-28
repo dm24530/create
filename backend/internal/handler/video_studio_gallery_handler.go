@@ -31,6 +31,58 @@ type saveVideoStudioGalleryRequest struct {
 	Saved *bool `json:"saved"`
 }
 
+type uploadVideoReferenceAssetRequest struct {
+	Kind    string `json:"kind"`
+	DataURL string `json:"data_url"`
+}
+
+func (h *VideoStudioGalleryHandler) UploadReferenceAsset(c *gin.Context) {
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not found in context")
+		return
+	}
+	var request uploadVideoReferenceAssetRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		response.BadRequest(c, "Invalid reference asset request")
+		return
+	}
+
+	var (
+		data        []byte
+		contentType string
+		err         error
+	)
+	switch strings.ToLower(strings.TrimSpace(request.Kind)) {
+	case "image":
+		data, contentType, err = decodeImageStudioDataURL(request.DataURL)
+	case "video":
+		data, contentType, err = service.DecodeVideoDataURL(request.DataURL)
+	case "audio":
+		data, contentType, err = service.DecodeAudioDataURL(request.DataURL)
+	default:
+		response.BadRequest(c, "kind must be image, video, or audio")
+		return
+	}
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+
+	url, err := h.gallery.UploadReferenceAsset(
+		c.Request.Context(),
+		subject.UserID,
+		request.Kind,
+		contentType,
+		data,
+	)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, gin.H{"url": url})
+}
+
 func (h *VideoStudioGalleryHandler) Save(c *gin.Context) {
 	subject, ok := middleware2.GetAuthSubjectFromContext(c)
 	if !ok {

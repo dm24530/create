@@ -1,8 +1,9 @@
 import { Button, Modal } from "antd";
 import { useTranslation } from "react-i18next";
+import { deleteCloudCanvasProject } from "@/services/canvas-cloud";
 
 import { useAssetStore } from "@/stores/use-asset-store";
-import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
+import { flushCanvasStorePersistence, useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { useCanvasUiStore } from "@/stores/canvas/use-canvas-ui-store";
 
 export function CanvasDeleteProjectsDialog() {
@@ -14,9 +15,16 @@ export function CanvasDeleteProjectsDialog() {
     const cleanupImages = useAssetStore((state) => state.cleanupImages);
     const confirm = () => {
         deleteProjects(ids);
+        flushCanvasStorePersistence();
         cleanupImages();
         removeSelectedIds(ids);
         setDeleteIds([]);
+        void Promise.allSettled(ids.map((id) => deleteCloudCanvasProject(id))).then((results) => {
+            const failed = results.filter((result) => result.status === "rejected");
+            if (failed.length > 0) {
+                console.warn("Failed to delete cloud canvas projects", failed);
+            }
+        });
     };
 
     return (

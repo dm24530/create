@@ -81,7 +81,7 @@ ENV GOPROXY=${GOPROXY}
 ENV GOSUMDB=${GOSUMDB}
 
 # Install build dependencies
-RUN sed -i 's#https://dl-cdn.alpinelinux.org#https://mirrors.aliyun.com#g' /etc/apk/repositories && \
+RUN sed -i 's#https://dl-cdn.alpinelinux.org#https://mirror.sjtu.edu.cn#g' /etc/apk/repositories && \
     apk add --no-cache git ca-certificates tzdata
 
 WORKDIR /app/backend
@@ -129,7 +129,7 @@ LABEL description="Create - AI Video & Image Generation Platform"
 LABEL org.opencontainers.image.source="https://github.com/diminglucky/create"
 
 # Install runtime dependencies
-RUN sed -i 's#https://dl-cdn.alpinelinux.org#https://mirrors.aliyun.com#g' /etc/apk/repositories && \
+RUN sed -i 's#https://dl-cdn.alpinelinux.org#https://mirror.sjtu.edu.cn#g' /etc/apk/repositories && \
     apk add --no-cache \
     ca-certificates \
     tzdata \

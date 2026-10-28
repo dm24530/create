@@ -33,7 +33,11 @@ import AppLayout from '@/components/layout/AppLayout.vue'
 import { useTheme } from '@/composables/useTheme'
 import { resolvePlaygroundApiEndpoint } from '@/utils/apiEndpoint'
 import { useAuthStore } from '@/stores/auth'
-import { canvasChannelName, selectCanvasCreatorKey } from './creatorKeySelection'
+import {
+  canvasChannelName,
+  selectCanvasCreatorKey,
+  selectCanvasVideoCreatorKey,
+} from './creatorKeySelection'
 
 const loading = ref(true)
 const error = ref('')
@@ -45,8 +49,10 @@ const frameStorageScope = ref('')
 const bootstrapPayload = ref<{
   baseUrl: string
   apiKey: string
+  videoApiKey: string
   accessToken: string
   channelName: string
+  videoChannelName: string
   locale: 'zh-CN' | 'en-US'
 } | null>(null)
 const bootstrapTimers: number[] = []
@@ -108,27 +114,12 @@ function randomStorageScope() {
 }
 
 async function resolveFrameURL() {
-  if (!import.meta.env.DEV) {
-    frameBaseURL.value = '/canvas-app/canvas?embed=1'
-    return
-  }
-
-  if (import.meta.env.VITE_CANVAS_SOURCE_DEV === '1') {
-    frameBaseURL.value = 'http://localhost:3001/canvas?embed=1'
-    return
-  }
-
-  try {
-    const response = await fetch('http://localhost:3001/canvas-app/index.html', {
-      method: 'HEAD',
-      cache: 'no-store',
-    })
-    frameBaseURL.value = response.ok
-      ? 'http://localhost:3001/canvas-app/canvas?embed=1'
-      : 'http://localhost:3001/canvas?embed=1'
-  } catch {
-    frameBaseURL.value = 'http://localhost:3001/canvas?embed=1'
-  }
+  // The parent Vite server already serves the built canvas at /canvas-app and
+  // falls back to its SPA entry. Only use the separate canvas dev server when
+  // explicitly requested, otherwise port 3001 may belong to another app.
+  frameBaseURL.value = import.meta.env.DEV && import.meta.env.VITE_CANVAS_SOURCE_DEV === '1'
+    ? 'http://localhost:3001/canvas?embed=1'
+    : '/canvas-app/canvas?embed=1'
 }
 
 async function loadContext() {
@@ -154,14 +145,17 @@ async function loadContext() {
     if (!creatorKey) {
       throw new Error('请先在生图工作台选择一个可用的 API Key')
     }
+    const videoCreatorKey = selectCanvasVideoCreatorKey(keyResponse.items || [], localStorage, ownerID)
     const baseURL = import.meta.env.DEV
       ? '/v1'
       : new URL(resolved, window.location.origin).toString().replace(/\/+$/, '')
     bootstrapPayload.value = {
       baseUrl: baseURL,
       apiKey: creatorKey.key,
+      videoApiKey: videoCreatorKey?.key || '',
       accessToken: authStore.token || '',
       channelName: canvasChannelName(creatorKey),
+      videoChannelName: videoCreatorKey ? canvasChannelName(videoCreatorKey) : '',
       locale: canvasLocale.value,
     }
   } catch (cause) {

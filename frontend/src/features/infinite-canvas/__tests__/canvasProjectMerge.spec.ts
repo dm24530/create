@@ -53,6 +53,21 @@ describe('mergeCloudCanvasProjects', () => {
     expect(result.reuploadProjectIds).toEqual([])
   })
 
+  it('removes a cloud project when a local deletion tombstone exists', () => {
+    const cloud = project('deleted-project', '2026-10-26T09:00:00.000Z', 5, 7)
+
+    const result = mergeCloudCanvasProjects(input({
+      deletedProjects: [{
+        id: 'deleted-project',
+        deletedAt: '2026-10-26T10:00:00.000Z',
+      }],
+      cloudProjects: [cloud],
+    }))
+
+    expect(result.projects).toHaveLength(0)
+    expect(result.deletedCloudProjectIds).toEqual(['deleted-project'])
+  })
+
   it('keeps and requests reupload for a project that has never reached the cloud', () => {
     const localOnly = project('local-only', '2026-10-26T08:00:00.000Z', 3)
     const stale = project('shared', '2026-10-26T07:00:00.000Z', 1, 4)
@@ -139,6 +154,56 @@ describe('mergeCloudCanvasProjects', () => {
     expect(result.projects[0].nodes[0].metadata.content).toBe('blob:cached-image')
     expect(result.projects[0].nodes[0].metadata.storageKey).toBe('image:cached')
     expect(result.projects[0].nodes[0].metadata.images?.[0].content).toBe('blob:cached-image')
+  })
+
+  it('keeps the local cached image reference when the cloud has the same image', () => {
+    const local = project('shared', '2026-10-26T07:00:00.000Z', 1, 4)
+    local.nodes[0] = {
+      ...local.nodes[0],
+      type: 'image',
+      position: { x: 0, y: 0 },
+      width: 100,
+      height: 100,
+      title: 'image',
+      metadata: {
+        content: 'blob:local-image',
+        storageKey: 'image:local',
+        images: [{ id: 'image-1', status: 'success', content: 'blob:local-image', storageKey: 'image:local' }],
+        primaryImageId: 'image-1',
+      },
+    } as any
+    const cloud = project('shared', '2026-10-26T09:00:00.000Z', 1, 5)
+    cloud.nodes[0] = {
+      ...cloud.nodes[0],
+      type: 'image',
+      position: { x: 0, y: 0 },
+      width: 100,
+      height: 100,
+      title: 'image',
+      metadata: {
+        content: 'https://cdn.example.com/cloud-image.png',
+        storageKey: 'image:cloud',
+        cloudAssetId: 'asset-1',
+        images: [{
+          id: 'image-1',
+          status: 'success',
+          content: 'https://cdn.example.com/cloud-image.png',
+          storageKey: 'image:cloud',
+          cloudAssetId: 'asset-1',
+        }],
+        primaryImageId: 'image-1',
+      },
+    } as any
+
+    const result = mergeCloudCanvasProjects(input({
+      localProjects: [local],
+      cloudProjects: [cloud],
+    }))
+
+    expect(result.projects[0].nodes[0].metadata.content).toBe('blob:local-image')
+    expect(result.projects[0].nodes[0].metadata.storageKey).toBe('image:local')
+    expect(result.projects[0].nodes[0].metadata.images?.[0].storageKey).toBe('image:local')
+    expect(result.projects[0].nodes[0].metadata.cloudAssetId).toBe('asset-1')
   })
 
   it('promotes image entry content when the cloud node root content is empty', () => {

@@ -1,14 +1,15 @@
 param(
-  [string]$Tag = "create:20261027-sourcecheck-v5",
-  [string]$PackageName = "create-update-20261027-sourcecheck-v5"
+  [string]$Tag = "create:20261028-video-reference-isolation",
+  [string]$PackageName = "create-update-20261028-video-reference-isolation"
 )
 
 $ErrorActionPreference = "Stop"
 $repoRoot = $PSScriptRoot
 $releaseDir = Join-Path $repoRoot "release"
-$stageName = "create-update-v5"
+$stageName = "package-$PackageName"
 $stageDir = Join-Path $releaseDir $stageName
-$imageTar = Join-Path $stageDir "create-20261027-sourcecheck-v5.tar"
+$imageArchiveName = (($Tag -replace '[^A-Za-z0-9._-]', '-') + '.tar')
+$imageTar = Join-Path $stageDir $imageArchiveName
 $archivePath = Join-Path $releaseDir "$PackageName.tar.gz"
 $checksumPath = "$archivePath.sha256"
 
@@ -103,6 +104,14 @@ function Copy-SourceSnapshot {
 
 $fingerprintBefore = Get-SourceFingerprint -Root $repoRoot
 
+$releaseRootFull = [IO.Path]::GetFullPath($releaseDir).TrimEnd("\") + "\"
+$stageDirFull = [IO.Path]::GetFullPath($stageDir)
+if (-not $stageDirFull.StartsWith($releaseRootFull, [StringComparison]::OrdinalIgnoreCase)) {
+  throw "staging directory escapes release directory: $stageDirFull"
+}
+if (Test-Path -LiteralPath $stageDir) {
+  Remove-Item -LiteralPath $stageDir -Recurse -Force
+}
 New-Item -ItemType Directory -Force -Path $stageDir | Out-Null
 $snapshotRoot = Join-Path $releaseDir ("source-snapshot-" + [Guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Force -Path $snapshotRoot | Out-Null
@@ -146,8 +155,46 @@ try {
 }
 
 Copy-Item -Force (Join-Path $repoRoot "deploy/docker-compose.create.yml") $stageDir
-Copy-Item -Force (Join-Path $repoRoot "release/create-update/update-server.sh") $stageDir
-Copy-Item -Force (Join-Path $repoRoot "release/create-update/README.txt") $stageDir
+
+$updateScript = Get-Content -Raw (Join-Path $repoRoot "release/create-update/update-server.sh")
+$updateScript = $updateScript -replace '(?m)^TARGET_IMAGE=.*$', ('TARGET_IMAGE="${TARGET_IMAGE:-' + $Tag + '}"')
+$updateScript = $updateScript -replace '(?m)^IMAGE_TAR=.*$', ('IMAGE_TAR="${IMAGE_TAR:-${SCRIPT_DIR}/' + $imageArchiveName + '}"')
+Set-Content -LiteralPath (Join-Path $stageDir "update-server.sh") -Value $updateScript -Encoding utf8NoBOM
+
+$readme = @"
+Create update package
+=====================
+
+Contents:
+- $imageArchiveName
+- storage-key-migrate-linux-amd64
+- docker-compose.create.yml
+- update-server.sh
+
+Run on the server from any directory:
+
+  bash update-server.sh
+
+Optional overrides:
+
+  DEPLOY_DIR=/opt/create COMPOSE_FILE=docker-compose.create.yml bash update-server.sh
+
+Target image:
+
+  $Tag
+
+The script:
+1. saves the current image name and .env
+2. backs up PostgreSQL
+3. loads the new image
+4. updates IMAGE in .env
+5. recreates only the create container
+6. checks container and host health
+7. restores the previous image and .env automatically if health fails
+
+It does not delete PostgreSQL, Redis, application data, or R2 objects.
+"@
+Set-Content -LiteralPath (Join-Path $stageDir "README.txt") -Value $readme -Encoding utf8NoBOM
 
 foreach ($required in @("update-server.sh", "README.txt")) {
   $path = Join-Path $stageDir $required

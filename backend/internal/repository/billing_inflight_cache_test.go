@@ -72,7 +72,7 @@ func TestInflightReservation_ConcurrentAdmitsOnlyWhatBalanceCovers(t *testing.T)
 	wg.Wait()
 	close(releases)
 
-	// balance 1.0, estimate 0.3: first always admitted, then while 1.0 - inflight >= 0.3 → 3 total.
+	// balance 1.0, estimate 0.3: while balance - inflight >= 0.3 → 3 total.
 	require.Equal(t, int32(3), admitted.Load())
 	require.Equal(t, int32(n-3), rejected.Load())
 	require.Equal(t, int64(3), inflightCount(t, cache, user.ID))
@@ -89,20 +89,30 @@ func TestInflightReservation_ConcurrentAdmitsOnlyWhatBalanceCovers(t *testing.T)
 	release()
 }
 
-func TestInflightReservation_FirstRequestAlwaysAdmitted(t *testing.T) {
+func TestInflightReservation_RejectsEstimateAboveBalance(t *testing.T) {
 	_, cache, svc := newInflightTestEnv(t, true, 60)
 	ctx := context.Background()
 	user := &service.User{ID: 7}
 	require.NoError(t, cache.SetUserBalance(ctx, user.ID, 0.01))
 
-	release, err := svc.ReserveInflightBalance(ctx, user, nil, nil, 5)
-	require.NoError(t, err, "a lone request keeps legacy behavior even if estimate exceeds balance")
-	_, err = svc.ReserveInflightBalance(ctx, user, nil, nil, 0.001)
+	_, err := svc.ReserveInflightBalance(ctx, user, nil, nil, 5)
 	require.ErrorIs(t, err, service.ErrInsufficientBalance)
-	release()
-	release2, err := svc.ReserveInflightBalance(ctx, user, nil, nil, 0.001)
+	require.Equal(t, int64(0), inflightCount(t, cache, user.ID))
+
+	release, err := svc.ReserveInflightBalance(ctx, user, nil, nil, 0.001)
 	require.NoError(t, err)
-	release2()
+	release()
+}
+
+func TestInflightReservation_RejectsZeroBalance(t *testing.T) {
+	_, cache, svc := newInflightTestEnv(t, true, 60)
+	ctx := context.Background()
+	user := &service.User{ID: 8}
+	require.NoError(t, cache.SetUserBalance(ctx, user.ID, 0))
+
+	_, err := svc.ReserveInflightBalance(ctx, user, nil, nil, 0.01)
+	require.ErrorIs(t, err, service.ErrInsufficientBalance)
+	require.Equal(t, int64(0), inflightCount(t, cache, user.ID))
 }
 
 func TestInflightReservation_TTLExpiryFreesLeakedReservation(t *testing.T) {

@@ -1076,3 +1076,73 @@ func TestBuildAsyncTaskFailureEntry(t *testing.T) {
 	require.Equal(t, "upstream returned no image", entry.ErrorMessage)
 	require.Equal(t, http.StatusBadGateway, entry.StatusCode)
 }
+
+func TestBuildClientImageErrorEntry(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/image-studio/client-errors", nil)
+	c.Request.Header.Set("User-Agent", "ImageStudioTest/1.0")
+	subject := &middleware2.AuthSubject{UserID: 42}
+	entry := buildClientImageErrorEntry(&imageStudioClientErrorRequest{
+		TaskID:      "imgtask_client_timeout",
+		BatchID:     "batch-1",
+		Model:       "gemini-nano-banana-2.1",
+		Platform:    service.PlatformGemini,
+		Stage:       "generation_timeout",
+		ErrorType:   "Client Timeout!",
+		Message:     "请求超时（90 秒）\n请稍后重试",
+		ElapsedMS:   90_000,
+		RequestID:   "req-client-1",
+		RequestPath: "/v1/images/generations",
+	}, subject, c)
+
+	require.NotNil(t, entry)
+	require.Equal(t, int64(42), *entry.UserID)
+	require.Equal(t, "req-client-1", entry.RequestID)
+	require.Equal(t, "client:req-client-1", entry.UsageRequestID)
+	require.Equal(t, "gemini-nano-banana-2.1", entry.Model)
+	require.Equal(t, service.PlatformGemini, entry.Platform)
+	require.Equal(t, "generation_timeout", entry.ErrorPhase)
+	require.Equal(t, "client_timeout", entry.ErrorType)
+	require.Equal(t, "请求超时（90 秒） 请稍后重试", entry.ErrorMessage)
+	require.Equal(t, http.StatusGatewayTimeout, entry.StatusCode)
+	require.Equal(t, "client_request", entry.ErrorSource)
+	require.Equal(t, "client", entry.ErrorOwner)
+	require.Equal(t, "/v1/images/generations", entry.RequestPath)
+}
+
+func TestReportClientImageErrorEnqueuesOpsLog(t *testing.T) {
+	setupOpsErrorLogTestQueue(t, 1)
+	ops := service.NewOpsService(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	h := &AsyncImageHandler{openAI: &OpenAIGatewayHandler{opsService: ops}}
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.POST("/api/v1/image-studio/client-errors", func(c *gin.Context) {
+		c.Set(string(middleware2.ContextKeyUser), middleware2.AuthSubject{UserID: 42})
+		h.ReportClientError(c)
+	})
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/image-studio/client-errors",
+		strings.NewReader(`{
+			"task_id":"imgtask_visible_error",
+			"batch_id":"batch-visible",
+			"model":"gemini-nano-banana-2.1",
+			"stage":"image_studio_visible_error",
+			"error_type":"client_timeout",
+			"message":"请求超时（3 分钟），请稍后重试",
+			"request_path":"/image-studio"
+		}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, int64(1), OpsErrorLogQueueLength())
+	job := <-opsErrorLogQueue
+	require.NotNil(t, job.entry)
+	require.Equal(t, int64(42), *job.entry.UserID)
+	require.Equal(t, "client_timeout", job.entry.ErrorType)
+	require.Equal(t, "image_studio_visible_error", job.entry.ErrorPhase)
+	require.Equal(t, "client_request", job.entry.ErrorSource)
+}

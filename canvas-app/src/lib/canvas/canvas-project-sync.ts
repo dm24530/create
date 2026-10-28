@@ -1,5 +1,5 @@
 import type { CanvasAssistantSession, CanvasConnection, CanvasNodeData } from "../../types/canvas";
-import type { CanvasProject } from "../../stores/canvas/use-canvas-store";
+import type { CanvasDeletedProject, CanvasProject } from "../../stores/canvas/use-canvas-store";
 import { canvasProjectCloudFingerprint } from "./canvas-cloud-content";
 
 export type CanvasProjectReconcileResult = {
@@ -7,6 +7,13 @@ export type CanvasProjectReconcileResult = {
     source: "cloud" | "local" | "merge";
     shouldUpload: boolean;
 };
+
+export function isCanvasProjectDeleted(
+    projectId: string,
+    deletedProjects: CanvasDeletedProject[],
+) {
+    return deletedProjects.some((item) => item.id === projectId);
+}
 
 export function hasUnsyncedCanvasChanges(project: CanvasProject) {
     if (!project.cloudVersion) return true;
@@ -161,14 +168,16 @@ function mergeNodeMedia(local: CanvasNodeData, cloud: CanvasNodeData): CanvasNod
     const localImages = new Map((localMeta.images || []).map((image) => [image.id, image]));
     const images = (cloudMeta.images || localMeta.images || []).map((image) => {
         const localImage = localImages.get(image.id);
-        if (!localImage || image.content || image.storageKey || image.cloudAssetId) return image;
+        if (!localImage) return image;
         return {
             ...image,
-            content: localImage.content,
-            storageKey: localImage.storageKey,
-            cloudAssetId: localImage.cloudAssetId,
-            cloudURL: localImage.cloudURL,
-            cloudPreviewURL: localImage.cloudPreviewURL,
+            ...localImage,
+            content: localImage.content || image.content,
+            storageKey: localImage.storageKey || image.storageKey,
+            cloudAssetId: image.cloudAssetId || localImage.cloudAssetId,
+            cloudURL: image.cloudURL || localImage.cloudURL,
+            cloudPreviewURL: image.cloudPreviewURL || localImage.cloudPreviewURL,
+            cloudSyncState: image.cloudSyncState || localImage.cloudSyncState,
         };
     });
     const cloudPrimaryContent = cloudMeta.images?.find((image) => image.content)?.content || "";
@@ -177,8 +186,8 @@ function mergeNodeMedia(local: CanvasNodeData, cloud: CanvasNodeData): CanvasNod
         ...cloud,
         metadata: {
             ...cloudMeta,
-            content: cloudMeta.content || cloudPrimaryContent || localMeta.content || localPrimaryContent,
-            storageKey: cloudMeta.storageKey || localMeta.storageKey,
+            content: localMeta.content || localPrimaryContent || cloudMeta.content || cloudPrimaryContent,
+            storageKey: localMeta.storageKey || cloudMeta.storageKey,
             cloudAssetId: cloudMeta.cloudAssetId || localMeta.cloudAssetId,
             cloudURL: cloudMeta.cloudURL || localMeta.cloudURL,
             cloudPreviewURL: cloudMeta.cloudPreviewURL || localMeta.cloudPreviewURL,

@@ -18,16 +18,22 @@ const {
   archiveVideo,
   deleteArchivedVideo,
   listArchivedVideos,
+  pinArchivedVideo,
+  uploadVideoReferenceAsset,
 } = vi.hoisted(() => ({
   archiveVideo: vi.fn(),
   deleteArchivedVideo: vi.fn(),
   listArchivedVideos: vi.fn(),
+  pinArchivedVideo: vi.fn(),
+  uploadVideoReferenceAsset: vi.fn(),
 }))
 
 vi.mock('../videoArchiveApi', () => ({
   archiveVideo,
   listArchivedVideos,
   deleteArchivedVideo,
+  pinArchivedVideo,
+  uploadVideoReferenceAsset,
   fetchStudioWorksQuota: vi.fn().mockResolvedValue({ used: 0, limit: 100 }),
   isStudioQuotaError: () => false,
   fetchOnlineInspirationsFromServer: vi.fn().mockResolvedValue([]),
@@ -98,9 +104,13 @@ function resetMocks() {
   getPublicSettings.mockReset()
   copyToClipboard.mockReset()
   archiveVideo.mockReset()
+  pinArchivedVideo.mockReset()
+  pinArchivedVideo.mockResolvedValue(undefined)
   deleteArchivedVideo.mockReset()
   listArchivedVideos.mockReset()
+  uploadVideoReferenceAsset.mockReset()
   listArchivedVideos.mockResolvedValue([])
+  uploadVideoReferenceAsset.mockResolvedValue({ url: 'https://r2.example.com/reference.png' })
   // 默认按"对象存储没配"处理：归档失败只提示，不影响生成结果本身。
   archiveVideo.mockRejectedValue({ reason: 'IMAGE_STORAGE_DISABLED', message: 'image storage is not enabled' })
   routeQuery.value = {}
@@ -109,6 +119,32 @@ function resetMocks() {
   })
   getPublicSettings.mockResolvedValue({ api_base_url: '/v1' })
   copyToClipboard.mockResolvedValue(true)
+}
+
+function useOpenAIVideoKey() {
+  listKeys.mockResolvedValue({
+    items: [{
+      id: 7,
+      name: 'video-key',
+      key: 'sk-video',
+      status: 'active',
+      group_id: 1,
+      group: { platform: 'openai', video_capable: true },
+    }],
+  })
+}
+
+function useGrokVideoKey() {
+  listKeys.mockResolvedValue({
+    items: [{
+      id: 7,
+      name: 'video-key',
+      key: 'sk-video',
+      status: 'active',
+      group_id: 1,
+      group: { platform: 'grok', video_capable: true },
+    }],
+  })
 }
 
 beforeEach(() => {
@@ -455,6 +491,7 @@ describe('VideoStudioView seedance generation', () => {
   })
 
   it('archives a finished video and switches the card to the stored copy', async () => {
+    const expiresAt = Math.floor(Date.now() / 1000) + 86_400
     archiveVideo.mockResolvedValue({
       id: 'arch-1',
       url: 'https://cdn.example.com/archived.mp4',
@@ -462,8 +499,9 @@ describe('VideoStudioView seedance generation', () => {
       model: '',
       format: 'mp4',
       duration_seconds: 5,
+      saved: false,
       created_at: 1,
-      expires_at: 2,
+      expires_at: expiresAt,
     })
     const fetchMock = vi.mocked(fetch)
     fetchMock.mockImplementation(async (input, init) => {
@@ -493,7 +531,14 @@ describe('VideoStudioView seedance generation', () => {
     )
     await vi.waitFor(() => {
       expect(wrapper.get('video').attributes('src')).toBe('https://cdn.example.com/archived.mp4')
+      expect(wrapper.text()).toContain('临时内容 · 还剩 1 天')
     })
+    await wrapper.get('[data-testid="video-archive-pin"]').trigger('click')
+    await flushPromises()
+
+    expect(pinArchivedVideo).toHaveBeenCalledWith('arch-1')
+    expect(wrapper.text()).toContain('已保存到我的作品')
+    expect(wrapper.find('[data-testid="video-archive-pin"]').exists()).toBe(false)
   })
 })
 
@@ -510,6 +555,7 @@ describe('VideoStudioView Seedance model controls', () => {
   })
 
   it('submits model-specific duration, resolution and reference fields through the video endpoint', async () => {
+    useOpenAIVideoKey()
     const fetchMock = vi.mocked(fetch)
     fetchMock.mockImplementation(async (input, init) => {
       const url = String(input)
@@ -580,6 +626,7 @@ describe('VideoStudioView Seedance model controls', () => {
   })
 
   it('archives authenticated Momo video bytes instead of asking the server to refetch', async () => {
+    useOpenAIVideoKey()
     archiveVideo.mockResolvedValue({
       id: 'arch-seedance',
       url: 'https://r2.example.com/seedance.mp4',
@@ -690,6 +737,7 @@ describe('VideoStudioView Seedance model controls', () => {
   })
 
   it('restores the selected model and generation parameters after remounting', async () => {
+    useOpenAIVideoKey()
     const fetchMock = vi.mocked(fetch)
     fetchMock.mockImplementation(async (input) => {
       const url = String(input)
@@ -844,6 +892,104 @@ describe('VideoStudioView references', () => {
       type: 'video_url',
       video_url: { url: 'https://cdn.example.com/ref.mp4' },
     })
+  })
+
+  it('routes Grok reference videos through the selected edit or extension endpoint', async () => {
+    useGrokVideoKey()
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = String(input)
+      if (url.endsWith('/models')) return jsonResponse({ data: [{ id: 'grok-imagine-video' }] })
+      if (url.endsWith('/videos/extensions') && init?.method === 'POST') {
+        return jsonResponse({ request_id: 'task-extension' })
+      }
+      if (url.endsWith('/videos/task-extension')) {
+        return jsonResponse({
+          status: 'done',
+          video: { url: 'https://cdn.example.com/extended.mp4', duration: 8 },
+        })
+      }
+      if (url.endsWith('/videos/task-extension/content')) {
+        return { ok: true, status: 200, statusText: 'OK', blob: async () => new Blob(['video']) } as unknown as Response
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountStudio()
+    await flushPromises()
+    await flushPromises()
+
+    await wrapper.get('[data-testid="video-reference-trigger"]').trigger('click')
+    await wrapper.get('[data-testid="reference-kind-video"]').trigger('click')
+    expect(wrapper.find('[data-testid="video-reference-role-video_edit"]').exists()).toBe(true)
+    await wrapper.get('[data-testid="video-reference-role-video_extension"]').trigger('click')
+    await wrapper.get('[data-testid="reference-url-input"]').setValue('https://cdn.example.com/source.mp4')
+    await wrapper.findAll('button').find((button) => button.text() === '添加')!.trigger('click')
+    await wrapper.get('textarea').setValue('继续延长这个镜头')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    await flushPromises()
+
+    const createCall = fetchMock.mock.calls.find(
+      (call) => String(call[0]).endsWith('/videos/extensions') && call[1]?.method === 'POST',
+    )
+    expect(createCall).toBeDefined()
+    expect(JSON.parse(String(createCall?.[1]?.body)).video).toEqual({
+      url: 'https://cdn.example.com/source.mp4',
+    })
+  })
+
+  it('uploads local Grok reference images before creating the video task', async () => {
+    useGrokVideoKey()
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = String(input)
+      if (url.endsWith('/models')) return jsonResponse({ data: [{ id: 'grok-imagine-video-1.5' }] })
+      if (url.endsWith('/videos/generations') && init?.method === 'POST') {
+        return jsonResponse({ request_id: 'task-grok-local-image' })
+      }
+      if (url.endsWith('/videos/task-grok-local-image')) {
+        return jsonResponse({
+          status: 'done',
+          video: { url: 'https://cdn.example.com/grok.mp4', duration: 8 },
+        })
+      }
+      if (url.endsWith('/videos/task-grok-local-image/content')) {
+        return { ok: true, status: 200, statusText: 'OK', blob: async () => new Blob(['video']) } as unknown as Response
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountStudio()
+    await flushPromises()
+    await flushPromises()
+    await wrapper.get('[data-testid="video-reference-trigger"]').trigger('click')
+    const input = wrapper.get('input[type="file"]')
+    Object.defineProperty(input.element, 'files', {
+      value: [new File([new Uint8Array(32)], 'source.png', { type: 'image/png' })],
+      configurable: true,
+    })
+    await input.trigger('change')
+    await vi.waitFor(() => {
+      expect(wrapper.findAll('.video-composer__reference').length).toBe(1)
+    })
+
+    await wrapper.get('textarea').setValue('让这张图开始运动')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    await flushPromises()
+
+    expect(uploadVideoReferenceAsset).toHaveBeenCalledWith({
+      kind: 'image',
+      data_url: expect.stringContaining('data:image/png;base64,'),
+    })
+    const createCall = fetchMock.mock.calls.find(
+      (call) => String(call[0]).endsWith('/videos/generations') && call[1]?.method === 'POST',
+    )
+    expect(createCall).toBeDefined()
+    expect(JSON.parse(String(createCall?.[1]?.body)).image).toEqual([
+      { url: 'https://r2.example.com/reference.png' },
+    ])
   })
 
   it('keeps the prompt and reference assets when the studio remounts', async () => {

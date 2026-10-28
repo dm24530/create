@@ -38,7 +38,10 @@ func (s *galleryStoreStub) Save(_ context.Context, entry *ImageStudioGalleryEntr
 	return nil
 }
 
-func (s *galleryStoreStub) List(context.Context, int64, int, *bool) ([]*ImageStudioGalleryEntry, error) {
+func (s *galleryStoreStub) List(_ context.Context, _ int64, limit int, _ *bool) ([]*ImageStudioGalleryEntry, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
 	return s.entries, nil
 }
 
@@ -219,6 +222,30 @@ func TestImageStudioGalleryListResolvesStoredOriginalsAndPreservesThumbURLs(t *t
 	require.Equal(t, "https://old-r2.example.com/thumbs/work-1.jpg?X-Amz-Signature=old", entries[0].ThumbURL)
 	require.Equal(t, 1, saver.batchCalls)
 	require.Zero(t, saver.presignCalls)
+}
+
+func TestImageStudioGalleryListHidesLegacyVideoReferenceImages(t *testing.T) {
+	store := &galleryStoreStub{entries: []*ImageStudioGalleryEntry{
+		{
+			ID:     "legacy-reference",
+			Prompt: "Video reference image",
+			Size:   "reference",
+			Saved:  false,
+		},
+		{
+			ID:     "generated-image",
+			Prompt: "雨后的咖啡馆",
+			Size:   "1024x1024",
+			Saved:  false,
+		},
+	}}
+	svc := NewImageStudioGalleryService(store, &gallerySaverStub{})
+
+	entries, err := svc.List(context.Background(), 7, 20, nil)
+
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	require.Equal(t, "generated-image", entries[0].ID)
 }
 
 func TestImageStudioGalleryListKeepsPendingLocalAssetURL(t *testing.T) {
@@ -763,6 +790,7 @@ func TestImageStudioGalleryPinMapsQuotaError(t *testing.T) {
 
 func TestImageStudioGalleryUnpinReturnsTemporaryExpiry(t *testing.T) {
 	createdAt := time.Now().UTC().Add(-time.Hour).Unix()
+	before := time.Now().UTC().Unix()
 	store := &galleryStoreStub{entries: []*ImageStudioGalleryEntry{{
 		ID:        "img-unpin",
 		UserID:    42,
@@ -776,11 +804,11 @@ func TestImageStudioGalleryUnpinReturnsTemporaryExpiry(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, entry)
 	require.False(t, entry.Saved)
-	require.Equal(t, createdAt+int64((7*24*time.Hour)/time.Second), entry.ExpiresAt)
+	require.GreaterOrEqual(t, entry.ExpiresAt, before+int64((7*24*time.Hour)/time.Second))
 	require.False(t, store.entries[0].Saved)
 }
 
-func TestImageStudioGalleryUnpinRejectsExpiredWork(t *testing.T) {
+func TestImageStudioGalleryUnpinSavedWorkAfterRetentionStartsFreshTemporaryWindow(t *testing.T) {
 	store := &galleryStoreStub{entries: []*ImageStudioGalleryEntry{{
 		ID:        "img-expired",
 		UserID:    42,
@@ -788,12 +816,15 @@ func TestImageStudioGalleryUnpinRejectsExpiredWork(t *testing.T) {
 		CreatedAt: time.Now().UTC().Add(-8 * 24 * time.Hour).Unix(),
 	}}}
 	svc := NewImageStudioGalleryService(store, &gallerySaverStub{retention: 7 * 24 * time.Hour})
+	before := time.Now().UTC().Unix()
 
 	entry, err := svc.Unpin(context.Background(), 42, "img-expired")
 
-	require.Nil(t, entry)
-	require.ErrorIs(t, err, ErrStudioWorkExpired)
-	require.Len(t, store.deleted, 0, "expired unpin must wait for the user's delete confirmation")
+	require.NoError(t, err)
+	require.NotNil(t, entry)
+	require.False(t, entry.Saved)
+	require.GreaterOrEqual(t, entry.ExpiresAt, before+int64((7*24*time.Hour)/time.Second))
+	require.Len(t, store.deleted, 0, "unpin must not delete the stored object")
 }
 
 // 清扫到期内容时，记录删掉之后桶里的对象也要删。

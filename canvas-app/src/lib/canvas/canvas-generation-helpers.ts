@@ -1,6 +1,6 @@
 import { defaultConfig, resolveModelForCapability, type AiConfig } from "@/stores/use-config-store";
 import i18n from "@/i18n";
-import { ensureImagePreview, resolveImageUrl, uploadImage } from "@/services/image-storage";
+import { claimLegacyStoredImage, ensureImagePreview, resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { resolveMediaUrl } from "@/services/file-storage";
 import { imageMetadata, referenceUrl } from "@/lib/canvas/canvas-node-factory";
 import type { NodeGenerationInput } from "@/components/canvas/canvas-node-generation";
@@ -35,6 +35,7 @@ export async function resolveMetadataReferences(metadata: CanvasNodeMetadata) {
     if (!metadata.references?.length) return null;
     const references = await Promise.all(
         metadata.references.map(async (url, index) => {
+            if (url.startsWith("image:")) await claimLegacyStoredImage(url);
             const dataUrl = url.startsWith("image:") ? await resolveImageUrl(url, "") : url;
             return dataUrl ? { id: `${index}`, name: `reference-${index}.png`, type: "image/png", dataUrl, storageKey: url.startsWith("image:") ? url : undefined } : null;
         }),
@@ -53,9 +54,11 @@ export async function hydrateCanvasImages(nodes: CanvasNodeData[]) {
                     return { ...node, metadata: { ...metadata, content: resolved } };
                 }
                 if (node.type !== CanvasNodeType.Image || !metadata || !content) return node;
+                await claimLegacyStoredImage(metadata.storageKey);
                 const images = await Promise.all(
                     (metadata.images || []).map(async (image) => {
                         if (!image.content) return image;
+                        await claimLegacyStoredImage(image.storageKey);
                         void ensureImagePreview(image.storageKey);
                         const resolved = await resolveImageUrl(image.storageKey, image.content).catch(() => image.content);
                         return { ...image, content: resolved };

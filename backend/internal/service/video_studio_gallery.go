@@ -23,6 +23,8 @@ const (
 	videoStoragePrefix = "videos/"
 	// maxVideoArchiveBytes 限制单条视频归档大小：服务器抓取与 base64 上传都按它兜底。
 	maxVideoArchiveBytes int64 = 256 << 20
+	// Video studio reference audio is small compared with generated videos.
+	maxVideoReferenceAudioBytes int64 = 16 << 20
 )
 
 var (
@@ -95,6 +97,14 @@ type VideoStudioMediaSaver interface {
 	GalleryRetention() time.Duration
 }
 
+type videoStudioReferenceImageSaver interface {
+	SaveImageWithKey(ctx context.Context, key, contentType string, data []byte) (string, string, error)
+}
+
+type videoStudioReferenceAudioSaver interface {
+	SaveVideoReferenceAudio(ctx context.Context, key, contentType string, data []byte) (string, error)
+}
+
 type VideoStudioGalleryService struct {
 	store      VideoStudioGalleryStore
 	storage    VideoStudioMediaSaver
@@ -125,6 +135,61 @@ func (s *VideoStudioGalleryService) tempRetention() time.Duration {
 		}
 	}
 	return ImageStudioGalleryTTL
+}
+
+// UploadReferenceAsset stores a temporary reference without creating a gallery
+// row. Video reference images otherwise leak into the image studio, while
+// reference videos leak into the video studio's temporary works.
+func (s *VideoStudioGalleryService) UploadReferenceAsset(
+	ctx context.Context,
+	userID int64,
+	kind string,
+	contentType string,
+	data []byte,
+) (string, error) {
+	if s == nil || s.storage == nil || userID <= 0 || len(data) == 0 {
+		return "", ErrVideoStudioGalleryUnavailable
+	}
+	storageKey := strconv.FormatInt(userID, 10)
+	if s.identities != nil {
+		resolved, err := s.identities.StorageKey(ctx, userID)
+		if err != nil {
+			return "", err
+		}
+		storageKey = resolved
+	}
+	id := strings.ReplaceAll(uuid.NewString(), "-", "")
+
+	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case "image":
+		saver, ok := s.storage.(videoStudioReferenceImageSaver)
+		if !ok {
+			return "", ErrVideoStudioGalleryUnavailable
+		}
+		key := storageKey + "/video-references/" + id + extensionForContentType(contentType)
+		url, _, err := saver.SaveImageWithKey(ctx, key, contentType, data)
+		return url, err
+	case "video":
+		normalizedType := normalizeVideoContentType(contentType, data)
+		if normalizedType == "" {
+			return "", ErrVideoStudioUnsupportedType
+		}
+		key := storageKey + "/video-references/" + id + videoExtensionForContentType(normalizedType)
+		return s.storage.SaveVideo(ctx, key, normalizedType, data)
+	case "audio":
+		saver, ok := s.storage.(videoStudioReferenceAudioSaver)
+		if !ok {
+			return "", ErrVideoStudioGalleryUnavailable
+		}
+		normalizedType := normalizeAudioContentType(contentType, data)
+		if normalizedType == "" {
+			return "", ErrVideoStudioUnsupportedType
+		}
+		key := storageKey + "/video-references/" + id + audioExtensionForContentType(normalizedType)
+		return saver.SaveVideoReferenceAudio(ctx, key, normalizedType, data)
+	default:
+		return "", ErrVideoStudioUnsupportedType
+	}
 }
 
 // Save 归档一段视频。contentType 必须是视频类型，大小不超过 maxVideoArchiveBytes。
@@ -250,7 +315,23 @@ func (s *VideoStudioGalleryService) List(
 	if limit <= 0 || limit > maxItems {
 		limit = maxItems
 	}
-	return s.store.List(ctx, userID, limit, saved)
+	entries, err := s.store.List(ctx, userID, limit, saved)
+	if err != nil {
+		return nil, err
+	}
+	visible := make([]*VideoStudioGalleryEntry, 0, len(entries))
+	for _, entry := range entries {
+		// Older clients archived local reference videos as temporary works.
+		// Keep them out of the studio list while allowing their normal expiry.
+		if entry != nil &&
+			!entry.Saved &&
+			strings.TrimSpace(entry.Prompt) == "Video reference" &&
+			entry.DurationSeconds == 0 {
+			continue
+		}
+		visible = append(visible, entry)
+	}
+	return visible, nil
 }
 
 // Pin 把一条临时视频转成「我的作品」里的长期内容（计入配额）。
@@ -267,7 +348,7 @@ func (s *VideoStudioGalleryService) Pin(ctx context.Context, userID int64, id st
 	return nil
 }
 
-// Unpin 取消保存。未过期的视频转回临时内容；已过期的视频由前端确认后删除。
+// Unpin 取消保存。取消后从当前时间重新开始临时保留期。
 func (s *VideoStudioGalleryService) Unpin(
 	ctx context.Context,
 	userID int64,
@@ -293,10 +374,7 @@ func (s *VideoStudioGalleryService) Unpin(
 	if !entry.Saved {
 		return entry, nil
 	}
-	expiresAt := entry.CreatedAt + int64(s.tempRetention().Seconds())
-	if expiresAt <= time.Now().UTC().Unix() {
-		return nil, ErrStudioWorkExpired
-	}
+	expiresAt := time.Now().UTC().Add(s.tempRetention()).Unix()
 	if err := s.store.Unpin(ctx, userID, entry.ID, expiresAt); err != nil {
 		return nil, err
 	}
@@ -329,6 +407,29 @@ func (s *ImageStorageSettingService) SaveVideo(ctx context.Context, key, content
 		return "", ErrVideoStudioArchiveTooLarge
 	}
 	key = videoStoragePrefix + strings.TrimLeft(strings.TrimSpace(key), "/")
+	if storage, ok := uploader.storage.(ImageStorageWithExpiry); ok {
+		return storage.SaveWithExpiry(ctx, key, contentType, data, s.GalleryRetention())
+	}
+	return uploader.storage.Save(ctx, key, contentType, data)
+}
+
+func (s *ImageStorageSettingService) SaveVideoReferenceAudio(
+	ctx context.Context,
+	key string,
+	contentType string,
+	data []byte,
+) (string, error) {
+	if reason := s.unusableReason(ctx); reason != nil {
+		return "", reason
+	}
+	if int64(len(data)) > maxVideoReferenceAudioBytes {
+		return "", ErrVideoStudioArchiveTooLarge
+	}
+	uploader, enabled := s.resolve()
+	if !enabled || uploader == nil || uploader.storage == nil {
+		return "", ErrImageStorageIncomplete
+	}
+	key = videoStoragePrefix + "references/" + strings.TrimLeft(strings.TrimSpace(key), "/")
 	if storage, ok := uploader.storage.(ImageStorageWithExpiry); ok {
 		return storage.SaveWithExpiry(ctx, key, contentType, data, s.GalleryRetention())
 	}
@@ -410,6 +511,38 @@ func DecodeVideoDataURL(dataURL string) ([]byte, string, error) {
 	return data, contentType, nil
 }
 
+func DecodeAudioDataURL(dataURL string) ([]byte, string, error) {
+	trimmed := strings.TrimSpace(dataURL)
+	if trimmed == "" {
+		return nil, "", fmt.Errorf("decode audio data URL: empty payload")
+	}
+	mediaType, payload, found := strings.Cut(trimmed, ",")
+	if !found || !strings.HasPrefix(strings.ToLower(mediaType), "data:") {
+		return nil, "", fmt.Errorf("decode audio data URL: malformed data URL")
+	}
+	if !strings.Contains(strings.ToLower(mediaType), ";base64") {
+		return nil, "", fmt.Errorf("decode audio data URL: payload is not base64 encoded")
+	}
+	header := mediaType[len("data:"):]
+	declaredHeader := header
+	if idx := strings.Index(strings.ToLower(header), ";base64"); idx >= 0 {
+		declaredHeader = header[:idx]
+	}
+	declared, _, err := mime.ParseMediaType(strings.TrimSpace(declaredHeader))
+	if err != nil {
+		return nil, "", fmt.Errorf("decode audio data URL: invalid media type: %w", err)
+	}
+	data, err := decodeBase64Payload(payload, maxVideoReferenceAudioBytes)
+	if err != nil {
+		return nil, "", err
+	}
+	contentType := normalizeAudioContentType(declared, data)
+	if contentType == "" {
+		return nil, "", ErrVideoStudioUnsupportedType
+	}
+	return data, contentType, nil
+}
+
 func normalizeVideoContentType(declared string, data []byte) string {
 	declared = strings.ToLower(strings.TrimSpace(strings.Split(declared, ";")[0]))
 	if isVideoContentType(declared) {
@@ -431,6 +564,28 @@ func isVideoContentType(contentType string) bool {
 	}
 }
 
+func normalizeAudioContentType(declared string, data []byte) string {
+	declared = strings.ToLower(strings.TrimSpace(strings.Split(declared, ";")[0]))
+	if isAudioContentType(declared) {
+		return declared
+	}
+	detected := strings.ToLower(strings.TrimSpace(strings.Split(http.DetectContentType(data), ";")[0]))
+	if isAudioContentType(detected) {
+		return detected
+	}
+	return ""
+}
+
+func isAudioContentType(contentType string) bool {
+	switch contentType {
+	case "audio/mpeg", "audio/mp3", "audio/wav", "audio/x-wav", "audio/ogg",
+		"audio/webm", "audio/mp4", "audio/aac", "audio/flac":
+		return true
+	default:
+		return false
+	}
+}
+
 func videoExtensionForContentType(contentType string) string {
 	switch contentType {
 	case "video/webm":
@@ -441,6 +596,25 @@ func videoExtensionForContentType(contentType string) string {
 		return ".mkv"
 	default:
 		return ".mp4"
+	}
+}
+
+func audioExtensionForContentType(contentType string) string {
+	switch contentType {
+	case "audio/wav", "audio/x-wav":
+		return ".wav"
+	case "audio/ogg":
+		return ".ogg"
+	case "audio/webm":
+		return ".webm"
+	case "audio/mp4":
+		return ".m4a"
+	case "audio/aac":
+		return ".aac"
+	case "audio/flac":
+		return ".flac"
+	default:
+		return ".mp3"
 	}
 }
 

@@ -712,8 +712,11 @@ import { useAuthStore } from '@/stores/auth'
 import { resolvePlaygroundApiEndpoint } from '@/utils/apiEndpoint'
 
 const IMAGE_GENERATION_TIMEOUT_MS = 3 * 60 * 1000
+const IMAGE_ASYNC_SUBMIT_TIMEOUT_MS = 2 * 60 * 1000
 const IMAGE_GENERATION_TIMEOUT_MESSAGE = '图片生成超过 3 分钟，已停止等待，请重新生成'
 const IMAGE_MEDIA_LOAD_TIMEOUT_MS = 3_000
+const reportedGenerationFailures = new Set<string>()
+const reportedVisibleErrors = new Set<string>()
 
 interface GeneratedImage {
   id: number | string
@@ -822,6 +825,11 @@ const sizeMenuPlacement = ref<'up' | 'down'>('down')
 const generating = ref(false)
 const activeGenerations = ref(0)
 const errorMessage = ref('')
+watch(errorMessage, (message) => {
+  const normalized = message.trim()
+  if (!normalized) return
+  reportVisibleImageStudioError(normalized)
+})
 const images = ref<GeneratedImage[]>([])
 const generationClockNow = ref(Date.now())
 const activeImageTaskCount = computed(() => images.value.filter((image) => image.pending).length)
@@ -1872,6 +1880,7 @@ function restorePendingImages() {
     const restored = restoredAll.filter((item) => !ambiguousGatewaySubmissions.includes(item))
     if (ambiguousGatewaySubmissions.length) {
       appStore.showWarning('有图片任务的提交结果无法确认，为避免重复扣费未自动重试。请确认作品库后重新生成。', 6000)
+      reportVisibleImageStudioError('有图片任务的提交结果无法确认，为避免重复扣费未自动重试。请确认作品库后重新生成。')
     }
     if (!restored.length && !timedOutEntries.length) {
       localStorage.removeItem(pendingImageStorageKey(userId))
@@ -2915,6 +2924,7 @@ async function retryFailedImage(image: GeneratedImage) {
   const snapshot = generationRequestSnapshots.get(String(image.batchId || ''))
   if (image.hadReferences && !snapshot?.references.length) {
     restoreComposerForManualRetry(image)
+    reportVisibleImageStudioError('原任务使用了参考图，请重新选择参考图后再生成。')
     appStore.showWarning('原任务使用了参考图，请重新选择参考图后再生成。', 5000)
     return
   }
@@ -3155,6 +3165,54 @@ function markImageFailed(image: GeneratedImage, error: unknown) {
   image.durationMs = image.startedAt
     ? Math.max(1, Date.now() - Number(image.startedAt))
     : image.durationMs
+  reportImageGenerationFailure(image, error, message)
+}
+
+function reportImageGenerationFailure(image: GeneratedImage, error: unknown, message: string) {
+  const key = `${image.batchId || image.id}:${message}`
+  if (reportedGenerationFailures.has(key)) return
+  reportedGenerationFailures.add(key)
+  const normalized = message.toLowerCase()
+  const errorType = normalized.includes('超时') || normalized.includes('timeout')
+    ? 'client_timeout'
+    : normalized.includes('无法连接') || normalized.includes('network')
+      ? 'client_network_error'
+      : 'client_generation_error'
+  void imageStudioGalleryAPI.reportClientError({
+    task_id: String(image.gatewayTaskId || image.taskId || ''),
+    batch_id: String(image.batchId || ''),
+    model: String(image.model || imageModel.value || ''),
+    stage: 'image_generation_failure',
+    error_type: errorType,
+    message,
+    status_code: nestedErrorStatus(error) || undefined,
+    elapsed_ms: image.startedAt ? Math.max(1, Date.now() - Number(image.startedAt)) : undefined,
+    request_id: String(image.gatewayTaskId || image.taskId || ''),
+    request_path: image.gatewayPollUrl || '/v1/images/generations',
+  }).catch(() => {
+    // Reporting must never change the user-visible generation result.
+  })
+}
+
+function reportVisibleImageStudioError(message: string) {
+  const key = message.toLowerCase()
+  if (reportedVisibleErrors.has(key)) return
+  reportedVisibleErrors.add(key)
+  const normalized = message.toLowerCase()
+  const errorType = normalized.includes('超时') || normalized.includes('timeout')
+    ? 'client_timeout'
+    : normalized.includes('无法连接') || normalized.includes('network')
+      ? 'client_network_error'
+      : 'client_visible_error'
+  void imageStudioGalleryAPI.reportClientError({
+    model: String(imageModel.value || ''),
+    stage: 'image_studio_visible_error',
+    error_type: errorType,
+    message,
+    request_path: '/image-studio',
+  }).catch(() => {
+    // Reporting must never change the user-visible error.
+  })
 }
 
 function removeFailedImage(image: GeneratedImage) {
@@ -3204,6 +3262,18 @@ async function waitForGatewayPollRetry(delay: number) {
   if (componentDisposed) throw new ImageGenerationWaitCancelled()
 }
 
+class ImageRequestTimeout extends Error {
+  constructor(readonly timeoutMs: number) {
+    super(`请求超时（${formatRequestTimeout(timeoutMs)}），请稍后重试`)
+    this.name = 'ImageRequestTimeout'
+  }
+}
+
+function formatRequestTimeout(timeoutMs: number) {
+  if (timeoutMs < 60_000) return `${Math.max(1, Math.ceil(timeoutMs / 1_000))} 秒`
+  return `${Math.ceil(timeoutMs / 60_000)} 分钟`
+}
+
 async function fetchWithTimeout(
   input: Parameters<typeof fetch>[0],
   init: Parameters<typeof fetch>[1] = {},
@@ -3219,7 +3289,7 @@ async function fetchWithTimeout(
     return await fetch(input, { ...init, signal: controller.signal })
   } catch (error) {
     if (timedOut) {
-      throw new Error(`请求超时（${Math.ceil(timeoutMs / 60_000)} 分钟），请稍后重试`)
+      throw new ImageRequestTimeout(timeoutMs)
     }
     throw error
   } finally {
@@ -3315,6 +3385,13 @@ async function pollGatewayImageTask(
       payload = await response.json().catch(() => null)
     } catch (error) {
       if (error instanceof ImageGenerationWaitCancelled) throw error
+      if (error instanceof ImageRequestTimeout) {
+        if (Date.now() < deadline) {
+          await waitForGatewayPollRetry(gatewayPollInterval(Date.now() - pollStartedAt))
+          continue
+        }
+        throw new Error(IMAGE_GENERATION_TIMEOUT_MESSAGE)
+      }
       throw error instanceof Error ? error : new Error('查询图片任务失败')
     }
     if (!response.ok) throw gatewayTaskError(payload, response.status)
@@ -3376,7 +3453,7 @@ async function tryExecuteGatewayAsyncRequests(
           headers: requestHeaders,
           body: requestBody,
         },
-        Math.min(30_000, Math.max(1, generationDeadline - Date.now())),
+        Math.min(IMAGE_ASYNC_SUBMIT_TIMEOUT_MS, Math.max(1, generationDeadline - Date.now())),
       )
       payload = await response.json().catch(() => null)
     } catch (error) {
@@ -3738,7 +3815,9 @@ async function finishGenerationBatch(
   }
   persistPendingImages()
   if (localProcessError) {
-    appStore.showWarning('本地尺寸处理失败，已保留并显示上游原图。', 6000)
+    const message = '本地尺寸处理失败，已保留并显示上游原图。'
+    reportVisibleImageStudioError(message)
+    appStore.showWarning(message, 6000)
   }
   if (persist) {
     await persistGeneratedImages(generated, currentPrompt, currentModel, { owner })
@@ -3949,7 +4028,9 @@ async function downloadImage(image: GeneratedImage) {
     link.download = filename
     link.click()
   } catch (error) {
-    appStore.showError(error instanceof Error ? error.message : '下载图片失败', 5000)
+    const message = error instanceof Error ? error.message : '下载图片失败'
+    reportVisibleImageStudioError(message)
+    appStore.showError(message, 5000)
   } finally {
     downloadingImageIds.value.delete(mediaId)
   }

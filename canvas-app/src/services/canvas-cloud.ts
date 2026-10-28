@@ -8,6 +8,12 @@ import {
 import { createImageThumbnail } from "@/lib/image-thumbnail";
 import { getImageBlob } from "@/services/image-storage";
 import { getMediaBlob } from "@/services/file-storage";
+import {
+  configureCanvasAuth,
+  getCanvasAccessToken as getCanvasAccessTokenFromAuth,
+  isCanvasAuthReady,
+  subscribeCanvasAuth,
+} from "@/services/canvas-auth";
 
 export type CloudCanvasProjectSummary = {
   id: string;
@@ -37,30 +43,24 @@ export type CloudCanvasProject = CloudCanvasProjectSummary & {
   assets: CloudCanvasAsset[];
 };
 
-let accessToken = "";
-const listeners = new Set<() => void>();
-
 export function configureCanvasCloud(token?: string) {
-  accessToken = token?.trim() || "";
-  listeners.forEach((listener) => listener());
+  configureCanvasAuth(token);
 }
 
 export function getCanvasAccessToken() {
-  return accessToken;
+  return getCanvasAccessTokenFromAuth();
 }
 
 export function subscribeCanvasCloud(listener: () => void) {
-  listeners.add(listener);
-  return () => {
-    listeners.delete(listener);
-  };
+  return subscribeCanvasAuth(listener);
 }
 
 export function isCanvasCloudReady() {
-  return Boolean(accessToken);
+  return isCanvasAuthReady();
 }
 
 async function cloudRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  const accessToken = getCanvasAccessTokenFromAuth();
   if (!accessToken) throw new Error("Canvas cloud session is unavailable");
   const headers = new Headers(init?.headers);
   headers.set("Authorization", `Bearer ${accessToken}`);
@@ -115,7 +115,12 @@ export async function putCloudCanvasProject(project: CanvasProject) {
 }
 
 export async function deleteCloudCanvasProject(id: string) {
-  await cloudRequest(`/projects/${encodeURIComponent(id)}`, { method: "DELETE" });
+  try {
+    await cloudRequest(`/projects/${encodeURIComponent(id)}`, { method: "DELETE" });
+  } catch (error) {
+    if ((error as Error & { status?: number })?.status === 404) return;
+    throw error;
+  }
 }
 
 export { canvasProjectCloudFingerprint, projectGraphForCloud };

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { canvasProjectCloudFingerprint } from '../../../../../canvas-app/src/lib/canvas/canvas-cloud-content'
 import {
   hasUnsyncedCanvasChanges,
+  isCanvasProjectDeleted,
   reconcileCanvasProjectOnOpen,
 } from '../../../../../canvas-app/src/lib/canvas/canvas-project-sync'
 
@@ -40,6 +41,15 @@ function synced(projectValue: ReturnType<typeof project>) {
 }
 
 describe('canvas project sync reconciliation', () => {
+  it('recognizes a local deletion tombstone before a cloud project can be restored', () => {
+    expect(isCanvasProjectDeleted('deleted-project', [
+      { id: 'deleted-project', deletedAt: '2026-10-28T00:00:00.000Z' },
+    ])).toBe(true)
+    expect(isCanvasProjectDeleted('active-project', [
+      { id: 'deleted-project', deletedAt: '2026-10-28T00:00:00.000Z' },
+    ])).toBe(false)
+  })
+
   it('uses newer cloud content when the local project is clean', () => {
     const local = synced(project('shared', 'Old title', ['local-node'], 1))
     const cloud = project('shared', 'Cloud title', ['cloud-node'], 2)

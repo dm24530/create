@@ -7,8 +7,11 @@
 //   - Grok（xAI 视频协议）：POST /videos/generations
 // 三种协议的状态查询与内容下载路径不同，统一在这里归一化。
 
-import { saveImageStudioGallery } from '@/api/imageStudio'
-import { archiveVideo } from './videoArchiveApi'
+import {
+  uploadVideoReferenceAsset,
+  type VideoReferenceAssetUpload,
+  type VideoReferenceAssetUploadResult,
+} from './videoArchiveApi'
 
 export type VideoProvider = 'seedance' | 'seedance_video' | 'grok'
 
@@ -28,7 +31,12 @@ export interface VideoReferenceAsset {
   kind: 'image' | 'video' | 'audio'
   name: string
   url: string
-  role?: 'first_frame' | 'last_frame' | 'reference_image'
+  role?:
+    | 'first_frame'
+    | 'last_frame'
+    | 'reference_image'
+    | 'video_edit'
+    | 'video_extension'
   // 本地选择/上传的素材才有字节数，用于前端限制单件与合计体积。
   sizeBytes?: number
 }
@@ -265,8 +273,9 @@ export function getVideoModelProfile(model: string, provider?: VideoProvider): V
     return seedanceProfile
   }
   if (provider === 'grok' || value.includes('grok')) {
+    const grokProfile = seedanceProfile || DEFAULT_PROFILE
     return {
-      ...DEFAULT_PROFILE,
+      ...grokProfile,
       provider: 'grok',
       minDuration: 1,
       maxDuration: value.includes('1.5') ? 15 : 10,
@@ -274,6 +283,17 @@ export function getVideoModelProfile(model: string, provider?: VideoProvider): V
       resolutions: value.includes('1.5') ? ['480p', '720p', '1080p'] : ['480p', '720p'],
       maxImages: value.includes('1.5') ? 14 : 7,
       supportsAudio: value.includes('1.5'),
+      modes: value.includes('1.5')
+        ? [
+            'text-to-video',
+            'image-to-video',
+            'first-last-frame',
+            'reference-images',
+            'reference-video',
+            'video-edit',
+            'video-extension',
+          ]
+        : ['text-to-video', 'image-to-video', 'reference-images', 'reference-video', 'video-edit', 'video-extension'],
     }
   }
   return DEFAULT_PROFILE
@@ -304,37 +324,35 @@ async function readError(response: Response): Promise<string> {
   )
 }
 
-export async function materializeSeedanceReferences(
+export async function materializeVideoReferences(
   assets: VideoReferenceAsset[],
-  model: string,
-  uploadImage: typeof saveImageStudioGallery = saveImageStudioGallery,
-  uploadVideo: typeof archiveVideo = archiveVideo,
+  uploadAsset: (
+    request: VideoReferenceAssetUpload,
+  ) => Promise<VideoReferenceAssetUploadResult> = uploadVideoReferenceAsset,
 ): Promise<VideoReferenceAsset[]> {
   return Promise.all(assets.map(async (asset) => {
     if (asset.kind === 'image' && asset.url.startsWith('data:image/')) {
-      const format = asset.url.match(/^data:image\/([a-zA-Z0-9.+-]+);/)?.[1]?.replace('jpeg', 'jpg') || 'png'
-      const entry = await uploadImage({
-        image_data_url: asset.url,
-        prompt: 'Video reference image',
-        model,
-        size: 'reference',
-        format,
-        saved: false,
+      const entry = await uploadAsset({
+        kind: 'image',
+        data_url: asset.url,
       })
       if (!entry.url) throw new Error('参考图上传后没有返回公开地址')
       return { ...asset, url: entry.url }
     }
     if (asset.kind === 'video' && asset.url.startsWith('data:video/')) {
-      const format = asset.url.match(/^data:video\/([a-zA-Z0-9.+-]+);/)?.[1] || 'mp4'
-      const entry = await uploadVideo({
-        video_data_url: asset.url,
-        prompt: 'Video reference',
-        model,
-        format,
-        duration_seconds: 0,
-        saved: false,
+      const entry = await uploadAsset({
+        kind: 'video',
+        data_url: asset.url,
       })
       if (!entry.url) throw new Error('参考视频上传后没有返回公开地址')
+      return { ...asset, url: entry.url }
+    }
+    if (asset.kind === 'audio' && asset.url.startsWith('data:audio/')) {
+      const entry = await uploadAsset({
+        kind: 'audio',
+        data_url: asset.url,
+      })
+      if (!entry.url) throw new Error('参考音频上传后没有返回公开地址')
       return { ...asset, url: entry.url }
     }
     return asset
@@ -349,29 +367,33 @@ export function buildVideoRequest(
     const firstFrame = params.images.find((asset) => asset.role === 'first_frame')
     const lastFrame = params.images.find((asset) => asset.role === 'last_frame')
     const referenceImages = params.images.filter((asset) => asset.role === 'reference_image')
+    const frameImages = [firstFrame, lastFrame]
+      .filter((asset): asset is VideoReferenceAsset => Boolean(asset))
+      .map((asset) => asset.url)
     const body: Record<string, unknown> = {
       model: params.model.trim(),
       prompt: params.prompt.trim(),
       duration: params.durationSeconds,
       resolution: params.resolution,
       aspect_ratio: params.aspectRatio,
+      generate_audio: params.generateAudio,
     }
     if (params.videos.length) {
       body.mode = 'reference-video'
       body.reference_video_urls = params.videos.map((asset) => asset.url)
-      if (referenceImages.length) {
-        body.reference_image_urls = referenceImages.map((asset) => asset.url)
-      }
     } else if (firstFrame || lastFrame) {
       body.mode = firstFrame && lastFrame ? 'first-last-frame' : 'image-to-video'
-      body.images = [firstFrame, lastFrame]
-        .filter((asset): asset is VideoReferenceAsset => Boolean(asset))
-        .map((asset) => asset.url)
     } else if (referenceImages.length) {
       body.mode = 'reference-images'
-      body.reference_image_urls = referenceImages.map((asset) => asset.url)
     } else {
       body.mode = 'text-to-video'
+    }
+    if (frameImages.length) body.images = frameImages
+    if (referenceImages.length) {
+      body.reference_image_urls = referenceImages.map((asset) => asset.url)
+    }
+    if (params.audios.length) {
+      body.reference_audio_urls = params.audios.map((asset) => asset.url)
     }
     return { path: '/video/generations', body }
   }
@@ -387,7 +409,15 @@ export function buildVideoRequest(
     if (params.images.length) {
       body.image = params.images.map((asset) => ({ url: asset.url }))
     }
-    return { path: '/videos/generations', body }
+    if (params.videos.length) {
+      body.video = { url: params.videos[0].url }
+    }
+    const path = params.videos.length
+      ? params.videos[0].role === 'video_extension'
+        ? '/videos/extensions'
+        : '/videos/edits'
+      : '/videos/generations'
+    return { path, body }
   }
 
   // Seedance 用 content 数组承载多模态参考，参考图可带 first_frame/last_frame 角色。
@@ -411,8 +441,8 @@ export function buildVideoRequest(
     duration: params.durationSeconds,
     resolution: params.resolution,
     ratio: params.aspectRatio,
+    generate_audio: params.generateAudio,
   }
-  if (params.generateAudio) body.generate_audio = true
   return { path: '/contents/generations/tasks', body }
 }
 
@@ -435,8 +465,9 @@ export function extractRequestId(payload: any): string {
 export async function createVideoTask(
   context: VideoGatewayContext,
   params: VideoGenerationParams,
+  resolvedProvider?: VideoProvider,
 ): Promise<{ provider: VideoProvider; requestId: string }> {
-  const provider = resolveVideoProvider(params.model, context)
+  const provider = resolvedProvider ?? resolveVideoProvider(params.model, context)
   const { path, body } = buildVideoRequest(provider, params)
   const response = await fetch(joinUrl(context.baseUrl, path), {
     method: 'POST',

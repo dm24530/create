@@ -31,7 +31,7 @@ import { CanvasNodeCropDialog, type CanvasImageCropRect } from "@/components/can
 import { CanvasNodeMaskEditDialog, type CanvasImageMaskEditPayload } from "@/components/canvas/canvas-node-mask-edit-dialog";
 import { CanvasNodeSplitDialog, type CanvasImageSplitParams } from "@/components/canvas/canvas-node-split-dialog";
 import { CanvasNodeUpscaleDialog, type CanvasImageUpscaleParams } from "@/components/canvas/canvas-node-upscale-dialog";
-import { buildNodeGenerationContext, buildNodeGenerationInputs, buildNodeResponseMessages, hydrateNodeGenerationContext, type NodeGenerationInput } from "@/components/canvas/canvas-node-generation";
+import { buildNodeGenerationContext, buildNodeGenerationInputs, buildNodeResponseMessages, hydrateNodeGenerationContext, type NodeGenerationContext, type NodeGenerationInput } from "@/components/canvas/canvas-node-generation";
 import { mapWithConcurrency } from "@/lib/concurrency";
 import { buildImageGenerationReferences } from "@/lib/canvas/image-generation-references";
 import { applyPendingImageTasks, clearPendingImageTask, clearPendingImageTasksForNodes, rememberPendingImageTask } from "@/lib/canvas/pending-image-tasks";
@@ -49,6 +49,7 @@ import { flushCanvasStorePersistence, useCanvasStore } from "@/stores/canvas/use
 import {
     canvasProjectCloudFingerprint,
     cloudCanvasProjectFingerprint,
+    deleteCloudCanvasProject,
     getCloudCanvasProject,
     hydrateCloudProject,
     isCanvasCloudReady,
@@ -58,7 +59,7 @@ import {
 import { useAgentBridge } from "@/pages/canvas/hooks/use-agent-bridge";
 import { usePluginHost } from "@/pages/canvas/hooks/use-plugin-host";
 import { buildNodeMentionReferences, getGroupResourceNodes, isCanvasReferenceNode, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
-import { mergeCanvasProjectContents, reconcileCanvasProjectOnOpen } from "@/lib/canvas/canvas-project-sync";
+import { isCanvasProjectDeleted, mergeCanvasProjectContents, reconcileCanvasProjectOnOpen } from "@/lib/canvas/canvas-project-sync";
 import { exportCanvasProjects } from "@/lib/canvas/canvas-export";
 import { applyNodeConfigPatch, audioMetadata, buildAudioGenerationMetadata, buildImageGenerationMetadata, createCanvasNode, imageMetadata, videoMetadata } from "@/lib/canvas/canvas-node-factory";
 import { applyGroupSelection, applyUngroupSelection, canGroupSelectedNodes, canUngroupSelectedNodes, collectGroupMemberNodes, findContainingGroupId, findGroupDropTarget, focusViewportForNode, getConnectionTargetAnchor, getGroupWrapRect, normalizeConnection, snapNodesIntoGroup } from "@/lib/canvas/canvas-node-geometry";
@@ -656,11 +657,19 @@ function InfiniteCanvasPage() {
         setLoadError("");
 
         const restore = async () => {
+            if (isCanvasProjectDeleted(projectId, useCanvasStore.getState().deletedProjects)) {
+                setLoadError(t("canvas.projectPage.notFound"));
+                return;
+            }
             const localProject = openProject(projectId);
             let project = localProject;
             if (isCanvasCloudReady()) {
                 try {
                     const cloudProject = await getCloudCanvasProject(projectId);
+                    if (isCanvasProjectDeleted(projectId, useCanvasStore.getState().deletedProjects)) {
+                        setLoadError(t("canvas.projectPage.notFound"));
+                        return;
+                    }
                     project = reconcileCanvasProjectOnOpen(localProject, hydrateCloudProject(cloudProject)).project;
                 } catch {
                     // Keep the local project route recoverable while cloud data is unavailable.
@@ -789,6 +798,7 @@ function InfiniteCanvasPage() {
 
     const syncCanvasProjectToCloud = useCallback(async () => {
         if (!isCanvasCloudReady()) return;
+        if (isCanvasProjectDeleted(projectId, useCanvasStore.getState().deletedProjects)) return;
         if (cloudSaveInFlightRef.current) {
             cloudSaveQueuedRef.current = true;
             return cloudSaveInFlightRef.current;
@@ -829,6 +839,12 @@ function InfiniteCanvasPage() {
                     }
                     const fingerprint = canvasProjectCloudFingerprint(currentProject);
                     const saved = await putCloudCanvasProject(currentProject);
+                    if (isCanvasProjectDeleted(projectId, useCanvasStore.getState().deletedProjects)) {
+                        await deleteCloudCanvasProject(projectId).catch((error) => {
+                            console.warn("Failed to delete canvas project after in-flight save", error);
+                        });
+                        return;
+                    }
                     useCanvasStore.setState((state) => ({
                         projects: state.projects.map((item) => (
                             item.id === projectId
@@ -907,6 +923,7 @@ function InfiniteCanvasPage() {
 
     useEffect(() => {
         if (!projectLoaded || !isCanvasCloudReady()) return;
+        if (isCanvasProjectDeleted(projectId, useCanvasStore.getState().deletedProjects)) return;
         if (cloudAssetTimerRef.current) clearTimeout(cloudAssetTimerRef.current);
         cloudAssetTimerRef.current = setTimeout(() => {
             void (async () => {
@@ -1011,6 +1028,7 @@ function InfiniteCanvasPage() {
 
     useEffect(() => {
         if (!projectLoaded || !isCanvasCloudReady()) return;
+        if (isCanvasProjectDeleted(projectId, useCanvasStore.getState().deletedProjects)) return;
         if (cloudSaveTimerRef.current) clearTimeout(cloudSaveTimerRef.current);
         cloudSaveTimerRef.current = setTimeout(() => {
             void syncCanvasProjectToCloud();
@@ -1707,7 +1725,11 @@ function InfiniteCanvasPage() {
 
     const deleteCurrentProject = useCallback(() => {
         deleteProjects([projectId]);
+        flushCanvasStorePersistence();
         cleanupAssetImages();
+        void deleteCloudCanvasProject(projectId).catch((error) => {
+            console.warn("Failed to delete cloud canvas project", error);
+        });
         navigate(`/canvas${window.location.search}`);
     }, [cleanupAssetImages, deleteProjects, navigate, projectId]);
 
@@ -2930,23 +2952,46 @@ function InfiniteCanvasPage() {
             const runController = startGenerationRequest(nodeId, nodeId, nodeId);
             const sourceTextContent = sourceNode?.type === CanvasNodeType.Text ? sourceNode.metadata?.content?.trim() || "" : "";
             const editingTextNode = mode === "text" && Boolean(sourceTextContent);
-            const generationContext = await hydrateNodeGenerationContext(
-                buildNodeGenerationContext(nodeId, nodesRef.current, connectionsRef.current, editingTextNode ? t("canvas.projectPage.editTextPrompt", { source: sourceTextContent, prompt }) : prompt),
-            );
+            const markSourceStatus = sourceNode?.type !== CanvasNodeType.Image && !editingTextNode;
+            const sourceGenerationStartedAt = Date.now();
+            if (markSourceStatus) {
+                setNodes((prev) => prev.map((node) => (
+                    node.id === nodeId
+                        ? { ...node, metadata: { ...node.metadata, ...(node.type === CanvasNodeType.Config ? {} : { prompt }), status: NODE_STATUS_LOADING, generationStartedAt: sourceGenerationStartedAt, errorDetails: undefined } }
+                        : node
+                )));
+            }
+            let generationContext: NodeGenerationContext;
+            try {
+                generationContext = await hydrateNodeGenerationContext(
+                    buildNodeGenerationContext(nodeId, nodesRef.current, connectionsRef.current, editingTextNode ? t("canvas.projectPage.editTextPrompt", { source: sourceTextContent, prompt }) : prompt),
+                );
+            } catch (error) {
+                if (!isGenerationCanceled(error)) {
+                    const errorDetails = error instanceof Error ? error.message : t("canvas.projectPage.generationFailed");
+                    message.error(errorDetails);
+                    setNodes((prev) => prev.map((node) => (
+                        node.id === nodeId
+                            ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_ERROR, generationStartedAt: sourceGenerationStartedAt, errorDetails } }
+                            : node
+                    )));
+                }
+                finishGenerationRequest(nodeId, runController);
+                setRunningNodeId(null);
+                return;
+            }
             const effectivePrompt = generationContext.prompt.trim();
             if (runController.signal.aborted) {
                 finishGenerationRequest(nodeId, runController);
                 setRunningNodeId(null);
                 return;
             }
-            const markSourceStatus = sourceNode?.type !== CanvasNodeType.Image && !editingTextNode;
             if (!effectivePrompt && (mode === "text" || mode === "audio")) {
                 finishGenerationRequest(nodeId, runController);
                 setRunningNodeId(null);
                 return;
             }
             let pendingChildIds: string[] = [];
-            if (markSourceStatus) setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, ...(node.type === CanvasNodeType.Config ? {} : { prompt }), status: NODE_STATUS_LOADING, generationStartedAt: Date.now(), errorDetails: undefined } } : node)));
 
             try {
                 if (mode === "image") {

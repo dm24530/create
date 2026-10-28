@@ -40,6 +40,13 @@ const keys = [
     status: 'active',
     group: { allow_image_generation: true },
   },
+  {
+    id: 3,
+    name: 'Video key',
+    key: 'sk-video-103',
+    status: 'active',
+    group: { allow_image_generation: false, video_capable: true },
+  },
 ]
 
 const postMessage = vi.fn()
@@ -91,6 +98,8 @@ describe('CanvasHostView account switching', () => {
   it('reloads bootstrap credentials before sending them to the next user iframe', async () => {
     localStorage.setItem('sub2api:image-studio:preferences:101', JSON.stringify({ keyId: '1' }))
     localStorage.setItem('sub2api:image-studio:preferences:102', JSON.stringify({ keyId: '2' }))
+    localStorage.setItem('sub2api:video-studio:preferences:101', JSON.stringify({ keyId: '3' }))
+    localStorage.setItem('sub2api:video-studio:preferences:102', JSON.stringify({ keyId: '3' }))
 
     const wrapper = mountHost()
     await flushPromises()
@@ -101,7 +110,11 @@ describe('CanvasHostView account switching', () => {
     await vi.advanceTimersByTimeAsync(0)
 
     expect(postMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ apiKey: 'sk-user-101', accessToken: 'token-user-101' }),
+      expect.objectContaining({
+        apiKey: 'sk-user-101',
+        videoApiKey: 'sk-video-103',
+        accessToken: 'token-user-101',
+      }),
       expect.any(String),
     )
     postMessage.mockClear()
@@ -118,12 +131,22 @@ describe('CanvasHostView account switching', () => {
     const payloads = postMessage.mock.calls.map(([payload]) => payload as Record<string, unknown>)
     expect(payloads).toContainEqual(expect.objectContaining({
       apiKey: 'sk-user-102',
+      videoApiKey: 'sk-video-103',
       accessToken: 'token-user-102',
     }))
     expect(payloads).not.toContainEqual(expect.objectContaining({
       apiKey: 'sk-user-101',
     }))
     expect(listKeys).toHaveBeenCalledTimes(2)
+  })
+
+  it('loads the embedded canvas from the current origin in development', async () => {
+    const wrapper = mountHost()
+    await flushPromises()
+
+    const src = wrapper.get('iframe').attributes('src') || ''
+    expect(src).toContain('/canvas-app/canvas?embed=1')
+    expect(src).not.toContain('localhost:3001')
   })
 
   it('retries a transient canvas context network failure', async () => {

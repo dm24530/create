@@ -172,6 +172,14 @@
             <div class="video-card__body">
               <p class="video-card__prompt" :title="task.prompt">{{ task.prompt || '未填写提示词' }}</p>
               <p class="video-card__meta">{{ formatTaskTime(task.createdAt) }} · {{ taskMeta(task) }}</p>
+              <p
+                v-if="task.archivedId"
+                class="video-card__archive-state"
+                :class="task.archivedSaved ? 'video-card__archive-state--saved' : 'video-card__archive-state--temp'"
+                data-testid="video-archive-state"
+              >
+                {{ archiveStateText(task) }}
+              </p>
             </div>
             <div class="video-card__actions">
               <button
@@ -182,6 +190,16 @@
                 @click="downloadTask(task)"
               >
                 <Icon name="download" size="sm" />
+              </button>
+              <button
+                v-if="task.archivedId && !task.archivedSaved"
+                type="button"
+                class="mini-action"
+                title="保存到我的作品"
+                data-testid="video-archive-pin"
+                @click="saveArchivedTask(task)"
+              >
+                <Icon name="bookmark" size="sm" />
               </button>
               <button
                 v-if="task.status === 'succeeded'"
@@ -486,6 +504,25 @@
             <p class="reference-dialog__hint">{{ imageRoleHint }}</p>
           </div>
         </template>
+        <template v-else-if="referenceKind === 'video' && videoRoleOptions.length">
+          <div class="reference-dialog__field">
+            <p class="reference-dialog__label">参考视频用途</p>
+            <div class="segmented segmented--compact">
+              <button
+                v-for="role in videoRoleOptions"
+                :key="role.value"
+                type="button"
+                class="segmented__item"
+                :class="{ 'segmented__item--active': videoReferenceRole === role.value }"
+                :data-testid="`video-reference-role-${role.value}`"
+                @click="videoReferenceRole = role.value"
+              >
+                {{ role.label }}
+              </button>
+            </div>
+            <p class="reference-dialog__hint">{{ videoRoleHint }}</p>
+          </div>
+        </template>
 
         <input
           ref="referenceFileInput"
@@ -634,7 +671,7 @@ import {
   fetchVideoPlayableUrl,
   getVideoModelProfile,
   isVideoModel,
-  materializeSeedanceReferences,
+  materializeVideoReferences,
   pollVideoTask,
   resolveVideoProvider,
   type VideoProvider,
@@ -646,6 +683,7 @@ import {
   deleteArchivedVideo,
   isStudioQuotaError,
   listArchivedVideos,
+  pinArchivedVideo,
   type ArchivedVideoEntry,
 } from './videoArchiveApi'
 import {
@@ -682,6 +720,8 @@ interface StudioTask {
   error: string
   createdAt: number
   archivedId?: string
+  archivedSaved?: boolean
+  archivedExpiresAt?: number
 }
 
 const MAX_TASK_COUNT = 4
@@ -803,6 +843,7 @@ const references = ref<VideoReferenceAsset[]>([])
 const referenceDialogOpen = ref(false)
 const referenceKind = ref<'image' | 'video' | 'audio'>('image')
 const referenceRole = ref<'first_frame' | 'last_frame' | 'reference_image'>('first_frame')
+const videoReferenceRole = ref<'video_edit' | 'video_extension'>('video_edit')
 const referenceUrlDraft = ref('')
 const referenceDialogError = ref('')
 const referenceFileInput = ref<HTMLInputElement | null>(null)
@@ -868,10 +909,14 @@ const MAX_DURATION = computed(() => videoModelProfile.value.maxDuration)
 const maxImages = computed(() => videoModelProfile.value.maxImages)
 const maxVideos = computed(() => videoModelProfile.value.maxVideos)
 const maxAudios = computed(() =>
-  effectiveProvider.value === 'seedance' && videoModelProfile.value.supportsAudio ? 1 : 0,
+  (effectiveProvider.value === 'seedance' || effectiveProvider.value === 'seedance_video') &&
+    videoModelProfile.value.supportsAudio
+    ? 1
+    : 0,
 )
 const supportsGenerateAudioToggle = computed(() =>
-  effectiveProvider.value === 'seedance' && videoModelProfile.value.supportsAudio,
+  (effectiveProvider.value === 'seedance' || effectiveProvider.value === 'seedance_video') &&
+    videoModelProfile.value.supportsAudio,
 )
 const durationPresetOptions = computed(() => {
   const presets = [5, 8, 10, 15, 30]
@@ -950,6 +995,20 @@ const imageRoleOptions = computed(() =>
     if (option.value === 'last_frame') return videoModelProfile.value.modes.includes('first-last-frame')
     return videoModelProfile.value.modes.includes('reference-images')
   }),
+)
+const videoRoleOptions = computed(() =>
+  [
+    { value: 'video_edit' as const, label: '视频编辑' },
+    { value: 'video_extension' as const, label: '视频延长' },
+  ].filter((option) => {
+    if (option.value === 'video_edit') return videoModelProfile.value.modes.includes('video-edit')
+    return videoModelProfile.value.modes.includes('video-extension')
+  }),
+)
+const videoRoleHint = computed(() =>
+  videoReferenceRole.value === 'video_extension'
+    ? '在参考视频结尾继续生成后续画面。'
+    : '以参考视频为源视频进行编辑或改拍。',
 )
 const imageRoleHint = computed(() => {
   switch (referenceRole.value) {
@@ -1070,6 +1129,14 @@ function taskMeta(task: StudioTask): string {
   ].filter(Boolean).join(' · ')
 }
 
+function archiveStateText(task: StudioTask): string {
+  if (task.archivedSaved) return '已保存到我的作品'
+  const expiresAt = Number(task.archivedExpiresAt || 0)
+  if (!expiresAt) return '临时内容'
+  const days = Math.max(1, Math.ceil((expiresAt * 1000 - Date.now()) / 86_400_000))
+  return `临时内容 · 还剩 ${days} 天`
+}
+
 function taskElapsedSeconds(task: StudioTask): number {
   const startedAt = Number(task.createdAt || 0)
   if (!startedAt) return 0
@@ -1186,6 +1253,9 @@ function taskFromRecord(record: VideoWorkRecord): StudioTask {
     revokeUrl: false,
     error: record.status === 'failed' ? record.statusMessage : '',
     createdAt: record.createdAt,
+    archivedId: record.archivedUrl ? record.id : undefined,
+    archivedSaved: record.archivedSaved,
+    archivedExpiresAt: record.archivedExpiresAt,
   }
 }
 
@@ -1216,6 +1286,8 @@ function taskFromArchived(entry: ArchivedVideoEntry): StudioTask {
     error: '',
     createdAt: Number(entry.created_at || 0) * 1000,
     archivedId: entry.id,
+    archivedSaved: entry.saved,
+    archivedExpiresAt: entry.expires_at,
   }
 }
 
@@ -1233,6 +1305,8 @@ function recordFromTask(task: StudioTask, status: VideoTaskStatus, statusMessage
     generateAudio: task.generateAudio,
     referenceCounts: task.referenceCounts,
     videoUrl: task.videoUrl,
+    archivedSaved: task.archivedSaved,
+    archivedExpiresAt: task.archivedExpiresAt,
     createdAt: task.createdAt,
     status,
     statusMessage,
@@ -1462,7 +1536,11 @@ function onReferenceFileSelected(event: Event) {
       kind,
       name: file.name || 'reference',
       url: String(reader.result || ''),
-      role: kind === 'image' ? referenceRole.value : undefined,
+      role: kind === 'image'
+        ? referenceRole.value
+        : kind === 'video'
+          ? videoReferenceRole.value
+          : undefined,
       sizeBytes: file.size,
     })
     if (added) closeReferenceDialog()
@@ -1485,7 +1563,11 @@ function confirmReferenceUrl() {
     kind: referenceKind.value,
     name,
     url,
-    role: referenceKind.value === 'image' ? referenceRole.value : undefined,
+    role: referenceKind.value === 'image'
+      ? referenceRole.value
+      : referenceKind.value === 'video'
+        ? videoReferenceRole.value
+        : undefined,
   })
   if (added) closeReferenceDialog()
 }
@@ -1548,7 +1630,7 @@ function applyVideoModelConstraints() {
       references.value
         .filter((asset) => asset.kind === 'image')
         .slice(0, profile.maxImages)
-        .map((asset) => {
+        .map((asset): VideoReferenceAsset => {
           if (asset.role === 'last_frame' && !profile.modes.includes('first-last-frame')) {
             return { ...asset, role: 'first_frame' as const }
           }
@@ -1558,6 +1640,17 @@ function applyVideoModelConstraints() {
           return asset
         }),
     )
+    .map((asset): VideoReferenceAsset => {
+      if (asset.kind !== 'video') return asset
+      const role = asset.role === 'video_extension' ? 'video_extension' : 'video_edit'
+      if (role === 'video_extension' && !profile.modes.includes('video-extension')) {
+        return { ...asset, role: 'video_edit' as const }
+      }
+      if (role === 'video_edit' && !profile.modes.includes('video-edit')) {
+        return { ...asset, role: undefined }
+      }
+      return { ...asset, role }
+    })
     .filter((asset) => asset.kind !== 'video' || profile.maxVideos > 0)
     .filter((asset) => asset.kind !== 'audio' || maxAudios.value > 0)
     .slice(0, profile.maxImages + profile.maxVideos + maxAudios.value)
@@ -1568,6 +1661,9 @@ function applyVideoModelConstraints() {
   }
   if (!imageRoleOptions.value.some((option) => option.value === referenceRole.value)) {
     referenceRole.value = imageRoleOptions.value[0]?.value || 'first_frame'
+  }
+  if (!videoRoleOptions.value.some((option) => option.value === videoReferenceRole.value)) {
+    videoReferenceRole.value = videoRoleOptions.value[0]?.value || 'video_edit'
   }
 }
 
@@ -1629,15 +1725,16 @@ async function generate() {
 
   errorMessage.value = ''
   let preparedReferences = referencesSnapshot
-  if (provider === 'seedance_video' && referencesSnapshot.some((asset) =>
+  if (referencesSnapshot.some((asset) =>
     (asset.kind === 'image' && asset.url.startsWith('data:image/')) ||
-    (asset.kind === 'video' && asset.url.startsWith('data:video/')),
+    (asset.kind === 'video' && asset.url.startsWith('data:video/')) ||
+    (asset.kind === 'audio' && asset.url.startsWith('data:audio/')),
   )) {
     preparingReferences.value = true
     try {
-      preparedReferences = await materializeSeedanceReferences(referencesSnapshot, model)
+      preparedReferences = await materializeVideoReferences(referencesSnapshot)
     } catch (error) {
-      errorMessage.value = errorMessageFrom(error, '参考图上传失败')
+      errorMessage.value = errorMessageFrom(error, '参考素材上传失败')
       return
     } finally {
       preparingReferences.value = false
@@ -1727,7 +1824,7 @@ async function runTask(
         images: (submission?.references || []).filter((asset) => asset.kind === 'image'),
         videos: (submission?.references || []).filter((asset) => asset.kind === 'video'),
         audios: (submission?.references || []).filter((asset) => asset.kind === 'audio'),
-      })
+      }, task.provider)
       task.requestId = created.requestId
       task.provider = created.provider
       task.stageText = '排队中'
@@ -1825,7 +1922,14 @@ async function archiveTaskVideo(task: StudioTask, upstreamUrl: string) {
     task.videoUrl = entry.url
     task.revokeUrl = false
     task.archivedId = entry.id
-    updateVideoWork(task.localId, { videoUrl: entry.url, archivedUrl: entry.url })
+    task.archivedSaved = entry.saved
+    task.archivedExpiresAt = entry.expires_at
+    updateVideoWork(task.localId, {
+      videoUrl: entry.url,
+      archivedUrl: entry.url,
+      archivedSaved: entry.saved,
+      archivedExpiresAt: entry.expires_at,
+    })
     works.value = listVideoWorks()
   } catch (error) {
     // 常见原因是对象存储没启用；说清楚而不是静默。
@@ -1844,6 +1948,26 @@ async function archiveTaskVideo(task: StudioTask, upstreamUrl: string) {
       : reason === 'IMAGE_STORAGE_DISABLED' || reason === 'IMAGE_STORAGE_INCOMPLETE'
         ? '视频已生成，但未归档到对象存储：请在后台「设置 → 数据备份」开启并补齐「异步生图对象存储」。'
         : `视频已生成，但归档失败：${errorMessageFrom(error, '未知原因')}`
+  }
+}
+
+async function saveArchivedTask(task: StudioTask) {
+  if (!task.archivedId || task.archivedSaved) return
+  errorMessage.value = ''
+  try {
+    await pinArchivedVideo(task.archivedId)
+    task.archivedSaved = true
+    task.archivedExpiresAt = 0
+    updateVideoWork(task.localId, {
+      archivedSaved: true,
+      archivedExpiresAt: 0,
+    })
+    works.value = listVideoWorks()
+    appStore.showSuccess('已保存到我的作品')
+  } catch (error) {
+    errorMessage.value = isStudioQuotaError(error)
+      ? '我的作品已满，请先删除一些内容再保存。'
+      : '保存到我的作品失败'
   }
 }
 
@@ -2321,6 +2445,19 @@ onBeforeUnmount(() => {
   white-space: nowrap;
   font-size: 0.72rem;
   color: rgb(148 163 184);
+}
+
+.video-card__archive-state {
+  margin-top: 0.3rem;
+  font-size: 0.72rem;
+}
+
+.video-card__archive-state--saved {
+  color: rgb(5 150 105);
+}
+
+.video-card__archive-state--temp {
+  color: rgb(217 119 6);
 }
 
 .video-card__actions {

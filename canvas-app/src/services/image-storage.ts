@@ -18,6 +18,7 @@ import {
     createImageThumbnail,
     type ImageRequestPolicy,
 } from "@/lib/image-thumbnail";
+import { getCanvasAccessToken } from "@/services/canvas-auth";
 
 export type UploadedImage = {
     url: string;
@@ -107,7 +108,18 @@ async function fetchImageBlob(url: string, options?: ImageReadOptions) {
         controller.abort();
     }, IMAGE_DOWNLOAD_TIMEOUT_MS);
     try {
-        const response = await fetch(withLocalProxy(url), { signal: controller.signal });
+        let response: Response | undefined;
+        let directError: unknown;
+        try {
+            response = await fetch(withLocalProxy(url), { signal: controller.signal });
+        } catch (error) {
+            directError = error;
+        }
+        if (!response?.ok && canProxyCanvasImage(url) && !controller.signal.aborted) {
+            response = await fetchCanvasImageProxy(url, controller.signal);
+            directError = undefined;
+        }
+        if (!response) throw directError;
         if (!response.ok) throw namedError(IMAGE_RESPONSE_ERROR);
         return await response.blob();
     } catch (error) {
@@ -118,6 +130,19 @@ async function fetchImageBlob(url: string, options?: ImageReadOptions) {
         window.clearTimeout(timer);
         options?.signal?.removeEventListener("abort", abort);
     }
+}
+
+function canProxyCanvasImage(url: string) {
+    return /^https?:\/\//i.test(url) || url.startsWith("/api/v1/public/image-assets/");
+}
+
+function fetchCanvasImageProxy(url: string, signal: AbortSignal) {
+    const token = getCanvasAccessToken();
+    if (!token) throw new TypeError("Canvas session is unavailable");
+    return fetch(`/api/v1/canvas/image-proxy?url=${encodeURIComponent(url)}`, {
+        headers: { Authorization: `Bearer ${token}` },
+        signal,
+    });
 }
 
 function loadImageMeta(url: string, options?: ImageReadOptions, timeoutMs = IMAGE_DECODE_TIMEOUT_MS) {
@@ -181,6 +206,23 @@ export async function resolveImageUrl(storageKey?: string, fallback = "") {
 
 export async function getImageBlob(storageKey: string) {
     return getScopedBlob(store, storageKey);
+}
+
+// Older canvas versions stored image keys without a user scope. Only claim an
+// unscoped key when the current, user-owned canvas graph explicitly references
+// it. Keeping this explicit avoids assigning unrelated legacy images to a user.
+export async function claimLegacyStoredImage(storageKey?: string) {
+    const key = storageKey?.trim() || "";
+    if (!key) return;
+    const scopedKey = scopedCanvasStorageKey(key);
+    if (await store.getItem<Blob>(scopedKey)) return;
+    for (const legacyKey of [key, ...legacyCanvasStorageKeys(key)]) {
+        const legacy = await store.getItem<Blob>(legacyKey);
+        if (!legacy) continue;
+        await store.setItem(scopedKey, legacy);
+        queueImagePreview(key);
+        return;
+    }
 }
 
 // 缩略图按图片的 storageKey 另存一份 WebP，只放在本地 IndexedDB 里，不写进节点数据，也不参与导出和 WebDAV 同步。
@@ -255,7 +297,10 @@ export async function setImageBlob(storageKey: string, blob: Blob) {
 }
 
 export async function imageToDataUrl(image: { url?: string; dataUrl?: string; storageKey?: string }, options?: ImageReadOptions) {
-    const url = image.dataUrl || (await resolveImageUrl(image.storageKey, image.url || ""));
+    // Browser-managed local blobs do not require CORS. Prefer them over remote
+    // preview/signed URLs, which may render in <img> but reject fetch().
+    const localUrl = image.storageKey ? await resolveImageUrl(image.storageKey, "") : "";
+    const url = localUrl || image.dataUrl || image.url || "";
     if (!url || url.startsWith("data:")) return url;
     return blobToDataUrl(await fetchImageBlob(url, options));
 }

@@ -5,7 +5,7 @@ import {
   createVideoTask,
   getVideoModelProfile,
   isVideoModel,
-  materializeSeedanceReferences,
+  materializeVideoReferences,
   parseVideoTaskSnapshot,
   pollVideoTask,
   resolveVideoProvider,
@@ -139,6 +139,15 @@ describe('Seedance video request mapping', () => {
     })
   })
 
+  it('sends generate_audio as an explicit boolean in the native Seedance body', () => {
+    const request = buildVideoRequest('seedance', {
+      ...base,
+      generateAudio: false,
+    })
+
+    expect(request.body).toHaveProperty('generate_audio', false)
+  })
+
   it('normalizes in-progress Seedance status responses', () => {
     expect(parseVideoTaskSnapshot('seedance', { status: 'in_progress' }).status).toBe('running')
     const completed = parseVideoTaskSnapshot('seedance', {
@@ -181,13 +190,100 @@ describe('Seedance video request mapping', () => {
       reference_image_urls: ['https://cdn.example.com/ref.png'],
     })
   })
+
+  it('keeps first/last frames, reference images, videos and audio together', () => {
+    const request = buildVideoRequest('seedance_video', {
+      ...base,
+      generateAudio: false,
+      images: [
+        {
+          id: 1,
+          kind: 'image',
+          name: 'first.png',
+          url: 'https://cdn.example.com/first.png',
+          role: 'first_frame',
+        },
+        {
+          id: 2,
+          kind: 'image',
+          name: 'last.png',
+          url: 'https://cdn.example.com/last.png',
+          role: 'last_frame',
+        },
+        {
+          id: 3,
+          kind: 'image',
+          name: 'ref.png',
+          url: 'https://cdn.example.com/ref.png',
+          role: 'reference_image',
+        },
+      ],
+      videos: [{
+        id: 4,
+        kind: 'video',
+        name: 'ref.mp4',
+        url: 'https://cdn.example.com/ref.mp4',
+        role: 'video_edit',
+      }],
+      audios: [{
+        id: 5,
+        kind: 'audio',
+        name: 'ref.mp3',
+        url: 'https://cdn.example.com/ref.mp3',
+      }],
+    })
+
+    expect(request.body).toMatchObject({
+      mode: 'reference-video',
+      images: [
+        'https://cdn.example.com/first.png',
+        'https://cdn.example.com/last.png',
+      ],
+      reference_image_urls: ['https://cdn.example.com/ref.png'],
+      reference_video_urls: ['https://cdn.example.com/ref.mp4'],
+      reference_audio_urls: ['https://cdn.example.com/ref.mp3'],
+      generate_audio: false,
+    })
+  })
+
+  it('routes Grok video edits and extensions to their documented endpoints', () => {
+    const edit = buildVideoRequest('grok', {
+      ...base,
+      model: 'grok-imagine-video-1.5',
+      videos: [{
+        id: 1,
+        kind: 'video',
+        name: 'source.mp4',
+        url: 'https://cdn.example.com/source.mp4',
+        role: 'video_edit',
+      }],
+    })
+    expect(edit.path).toBe('/videos/edits')
+    expect(edit.body.video).toEqual({ url: 'https://cdn.example.com/source.mp4' })
+
+    const extension = buildVideoRequest('grok', {
+      ...base,
+      model: 'grok-imagine-video-1.5',
+      videos: [{
+        id: 2,
+        kind: 'video',
+        name: 'source.mp4',
+        url: 'https://cdn.example.com/source.mp4',
+        role: 'video_extension',
+      }],
+    })
+    expect(extension.path).toBe('/videos/extensions')
+    expect(extension.body.video).toEqual({ url: 'https://cdn.example.com/source.mp4' })
+  })
 })
 
 describe('Seedance reference uploads', () => {
   it('replaces local image and video data URLs with public object-storage URLs', async () => {
-    const uploadImage = vi.fn().mockResolvedValue({ url: 'https://r2.example.com/frame.png' })
-    const uploadVideo = vi.fn().mockResolvedValue({ url: 'https://r2.example.com/reference.mp4' })
-    const assets = await materializeSeedanceReferences([
+    const uploadAsset = vi.fn()
+      .mockResolvedValueOnce({ url: 'https://r2.example.com/frame.png' })
+      .mockResolvedValueOnce({ url: 'https://r2.example.com/reference.mp4' })
+      .mockResolvedValueOnce({ url: 'https://r2.example.com/reference.mp3' })
+    const assets = await materializeVideoReferences([
       {
         id: 1,
         kind: 'image',
@@ -208,29 +304,63 @@ describe('Seedance reference uploads', () => {
         name: 'reference.mp4',
         url: 'data:video/mp4;base64,dmlkZW8=',
       },
-    ], 'seedance-2.5', uploadImage, uploadVideo)
+      {
+        id: 4,
+        kind: 'audio',
+        name: 'reference.mp3',
+        url: 'data:audio/mpeg;base64,bXAz',
+      },
+    ], uploadAsset)
 
-    expect(uploadImage).toHaveBeenCalledWith({
-      image_data_url: 'data:image/png;base64,dGlueQ==',
-      prompt: 'Video reference image',
-      model: 'seedance-2.5',
-      size: 'reference',
-      format: 'png',
-      saved: false,
+    expect(uploadAsset).toHaveBeenNthCalledWith(1, {
+      kind: 'image',
+      data_url: 'data:image/png;base64,dGlueQ==',
     })
-    expect(uploadVideo).toHaveBeenCalledWith({
-      video_data_url: 'data:video/mp4;base64,dmlkZW8=',
-      prompt: 'Video reference',
-      model: 'seedance-2.5',
-      format: 'mp4',
-      duration_seconds: 0,
-      saved: false,
+    expect(uploadAsset).toHaveBeenNthCalledWith(2, {
+      kind: 'video',
+      data_url: 'data:video/mp4;base64,dmlkZW8=',
+    })
+    expect(uploadAsset).toHaveBeenNthCalledWith(3, {
+      kind: 'audio',
+      data_url: 'data:audio/mpeg;base64,bXAz',
     })
     expect(assets.map((asset) => asset.url)).toEqual([
       'https://r2.example.com/frame.png',
       'https://cdn.example.com/remote.png',
       'https://r2.example.com/reference.mp4',
+      'https://r2.example.com/reference.mp3',
     ])
+  })
+})
+
+describe('provider selection', () => {
+  it('uses the provider resolved before task creation even for a custom base URL', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      json: async () => ({ id: 'task-ark' }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const created = await createVideoTask({
+      baseUrl: 'https://custom-seedance.example/v1',
+      apiKey: 'sk-custom',
+      platform: 'openai',
+    }, {
+      model: 'seedance-2.5',
+      prompt: 'waves',
+      durationSeconds: 5,
+      resolution: '720p',
+      aspectRatio: '16:9',
+      generateAudio: false,
+      images: [],
+      videos: [],
+      audios: [],
+    }, 'seedance')
+
+    expect(created.provider).toBe('seedance')
+    expect(String(fetchMock.mock.calls[0][0])).toBe('https://custom-seedance.example/v1/contents/generations/tasks')
   })
 })
 

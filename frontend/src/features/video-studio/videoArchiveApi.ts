@@ -28,6 +28,28 @@ export interface ArchiveVideoRequest {
   saved?: boolean
 }
 
+export interface VideoReferenceAssetUpload {
+  kind: 'image' | 'video' | 'audio'
+  data_url: string
+}
+
+export interface VideoReferenceAssetUploadResult {
+  url: string
+}
+
+// Reference assets use temporary object storage only. They must not create a
+// gallery row, otherwise video inputs show up in the image workbench.
+export async function uploadVideoReferenceAsset(
+  request: VideoReferenceAssetUpload,
+): Promise<VideoReferenceAssetUploadResult> {
+  const { data } = await apiClient.post<VideoReferenceAssetUploadResult>(
+    '/video-studio/reference-assets',
+    request,
+    { timeout: 4 * 60 * 1000 },
+  )
+  return data
+}
+
 export async function listArchivedVideos(
   scope?: 'saved' | 'temp',
 ): Promise<ArchivedVideoEntry[]> {

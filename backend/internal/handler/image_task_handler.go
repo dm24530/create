@@ -61,6 +61,20 @@ type asyncGeminiTaskEnvelope struct {
 	Stats   geminiImageRequestStats
 }
 
+type imageStudioClientErrorRequest struct {
+	TaskID      string `json:"task_id"`
+	BatchID     string `json:"batch_id"`
+	Model       string `json:"model"`
+	Platform    string `json:"platform"`
+	Stage       string `json:"stage"`
+	ErrorType   string `json:"error_type"`
+	Message     string `json:"message"`
+	StatusCode  int    `json:"status_code"`
+	ElapsedMS   int64  `json:"elapsed_ms"`
+	RequestID   string `json:"request_id"`
+	RequestPath string `json:"request_path"`
+}
+
 type geminiImageRequestPayload struct {
 	Contents []struct {
 		Parts []struct {
@@ -411,6 +425,135 @@ func (h *AsyncImageHandler) Get(c *gin.Context) {
 		c.Header("Retry-After", "3")
 	}
 	c.JSON(http.StatusOK, task)
+}
+
+// ReportClientError records a generation failure that happened in the browser
+// before the backend could persist a final image-task failure.
+func (h *AsyncImageHandler) ReportClientError(c *gin.Context) {
+	var input imageStudioClientErrorRequest
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{
+			"type":    "invalid_request_error",
+			"message": "invalid client image error report",
+		}})
+		return
+	}
+	input.Message = truncateString(singleLine(input.Message), 2000)
+	if input.Message == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{
+			"type":    "invalid_request_error",
+			"message": "error message is required",
+		}})
+		return
+	}
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok || subject.UserID <= 0 {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": gin.H{
+			"type":    "authentication_error",
+			"message": "authentication required",
+		}})
+		return
+	}
+
+	entry := buildClientImageErrorEntry(&input, &subject, c)
+	if entry != nil && h != nil && h.openAI != nil && h.openAI.opsService != nil {
+		enqueueOpsErrorLog(h.openAI.opsService, entry)
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"code":    0,
+		"message": "success",
+		"data":    gin.H{"reported": true},
+	})
+}
+
+func buildClientImageErrorEntry(
+	input *imageStudioClientErrorRequest,
+	subject *middleware2.AuthSubject,
+	c *gin.Context,
+) *service.OpsInsertErrorLogInput {
+	if input == nil || subject == nil || subject.UserID <= 0 {
+		return nil
+	}
+	errorType := sanitizeClientImageErrorToken(input.ErrorType)
+	if errorType == "" {
+		errorType = "client_image_error"
+	}
+	statusCode := input.StatusCode
+	if statusCode < 400 || statusCode > 599 {
+		statusCode = http.StatusInternalServerError
+		if strings.Contains(strings.ToLower(errorType), "timeout") {
+			statusCode = http.StatusGatewayTimeout
+		}
+	}
+	requestID := truncateString(singleLine(input.RequestID), 128)
+	if requestID == "" {
+		requestID = truncateString(singleLine(input.TaskID), 128)
+	}
+	usageRequestID := ""
+	if requestID != "" {
+		usageRequestID = "client:" + requestID
+	}
+	requestPath := truncateString(singleLine(input.RequestPath), 512)
+	if requestPath == "" {
+		requestPath = "/image-studio"
+	}
+	requestType := int16(service.RequestTypeAsync)
+	clientIP := c.ClientIP()
+	message := truncateString(singleLine(input.Message), 2000)
+	body, _ := json.Marshal(gin.H{
+		"task_id":    truncateString(input.TaskID, 128),
+		"batch_id":   truncateString(input.BatchID, 128),
+		"stage":      truncateString(input.Stage, 80),
+		"elapsed_ms": input.ElapsedMS,
+	})
+	return &service.OpsInsertErrorLogInput{
+		RequestID:         requestID,
+		ClientRequestID:   requestID,
+		UsageRequestID:    usageRequestID,
+		RequestInstanceID: resolveOpsRequestInstanceID(c),
+		UserID:            &subject.UserID,
+		ClientIP:          &clientIP,
+		Platform:          truncateString(singleLine(input.Platform), 64),
+		Model:             truncateString(singleLine(input.Model), 200),
+		RequestedModel:    truncateString(singleLine(input.Model), 200),
+		RequestPath:       requestPath,
+		InboundEndpoint:   "/api/v1/image-studio/client-errors",
+		RequestType:       &requestType,
+		UserAgent:         truncateString(c.GetHeader("User-Agent"), 512),
+		ErrorPhase:        truncateString(singleLine(input.Stage), 80),
+		ErrorType:         errorType,
+		Severity:          "error",
+		StatusCode:        statusCode,
+		ErrorMessage:      message,
+		ErrorBody:         string(body),
+		ErrorSource:       "client_request",
+		ErrorOwner:        "client",
+		CreatedAt:         time.Now(),
+	}
+}
+
+func sanitizeClientImageErrorToken(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return ""
+	}
+	var builder strings.Builder
+	lastWasSeparator := false
+	for _, char := range value {
+		if (char >= 'a' && char <= 'z') ||
+			(char >= '0' && char <= '9') ||
+			char == '_' || char == '-' || char == '.' {
+			builder.WriteRune(char)
+			lastWasSeparator = false
+		} else if !lastWasSeparator && builder.Len() > 0 {
+			builder.WriteByte('_')
+			lastWasSeparator = true
+		}
+		if builder.Len() >= 80 {
+			break
+		}
+	}
+	return strings.Trim(builder.String(), "_.-")
 }
 
 func (h *AsyncImageHandler) validateRequest(c *gin.Context, platform string, body []byte, geminiEnvelope *asyncGeminiTaskEnvelope) error {

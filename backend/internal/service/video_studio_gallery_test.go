@@ -73,12 +73,17 @@ func (s *videoGalleryStoreStub) SweepExpired(context.Context, int) ([]string, er
 type videoMediaSaverStub struct {
 	keys          []string
 	types         []string
+	imageKeys     []string
+	imageTypes    []string
+	audioKeys     []string
+	audioTypes    []string
 	deletedObject []string
 	quota         int
 }
 
 func TestVideoStudioGalleryUnpinReturnsTemporaryExpiry(t *testing.T) {
 	createdAt := time.Now().UTC().Add(-time.Hour).Unix()
+	before := time.Now().UTC().Unix()
 	store := &videoGalleryStoreStub{saved: []*VideoStudioGalleryEntry{{
 		ID:        "video-unpin",
 		UserID:    42,
@@ -92,12 +97,53 @@ func TestVideoStudioGalleryUnpinReturnsTemporaryExpiry(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, entry)
 	require.False(t, entry.Saved)
-	require.Equal(t, createdAt+int64((30*24*time.Hour)/time.Second), entry.ExpiresAt)
+	require.GreaterOrEqual(t, entry.ExpiresAt, before+int64((30*24*time.Hour)/time.Second))
+}
+
+func TestVideoStudioGalleryUnpinSavedWorkAfterRetentionStartsFreshTemporaryWindow(t *testing.T) {
+	createdAt := time.Now().UTC().Add(-60 * 24 * time.Hour).Unix()
+	store := &videoGalleryStoreStub{saved: []*VideoStudioGalleryEntry{{
+		ID:        "video-old-saved",
+		UserID:    42,
+		Saved:     true,
+		CreatedAt: createdAt,
+	}}}
+	svc := NewVideoStudioGalleryService(store, &videoMediaSaverStub{})
+	now := time.Now().UTC().Unix()
+
+	entry, err := svc.Unpin(context.Background(), 42, "video-old-saved")
+
+	require.NoError(t, err)
+	require.NotNil(t, entry)
+	require.False(t, entry.Saved)
+	require.GreaterOrEqual(t, entry.ExpiresAt, now+int64((30*24*time.Hour)/time.Second))
 }
 
 func (s *videoMediaSaverStub) SaveVideo(_ context.Context, key, contentType string, _ []byte) (string, error) {
 	s.keys = append(s.keys, key)
 	s.types = append(s.types, contentType)
+	return "https://cdn.example.com/" + key, nil
+}
+
+func (s *videoMediaSaverStub) SaveImageWithKey(
+	_ context.Context,
+	key string,
+	contentType string,
+	_ []byte,
+) (string, string, error) {
+	s.imageKeys = append(s.imageKeys, key)
+	s.imageTypes = append(s.imageTypes, contentType)
+	return "https://cdn.example.com/" + key, key, nil
+}
+
+func (s *videoMediaSaverStub) SaveVideoReferenceAudio(
+	_ context.Context,
+	key string,
+	contentType string,
+	_ []byte,
+) (string, error) {
+	s.audioKeys = append(s.audioKeys, key)
+	s.audioTypes = append(s.audioTypes, contentType)
 	return "https://cdn.example.com/" + key, nil
 }
 
@@ -149,6 +195,55 @@ func TestVideoStudioGalleryArchivesOnlyVideos(t *testing.T) {
 	require.Len(t, store.saved, 1)
 }
 
+func TestVideoStudioGalleryUploadReferenceAssetSkipsGalleryRows(t *testing.T) {
+	store := &videoGalleryStoreStub{}
+	saver := &videoMediaSaverStub{}
+	svc := NewVideoStudioGalleryService(store, saver)
+	ctx := context.Background()
+
+	imageURL, err := svc.UploadReferenceAsset(ctx, 42, "image", "image/png", pngBytes)
+	require.NoError(t, err)
+	require.Contains(t, imageURL, "/video-references/")
+	require.Len(t, saver.imageKeys, 1)
+	require.Equal(t, "image/png", saver.imageTypes[0])
+
+	videoURL, err := svc.UploadReferenceAsset(ctx, 42, "video", "video/mp4", mp4Bytes())
+	require.NoError(t, err)
+	require.Contains(t, videoURL, "/video-references/")
+	require.Len(t, saver.keys, 1)
+
+	audioURL, err := svc.UploadReferenceAsset(ctx, 42, "audio", "audio/mpeg", []byte("fake-mp3"))
+	require.NoError(t, err)
+	require.Contains(t, audioURL, "/video-references/")
+	require.Len(t, saver.audioKeys, 1)
+	require.Equal(t, "audio/mpeg", saver.audioTypes[0])
+
+	require.Empty(t, store.saved, "temporary reference assets must not create studio works")
+}
+
+func TestVideoStudioGalleryListHidesLegacyReferenceVideos(t *testing.T) {
+	store := &videoGalleryStoreStub{saved: []*VideoStudioGalleryEntry{
+		{
+			ID:              "legacy-reference",
+			Prompt:          "Video reference",
+			DurationSeconds: 0,
+			Saved:           false,
+		},
+		{
+			ID:     "generated-video",
+			Prompt: "雨后街景",
+			Saved:  false,
+		},
+	}}
+	svc := NewVideoStudioGalleryService(store, &videoMediaSaverStub{})
+
+	entries, err := svc.List(context.Background(), 42, 10, nil)
+
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	require.Equal(t, "generated-video", entries[0].ID)
+}
+
 func TestVideoStudioGalleryRejectsOversizedArchives(t *testing.T) {
 	svc := NewVideoStudioGalleryService(&videoGalleryStoreStub{}, &videoMediaSaverStub{})
 	tooBig := make([]byte, maxVideoArchiveBytes+1)
@@ -179,5 +274,15 @@ func TestDecodeVideoDataURLRejectsNonVideo(t *testing.T) {
 	data, contentType, err := DecodeVideoDataURL("data:video/mp4;base64," + base64Of(mp4Bytes()))
 	require.NoError(t, err)
 	require.Equal(t, "video/mp4", contentType)
+	require.NotEmpty(t, data)
+}
+
+func TestDecodeAudioDataURLRejectsNonAudio(t *testing.T) {
+	_, _, err := DecodeAudioDataURL("data:image/png;base64," + base64Of(pngBytes))
+	require.ErrorIs(t, err, ErrVideoStudioUnsupportedType)
+
+	data, contentType, err := DecodeAudioDataURL("data:audio/mpeg;base64," + base64Of([]byte("fake-mp3")))
+	require.NoError(t, err)
+	require.Equal(t, "audio/mpeg", contentType)
 	require.NotEmpty(t, data)
 }

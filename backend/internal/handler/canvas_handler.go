@@ -103,6 +103,42 @@ func NewCanvasHandler(
 	return &CanvasHandler{db: db, storage: storage, identities: identities}
 }
 
+// ProxyImage keeps canvas image references readable when an object store
+// enables signed image rendering but does not allow browser-side cross-origin
+// fetch. The authenticated endpoint returns the bytes from our own origin so
+// reference images can be converted to request payloads reliably.
+func (h *CanvasHandler) ProxyImage(c *gin.Context) {
+	if _, ok := h.userID(c); !ok {
+		return
+	}
+	rawURL := strings.TrimSpace(c.Query("url"))
+	if rawURL == "" {
+		response.BadRequest(c, "缺少图片地址")
+		return
+	}
+	if !strings.HasPrefix(rawURL, "http://") &&
+		!strings.HasPrefix(rawURL, "https://") &&
+		!strings.HasPrefix(rawURL, service.LocalImageAssetURLPrefix) {
+		response.BadRequest(c, "不支持的图片地址")
+		return
+	}
+	data, contentType, err := h.storage.FetchImageURL(c.Request.Context(), rawURL)
+	if err != nil || len(data) == 0 {
+		logger.L().Warn("canvas.image_proxy_failed", zap.Error(err))
+		response.Error(c, http.StatusBadGateway, "拉取图片失败")
+		return
+	}
+	if strings.TrimSpace(contentType) == "" {
+		contentType = http.DetectContentType(data)
+	}
+	if !strings.HasPrefix(strings.ToLower(contentType), "image/") {
+		response.Error(c, http.StatusBadGateway, "图片地址返回了非图片内容")
+		return
+	}
+	c.Header("Cache-Control", "private, max-age=300")
+	c.Data(http.StatusOK, contentType, data)
+}
+
 func (h *CanvasHandler) ListProjects(c *gin.Context) {
 	userID, ok := h.userID(c)
 	if !ok {

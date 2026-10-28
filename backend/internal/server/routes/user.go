@@ -109,6 +109,7 @@ func RegisterUserRoutes(
 
 		imageStudio := authenticated.Group("/image-studio")
 		{
+			imageStudio.POST("/client-errors", h.AsyncImage.ReportClientError)
 			imageStudio.GET("/gallery", h.ImageStudioGallery.List)
 			imageStudio.POST("/gallery", h.ImageStudioGallery.Save)
 			imageStudio.POST("/gallery/from-task", h.ImageStudioGallery.SaveFromTask)
@@ -125,6 +126,7 @@ func RegisterUserRoutes(
 		// 视频作品的持久化归档（与图片共用同一份对象存储配置，走 videos/ 前缀）。
 		videoStudio := authenticated.Group("/video-studio")
 		{
+			videoStudio.POST("/reference-assets", h.VideoStudioGallery.UploadReferenceAsset)
 			videoStudio.GET("/gallery", h.VideoStudioGallery.List)
 			videoStudio.POST("/gallery", h.VideoStudioGallery.Save)
 			videoStudio.POST("/gallery/:id/pin", h.VideoStudioGallery.Pin)
@@ -141,6 +143,7 @@ func RegisterUserRoutes(
 			canvas.GET("/projects/:id", h.Canvas.GetProject)
 			canvas.PUT("/projects/:id", h.Canvas.PutProject)
 			canvas.DELETE("/projects/:id", h.Canvas.DeleteProject)
+			canvas.GET("/image-proxy", h.Canvas.ProxyImage)
 			canvas.POST("/assets", h.Canvas.UploadAsset)
 			canvas.DELETE("/assets/:id", h.Canvas.DeleteAsset)
 		}

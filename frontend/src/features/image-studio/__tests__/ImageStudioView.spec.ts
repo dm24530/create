@@ -11,7 +11,7 @@ import { IMAGE_STUDIO_DEFAULT_PROMPT, imageStudioDraft, resetImageStudioDraft } 
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 
-const { listKeys, getPublicSettings, listGallery, saveGallery, saveGalleryFromTask, pinGallery, deleteGallery, downloadGallery, downloadURLGallery, thumbnailGallery, galleryQuota, reportDisplay, copyToClipboard, imageNeedsLocalResize, processImageForDisplay, tryStartPersistent, waitForPersistent } = vi.hoisted(() => ({
+const { listKeys, getPublicSettings, listGallery, saveGallery, saveGalleryFromTask, pinGallery, deleteGallery, downloadGallery, downloadURLGallery, thumbnailGallery, galleryQuota, reportDisplay, reportClientError, copyToClipboard, imageNeedsLocalResize, processImageForDisplay, tryStartPersistent, waitForPersistent } = vi.hoisted(() => ({
   listKeys: vi.fn(),
   getPublicSettings: vi.fn(),
   listGallery: vi.fn(),
@@ -24,6 +24,7 @@ const { listKeys, getPublicSettings, listGallery, saveGallery, saveGalleryFromTa
   thumbnailGallery: vi.fn(),
   galleryQuota: vi.fn(),
   reportDisplay: vi.fn(),
+  reportClientError: vi.fn(),
   copyToClipboard: vi.fn(),
   imageNeedsLocalResize: vi.fn(),
   processImageForDisplay: vi.fn(),
@@ -49,6 +50,7 @@ vi.mock('@/api', () => ({
     thumbnail: thumbnailGallery,
     quota: galleryQuota,
     reportDisplay,
+    reportClientError,
   },
 }))
 
@@ -163,6 +165,7 @@ function resetCommonMocks() {
   thumbnailGallery.mockReset()
   galleryQuota.mockReset()
   reportDisplay.mockReset()
+  reportClientError.mockReset()
   copyToClipboard.mockReset()
   imageNeedsLocalResize.mockReset()
   processImageForDisplay.mockReset()
@@ -181,6 +184,7 @@ function resetCommonMocks() {
   thumbnailGallery.mockResolvedValue(new Blob(['thumb'], { type: 'image/jpeg' }))
   galleryQuota.mockResolvedValue({ used: 0, limit: 100 })
   reportDisplay.mockResolvedValue(undefined)
+  reportClientError.mockResolvedValue(undefined)
   copyToClipboard.mockResolvedValue(true)
   imageNeedsLocalResize.mockImplementation((value: string, upstreamMaxEdge: number) => {
     const match = /^(\d+)x(\d+)$/i.exec(value.trim())
@@ -546,6 +550,10 @@ describe('ImageStudioView image model loading', () => {
         message: '无法连接到 API 服务，请检查网络或 API 地址。',
       }),
     ]))
+    expect(reportClientError).toHaveBeenCalledWith(expect.objectContaining({
+      error_type: 'client_network_error',
+      stage: 'image_studio_visible_error',
+    }))
   })
 
   it('shows insufficient balance errors in Chinese', async () => {
@@ -1621,6 +1629,187 @@ describe('ImageStudioView gallery', () => {
 
       expect(wrapper.get('[data-testid="image-generation-failure"]').text()).toContain('请求超时')
       expect(wrapper.get('[data-testid="image-generation-failure"]').text()).toContain('3 分钟')
+      expect(reportClientError).toHaveBeenCalledWith(expect.objectContaining({
+        error_type: 'client_timeout',
+        stage: 'image_generation_failure',
+      }))
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps waiting for an async image submission beyond 30 seconds', async () => {
+    vi.useFakeTimers()
+    try {
+      listKeys.mockResolvedValue({
+        items: [{ id: 1, name: 'dd', key: 'sk-local', status: 'active', group_id: 2 }],
+      })
+      getPublicSettings.mockResolvedValue({ api_base_url: '/v1' })
+      vi.mocked(fetch).mockImplementation(async (input, init) => {
+        const url = String(input)
+        if (url.endsWith('/images/batches/models')) {
+          return { ok: true, json: async () => ({ data: [] }) } as Response
+        }
+        if (url.endsWith('/models')) {
+          return { ok: true, json: async () => ({ data: [{ id: 'gpt-image-1' }] }) } as Response
+        }
+        if (url.endsWith('/images/generations/async')) {
+          return new Promise<Response>((resolve, reject) => {
+            const timer = window.setTimeout(() => {
+              resolve({
+                ok: true,
+                status: 202,
+                json: async () => ({
+                  task_id: 'imgtask_queued_75s',
+                  status: 'processing',
+                  poll_url: '/v1/images/tasks/imgtask_queued_75s',
+                }),
+              } as Response)
+            }, 75_000)
+            init?.signal?.addEventListener('abort', () => {
+              window.clearTimeout(timer)
+              reject(new DOMException('Aborted', 'AbortError'))
+            }, { once: true })
+          })
+        }
+        if (url.endsWith('/images/tasks/imgtask_queued_75s')) {
+          return {
+            ok: true,
+            json: async () => ({
+              task_id: 'imgtask_queued_75s',
+              status: 'completed',
+              result: { data: [{ b64_json: 'cXVldWVk', mime_type: 'image/png' }] },
+            }),
+          } as Response
+        }
+        throw new Error(`Unexpected request: ${url}`)
+      })
+
+      const wrapper = mountImageStudio()
+      await flushPromises()
+      await flushPromises()
+      await wrapper.get('form').trigger('submit')
+      await flushPromises()
+      await vi.advanceTimersByTimeAsync(31_000)
+      await flushPromises()
+
+      expect(wrapper.find('[data-testid="image-generation-failure"]').exists()).toBe(false)
+
+      await vi.advanceTimersByTimeAsync(45_000)
+      await flushPromises()
+      expect(wrapper.find('[data-testid="image-generation-failure"]').exists()).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('stops an unresponsive async image submission at 120 seconds', async () => {
+    vi.useFakeTimers()
+    try {
+      listKeys.mockResolvedValue({
+        items: [{ id: 1, name: 'dd', key: 'sk-local', status: 'active', group_id: 2 }],
+      })
+      getPublicSettings.mockResolvedValue({ api_base_url: '/v1' })
+      vi.mocked(fetch).mockImplementation(async (input, init) => {
+        const url = String(input)
+        if (url.endsWith('/images/batches/models')) {
+          return { ok: true, json: async () => ({ data: [] }) } as Response
+        }
+        if (url.endsWith('/models')) {
+          return { ok: true, json: async () => ({ data: [{ id: 'gpt-image-1' }] }) } as Response
+        }
+        if (url.endsWith('/images/generations/async')) {
+          return new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () => {
+              reject(new DOMException('Aborted', 'AbortError'))
+            }, { once: true })
+          })
+        }
+        throw new Error(`Unexpected request: ${url}`)
+      })
+
+      const wrapper = mountImageStudio()
+      await flushPromises()
+      await flushPromises()
+      await wrapper.get('form').trigger('submit')
+      await flushPromises()
+      await vi.advanceTimersByTimeAsync(119_000)
+      await flushPromises()
+      expect(wrapper.find('[data-testid="image-generation-failure"]').exists()).toBe(false)
+
+      await vi.advanceTimersByTimeAsync(2_000)
+      await flushPromises()
+
+      const failure = wrapper.get('[data-testid="image-generation-failure"]').text()
+      expect(failure).toContain('请求超时')
+      expect(failure).toContain('2 分钟')
+      expect(reportClientError).toHaveBeenCalledWith(expect.objectContaining({
+        error_type: 'client_timeout',
+        stage: 'image_generation_failure',
+      }))
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('retries a timed-out status poll until the overall generation deadline', async () => {
+    vi.useFakeTimers()
+    try {
+      listKeys.mockResolvedValue({
+        items: [{ id: 1, name: 'dd', key: 'sk-local', status: 'active', group_id: 2 }],
+      })
+      getPublicSettings.mockResolvedValue({ api_base_url: '/v1' })
+      let pollCalls = 0
+      vi.mocked(fetch).mockImplementation(async (input, init) => {
+        const url = String(input)
+        if (url.endsWith('/images/batches/models')) {
+          return { ok: true, json: async () => ({ data: [] }) } as Response
+        }
+        if (url.endsWith('/models')) {
+          return { ok: true, json: async () => ({ data: [{ id: 'gpt-image-1' }] }) } as Response
+        }
+        if (url.endsWith('/images/generations/async')) {
+          return {
+            ok: true,
+            status: 202,
+            json: async () => ({
+              task_id: 'imgtask_slow_poll',
+              status: 'processing',
+              poll_url: '/v1/images/tasks/imgtask_slow_poll',
+            }),
+          } as Response
+        }
+        if (url.endsWith('/images/tasks/imgtask_slow_poll')) {
+          pollCalls += 1
+          if (pollCalls === 1) {
+            return new Promise<Response>((_resolve, reject) => {
+              init?.signal?.addEventListener('abort', () => {
+                reject(new DOMException('Aborted', 'AbortError'))
+              }, { once: true })
+            })
+          }
+          return {
+            ok: true,
+            json: async () => ({
+              task_id: 'imgtask_slow_poll',
+              status: 'completed',
+              result: { data: [{ b64_json: 'cG9sbGVk', mime_type: 'image/png' }] },
+            }),
+          } as Response
+        }
+        throw new Error(`Unexpected request: ${url}`)
+      })
+
+      const wrapper = mountImageStudio()
+      await flushPromises()
+      await flushPromises()
+      await wrapper.get('form').trigger('submit')
+      await flushPromises()
+      await vi.advanceTimersByTimeAsync(35_000)
+      await flushPromises()
+
+      expect(pollCalls).toBeGreaterThanOrEqual(2)
+      expect(wrapper.find('[data-testid="image-generation-failure"]').exists()).toBe(false)
     } finally {
       vi.useRealTimers()
     }

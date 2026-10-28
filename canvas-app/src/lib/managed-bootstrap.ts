@@ -1,5 +1,6 @@
 import { fetchImageModels } from "@/services/api/image";
 import {
+    createModelChannel,
     guessCapability,
     modelOptionsFromChannels,
     selectableModelsByCapability,
@@ -19,8 +20,10 @@ type ManagedBootstrapPayload = {
     type: "create-canvas-bootstrap";
     baseUrl?: string;
     apiKey?: string;
+    videoApiKey?: string;
     accessToken?: string;
     channelName?: string;
+    videoChannelName?: string;
     managed?: boolean;
     theme?: ThemeName;
     locale?: AppLocale;
@@ -58,58 +61,73 @@ async function applyManagedBootstrap(payload: ManagedBootstrapPayload) {
     configureCanvasCloud(payload.accessToken);
     const baseUrl = payload.baseUrl?.trim() || "";
     const apiKey = payload.apiKey?.trim() || "";
+    const videoApiKey = payload.videoApiKey?.trim() || "";
     if (payload.managed) setManagedMode(true);
-    if (!baseUrl && !apiKey) return null;
+    if (!baseUrl || (!apiKey && !videoApiKey)) return null;
     const normalizedBaseUrl = normalizeManagedBaseUrl(baseUrl || "");
-    const result = useConfigStore.getState().importChannelCredentials({
-        baseUrl: normalizedBaseUrl,
-        apiKey,
-    });
-    if (result.status !== "created" && result.status !== "updated") return result;
+
+    const loadModels = async (credential: string) => {
+        if (!credential) return [] as ModelChannel["models"];
+        try {
+            const names = await fetchImageModels({
+                baseUrl: normalizedBaseUrl,
+                apiKey: credential,
+                apiFormat: "openai",
+            });
+            return names.map((name) => ({
+                name,
+                capability: guessCapability(name),
+            }));
+        } catch {
+            // Keep managed channels empty rather than showing models from another credential.
+            return [] as ModelChannel["models"];
+        }
+    };
+
+    const [imageModels, videoModels] = await Promise.all([
+        loadModels(apiKey),
+        loadModels(videoApiKey),
+    ]);
+    const channels: ModelChannel[] = [];
+    if (apiKey) {
+        channels.push(createModelChannel({
+            id: "managed-image",
+            name: payload.channelName?.trim() || "平台 API",
+            baseUrl: normalizedBaseUrl,
+            apiKey,
+            apiFormat: "openai",
+            models: imageModels.filter((model) => model.capability !== "video"),
+        }));
+    }
+    if (videoApiKey) {
+        channels.push(createModelChannel({
+            id: "managed-video",
+            name: payload.videoChannelName?.trim() || payload.channelName?.trim() || "平台 API",
+            baseUrl: normalizedBaseUrl,
+            apiKey: videoApiKey,
+            apiFormat: "openai",
+            models: videoModels.filter((model) => model.capability === "video"),
+        }));
+    }
+    if (!channels.length) return null;
 
     const state = useConfigStore.getState();
-    const matchingIndex = state.config.channels.findIndex((channel) => (
-        channel.baseUrl.replace(/\/+$/, "") === normalizedBaseUrl.replace(/\/+$/, "")
-    ));
-    if (matchingIndex < 0) return result;
-
-    let models: ModelChannel["models"] = [];
-    try {
-        const names = await fetchImageModels({
-            baseUrl: normalizedBaseUrl,
-            apiKey: apiKey || "",
-            apiFormat: "openai",
-        });
-        models = names.map((name) => ({
-            name,
-            capability: guessCapability(name),
-        }));
-    } catch {
-        // Keep the managed channel empty rather than showing stale third-party models.
-    }
-
-    const managedChannel = state.config.channels[matchingIndex];
-    if (!managedChannel) return result;
-    const channels: ModelChannel[] = [{
-        ...managedChannel,
-        name: payload.channelName?.trim() || "平台 API",
-        models,
-    }];
+    const primaryChannel = channels[0];
     const nextConfig = {
         ...state.config,
         channels,
         models: modelOptionsFromChannels(channels),
-        baseUrl: managedChannel.baseUrl,
-        apiKey: managedChannel.apiKey,
-        apiFormat: managedChannel.apiFormat,
+        baseUrl: primaryChannel.baseUrl,
+        apiKey: primaryChannel.apiKey,
+        apiFormat: primaryChannel.apiFormat,
     };
-    nextConfig.imageModel = selectableModelsByCapability(nextConfig, "image")[0] || nextConfig.imageModel;
-    nextConfig.videoModel = selectableModelsByCapability(nextConfig, "video")[0] || nextConfig.videoModel;
-    nextConfig.textModel = selectableModelsByCapability(nextConfig, "text")[0] || nextConfig.textModel;
-    nextConfig.audioModel = selectableModelsByCapability(nextConfig, "audio")[0] || nextConfig.audioModel;
-    nextConfig.model = nextConfig.imageModel;
+    nextConfig.imageModel = selectableModelsByCapability(nextConfig, "image")[0] || "";
+    nextConfig.videoModel = selectableModelsByCapability(nextConfig, "video")[0] || "";
+    nextConfig.textModel = selectableModelsByCapability(nextConfig, "text")[0] || "";
+    nextConfig.audioModel = selectableModelsByCapability(nextConfig, "audio")[0] || "";
+    nextConfig.model = nextConfig.imageModel || nextConfig.videoModel || nextConfig.textModel;
     useConfigStore.setState({ config: nextConfig, isConfigOpen: false });
-    return result;
+    return nextConfig;
 }
 
 export function listenManagedThemeFromParent() {

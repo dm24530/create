@@ -106,6 +106,26 @@ export interface ImageStudioGalleryDownloadURL {
   filename: string
 }
 
+export interface ImageStudioClientErrorReport {
+  task_id?: string
+  batch_id?: string
+  model?: string
+  platform?: string
+  stage: string
+  error_type: string
+  message: string
+  status_code?: number
+  elapsed_ms?: number
+  request_id?: string
+  request_path?: string
+}
+
+export async function reportImageStudioClientError(
+  payload: ImageStudioClientErrorReport,
+): Promise<void> {
+  await apiClient.post('/image-studio/client-errors', payload, { timeout: 10_000 })
+}
+
 export async function downloadURLImageStudioGallery(id: string): Promise<ImageStudioGalleryDownloadURL> {
   const { data } = await apiClient.get<ImageStudioGalleryDownloadURL>(
     `/image-studio/gallery/${encodeURIComponent(id)}/download-url`,
@@ -153,6 +173,7 @@ export const imageStudioGalleryAPI = {
   thumbnail: thumbnailImageStudioGallery,
   quota: fetchStudioWorksQuota,
   reportDisplay: reportImageStudioDisplay,
+  reportClientError: reportImageStudioClientError,
 }
 
 export default imageStudioGalleryAPI

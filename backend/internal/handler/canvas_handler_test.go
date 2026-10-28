@@ -69,6 +69,28 @@ func (s *canvasStorageStub) FetchImageURL(_ context.Context, _ string) ([]byte, 
 	return []byte("remote-image"), "image/png", nil
 }
 
+func TestCanvasProxyImageStreamsRemoteImage(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler := &CanvasHandler{storage: &canvasStorageStub{}}
+	const userID int64 = 101
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/canvas/image-proxy?url="+
+			"https%3A%2F%2Fr2.example.test%2Fimage.png",
+		nil,
+	)
+	c.Set(string(middleware2.ContextKeyUser), middleware2.AuthSubject{UserID: userID})
+
+	handler.ProxyImage(c)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, "image/png", w.Header().Get("Content-Type"))
+	require.Equal(t, "remote-image", w.Body.String())
+}
+
 type canvasObjectKeyMatcher struct {
 	prefix string
 }
