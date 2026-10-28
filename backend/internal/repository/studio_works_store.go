@@ -16,7 +16,7 @@ import (
 // 两种作品共用一张表，用 kind 区分；配额计数刻意不带 kind 条件，
 // 所以「每人 100 个文件」是图片 + 视频合并计算的。
 const studioWorksColumns = `
-	id, user_id, kind, object_key, url, thumb_url, prompt, model, format, size, duration_seconds, duration_ms, saved,
+	id, user_id, kind, object_key, url, thumb_url, prompt, model, format, size, duration_seconds, duration_ms, saved, sort_order,
 	EXTRACT(EPOCH FROM created_at)::bigint AS created_at,
 	COALESCE(EXTRACT(EPOCH FROM expires_at)::bigint, 0) AS expires_at`
 
@@ -79,10 +79,10 @@ func (s *studioWorksDB) insert(ctx context.Context, entry *studioWorkRow, quota 
 
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO studio_works (
-			id, user_id, kind, object_key, url, thumb_url, prompt, model, format, size, duration_seconds, duration_ms, saved, expires_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+			id, user_id, kind, object_key, url, thumb_url, prompt, model, format, size, duration_seconds, duration_ms, saved, sort_order, expires_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
 		entry.ID, entry.UserID, entry.Kind, entry.ObjectKey, entry.URL, entry.ThumbURL, entry.Prompt,
-		entry.Model, entry.Format, entry.Size, entry.DurationSeconds, entry.DurationMs, entry.Saved, studioWorkExpiry(entry.ExpiresAt),
+		entry.Model, entry.Format, entry.Size, entry.DurationSeconds, entry.DurationMs, entry.Saved, entry.SortOrder, studioWorkExpiry(entry.ExpiresAt),
 	); err != nil {
 		return fmt.Errorf("insert studio work: %w", err)
 	}
@@ -116,7 +116,7 @@ func (s *studioWorksDB) list(
 		query += fmt.Sprintf(" AND saved = $%d", len(args)+1)
 		args = append(args, *saved)
 	}
-	query += fmt.Sprintf(" ORDER BY created_at DESC LIMIT $%d", len(args)+1)
+	query += fmt.Sprintf(" ORDER BY sort_order DESC, created_at DESC, id DESC LIMIT $%d", len(args)+1)
 	args = append(args, limit)
 
 	rows, err := s.db.QueryContext(ctx, query, args...)
@@ -130,7 +130,7 @@ func (s *studioWorksDB) list(
 		entry := &studioWorkRow{}
 		if err := rows.Scan(
 			&entry.ID, &entry.UserID, &entry.Kind, &entry.ObjectKey, &entry.URL, &entry.ThumbURL, &entry.Prompt,
-			&entry.Model, &entry.Format, &entry.Size, &entry.DurationSeconds, &entry.DurationMs, &entry.Saved,
+			&entry.Model, &entry.Format, &entry.Size, &entry.DurationSeconds, &entry.DurationMs, &entry.Saved, &entry.SortOrder,
 			&entry.CreatedAt, &entry.ExpiresAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan studio work: %w", err)
@@ -355,6 +355,7 @@ type studioWorkRow struct {
 	DurationSeconds int
 	DurationMs      sql.NullInt64
 	Saved           bool
+	SortOrder       int64
 	ExpiresAt       int64
 	CreatedAt       int64
 }
@@ -391,6 +392,7 @@ func (s *imageStudioGalleryStore) Save(
 			Valid: entry.DurationMs > 0,
 		},
 		Saved:     entry.Saved,
+		SortOrder: entry.SortOrder,
 		ExpiresAt: entry.ExpiresAt,
 	}, quota)
 }
@@ -416,6 +418,7 @@ func (s *imageStudioGalleryStore) List(
 			Format:     row.Format,
 			DurationMs: int(row.DurationMs.Int64),
 			Saved:      row.Saved,
+			SortOrder:  row.SortOrder,
 			ExpiresAt:  row.ExpiresAt,
 			CreatedAt:  row.CreatedAt,
 		})
@@ -478,6 +481,7 @@ func (s *videoStudioGalleryStore) Save(
 		Format:          entry.Format,
 		DurationSeconds: entry.DurationSeconds,
 		Saved:           entry.Saved,
+		SortOrder:       entry.SortOrder,
 		ExpiresAt:       entry.ExpiresAt,
 	}, quota)
 }
@@ -501,6 +505,7 @@ func (s *videoStudioGalleryStore) List(
 			Format:          row.Format,
 			DurationSeconds: row.DurationSeconds,
 			Saved:           row.Saved,
+			SortOrder:       row.SortOrder,
 			ExpiresAt:       row.ExpiresAt,
 			CreatedAt:       row.CreatedAt,
 		})

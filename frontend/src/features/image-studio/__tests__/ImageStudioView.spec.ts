@@ -2103,6 +2103,7 @@ describe('ImageStudioView gallery', () => {
         'imgtask_timed_1',
         'imgtask_timed_2',
       ])
+      expect(payloads[0].sort_order).toBeGreaterThan(payloads[1].sort_order)
       expect(saveGallery).not.toHaveBeenCalled()
       expect(listGallery).toHaveBeenCalledTimes(2)
     } finally {
@@ -2169,6 +2170,15 @@ describe('ImageStudioView gallery', () => {
 
     expect(wrapper.find('img[alt="生成结果 1"]').exists()).toBe(true)
     expect(wrapper.findAll('.image-pending-card')).toHaveLength(1)
+    let cards = wrapper.findAll('[data-testid="image-results-grid"] article')
+    expect(cards[0].find('img[alt="生成结果 1"]').exists()).toBe(true)
+    expect(cards[1].find('.image-pending-card').exists()).toBe(true)
+
+    await wrapper.get('.studio-results__action').trigger('click')
+    await flushPromises()
+    cards = wrapper.findAll('[data-testid="image-results-grid"] article')
+    expect(cards[0].find('img[alt="生成结果 1"]').exists()).toBe(true)
+    expect(cards[1].find('.image-pending-card').exists()).toBe(true)
 
     resolveSecond({
       ok: true,
@@ -2180,6 +2190,191 @@ describe('ImageStudioView gallery', () => {
     } as Response)
     await flushPromises()
     expect(wrapper.findAll('.image-pending-card')).toHaveLength(0)
+  })
+
+  it('shows a completed image preview before local size processing finishes', async () => {
+    listKeys.mockResolvedValue({
+      items: [{ id: 1, name: 'dd', key: 'sk-local', status: 'active', group_id: 2 }],
+    })
+    getPublicSettings.mockResolvedValue({ api_base_url: '/v1' })
+    imageNeedsLocalResize.mockReturnValue(true)
+    let resolveProcessing!: (result: {
+      src: string
+      format: string
+      processed: boolean
+    }) => void
+    processImageForDisplay.mockReturnValue(new Promise((resolve) => {
+      resolveProcessing = resolve
+    }))
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/images/batches/models')) {
+        return { ok: true, json: async () => ({ data: [] }) } as Response
+      }
+      if (url.endsWith('/models')) {
+        return { ok: true, json: async () => ({ data: [{ id: 'gpt-image-1' }] }) } as Response
+      }
+      if (url.endsWith('/images/generations/async')) {
+        return {
+          ok: true,
+          status: 202,
+          json: async () => ({
+            task_id: 'imgtask_preview_first',
+            status: 'processing',
+            poll_url: '/v1/images/tasks/imgtask_preview_first',
+          }),
+        } as Response
+      }
+      if (url.endsWith('/images/tasks/imgtask_preview_first')) {
+        return {
+          ok: true,
+          json: async () => ({
+            task_id: 'imgtask_preview_first',
+            status: 'completed',
+            result: {
+              data: [{
+                url: 'https://cdn.example.com/full-size.png',
+                preview_data_url: 'data:image/jpeg;base64,cHJldmlldw==',
+              }],
+            },
+          }),
+        } as Response
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountImageStudio()
+    await flushPromises()
+    await flushPromises()
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(wrapper.find('img[alt="生成结果 1"]').attributes('src'))
+      .toBe('data:image/jpeg;base64,cHJldmlldw==')
+
+    resolveProcessing({
+      src: 'data:image/png;base64,ZnVsbA==',
+      format: 'png',
+      processed: true,
+    })
+    await flushPromises()
+    expect(wrapper.find('img[alt="生成结果 1"]').attributes('src'))
+      .toContain('data:image/jpeg;base64,cHJldmlldw==')
+  })
+
+  it('shows every completed preview without waiting for another image resize', async () => {
+    listKeys.mockResolvedValue({
+      items: [{ id: 1, name: 'dd', key: 'sk-local', status: 'active', group_id: 2 }],
+    })
+    getPublicSettings.mockResolvedValue({ api_base_url: '/v1' })
+    imageNeedsLocalResize.mockReturnValue(true)
+    const pendingProcessors: Array<(result: {
+      src: string
+      format: string
+      processed: boolean
+    }) => void> = []
+    processImageForDisplay.mockImplementation(() => new Promise((resolve) => {
+      pendingProcessors.push(resolve)
+    }))
+    let submitCalls = 0
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/images/batches/models')) {
+        return { ok: true, json: async () => ({ data: [] }) } as Response
+      }
+      if (url.endsWith('/models')) {
+        return { ok: true, json: async () => ({ data: [{ id: 'gpt-image-1' }] }) } as Response
+      }
+      if (url.endsWith('/images/generations/async')) {
+        submitCalls += 1
+        return {
+          ok: true,
+          status: 202,
+          json: async () => ({
+            task_id: `imgtask_parallel_${submitCalls}`,
+            status: 'processing',
+            poll_url: `/v1/images/tasks/imgtask_parallel_${submitCalls}`,
+          }),
+        } as Response
+      }
+      const task = url.match(/\/images\/tasks\/imgtask_parallel_(\d+)$/)?.[1]
+      if (task) {
+        return {
+          ok: true,
+          json: async () => ({
+            task_id: `imgtask_parallel_${task}`,
+            status: 'completed',
+            result: {
+              data: [{
+                url: `https://cdn.example.com/parallel-${task}.png`,
+                preview_data_url: `data:image/jpeg;base64,cHJldmlldy0${task}=`,
+              }],
+            },
+          }),
+        } as Response
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountImageStudio()
+    await flushPromises()
+    await flushPromises()
+    await wrapper.get('[data-testid="image-count-control"]').findAll('button')[1].trigger('click')
+    const submitPromise = wrapper.get('form').trigger('submit')
+    await vi.waitFor(() => {
+      expect(wrapper.findAll('.image-pending-card')).toHaveLength(0)
+      expect(wrapper.findAll('img[alt^="生成结果"]')).toHaveLength(2)
+    })
+
+    for (const resolveProcess of pendingProcessors) {
+      resolveProcess({
+        src: 'data:image/png;base64,cHJvY2Vzc2Vk',
+        format: 'png',
+        processed: true,
+      })
+    }
+    await submitPromise
+    await flushPromises()
+  })
+
+  it('restores failed and pending images in their original slot order', async () => {
+    listKeys.mockResolvedValue({
+      items: [{ id: 1, name: 'dd', key: 'sk-local', status: 'active', group_id: 2 }],
+    })
+    getPublicSettings.mockResolvedValue({ api_base_url: '/v1' })
+    const now = Date.now()
+    localStorage.setItem(imageStudioPendingStorageKey(), JSON.stringify([{
+      id: 12,
+      title: '正在生成 2',
+      src: '',
+      meta: 'PNG · 1024x1024 · gpt-image-1',
+      pending: true,
+      taskId: 'pending-task',
+      batchId: 'batch-order',
+      startedAt: now,
+      displayOrder: 200,
+      prompt: 'pending task',
+    }]))
+    localStorage.setItem('sub2api:image-studio:failures:2', JSON.stringify([{
+      id: 11,
+      title: '生成失败',
+      src: '',
+      meta: 'PNG · 1024x1024 · gpt-image-1',
+      failed: true,
+      error: 'upstream failed',
+      batchId: 'batch-order',
+      displayOrder: 201,
+      prompt: 'failed task',
+    }]))
+
+    const wrapper = mountImageStudio()
+    await flushPromises()
+    await flushPromises()
+
+    const cards = wrapper.findAll('[data-testid="image-results-grid"] article')
+    expect(cards).toHaveLength(2)
+    expect(cards[0].find('[data-testid="image-generation-failure"]').exists()).toBe(true)
+    expect(cards[1].find('.image-pending-card').exists()).toBe(true)
   })
 
   it('keeps failed generations visible and restores them from user history', async () => {
@@ -3175,7 +3370,7 @@ describe('ImageStudioView gallery', () => {
     expect(fetch).not.toHaveBeenCalledWith('https://upstream.example.com/out.png')
   })
 
-  it('keeps the pending card visible until required local resizing finishes', async () => {
+  it('shows the image before required local resizing finishes', async () => {
     listKeys.mockResolvedValue({
       items: [{ id: 1, name: 'dd', key: 'sk-local', status: 'active', group_id: 2 }],
     })
@@ -3249,8 +3444,8 @@ describe('ImageStudioView gallery', () => {
         'png',
       )
     })
-    expect(wrapper.find('img[alt="生成结果 1"]').exists()).toBe(false)
-    expect(wrapper.text()).toContain('正在生成')
+    expect(wrapper.get('img[alt="生成结果 1"]').attributes('src'))
+      .toContain('data:image/png;base64,')
 
     resolveProcess({
       src: 'data:image/png;base64,processed',

@@ -21,6 +21,9 @@ export interface VideoWorkRecord {
   archivedSaved?: boolean
   archivedExpiresAt?: number
   createdAt: number
+  displayOrder?: number
+  /** 仅失败记录使用：按后台对象存储临时保留期计算出的本地到期时间（秒）。 */
+  expiresAt?: number
   status: VideoTaskStatus
   statusMessage: string
 }
@@ -29,15 +32,35 @@ export const VIDEO_WORKS_STORAGE_KEY = 'sub2api:video-studio:works'
 
 const MAX_RECORDS = 100
 
+function videoWorkOrder(record: VideoWorkRecord) {
+  const explicit = Number(record.displayOrder)
+  if (Number.isFinite(explicit) && explicit > 0) return explicit
+  const createdAt = Number(record.createdAt)
+  return Number.isFinite(createdAt) ? createdAt * 1000 : 0
+}
+
+function sortVideoWorks(records: VideoWorkRecord[]) {
+  return records.sort((a, b) =>
+    videoWorkOrder(b) - videoWorkOrder(a)
+    || (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0),
+  )
+}
+
 export function listVideoWorks(): VideoWorkRecord[] {
   try {
     const stored = JSON.parse(localStorage.getItem(VIDEO_WORKS_STORAGE_KEY) || '[]')
     if (!Array.isArray(stored)) return []
-    return stored
+    const now = Date.now()
+    const records = stored
       .filter((item): item is VideoWorkRecord =>
-        Boolean(item) && typeof item === 'object' && typeof item.id === 'string' && typeof item.requestId === 'string',
+        Boolean(item) &&
+        typeof item === 'object' &&
+        typeof item.id === 'string' &&
+        typeof item.requestId === 'string' &&
+        !(Number(item.expiresAt) > 0 && Number(item.expiresAt) * 1000 <= now),
       )
-      .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+    if (records.length !== stored.length) writeVideoWorks(records)
+    return sortVideoWorks(records)
   } catch {
     return []
   }
@@ -59,7 +82,7 @@ export function saveVideoWork(record: VideoWorkRecord): VideoWorkRecord[] {
   const index = records.findIndex((item) => item.id === record.id)
   if (index >= 0) records.splice(index, 1, { ...records[index], ...record })
   else records.unshift(record)
-  const next = records.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+  const next = sortVideoWorks(records)
   writeVideoWorks(next)
   return next
 }

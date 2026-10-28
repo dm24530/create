@@ -65,8 +65,14 @@ type VideoStudioGalleryEntry struct {
 	// Saved 为真表示用户已把它存进「我的作品」：长期有效。
 	Saved     bool  `json:"saved"`
 	CreatedAt int64 `json:"created_at"`
+	SortOrder int64 `json:"sort_order,omitempty"`
 	// ExpiresAt 只在临时内容上非 0：到期后由后台清扫连对象一起删。
 	ExpiresAt int64 `json:"expires_at"`
+}
+
+type VideoStudioGallerySaveOptions struct {
+	CreatedAt int64
+	SortOrder int64
 }
 
 type VideoStudioGalleryStore interface {
@@ -203,6 +209,7 @@ func (s *VideoStudioGalleryService) Save(
 	contentType string,
 	data []byte,
 	saved bool,
+	options ...VideoStudioGallerySaveOptions,
 ) (*VideoStudioGalleryEntry, error) {
 	if s == nil || s.store == nil || s.storage == nil || userID <= 0 || len(data) == 0 {
 		return nil, ErrVideoStudioGalleryUnavailable
@@ -240,9 +247,26 @@ func (s *VideoStudioGalleryService) Save(
 	}
 
 	now := time.Now().UTC()
+	createdAt := now
+	sortOrder := int64(0)
+	if len(options) > 0 {
+		if options[0].SortOrder > 0 {
+			sortOrder = options[0].SortOrder
+		}
+		if options[0].CreatedAt > 0 {
+			candidate := time.Unix(options[0].CreatedAt, 0).UTC()
+			if !candidate.After(now.Add(5*time.Minute)) &&
+				!candidate.Before(now.Add(-30*24*time.Hour)) {
+				createdAt = candidate
+			}
+		}
+	}
 	expiresAt := int64(0)
 	if !saved {
 		expiresAt = now.Add(s.tempRetention()).Unix()
+	}
+	if sortOrder <= 0 {
+		sortOrder = createdAt.Unix() * 1000
 	}
 	entry := &VideoStudioGalleryEntry{
 		ID:              id,
@@ -254,7 +278,8 @@ func (s *VideoStudioGalleryService) Save(
 		Format:          strings.TrimSpace(format),
 		DurationSeconds: durationSeconds,
 		Saved:           saved,
-		CreatedAt:       now.Unix(),
+		CreatedAt:       createdAt.Unix(),
+		SortOrder:       sortOrder,
 		ExpiresAt:       expiresAt,
 	}
 	if err := s.store.Save(ctx, entry, resolveStudioQuota(s.storage)); err != nil {
@@ -292,6 +317,7 @@ func (s *VideoStudioGalleryService) SaveFromURL(
 	durationSeconds int,
 	rawURL string,
 	saved bool,
+	options ...VideoStudioGallerySaveOptions,
 ) (*VideoStudioGalleryEntry, error) {
 	if s == nil || s.store == nil || s.storage == nil || userID <= 0 || strings.TrimSpace(rawURL) == "" {
 		return nil, ErrVideoStudioGalleryUnavailable
@@ -300,7 +326,7 @@ func (s *VideoStudioGalleryService) SaveFromURL(
 	if err != nil {
 		return nil, err
 	}
-	return s.Save(ctx, userID, prompt, model, format, durationSeconds, contentType, data, saved)
+	return s.Save(ctx, userID, prompt, model, format, durationSeconds, contentType, data, saved, options...)
 }
 
 // List 列出作品。saved 为 nil 时临时与已保存都返回。

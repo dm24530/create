@@ -12,6 +12,7 @@ export interface ArchivedVideoEntry {
   /** true = 已存进「我的作品」（永久）；false = 工作台的临时内容（到期自动删）。 */
   saved: boolean
   created_at: number
+  sort_order?: number
   /** 临时内容的过期时间（秒）；已保存的为 0。 */
   expires_at: number
 }
@@ -24,6 +25,8 @@ export interface ArchiveVideoRequest {
   model: string
   format: string
   duration_seconds: number
+  created_at?: number
+  sort_order?: number
   /** 不传时后端按"直接存进我的作品"处理；工作台应显式传 false。 */
   saved?: boolean
 }
@@ -91,12 +94,17 @@ export async function unpinArchivedVideo(id: string): Promise<UnpinArchivedVideo
 export interface StudioWorksQuota {
   used: number
   limit: number
+  retention_seconds?: number
 }
 
 // 作品配额是图片 + 视频合起来算的（与图片工作台同一份计数）。
 export async function fetchStudioWorksQuota(): Promise<StudioWorksQuota> {
   const { data } = await apiClient.get<StudioWorksQuota>('/video-studio/gallery/quota')
-  return { used: Number(data?.used || 0), limit: Number(data?.limit || 0) }
+  return {
+    used: Number(data?.used || 0),
+    limit: Number(data?.limit || 0),
+    retention_seconds: Number(data?.retention_seconds || 0),
+  }
 }
 
 // 判断一个错误是不是「作品库已满」：后端用 429 + *_QUOTA_EXCEEDED 表达。

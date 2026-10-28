@@ -26,6 +26,8 @@ type saveVideoStudioGalleryRequest struct {
 	Model           string `json:"model"`
 	Format          string `json:"format"`
 	DurationSeconds int    `json:"duration_seconds"`
+	CreatedAt       int64  `json:"created_at"`
+	SortOrder       int64  `json:"sort_order"`
 	// Saved 为真表示直接存进「我的作品」（长期有效、计入配额）；
 	// 不传时保持老行为（true）。
 	Saved *bool `json:"saved"`
@@ -113,10 +115,18 @@ func (h *VideoStudioGalleryHandler) Save(c *gin.Context) {
 		}
 		entry, err = h.gallery.Save(
 			ctx, subject.UserID, request.Prompt, request.Model, request.Format, request.DurationSeconds, contentType, data, saved,
+			service.VideoStudioGallerySaveOptions{
+				CreatedAt: request.CreatedAt,
+				SortOrder: request.SortOrder,
+			},
 		)
 	case videoURL != "":
 		entry, err = h.gallery.SaveFromURL(
 			ctx, subject.UserID, request.Prompt, request.Model, request.Format, request.DurationSeconds, videoURL, saved,
+			service.VideoStudioGallerySaveOptions{
+				CreatedAt: request.CreatedAt,
+				SortOrder: request.SortOrder,
+			},
 		)
 	default:
 		response.BadRequest(c, "video_url or video_data_url is required")

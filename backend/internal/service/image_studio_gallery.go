@@ -62,6 +62,7 @@ type ImageStudioGalleryEntry struct {
 	// Saved 为真表示用户已把它存进「我的作品」：长期有效。
 	Saved     bool  `json:"saved"`
 	CreatedAt int64 `json:"created_at"`
+	SortOrder int64 `json:"sort_order,omitempty"`
 	// DurationMs is the wall-clock image generation time when known.
 	DurationMs int `json:"duration_ms,omitempty"`
 	// ExpiresAt 只在临时内容上非 0：到期后由后台清扫连对象一起删。
@@ -71,6 +72,7 @@ type ImageStudioGalleryEntry struct {
 type ImageStudioGallerySaveOptions struct {
 	DurationMs int
 	CreatedAt  int64
+	SortOrder  int64
 }
 
 type ImageStudioGalleryStore interface {
@@ -240,8 +242,12 @@ func (s *ImageStudioGalleryService) Save(
 	serverNow := time.Now().UTC()
 	createdAt := serverNow
 	generationDurationMs := 0
+	sortOrder := int64(0)
 	if len(options) > 0 {
 		generationDurationMs = max(options[0].DurationMs, 0)
+		if options[0].SortOrder > 0 {
+			sortOrder = options[0].SortOrder
+		}
 		if options[0].CreatedAt > 0 {
 			candidate := time.Unix(options[0].CreatedAt, 0).UTC()
 			// 客户端时间只用于展示；限制异常时钟值，过期时间始终由服务端决定。
@@ -254,6 +260,9 @@ func (s *ImageStudioGalleryService) Save(
 	expiresAt := int64(0)
 	if !saved {
 		expiresAt = serverNow.Add(s.tempRetention()).Unix()
+	}
+	if sortOrder <= 0 {
+		sortOrder = createdAt.Unix() * 1000
 	}
 	entry := &ImageStudioGalleryEntry{
 		ID:     id,
@@ -268,6 +277,7 @@ func (s *ImageStudioGalleryService) Save(
 		Format:     strings.TrimSpace(format),
 		Saved:      saved,
 		CreatedAt:  createdAt.Unix(),
+		SortOrder:  sortOrder,
 		DurationMs: generationDurationMs,
 		ExpiresAt:  expiresAt,
 	}
@@ -322,8 +332,12 @@ func (s *ImageStudioGalleryService) SaveExistingObject(
 	serverNow := time.Now().UTC()
 	createdAt := serverNow
 	durationMs := 0
+	sortOrder := int64(0)
 	if len(options) > 0 {
 		durationMs = max(options[0].DurationMs, 0)
+		if options[0].SortOrder > 0 {
+			sortOrder = options[0].SortOrder
+		}
 		if options[0].CreatedAt > 0 {
 			candidate := time.Unix(options[0].CreatedAt, 0).UTC()
 			if !candidate.After(serverNow.Add(5*time.Minute)) &&
@@ -336,6 +350,9 @@ func (s *ImageStudioGalleryService) SaveExistingObject(
 	if !saved {
 		expiresAt = serverNow.Add(s.tempRetention()).Unix()
 	}
+	if sortOrder <= 0 {
+		sortOrder = createdAt.Unix() * 1000
+	}
 	entry := &ImageStudioGalleryEntry{
 		ID:         strings.ReplaceAll(uuid.NewString(), "-", ""),
 		UserID:     userID,
@@ -347,6 +364,7 @@ func (s *ImageStudioGalleryService) SaveExistingObject(
 		Format:     strings.TrimSpace(format),
 		Saved:      saved,
 		CreatedAt:  createdAt.Unix(),
+		SortOrder:  sortOrder,
 		DurationMs: durationMs,
 		ExpiresAt:  expiresAt,
 	}
@@ -719,6 +737,7 @@ func (s *ImageStudioGalleryService) Quota(ctx context.Context, userID int64) (St
 	quota := StudioWorksQuota{Limit: int64(StudioWorksQuotaPerUser)}
 	if s != nil {
 		quota.Limit = resolveStudioQuota(s.storage)
+		quota.RetentionSeconds = int64(s.tempRetention().Seconds())
 	}
 	if s == nil || s.store == nil || userID <= 0 {
 		return quota, nil

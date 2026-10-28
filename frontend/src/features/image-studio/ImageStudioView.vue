@@ -750,6 +750,7 @@ interface GeneratedImage {
   saved?: boolean
   expiresAt?: number
   createdAt?: number
+  displayOrder?: number
   restoredFromSnapshot?: boolean
 }
 
@@ -886,6 +887,42 @@ const PENDING_PROMPT_STORAGE_KEY = 'sub2api:image-studio:pending-prompt'
 const STUDIO_PREFERENCES_STORAGE_KEY = 'sub2api:image-studio:preferences'
 const STUDIO_SNAPSHOT_STORAGE_KEY = 'sub2api:image-studio:snapshot-v1'
 let nextImageId = 1
+let imageDisplayOrderCursor = Date.now() * 1000
+
+function allocateImageBatchDisplayOrder(count: number) {
+  const batchSize = Math.max(1, count)
+  imageDisplayOrderCursor = Math.max(
+    Date.now() * 1000,
+    imageDisplayOrderCursor + batchSize + 1,
+  )
+  return imageDisplayOrderCursor
+}
+
+function imageDisplayOrder(image: GeneratedImage) {
+  const explicit = Number(image.displayOrder)
+  if (Number.isFinite(explicit) && explicit > 0) return explicit
+  const createdAt = Number(image.createdAt)
+  return Number.isFinite(createdAt) && createdAt > 0 ? createdAt * 1000 : 0
+}
+
+function mergeImagesByDisplayOrder(
+  current: GeneratedImage[],
+  incoming: GeneratedImage[],
+): GeneratedImage[] {
+  const seen = new Set<string>()
+  const merged = [...incoming, ...current].filter((image) => {
+    const key = String(image.id)
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+  const originalIndex = new Map(merged.map((image, index) => [image, index]))
+  merged.sort((left, right) => (
+    imageDisplayOrder(right) - imageDisplayOrder(left)
+    || Number(originalIndex.get(left)) - Number(originalIndex.get(right))
+  ))
+  return merged
+}
 
 function pendingImageStorageKey(userId: number | string) {
   return `${PENDING_STORAGE_KEY}:${userId}`
@@ -1233,6 +1270,7 @@ const galleryRemoteThumbUrls = new Map<string, string>()
 const galleryThumbnailDataUrls = new Map<string, string>()
 const galleryThumbnailRecoveryIds = new Set<string>()
 const imageMediaTimeoutIds = new Map<string, ReturnType<typeof setTimeout>>()
+const imageProcessingTasks = new Map<string, Promise<void>>()
 const studioQuota = ref<{ used: number; limit: number } | null>(null)
 const resumedGenerationBatches = new Set<string>()
 const resumedGatewayBatches = new Set<string>()
@@ -1261,6 +1299,7 @@ function clearStudioUserState() {
   imageMediaRetryNonce.value.clear()
   for (const timer of imageMediaTimeoutIds.values()) clearTimeout(timer)
   imageMediaTimeoutIds.clear()
+  imageProcessingTasks.clear()
   locallySavedGalleryIds.clear()
   galleryBackedIds.value.clear()
   localToGalleryId.value.clear()
@@ -1661,81 +1700,68 @@ async function loadGallery(epoch = studioUserEpoch, ownerId = studioStateOwnerId
   try {
     const entries = await imageStudioGalleryAPI.list()
     if (epoch !== studioUserEpoch || ownerId !== studioStateOwnerId.value) return
+    const entryById = new Map(entries.map((entry) => [String(entry.id), entry]))
+    const matchedGalleryIds = new Set<string>()
     for (const entry of entries) {
       if (entry?.id) galleryBackedIds.value.add(String(entry.id))
       if (entry?.id && entry.thumb_url) {
         galleryRemoteThumbUrls.set(String(entry.id), String(entry.thumb_url))
       }
-      const localImage = images.value.find((item) => (
-        localToGalleryId.value.get(String(item.id)) === String(entry?.id || '')
-      ))
-      if (localImage) {
-        const storedURL = resolveImageAssetURL(String(entry.url || ''))
-        if (storedURL && !sameStoredObject(localImage.src, storedURL)) {
-          localImage.src = storedURL
-          resetImageMediaState(localImage)
-        }
-        const storedThumbURL = String(entry.thumb_url || '')
-        if (
-          storedThumbURL
-          && !isInlineImageSource(localImage.thumbSrc)
-          && !sameStoredObject(localImage.thumbSrc, storedThumbURL)
-        ) {
-          localImage.thumbSrc = storedThumbURL
-          localImage.thumbSrcSet = ''
-          resetImageMediaState(localImage)
-        }
-        localImage.saved = entry.saved !== false
-        localImage.expiresAt = entry.expires_at || 0
-      }
     }
-    const pending = images.value.filter((item) => item.pending)
-    const localResults = images.value.filter((item) => (
-      !item.pending
-      && !item.restoredFromSnapshot
-      && typeof item.id === 'number'
-    ))
+
+    for (const image of images.value) {
+      const mappedId = localToGalleryId.value.get(String(image.id))
+      const entry = entryById.get(String(image.id))
+        || entryById.get(String(mappedId || ''))
+        || entries.find((candidate) => sameStoredObject(image.src, candidate.url))
+      if (!entry) continue
+      matchedGalleryIds.add(String(entry.id))
+      if (mappedId !== String(entry.id)) {
+        localToGalleryId.value.set(String(image.id), String(entry.id))
+      }
+      const storedURL = resolveImageAssetURL(String(entry.url || ''))
+      if (storedURL && !sameStoredObject(image.src, storedURL)) {
+        image.src = storedURL
+        resetImageMediaState(image)
+      }
+      const storedThumbURL = String(entry.thumb_url || '')
+      if (
+        storedThumbURL
+        && !isInlineImageSource(image.thumbSrc)
+        && !sameStoredObject(image.thumbSrc, storedThumbURL)
+      ) {
+        image.thumbSrc = storedThumbURL
+        image.thumbSrcSet = ''
+        resetImageMediaState(image)
+      }
+      image.prompt = entry.prompt
+      image.model = entry.model
+      image.size = entry.size
+      image.format = entry.format
+      image.saved = entry.saved !== false
+      image.expiresAt = entry.expires_at || 0
+      image.durationMs = Number(entry.duration_ms || 0) || image.durationMs
+      image.createdAt = entry.created_at || image.createdAt
+      image.displayOrder = Number(entry.sort_order || 0) || image.displayOrder
+    }
     const seen = new Set<string>()
-    const existingById = new Map(images.value.map((item) => [String(item.id), item]))
     const gallery = entries
       // 本会话刚保存进图库的图片，本地已经有一份可显示的数据副本；
       // 再从图库列表渲染一份就会变成"生成一个却显示两个"。
       .filter((entry) => !locallySavedGalleryIds.has(String(entry.id)))
-      .map((entry, index) => {
-        const existing = existingById.get(String(entry.id))
-        if (!existing) return galleryEntryToImage(entry, index)
-        return {
-          ...existing,
-          src: sameStoredObject(existing.src, entry.url)
-            ? existing.src
-            : resolveImageAssetURL(entry.url),
-          thumbSrc: isInlineImageSource(existing.thumbSrc)
-            ? existing.thumbSrc
-            : sameStoredObject(existing.thumbSrc, entry.thumb_url)
-              ? existing.thumbSrc
-              : entry.thumb_url || existing.thumbSrc,
-          thumbSrcSet: isInlineImageSource(existing.thumbSrc) ? existing.thumbSrcSet : '',
-          prompt: entry.prompt,
-          model: entry.model,
-          size: entry.size,
-          format: entry.format,
-          saved: entry.saved !== false,
-          expiresAt: entry.expires_at || 0,
-          durationMs: Number(entry.duration_ms || 0) || undefined,
-          createdAt: entry.created_at || 0,
-        }
-      })
+      .filter((entry) => !matchedGalleryIds.has(String(entry.id)))
+      .map((entry, index) => galleryEntryToImage(entry, index))
       .filter((item) => {
         const key = String(item.id || item.src)
         if (seen.has(key)) return false
         seen.add(key)
         return true
       })
-    const merged = [...localResults, ...gallery].filter((item, index, all) => {
+    const merged = [...images.value, ...gallery].filter((item, index, all) => {
       const key = String(item.id || item.src)
       return all.findIndex((candidate) => String(candidate.id || candidate.src) === key) === index
     })
-    images.value = [...pending, ...merged]
+    images.value = merged
     for (const entry of entries) {
       const localImage = images.value.find((item) => (
         String(item.id) === String(entry.id)
@@ -1833,6 +1859,7 @@ function galleryEntryToImage(entry: ImageStudioGalleryEntry, index: number): Gen
     expiresAt: entry.expires_at || 0,
     durationMs: Number(entry.duration_ms || 0) || undefined,
     createdAt: entry.created_at || 0,
+    displayOrder: Number(entry.sort_order || 0) || undefined,
   }
 }
 
@@ -1887,13 +1914,15 @@ function restorePendingImages() {
       return
     }
     nextImageId = Math.max(nextImageId, ...restoredEntries.map((item) => Number(item.id) + 1))
-    images.value = [
-      ...restored,
-      ...timedOutEntries,
-      ...images.value.filter((item) => !item.pending),
-    ]
+    imageDisplayOrderCursor = Math.max(
+      imageDisplayOrderCursor,
+      ...restoredEntries.map((item) => Number(item.displayOrder) || 0),
+    )
+    images.value = mergeImagesByDisplayOrder(
+      images.value,
+      [...restored, ...timedOutEntries],
+    )
     persistPendingImages()
-    persistFailedImages()
     const serviceWorkerPending = restored.filter((item) => !item.gatewayPollUrl)
     if (serviceWorkerPending.length && 'serviceWorker' in navigator && typeof indexedDB !== 'undefined') {
       appStore.showSuccess(`已恢复 ${restored.length} 个后台生成任务`, 3000)
@@ -1930,11 +1959,11 @@ function restoreFailedImages() {
       }))
     if (!restored.length) return
     nextImageId = Math.max(nextImageId, ...restored.map((item) => Number(item.id) + 1))
-    const restoredIds = new Set(restored.map((item) => String(item.id)))
-    images.value = [
-      ...restored,
-      ...images.value.filter((item) => !restoredIds.has(String(item.id))),
-    ]
+    imageDisplayOrderCursor = Math.max(
+      imageDisplayOrderCursor,
+      ...restored.map((item) => Number(item.displayOrder) || 0),
+    )
+    images.value = mergeImagesByDisplayOrder(images.value, restored)
   } catch {
     // Ignore malformed browser storage and keep the gallery usable.
   }
@@ -2070,6 +2099,7 @@ async function persistGeneratedImages(
   model: string,
   options: { refresh?: boolean; owner?: StudioOwnerSnapshot } = {},
 ) {
+  await Promise.all(items.map((item) => imageProcessingTasks.get(String(item.id))))
   if (options.owner && !isStudioOwnerCurrent(options.owner)) return false
   const persistenceTasks = items.map(async (item) => {
     if (options.owner && !isStudioOwnerCurrent(options.owner)) {
@@ -2103,6 +2133,8 @@ async function persistGeneratedImages(
       // 记住服务端状态，卡片上才能显示"还剩 N 天 / 已保存"。
       result.value.item.saved = result.value.entry.saved !== false
       result.value.item.expiresAt = result.value.entry.expires_at || 0
+      result.value.item.displayOrder = Number(result.value.entry.sort_order || 0)
+        || result.value.item.displayOrder
       const storedURL = resolveImageAssetURL(String(result.value.entry.url || ''))
       if (storedURL && storedURL !== result.value.item.src) {
         result.value.item.src = storedURL
@@ -2157,6 +2189,7 @@ async function saveImageToGallery(
       format: image.format || format.value,
       duration_ms: image.durationMs || undefined,
       created_at: image.createdAt || undefined,
+      sort_order: image.displayOrder,
       saved,
     })
   }
@@ -2171,6 +2204,7 @@ async function saveImageToGallery(
     format: image.format || format.value,
     duration_ms: image.durationMs || undefined,
     created_at: image.createdAt || undefined,
+    sort_order: image.displayOrder,
     saved,
   })
 }
@@ -2251,7 +2285,11 @@ function reportImageDisplay(image: GeneratedImage) {
   const taskId = String(image.gatewayTaskId || '').trim()
   if (!taskId || reportedImageDisplayTaskIds.has(taskId)) return
   reportedImageDisplayTaskIds.add(taskId)
-  void imageStudioGalleryAPI.reportDisplay(taskId, image.durationMs).catch(() => {
+  const startedAt = Number(image.startedAt || 0)
+  const displayDurationMs = startedAt > 0
+    ? Math.max(1, Date.now() - startedAt)
+    : image.durationMs
+  void imageStudioGalleryAPI.reportDisplay(taskId, displayDurationMs).catch(() => {
     reportedImageDisplayTaskIds.delete(taskId)
   })
 }
@@ -2776,6 +2814,7 @@ async function generate() {
   const requestCount = Math.min(Math.max(Number(count.value) || 1, 1), 4)
   const batchId = createImageGenerationTaskId()
   const startedAt = Date.now()
+  const displayOrderBase = allocateImageBatchDisplayOrder(requestCount)
   const requestReferences = references.value.map((item) => ({ ...item }))
   generationRequestSnapshots.set(batchId, {
     prompt: currentPrompt,
@@ -2798,6 +2837,7 @@ async function generate() {
     batchId,
     apiKeyId: selectedKey.value?.id,
     startedAt,
+    displayOrder: displayOrderBase - index,
     prompt: currentPrompt,
     model: imageModel.value,
     size: size.value,
@@ -3762,7 +3802,7 @@ async function finishGenerationBatch(
     ? Math.max(1, completedAtMs - Number(firstPending.startedAt))
     : undefined
   const generated: GeneratedImage[] = []
-  let localProcessError = ''
+  const resizeTargets: Array<{ image: GeneratedImage; source: string }> = []
   const needsLocalResize = imageNeedsLocalResize(requestedSize, IMAGE_MAX_EDGE)
   for (let index = 0; index < items.length; index += 1) {
     const item = items[index]
@@ -3773,21 +3813,13 @@ async function finishGenerationBatch(
       : resolveImageAssetURL(String(item.url || ''))
     if (!rawSrc) continue
     const previewSrc = String(item.preview_data_url || '')
-    let src = rawSrc
-    let actualFormat = imageFormatFromResult(item, rawSrc, requestedFormat)
-    if (needsLocalResize) {
-      const processed = await processImageForDisplay(rawSrc, requestedSize, requestedFormat)
-      if (owner && !isStudioOwnerCurrent(owner)) return []
-      src = processed.src
-      actualFormat = processed.format
-      if (processed.error && !localProcessError) localProcessError = processed.error
-    }
+    const actualFormat = imageFormatFromResult(item, rawSrc, requestedFormat)
     const itemCompletedAt = Number(item.__imageTaskCompletedAt || 0)
     const itemDurationMs = Number(item.__imageTaskDurationMs || 0)
-    generated.push({
+    const generatedImage: GeneratedImage = {
       id: nextImageId++,
       title: `生成结果 ${titleStart + index}`,
-      src,
+      src: rawSrc,
       originalSrc: rawSrc,
       thumbSrc: previewSrc || undefined,
       prompt: currentPrompt,
@@ -3803,7 +3835,13 @@ async function finishGenerationBatch(
       gatewayTaskId: firstPending?.gatewayTaskId,
       gatewayPollUrl: firstPending?.gatewayPollUrl,
       apiKeyId: firstPending?.apiKeyId,
-    })
+      displayOrder: firstPending?.displayOrder,
+      startedAt: firstPending?.startedAt,
+    }
+    generated.push(generatedImage)
+    if (needsLocalResize) {
+      resizeTargets.push({ image: generatedImage, source: rawSrc })
+    }
   }
 
   const pendingIds = new Set(pendingImages.map((item) => item.id))
@@ -3814,12 +3852,41 @@ async function finishGenerationBatch(
     images.value.splice(Math.min(pendingIndex, images.value.length), 0, ...generated)
   }
   persistPendingImages()
-  if (localProcessError) {
+
+  let localProcessError = ''
+  const reportLocalProcessError = (error: string) => {
+    if (localProcessError) return
+    localProcessError = error
     const message = '本地尺寸处理失败，已保留并显示上游原图。'
     reportVisibleImageStudioError(message)
     appStore.showWarning(message, 6000)
   }
+  const processingTasks = resizeTargets.map((target) => {
+    const key = String(target.image.id)
+    const task = processImageForDisplay(
+      target.source,
+      requestedSize,
+      requestedFormat,
+    ).then((processed) => {
+      if (owner && !isStudioOwnerCurrent(owner)) return
+      target.image.src = processed.src
+      target.image.originalSrc = target.source
+      target.image.format = processed.format
+      target.image.meta = `${processed.format.toUpperCase()} · ${requestedSize} · ${currentModel}`
+      images.value = [...images.value]
+      if (processed.error) reportLocalProcessError(processed.error)
+    }).catch((error) => {
+      if (owner && !isStudioOwnerCurrent(owner)) return
+      reportLocalProcessError(error instanceof Error ? error.message : 'image processing failed')
+    }).finally(() => {
+      if (imageProcessingTasks.get(key) === task) imageProcessingTasks.delete(key)
+    })
+    imageProcessingTasks.set(key, task)
+    return task
+  })
+
   if (persist) {
+    await Promise.all(processingTasks)
     await persistGeneratedImages(generated, currentPrompt, currentModel, { owner })
   }
   return generated

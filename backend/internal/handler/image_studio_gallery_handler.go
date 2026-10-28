@@ -33,6 +33,7 @@ type saveImageStudioGalleryRequest struct {
 	Format       string `json:"format"`
 	DurationMs   int    `json:"duration_ms"`
 	CreatedAt    int64  `json:"created_at"`
+	SortOrder    int64  `json:"sort_order"`
 	// Saved 为真表示直接存进「我的作品」（长期有效、计入配额）；
 	// 不传时保持老行为（true），显式传 false 才是"只是生成页的临时内容"。
 	Saved *bool `json:"saved"`
@@ -47,6 +48,7 @@ type saveImageStudioGalleryFromTaskRequest struct {
 	Format     string `json:"format"`
 	DurationMs int    `json:"duration_ms"`
 	CreatedAt  int64  `json:"created_at"`
+	SortOrder  int64  `json:"sort_order"`
 	Saved      *bool  `json:"saved"`
 }
 
@@ -94,12 +96,20 @@ func (h *ImageStudioGalleryHandler) Save(c *gin.Context) {
 		}
 		entry, err = h.gallery.Save(
 			ctx, subject.UserID, request.Prompt, request.Model, request.Size, request.Format, contentType, data, saved,
-			service.ImageStudioGallerySaveOptions{DurationMs: request.DurationMs, CreatedAt: request.CreatedAt},
+			service.ImageStudioGallerySaveOptions{
+				DurationMs: request.DurationMs,
+				CreatedAt:  request.CreatedAt,
+				SortOrder:  request.SortOrder,
+			},
 		)
 	case imageURL != "":
 		entry, err = h.gallery.SaveFromURL(
 			ctx, subject.UserID, request.Prompt, request.Model, request.Size, request.Format, imageURL, saved,
-			service.ImageStudioGallerySaveOptions{DurationMs: request.DurationMs, CreatedAt: request.CreatedAt},
+			service.ImageStudioGallerySaveOptions{
+				DurationMs: request.DurationMs,
+				CreatedAt:  request.CreatedAt,
+				SortOrder:  request.SortOrder,
+			},
 		)
 	default:
 		response.BadRequest(c, "image_data_url or image_url is required")
@@ -178,6 +188,7 @@ func (h *ImageStudioGalleryHandler) SaveFromTask(c *gin.Context) {
 		service.ImageStudioGallerySaveOptions{
 			DurationMs: request.DurationMs,
 			CreatedAt:  request.CreatedAt,
+			SortOrder:  request.SortOrder,
 		},
 	)
 	if err != nil {

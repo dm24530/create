@@ -17,12 +17,14 @@ const { listKeys, getPublicSettings, copyToClipboard, routeQuery } = vi.hoisted(
 const {
   archiveVideo,
   deleteArchivedVideo,
+  fetchStudioWorksQuota,
   listArchivedVideos,
   pinArchivedVideo,
   uploadVideoReferenceAsset,
 } = vi.hoisted(() => ({
   archiveVideo: vi.fn(),
   deleteArchivedVideo: vi.fn(),
+  fetchStudioWorksQuota: vi.fn(),
   listArchivedVideos: vi.fn(),
   pinArchivedVideo: vi.fn(),
   uploadVideoReferenceAsset: vi.fn(),
@@ -34,7 +36,7 @@ vi.mock('../videoArchiveApi', () => ({
   deleteArchivedVideo,
   pinArchivedVideo,
   uploadVideoReferenceAsset,
-  fetchStudioWorksQuota: vi.fn().mockResolvedValue({ used: 0, limit: 100 }),
+  fetchStudioWorksQuota,
   isStudioQuotaError: () => false,
   fetchOnlineInspirationsFromServer: vi.fn().mockResolvedValue([]),
   fetchOnlineInspirationFeed: vi.fn().mockResolvedValue({ items: [] }),
@@ -107,6 +109,8 @@ function resetMocks() {
   pinArchivedVideo.mockReset()
   pinArchivedVideo.mockResolvedValue(undefined)
   deleteArchivedVideo.mockReset()
+  fetchStudioWorksQuota.mockReset()
+  fetchStudioWorksQuota.mockResolvedValue({ used: 0, limit: 100, retention_seconds: 7 * 86400 })
   listArchivedVideos.mockReset()
   uploadVideoReferenceAsset.mockReset()
   listArchivedVideos.mockResolvedValue([])
@@ -332,6 +336,63 @@ describe('VideoStudioView model loading', () => {
     expect(video.attributes('controls')).toBeDefined()
   })
 
+  it('appends loaded history without moving existing task slots', async () => {
+    let createCount = 0
+    const pendingPoll = new Promise<Response>(() => {})
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = String(input)
+      if (url.endsWith('/models')) return jsonResponse({ data: [{ id: 'seedance-2-720p' }] })
+      if (url.endsWith('/contents/generations/tasks') && init?.method === 'POST') {
+        createCount += 1
+        return jsonResponse({ id: `task-${createCount}` })
+      }
+      if (url.endsWith('/contents/generations/tasks/task-1')) {
+        return jsonResponse({
+          id: 'task-1',
+          status: 'failed',
+          failure_reason: 'generation failed',
+        })
+      }
+      if (url.endsWith('/contents/generations/tasks/task-2')) return pendingPoll
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountStudio()
+    await flushPromises()
+    await flushPromises()
+
+    await wrapper.get('textarea').setValue('保持任务位置不变')
+    await wrapper.get('[data-testid="video-task-count"]').setValue('2')
+    await wrapper.get('[data-testid="video-task-count"]').trigger('blur')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    let cards = wrapper.findAll('.video-grid article')
+    expect(cards).toHaveLength(2)
+    expect(cards[0].text()).toContain('generation failed')
+    expect(cards[1].text()).toContain('排队中')
+
+    listArchivedVideos.mockResolvedValue([{
+      id: 'newer-archive',
+      url: 'https://cdn.example.com/newer-archive.mp4',
+      prompt: 'newer archive',
+      model: 'seedance-2-720p',
+      format: 'mp4',
+      duration_seconds: 5,
+      saved: false,
+      created_at: Math.floor(Date.now() / 1000) + 60,
+      expires_at: 1_800_000_000,
+    }])
+    await wrapper.get('button.studio-results__action').trigger('click')
+    await flushPromises()
+
+    cards = wrapper.findAll('.video-grid article')
+    expect(cards).toHaveLength(3)
+    expect(cards[0].text()).toContain('generation failed')
+    expect(cards[1].text()).toContain('排队中')
+    expect(cards[2].get('video').attributes('src')).toBe('https://cdn.example.com/newer-archive.mp4')
+  })
+
   it('does not expose raw no-service errors in the composer', async () => {
     listKeys.mockRejectedValue(new Error('NO_VIDEO_CREATION_SERVICE'))
     getPublicSettings.mockResolvedValue({ api_base_url: '/v1' })
@@ -414,6 +475,13 @@ describe('VideoStudioView seedance generation', () => {
       }
       const task = url.match(/\/contents\/generations\/tasks\/(task-\d+)$/)?.[1]
       if (task) {
+        if (task === 'task-1') {
+          return jsonResponse({
+            id: task,
+            status: 'failed',
+            failure_reason: 'first task failed',
+          })
+        }
         return jsonResponse({
           id: task,
           status: 'succeeded',
@@ -435,7 +503,15 @@ describe('VideoStudioView seedance generation', () => {
     await flushPromises()
 
     expect(createCount).toBe(3)
-    expect(wrapper.findAll('video')).toHaveLength(3)
+    expect(wrapper.findAll('video')).toHaveLength(2)
+    const cards = wrapper.findAll('.video-grid article')
+    expect(cards).toHaveLength(3)
+    expect(cards[0].text()).toContain('first task failed')
+    const failedRecord = JSON.parse(localStorage.getItem('sub2api:video-studio:works') || '[]')
+      .find((record: { status?: string }) => record.status === 'failed')
+    expect(failedRecord?.expiresAt).toBeGreaterThan(Math.floor(Date.now() / 1000))
+    expect(cards[1].get('video').attributes('src')).toBe('https://cdn.example.com/task-2.mp4')
+    expect(cards[2].get('video').attributes('src')).toBe('https://cdn.example.com/task-3.mp4')
   })
 
   it('keeps the duration parameter inside the range the upstream accepts', async () => {
@@ -527,7 +603,12 @@ describe('VideoStudioView seedance generation', () => {
 
     // 公开直链交给服务端抓取归档，浏览器不用下载再上传。
     expect(archiveVideo).toHaveBeenCalledWith(
-      expect.objectContaining({ video_url: 'https://cdn.example.com/out.mp4', model: 'seedance-2-720p' }),
+      expect.objectContaining({
+        video_url: 'https://cdn.example.com/out.mp4',
+        model: 'seedance-2-720p',
+        created_at: expect.any(Number),
+        sort_order: expect.any(Number),
+      }),
     )
     await vi.waitFor(() => {
       expect(wrapper.get('video').attributes('src')).toBe('https://cdn.example.com/archived.mp4')
@@ -1375,5 +1456,75 @@ describe('VideoStudioView unfinished work resumption', () => {
     expect(
       fetchMock.mock.calls.filter((call) => String(call[0]).includes('/contents/generations/tasks/')).length,
     ).toBe(pollsAfterMount)
+  })
+
+  it('restores a failed task after refresh without polling it again', async () => {
+    saveVideoWork({
+      id: 'vw_failed_restore',
+      provider: 'seedance',
+      requestId: 'task-failed-restore',
+      keyId: 7,
+      model: 'seedance-2-720p',
+      prompt: '已经失败的镜头',
+      durationSeconds: 5,
+      resolution: '720p',
+      aspectRatio: '16:9',
+      generateAudio: false,
+      referenceCounts: { images: 0, videos: 0, audios: 0 },
+      videoUrl: '',
+      createdAt: Date.now() - 60 * 60 * 1000,
+      status: 'failed',
+      statusMessage: '上游拒绝生成',
+    })
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/models')) return jsonResponse({ data: [{ id: 'seedance-2-720p' }] })
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountStudio()
+    await flushPromises()
+    await flushPromises()
+
+    const cards = wrapper.findAll('.video-grid article')
+    expect(cards).toHaveLength(1)
+    expect(cards[0].text()).toContain('上游拒绝生成')
+    expect(fetchMock.mock.calls.some((call) =>
+      String(call[0]).includes('/contents/generations/tasks/task-failed-restore'),
+    )).toBe(false)
+  })
+
+  it('removes a failed task only after the backend object-storage retention expires', async () => {
+    fetchStudioWorksQuota.mockResolvedValue({ used: 0, limit: 100, retention_seconds: 86_400 })
+    saveVideoWork({
+      id: 'vw_failed_expired',
+      provider: 'seedance',
+      requestId: 'task-failed-expired',
+      keyId: 7,
+      model: 'seedance-2-720p',
+      prompt: '超过保留期的镜头',
+      durationSeconds: 5,
+      resolution: '720p',
+      aspectRatio: '16:9',
+      generateAudio: false,
+      referenceCounts: { images: 0, videos: 0, audios: 0 },
+      videoUrl: '',
+      createdAt: Date.now() - 2 * 86_400 * 1000,
+      status: 'failed',
+      statusMessage: '已经过期的失败记录',
+    })
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/models')) return jsonResponse({ data: [{ id: 'seedance-2-720p' }] })
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountStudio()
+    await flushPromises()
+    await flushPromises()
+
+    expect(wrapper.findAll('.video-grid article')).toHaveLength(0)
+    expect(localStorage.getItem('sub2api:video-studio:works')).not.toContain('vw_failed_expired')
   })
 })

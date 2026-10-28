@@ -182,12 +182,16 @@ func TestVideoStudioGalleryArchivesOnlyVideos(t *testing.T) {
 	require.ErrorIs(t, err, ErrVideoStudioUnsupportedType)
 
 	// 声明的类型不实（假装 png）时按内容嗅探，仍然识别为视频并归档。
-	entry, err := svc.Save(ctx, 1, "镜头", "seedance-2-720p", "mp4", 8, "image/png", mp4Bytes(), true)
+	entry, err := svc.Save(
+		ctx, 1, "镜头", "seedance-2-720p", "mp4", 8, "image/png", mp4Bytes(), true,
+		VideoStudioGallerySaveOptions{SortOrder: 67890},
+	)
 	require.NoError(t, err)
 	require.Equal(t, "video/mp4", saver.types[0])
 	require.Equal(t, "videos/", videoStoragePrefix)
 	require.True(t, bytes.HasSuffix([]byte(entry.URL), []byte(".mp4")))
 	require.Equal(t, 8, entry.DurationSeconds)
+	require.Equal(t, int64(67890), entry.SortOrder)
 	require.Equal(t, "镜头", entry.Prompt)
 	require.Equal(t, int64(0), entry.ExpiresAt, "作品不再有过期时间")
 	require.True(t, bytes.HasPrefix([]byte(entry.ObjectKey), []byte(videoStoragePrefix)),

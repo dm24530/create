@@ -14,14 +14,14 @@ func TestStudioWorksListScansNullableDuration(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 	store := &studioWorksDB{db: db}
 	saved := true
-	mock.ExpectQuery(`(?s)SELECT.*duration_ms.*FROM studio_works.*saved = TRUE.*saved = \$3.*LIMIT \$4`).
+	mock.ExpectQuery(`(?s)SELECT.*sort_order.*FROM studio_works.*saved = TRUE.*saved = \$3.*ORDER BY sort_order DESC.*LIMIT \$4`).
 		WithArgs(int64(7), "image", true, 100).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "user_id", "kind", "object_key", "url", "thumb_url", "prompt", "model", "format", "size",
-			"duration_seconds", "duration_ms", "saved", "created_at", "expires_at",
+			"duration_seconds", "duration_ms", "saved", "sort_order", "created_at", "expires_at",
 		}).AddRow(
 			"work-1", int64(7), "image", "images/work-1.png", "https://cdn.test/work-1.png", "", "cat", "gpt-image-1",
-			"png", "1024x1024", 0, nil, true, int64(100), int64(0),
+			"png", "1024x1024", 0, nil, true, int64(900), int64(100), int64(0),
 		))
 
 	rows, err := store.list(context.Background(), 7, "image", &saved, 100)

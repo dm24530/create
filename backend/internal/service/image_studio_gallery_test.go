@@ -679,7 +679,7 @@ func TestImageStudioGalleryHonoursConfiguredQuota(t *testing.T) {
 		entries[i] = &ImageStudioGalleryEntry{}
 	}
 	store := &galleryStoreStub{entries: entries}
-	svc := NewImageStudioGalleryService(store, &gallerySaverStub{quota: 2})
+	svc := NewImageStudioGalleryService(store, &gallerySaverStub{quota: 2, retention: 72 * time.Hour})
 
 	_, err := svc.Save(
 		context.Background(),
@@ -698,6 +698,7 @@ func TestImageStudioGalleryHonoursConfiguredQuota(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(2), quota.Limit, "上限要用后台配置的值")
 	require.Equal(t, int64(2), quota.Used)
+	require.Equal(t, int64((72 * time.Hour).Seconds()), quota.RetentionSeconds, "失败历史要用对象存储的临时保留期")
 }
 
 // 列表条数必须跟着配额走：否则配额放宽后，更早的作品既看不到也删不掉。
@@ -743,12 +744,13 @@ func TestImageStudioGallerySaveUsesPerImageCompletionTimeAndDuration(t *testing.
 		"image/png",
 		smallPNG(t),
 		false,
-		ImageStudioGallerySaveOptions{CreatedAt: completedAt, DurationMs: 3200},
+		ImageStudioGallerySaveOptions{CreatedAt: completedAt, DurationMs: 3200, SortOrder: 12345},
 	)
 
 	require.NoError(t, err)
 	require.Equal(t, completedAt, entry.CreatedAt)
 	require.Equal(t, 3200, entry.DurationMs)
+	require.Equal(t, int64(12345), entry.SortOrder)
 	require.InDelta(
 		t,
 		beforeSave+int64((24*time.Hour)/time.Second),

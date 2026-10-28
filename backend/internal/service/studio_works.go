@@ -51,8 +51,9 @@ type studioObjectDeleter interface {
 
 // StudioWorksQuota 描述用户的配额使用情况，供前端展示「已用 N / 上限」。
 type StudioWorksQuota struct {
-	Used  int64 `json:"used"`
-	Limit int64 `json:"limit"`
+	Used             int64 `json:"used"`
+	Limit            int64 `json:"limit"`
+	RetentionSeconds int64 `json:"retention_seconds"`
 }
 
 // studioQuotaReader 是读配额上限的最小接口，由对象存储设置服务实现。

@@ -11,6 +11,7 @@ export interface ImageStudioGalleryEntry {
   /** true = 已存进「我的作品」（永久）；false = 生成页的临时内容（到期自动删）。 */
   saved: boolean
   created_at: number
+  sort_order?: number
   duration_ms?: number
   /** 临时内容的过期时间（秒）；已保存的为 0。 */
   expires_at: number
@@ -25,6 +26,7 @@ export interface SaveImageStudioGalleryRequest {
   format: string
   duration_ms?: number
   created_at?: number
+  sort_order?: number
   /** 不传时后端按"直接存进我的作品"处理（老行为）；生成页应显式传 false。 */
   saved?: boolean
 }
@@ -38,6 +40,7 @@ export interface SaveImageStudioGalleryTaskRequest {
   format: string
   duration_ms?: number
   created_at?: number
+  sort_order?: number
   saved?: boolean
 }
 
@@ -145,12 +148,17 @@ export async function thumbnailImageStudioGallery(id: string): Promise<Blob> {
 export interface StudioWorksQuota {
   used: number
   limit: number
+  retention_seconds?: number
 }
 
 // 作品配额是图片 + 视频合起来算的，两个工作台调同一个计数。
 export async function fetchStudioWorksQuota(): Promise<StudioWorksQuota> {
   const { data } = await apiClient.get<StudioWorksQuota>('/image-studio/gallery/quota')
-  return { used: Number(data?.used || 0), limit: Number(data?.limit || 0) }
+  return {
+    used: Number(data?.used || 0),
+    limit: Number(data?.limit || 0),
+    retention_seconds: Number(data?.retention_seconds || 0),
+  }
 }
 
 export async function reportImageStudioDisplay(taskId: string, durationMs?: number): Promise<void> {

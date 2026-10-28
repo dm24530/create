@@ -681,6 +681,7 @@ import {
 import {
   archiveVideo,
   deleteArchivedVideo,
+  fetchStudioWorksQuota,
   isStudioQuotaError,
   listArchivedVideos,
   pinArchivedVideo,
@@ -719,6 +720,8 @@ interface StudioTask {
   revokeUrl: boolean
   error: string
   createdAt: number
+  displayOrder?: number
+  expiresAt?: number
   archivedId?: string
   archivedSaved?: boolean
   archivedExpiresAt?: number
@@ -861,6 +864,7 @@ if (videoStudioDraft.ownerId !== draftOwnerId) {
 
 const tasks = ref<StudioTask[]>([])
 const works = ref<VideoWorkRecord[]>([])
+const videoRetentionSeconds = ref(0)
 const previewTask = ref<StudioTask | null>(null)
 const deleteTaskCandidate = ref<StudioTask | null>(null)
 const activeGenerations = ref(0)
@@ -868,6 +872,16 @@ const preparingReferences = ref(false)
 const cancelledTasks = new Set<string>()
 // 换成归档地址后退役的 blob URL：等离开页面再统一释放。
 const retiredObjectURLs: string[] = []
+let videoDisplayOrderCursor = Date.now() * 1000
+
+function allocateVideoBatchDisplayOrder(count: number) {
+  const batchSize = Math.max(1, count)
+  videoDisplayOrderCursor = Math.max(
+    Date.now() * 1000,
+    videoDisplayOrderCursor + batchSize + 1,
+  )
+  return videoDisplayOrderCursor
+}
 
 let nextReferenceId = Math.max(1, ...references.value.map((item) => item.id + 1))
 let modelRequestId = 0
@@ -1176,8 +1190,15 @@ async function loadData() {
     .catch((error) => {
       if (!errorMessage.value) errorMessage.value = errorMessageFrom(error, '加载设置失败')
     })
+  const quotaPromise = fetchStudioWorksQuota()
+    .then((quota) => {
+      videoRetentionSeconds.value = Math.max(0, Math.floor(Number(quota.retention_seconds) || 0))
+    })
+    .catch(() => {
+      // 配额接口不可用不影响生成；失败历史会继续保留在本地。
+    })
 
-  await Promise.allSettled([keysPromise, settingsPromise])
+  await Promise.allSettled([keysPromise, settingsPromise, quotaPromise])
 }
 
 // 灵感库「带入工作台」通过 query 传递模板标识，这里把参数写进编辑器。
@@ -1215,9 +1236,31 @@ function applyInspirationFromRoute() {
 
 function resumeWorks() {
   const records = listVideoWorks()
-  works.value = records
+  const nowSeconds = Math.floor(Date.now() / 1000)
+  const expiredIds: string[] = []
+  videoDisplayOrderCursor = Math.max(
+    videoDisplayOrderCursor,
+    ...records.map((record) => Number(record.displayOrder) || 0),
+  )
   for (const record of records) {
-    if (record.status === 'failed') continue
+    if (record.status === 'failed') {
+      const expiresAt = Number(record.expiresAt) > 0
+        ? Number(record.expiresAt)
+        : videoRetentionSeconds.value > 0
+          ? Math.floor(record.createdAt / 1000) + videoRetentionSeconds.value
+          : 0
+      if (expiresAt > 0 && expiresAt <= nowSeconds) {
+        expiredIds.push(record.id)
+        continue
+      }
+      if (expiresAt > 0 && expiresAt !== record.expiresAt) {
+        updateVideoWork(record.id, { expiresAt })
+      }
+      if (!tasks.value.some((task) => task.localId === record.id)) {
+        tasks.value.push(taskFromRecord({ ...record, expiresAt: expiresAt || undefined }))
+      }
+      continue
+    }
     if (
       record.status === 'succeeded' &&
       (record.archivedUrl || (record.videoUrl && !record.videoUrl.startsWith('blob:')))
@@ -1229,6 +1272,8 @@ function resumeWorks() {
     // 取回响应式代理再驱动：直接改原始对象不会触发重渲染。
     void runTask(tasks.value[tasks.value.length - 1], null)
   }
+  for (const id of expiredIds) removeVideoWork(id)
+  works.value = listVideoWorks()
 }
 
 function taskFromRecord(record: VideoWorkRecord): StudioTask {
@@ -1253,6 +1298,8 @@ function taskFromRecord(record: VideoWorkRecord): StudioTask {
     revokeUrl: false,
     error: record.status === 'failed' ? record.statusMessage : '',
     createdAt: record.createdAt,
+    displayOrder: record.displayOrder,
+    expiresAt: record.expiresAt,
     archivedId: record.archivedUrl ? record.id : undefined,
     archivedSaved: record.archivedSaved,
     archivedExpiresAt: record.archivedExpiresAt,
@@ -1285,6 +1332,8 @@ function taskFromArchived(entry: ArchivedVideoEntry): StudioTask {
     revokeUrl: false,
     error: '',
     createdAt: Number(entry.created_at || 0) * 1000,
+    displayOrder: Number(entry.sort_order || 0) || Number(entry.created_at || 0) * 1000,
+    expiresAt: 0,
     archivedId: entry.id,
     archivedSaved: entry.saved,
     archivedExpiresAt: entry.expires_at,
@@ -1308,13 +1357,25 @@ function recordFromTask(task: StudioTask, status: VideoTaskStatus, statusMessage
     archivedSaved: task.archivedSaved,
     archivedExpiresAt: task.archivedExpiresAt,
     createdAt: task.createdAt,
+    displayOrder: task.displayOrder,
+    expiresAt: task.expiresAt,
     status,
     statusMessage,
   }
 }
 
 function persistTask(task: StudioTask, status: VideoTaskStatus, statusMessage: string) {
-  updateVideoWork(task.localId, recordFromTask(task, status, statusMessage))
+  const record = recordFromTask(task, status, statusMessage)
+  if (status === 'failed') {
+    if (!task.expiresAt && videoRetentionSeconds.value > 0) {
+      task.expiresAt = Math.floor(Date.now() / 1000) + videoRetentionSeconds.value
+      record.expiresAt = task.expiresAt
+    }
+  } else {
+    task.expiresAt = undefined
+    record.expiresAt = undefined
+  }
+  updateVideoWork(task.localId, record)
   works.value = listVideoWorks()
 }
 
@@ -1360,7 +1421,7 @@ async function loadArchivedResults() {
       .filter((entry) => entry.url && !existingArchivedIds.has(entry.id))
       .map(taskFromArchived)
     if (!imported.length) return
-    tasks.value = [...tasks.value, ...imported].sort((a, b) => b.createdAt - a.createdAt)
+    tasks.value = [...tasks.value, ...imported]
   } catch {
     // 对象存储未启用时仍保留当前会话结果，不阻断生成。
   } finally {
@@ -1721,7 +1782,7 @@ async function generate() {
   const apiKeyRef = effectiveApiKey.value
   const count = clampTaskCount(Number(taskCount.value))
   const referencesSnapshot = references.value.slice()
-  const trackedTasks: StudioTask[] = []
+  const newTasks: StudioTask[] = []
 
   errorMessage.value = ''
   let preparedReferences = referencesSnapshot
@@ -1740,6 +1801,7 @@ async function generate() {
       preparingReferences.value = false
     }
   }
+  const displayOrderBase = allocateVideoBatchDisplayOrder(count)
   for (let index = 0; index < count; index += 1) {
     const task: StudioTask = {
       localId: createVideoWorkId(),
@@ -1764,12 +1826,14 @@ async function generate() {
       videoUrl: '',
       revokeUrl: false,
       error: '',
-      createdAt: Date.now(),
+      createdAt: Date.now() - index,
+      displayOrder: displayOrderBase - index,
     }
-    tasks.value.unshift(task)
-    trackedTasks.unshift(tasks.value[0])
-    saveVideoWork(recordFromTask(tasks.value[0], 'queued', '正在提交任务'))
+    newTasks.push(task)
+    saveVideoWork(recordFromTask(task, 'queued', '正在提交任务'))
   }
+  tasks.value.unshift(...newTasks)
+  const trackedTasks = tasks.value.slice(0, newTasks.length)
   works.value = listVideoWorks()
   await Promise.all(
     trackedTasks.map((task) =>
@@ -1902,6 +1966,8 @@ async function archiveTaskVideo(task: StudioTask, upstreamUrl: string) {
       model: task.model,
       format: 'mp4',
       duration_seconds: task.durationSeconds,
+      created_at: Math.floor(task.createdAt / 1000),
+      sort_order: task.displayOrder,
       // 工作台的内容先进临时档（到期自动删）；用户到「我的作品」里点保存才转永久。
       saved: false,
     }

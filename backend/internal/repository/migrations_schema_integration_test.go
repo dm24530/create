@@ -101,6 +101,7 @@ func TestMigrationsRunner_IsIdempotent_AndSchemaIsUpToDate(t *testing.T) {
 	require.True(t, imageGenerationMetricsRegclass.Valid, "expected image_generation_metrics table to exist")
 	requireColumn(t, tx, "image_generation_metrics", "generation_duration_ms", "integer", 0, false)
 	requireColumn(t, tx, "studio_works", "duration_ms", "integer", 0, true)
+	requireColumn(t, tx, "studio_works", "sort_order", "bigint", 0, true)
 
 	var mismatchIndexDef string
 	require.NoError(t, tx.QueryRowContext(context.Background(), `
