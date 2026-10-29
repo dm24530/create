@@ -8,6 +8,7 @@ import (
 	"mime"
 	"net/http"
 	"path"
+	"strconv"
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
@@ -31,6 +32,7 @@ type saveImageStudioGalleryRequest struct {
 	Model        string `json:"model"`
 	Size         string `json:"size"`
 	Format       string `json:"format"`
+	SourceID     string `json:"source_id"`
 	DurationMs   int    `json:"duration_ms"`
 	CreatedAt    int64  `json:"created_at"`
 	SortOrder    int64  `json:"sort_order"`
@@ -100,6 +102,7 @@ func (h *ImageStudioGalleryHandler) Save(c *gin.Context) {
 				DurationMs: request.DurationMs,
 				CreatedAt:  request.CreatedAt,
 				SortOrder:  request.SortOrder,
+				SourceID:   request.SourceID,
 			},
 		)
 	case imageURL != "":
@@ -109,6 +112,7 @@ func (h *ImageStudioGalleryHandler) Save(c *gin.Context) {
 				DurationMs: request.DurationMs,
 				CreatedAt:  request.CreatedAt,
 				SortOrder:  request.SortOrder,
+				SourceID:   request.SourceID,
 			},
 		)
 	default:
@@ -176,6 +180,7 @@ func (h *ImageStudioGalleryHandler) SaveFromTask(c *gin.Context) {
 		return
 	}
 	saved := request.Saved == nil || *request.Saved
+	sourceID := "image-task:" + record.ID + ":" + strconv.Itoa(index)
 	entry, err := h.gallery.SaveExistingObject(
 		c.Request.Context(),
 		subject.UserID,
@@ -191,6 +196,7 @@ func (h *ImageStudioGalleryHandler) SaveFromTask(c *gin.Context) {
 			CreatedAt:   request.CreatedAt,
 			SortOrder:   request.SortOrder,
 			ContentType: item.MIMEType,
+			SourceID:    sourceID,
 		},
 	)
 	if err != nil {

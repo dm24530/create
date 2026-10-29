@@ -57,6 +57,19 @@ func (s *galleryStoreStub) ObjectKey(_ context.Context, _ int64, id string) (str
 	return key, nil
 }
 
+func (s *galleryStoreStub) FindBySourceID(
+	_ context.Context,
+	userID int64,
+	sourceID string,
+) (*ImageStudioGalleryEntry, error) {
+	for _, entry := range s.entries {
+		if entry != nil && entry.UserID == userID && entry.SourceID == sourceID {
+			return entry, nil
+		}
+	}
+	return nil, ErrStudioWorkNotFound
+}
+
 func (s *galleryStoreStub) UpdateThumb(_ context.Context, _ int64, id, thumbURL, thumbObjectKey string) error {
 	for _, entry := range s.entries {
 		if entry.ID == id {
@@ -380,6 +393,65 @@ func TestImageStudioGallerySaveExistingObjectDoesNotReupload(t *testing.T) {
 	require.Equal(t, "png", entry.Format)
 	require.False(t, entry.Saved)
 	require.NotZero(t, entry.ExpiresAt)
+	require.Len(t, store.entries, 1)
+}
+
+func TestImageStudioGallerySaveExistingObjectIsIdempotentBySourceID(t *testing.T) {
+	store := &galleryStoreStub{}
+	svc := NewImageStudioGalleryService(store, &gallerySaverStub{})
+	options := ImageStudioGallerySaveOptions{SourceID: "image-task:imgtask_123:0"}
+
+	first, err := svc.SaveExistingObject(
+		context.Background(),
+		42,
+		"images/users/42/task-123.png",
+		"https://gen.example.com/images/users/42/task-123.png",
+		"a cat",
+		"gpt-image-1",
+		"1024x1024",
+		"png",
+		false,
+		options,
+	)
+	require.NoError(t, err)
+	second, err := svc.SaveExistingObject(
+		context.Background(),
+		42,
+		"images/users/42/task-123.png",
+		"https://gen.example.com/images/users/42/task-123.png",
+		"a cat",
+		"gpt-image-1",
+		"1024x1024",
+		"png",
+		false,
+		options,
+	)
+
+	require.NoError(t, err)
+	require.Equal(t, first.ID, second.ID)
+	require.Equal(t, "image-task:imgtask_123:0", second.SourceID)
+	require.Len(t, store.entries, 1)
+}
+
+func TestImageStudioGallerySaveIsIdempotentBySourceID(t *testing.T) {
+	store := &galleryStoreStub{}
+	saver := &gallerySaverStub{}
+	svc := NewImageStudioGalleryService(store, saver)
+	options := ImageStudioGallerySaveOptions{SourceID: "local:image-123"}
+
+	first, err := svc.Save(
+		context.Background(), 42, "a cat", "gpt-image-1", "1024x1024", "png",
+		"image/png", smallPNG(t), false, options,
+	)
+	require.NoError(t, err)
+	second, err := svc.Save(
+		context.Background(), 42, "a cat", "gpt-image-1", "1024x1024", "png",
+		"image/png", smallPNG(t), false, options,
+	)
+
+	require.NoError(t, err)
+	require.Equal(t, first.ID, second.ID)
+	require.Equal(t, "local:image-123", second.SourceID)
 	require.Len(t, store.entries, 1)
 }
 

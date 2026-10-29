@@ -16,7 +16,7 @@ import (
 // 两种作品共用一张表，用 kind 区分；配额计数刻意不带 kind 条件，
 // 所以「每人 100 个文件」是图片 + 视频合并计算的。
 const studioWorksColumns = `
-	id, user_id, kind, object_key, url, thumb_url, thumb_object_key, prompt, model, format, size, duration_seconds, duration_ms, saved, sort_order,
+	id, user_id, kind, source_id, object_key, url, thumb_url, thumb_object_key, prompt, model, format, size, duration_seconds, duration_ms, saved, sort_order,
 	EXTRACT(EPOCH FROM created_at)::bigint AS created_at,
 	COALESCE(EXTRACT(EPOCH FROM expires_at)::bigint, 0) AS expires_at`
 
@@ -52,6 +52,22 @@ func (s *studioWorksDB) insert(ctx context.Context, entry *studioWorkRow, quota 
 		return fmt.Errorf("lock studio works for user: %w", err)
 	}
 
+	if entry.SourceID != "" {
+		var exists bool
+		if err := tx.QueryRowContext(ctx, `
+			SELECT EXISTS(
+				SELECT 1 FROM studio_works
+				WHERE user_id = $1 AND kind = $2 AND source_id = $3
+			)`,
+			entry.UserID, entry.Kind, entry.SourceID,
+		).Scan(&exists); err != nil {
+			return fmt.Errorf("check studio work source: %w", err)
+		}
+		if exists {
+			return service.ErrStudioWorkAlreadyExists
+		}
+	}
+
 	// 配额只约束"存到我的作品"的条目：没保存的临时内容到期会被清扫，不计入 100。
 	if quota > 0 && entry.Saved {
 		var used int64
@@ -79,9 +95,9 @@ func (s *studioWorksDB) insert(ctx context.Context, entry *studioWorkRow, quota 
 
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO studio_works (
-			id, user_id, kind, object_key, url, thumb_url, thumb_object_key, prompt, model, format, size, duration_seconds, duration_ms, saved, sort_order, expires_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
-		entry.ID, entry.UserID, entry.Kind, entry.ObjectKey, entry.URL, entry.ThumbURL, entry.ThumbObjectKey, entry.Prompt,
+			id, user_id, kind, source_id, object_key, url, thumb_url, thumb_object_key, prompt, model, format, size, duration_seconds, duration_ms, saved, sort_order, expires_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
+		entry.ID, entry.UserID, entry.Kind, entry.SourceID, entry.ObjectKey, entry.URL, entry.ThumbURL, entry.ThumbObjectKey, entry.Prompt,
 		entry.Model, entry.Format, entry.Size, entry.DurationSeconds, entry.DurationMs, entry.Saved, entry.SortOrder, studioWorkExpiry(entry.ExpiresAt),
 	); err != nil {
 		return fmt.Errorf("insert studio work: %w", err)
@@ -129,7 +145,7 @@ func (s *studioWorksDB) list(
 	for rows.Next() {
 		entry := &studioWorkRow{}
 		if err := rows.Scan(
-			&entry.ID, &entry.UserID, &entry.Kind, &entry.ObjectKey, &entry.URL, &entry.ThumbURL, &entry.ThumbObjectKey, &entry.Prompt,
+			&entry.ID, &entry.UserID, &entry.Kind, &entry.SourceID, &entry.ObjectKey, &entry.URL, &entry.ThumbURL, &entry.ThumbObjectKey, &entry.Prompt,
 			&entry.Model, &entry.Format, &entry.Size, &entry.DurationSeconds, &entry.DurationMs, &entry.Saved, &entry.SortOrder,
 			&entry.CreatedAt, &entry.ExpiresAt,
 		); err != nil {
@@ -349,6 +365,7 @@ type studioWorkRow struct {
 	ID              string
 	UserID          int64
 	Kind            string
+	SourceID        string
 	ObjectKey       string
 	URL             string
 	ThumbURL        string
@@ -385,6 +402,7 @@ func (s *imageStudioGalleryStore) Save(
 		ID:             entry.ID,
 		UserID:         entry.UserID,
 		Kind:           "image",
+		SourceID:       entry.SourceID,
 		ObjectKey:      entry.ObjectKey,
 		URL:            entry.URL,
 		ThumbURL:       entry.ThumbURL,
@@ -415,6 +433,7 @@ func (s *imageStudioGalleryStore) List(
 		entries = append(entries, &service.ImageStudioGalleryEntry{
 			ID:             row.ID,
 			UserID:         row.UserID,
+			SourceID:       row.SourceID,
 			ObjectKey:      row.ObjectKey,
 			URL:            row.URL,
 			ThumbURL:       row.ThumbURL,
@@ -439,6 +458,48 @@ func (s *imageStudioGalleryStore) Count(ctx context.Context, userID int64) (int6
 
 func (s *imageStudioGalleryStore) ObjectKey(ctx context.Context, userID int64, id string) (string, error) {
 	return s.objectKey(ctx, userID, id)
+}
+
+func (s *imageStudioGalleryStore) FindBySourceID(
+	ctx context.Context,
+	userID int64,
+	sourceID string,
+) (*service.ImageStudioGalleryEntry, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT`+studioWorksColumns+`
+		FROM studio_works
+		WHERE user_id = $1 AND kind = 'image' AND source_id = $2`,
+		userID, strings.TrimSpace(sourceID),
+	)
+	entry := &studioWorkRow{}
+	if err := row.Scan(
+		&entry.ID, &entry.UserID, &entry.Kind, &entry.SourceID, &entry.ObjectKey, &entry.URL, &entry.ThumbURL, &entry.ThumbObjectKey, &entry.Prompt,
+		&entry.Model, &entry.Format, &entry.Size, &entry.DurationSeconds, &entry.DurationMs, &entry.Saved, &entry.SortOrder,
+		&entry.CreatedAt, &entry.ExpiresAt,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, service.ErrStudioWorkNotFound
+		}
+		return nil, fmt.Errorf("find image studio work by source: %w", err)
+	}
+	return &service.ImageStudioGalleryEntry{
+		ID:             entry.ID,
+		UserID:         entry.UserID,
+		SourceID:       entry.SourceID,
+		ObjectKey:      entry.ObjectKey,
+		URL:            entry.URL,
+		ThumbURL:       entry.ThumbURL,
+		ThumbObjectKey: entry.ThumbObjectKey,
+		Prompt:         entry.Prompt,
+		Model:          entry.Model,
+		Size:           entry.Size,
+		Format:         entry.Format,
+		DurationMs:     int(entry.DurationMs.Int64),
+		Saved:          entry.Saved,
+		SortOrder:      entry.SortOrder,
+		ExpiresAt:      entry.ExpiresAt,
+		CreatedAt:      entry.CreatedAt,
+	}, nil
 }
 
 func (s *imageStudioGalleryStore) UpdateThumb(
@@ -530,6 +591,45 @@ func (s *videoStudioGalleryStore) Count(ctx context.Context, userID int64) (int6
 
 func (s *videoStudioGalleryStore) ObjectKey(ctx context.Context, userID int64, id string) (string, error) {
 	return s.objectKey(ctx, userID, id)
+}
+
+func (s *videoStudioGalleryStore) FindBySourceID(
+	ctx context.Context,
+	userID int64,
+	sourceID string,
+) (*service.VideoStudioGalleryEntry, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT`+studioWorksColumns+`
+		FROM studio_works
+		WHERE user_id = $1 AND kind = 'video' AND source_id = $2`,
+		userID, strings.TrimSpace(sourceID),
+	)
+	entry := &studioWorkRow{}
+	if err := row.Scan(
+		&entry.ID, &entry.UserID, &entry.Kind, &entry.SourceID, &entry.ObjectKey, &entry.URL, &entry.ThumbURL, &entry.ThumbObjectKey, &entry.Prompt,
+		&entry.Model, &entry.Format, &entry.Size, &entry.DurationSeconds, &entry.DurationMs, &entry.Saved, &entry.SortOrder,
+		&entry.CreatedAt, &entry.ExpiresAt,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, service.ErrStudioWorkNotFound
+		}
+		return nil, fmt.Errorf("find studio work by source: %w", err)
+	}
+	return &service.VideoStudioGalleryEntry{
+		ID:              entry.ID,
+		UserID:          entry.UserID,
+		SourceID:        entry.SourceID,
+		ObjectKey:       entry.ObjectKey,
+		URL:             entry.URL,
+		Prompt:          entry.Prompt,
+		Model:           entry.Model,
+		Format:          entry.Format,
+		DurationSeconds: entry.DurationSeconds,
+		Saved:           entry.Saved,
+		SortOrder:       entry.SortOrder,
+		ExpiresAt:       entry.ExpiresAt,
+		CreatedAt:       entry.CreatedAt,
+	}, nil
 }
 
 func (s *videoStudioGalleryStore) Delete(ctx context.Context, userID int64, id string) error {

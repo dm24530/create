@@ -703,6 +703,7 @@ interface StudioTask {
   localId: string
   provider: VideoProvider
   requestId: string
+  sourceId: string
   keyId: number
   // 发起任务时用的渠道（仅内存保存，不写进本地记录，避免密钥落盘）。
   baseUrl: string
@@ -1277,10 +1278,16 @@ function resumeWorks() {
 }
 
 function taskFromRecord(record: VideoWorkRecord): StudioTask {
+  const sourceId = record.sourceId || archiveSourceID(
+    record.provider,
+    record.requestId,
+    record.id,
+  )
   return {
     localId: record.id,
     provider: record.provider,
     requestId: record.requestId,
+    sourceId,
     keyId: record.keyId,
     // 恢复历史任务时按本站密钥重新解析渠道，自定义渠道的密钥不落盘。
     baseUrl: '',
@@ -1300,10 +1307,20 @@ function taskFromRecord(record: VideoWorkRecord): StudioTask {
     createdAt: record.createdAt,
     displayOrder: record.displayOrder,
     expiresAt: record.expiresAt,
-    archivedId: record.archivedUrl ? record.id : undefined,
+    archivedId: record.archivedId,
     archivedSaved: record.archivedSaved,
     archivedExpiresAt: record.archivedExpiresAt,
   }
+}
+
+function taskArchiveSourceID(task: Pick<StudioTask, 'provider' | 'requestId' | 'localId'>): string {
+  return archiveSourceID(task.provider, task.requestId, task.localId)
+}
+
+function archiveSourceID(provider: VideoProvider, requestId: string, fallbackId: string): string {
+  return requestId.trim()
+    ? `${provider}:${requestId.trim()}`
+    : `local:${fallbackId}`
 }
 
 function archivedTaskLocalId(id: string): string {
@@ -1316,6 +1333,7 @@ function taskFromArchived(entry: ArchivedVideoEntry): StudioTask {
     localId: archivedTaskLocalId(entry.id),
     provider: resolveVideoProvider(model),
     requestId: '',
+    sourceId: entry.source_id || '',
     keyId: 0,
     baseUrl: '',
     apiKeyRef: '',
@@ -1345,6 +1363,7 @@ function recordFromTask(task: StudioTask, status: VideoTaskStatus, statusMessage
     id: task.localId,
     provider: task.provider,
     requestId: task.requestId,
+    sourceId: task.sourceId || taskArchiveSourceID(task),
     keyId: task.keyId,
     model: task.model,
     prompt: task.prompt,
@@ -1354,6 +1373,8 @@ function recordFromTask(task: StudioTask, status: VideoTaskStatus, statusMessage
     generateAudio: task.generateAudio,
     referenceCounts: task.referenceCounts,
     videoUrl: task.videoUrl,
+    archivedId: task.archivedId,
+    archivedUrl: task.archivedId && task.videoUrl ? task.videoUrl : undefined,
     archivedSaved: task.archivedSaved,
     archivedExpiresAt: task.archivedExpiresAt,
     createdAt: task.createdAt,
@@ -1412,13 +1433,44 @@ async function loadArchivedResults() {
   loadingResults.value = true
   try {
     const entries = await listArchivedVideos('temp')
+    const entriesBySource = new Map(
+      entries
+        .filter((entry) => entry.url && entry.source_id)
+        .map((entry) => [entry.source_id!, entry] as const),
+    )
+    for (const task of tasks.value) {
+      const entry = task.sourceId ? entriesBySource.get(task.sourceId) : undefined
+      if (!entry) continue
+      task.archivedId = entry.id
+      task.archivedSaved = entry.saved
+      task.archivedExpiresAt = entry.expires_at
+      task.videoUrl = entry.url
+      task.revokeUrl = false
+      updateVideoWork(task.localId, {
+        sourceId: task.sourceId,
+        videoUrl: entry.url,
+        archivedId: entry.id,
+        archivedUrl: entry.url,
+        archivedSaved: entry.saved,
+        archivedExpiresAt: entry.expires_at,
+      })
+    }
     const existingArchivedIds = new Set(
       tasks.value
         .map((task) => task.archivedId)
         .filter((id): id is string => Boolean(id)),
     )
+    const existingSourceIds = new Set(
+      tasks.value
+        .map((task) => task.sourceId)
+        .filter(Boolean),
+    )
     const imported = entries
-      .filter((entry) => entry.url && !existingArchivedIds.has(entry.id))
+      .filter((entry) =>
+        entry.url &&
+        !existingArchivedIds.has(entry.id) &&
+        (!entry.source_id || !existingSourceIds.has(entry.source_id)),
+      )
       .map(taskFromArchived)
     if (!imported.length) return
     tasks.value = [...tasks.value, ...imported]
@@ -1807,6 +1859,7 @@ async function generate() {
       localId: createVideoWorkId(),
       provider,
       requestId: '',
+      sourceId: '',
       keyId: platformKey?.id ?? 0,
       baseUrl,
       apiKeyRef,
@@ -1891,6 +1944,7 @@ async function runTask(
       }, task.provider)
       task.requestId = created.requestId
       task.provider = created.provider
+      task.sourceId = archiveSourceID(task.provider, task.requestId, task.localId)
       task.stageText = '排队中'
       persistTask(task, 'queued', '排队中')
     }
@@ -1961,7 +2015,9 @@ async function refreshTask(task: StudioTask) {
 async function archiveTaskVideo(task: StudioTask, upstreamUrl: string) {
   archiveHint.value = ''
   try {
+    const sourceId = task.sourceId || taskArchiveSourceID(task)
     const request = {
+      source_id: sourceId,
       prompt: task.prompt,
       model: task.model,
       format: 'mp4',
@@ -1987,15 +2043,21 @@ async function archiveTaskVideo(task: StudioTask, upstreamUrl: string) {
     if (task.revokeUrl && task.videoUrl) retiredObjectURLs.push(task.videoUrl)
     task.videoUrl = entry.url
     task.revokeUrl = false
+    task.sourceId = entry.source_id || sourceId
     task.archivedId = entry.id
     task.archivedSaved = entry.saved
     task.archivedExpiresAt = entry.expires_at
     updateVideoWork(task.localId, {
       videoUrl: entry.url,
+      sourceId: task.sourceId,
+      archivedId: entry.id,
       archivedUrl: entry.url,
       archivedSaved: entry.saved,
       archivedExpiresAt: entry.expires_at,
     })
+    tasks.value = tasks.value.filter((candidate) =>
+      candidate.localId === task.localId || candidate.archivedId !== entry.id,
+    )
     works.value = listVideoWorks()
   } catch (error) {
     // 常见原因是对象存储没启用；说清楚而不是静默。

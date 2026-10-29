@@ -36,6 +36,8 @@ var ErrStudioWorkNotFound = infraerrors.New(
 	"work not found",
 )
 
+var ErrStudioWorkAlreadyExists = errors.New("studio work already exists")
+
 var ErrImageStudioGalleryUnavailable = infraerrors.New(
 	http.StatusServiceUnavailable,
 	"IMAGE_STUDIO_GALLERY_UNAVAILABLE",
@@ -51,6 +53,8 @@ var ErrImageStudioGalleryQuotaExceeded = infraerrors.New(
 type ImageStudioGalleryEntry struct {
 	ID     string `json:"id"`
 	UserID int64  `json:"-"`
+	// SourceID is stable for one generated image and makes gallery retries idempotent.
+	SourceID string `json:"source_id,omitempty"`
 	// ObjectKey 是对象存储里的完整键，删除作品时用它删对象；不下发给前端。
 	ObjectKey string `json:"-"`
 	URL       string `json:"url"`
@@ -76,6 +80,7 @@ type ImageStudioGallerySaveOptions struct {
 	CreatedAt   int64
 	SortOrder   int64
 	ContentType string
+	SourceID    string
 }
 
 type ImageStudioGalleryStore interface {
@@ -93,6 +98,7 @@ type ImageStudioGalleryStore interface {
 	SweepExpired(ctx context.Context, batch int) ([]string, error)
 	// ObjectKey 返回记录的 object_key；记录不存在时返回 ErrStudioWorkNotFound。
 	ObjectKey(ctx context.Context, userID int64, id string) (string, error)
+	FindBySourceID(ctx context.Context, userID int64, sourceID string) (*ImageStudioGalleryEntry, error)
 	UpdateThumb(ctx context.Context, userID int64, id, thumbURL, thumbObjectKey string) error
 	Delete(ctx context.Context, userID int64, id string) error
 }
@@ -195,6 +201,23 @@ func (s *ImageStudioGalleryService) Save(
 	}
 
 	id := strings.ReplaceAll(uuid.NewString(), "-", "")
+	sourceID := ""
+	if len(options) > 0 {
+		sourceID = normalizeStudioSourceID(options[0].SourceID)
+	}
+	if sourceID != "" {
+		existing, findErr := s.store.FindBySourceID(ctx, userID, sourceID)
+		switch {
+		case findErr == nil && existing != nil:
+			if existing.ExpiresAt > 0 && existing.ExpiresAt <= time.Now().UTC().Unix() {
+				s.cleanupExpiredImageEntry(ctx, existing)
+			} else {
+				return s.saveExistingImageEntry(ctx, userID, existing, saved)
+			}
+		case findErr != nil && !errors.Is(findErr, ErrStudioWorkNotFound):
+			return nil, findErr
+		}
+	}
 	contentType = strings.TrimSpace(strings.ToLower(contentType))
 	if !strings.HasPrefix(contentType, "image/") {
 		contentType = detectImageContentType(data)
@@ -272,8 +295,9 @@ func (s *ImageStudioGalleryService) Save(
 		sortOrder = createdAt.Unix() * 1000
 	}
 	entry := &ImageStudioGalleryEntry{
-		ID:     id,
-		UserID: userID,
+		ID:       id,
+		UserID:   userID,
+		SourceID: sourceID,
 		// 存"最终键"（可能带 images/ 之类的前缀），而不是本地拼的那个短键。
 		ObjectKey:      objectKey,
 		URL:            url,
@@ -290,6 +314,14 @@ func (s *ImageStudioGalleryService) Save(
 		ExpiresAt:      expiresAt,
 	}
 	if err := s.store.Save(ctx, entry, resolveStudioQuota(s.storage)); err != nil {
+		if errors.Is(err, ErrStudioWorkAlreadyExists) && sourceID != "" {
+			cleanupObjects()
+			existing, findErr := s.store.FindBySourceID(ctx, userID, sourceID)
+			if findErr != nil {
+				return nil, findErr
+			}
+			return s.saveExistingImageEntry(ctx, userID, existing, saved)
+		}
 		if errors.Is(err, ErrStudioWorksQuotaExceeded) {
 			// 并发下抢先失败：刚上传的对象要撤掉，不然就成了没人认领的孤儿。
 			cleanupObjects()
@@ -303,6 +335,61 @@ func (s *ImageStudioGalleryService) Save(
 		return nil, err
 	}
 	return entry, nil
+}
+
+func normalizeStudioSourceID(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) > 160 {
+		return value[:160]
+	}
+	return value
+}
+
+func (s *ImageStudioGalleryService) saveExistingImageEntry(
+	ctx context.Context,
+	userID int64,
+	entry *ImageStudioGalleryEntry,
+	saved bool,
+) (*ImageStudioGalleryEntry, error) {
+	if entry == nil {
+		return nil, ErrStudioWorkNotFound
+	}
+	if saved && !entry.Saved {
+		if err := s.store.Pin(ctx, userID, entry.ID, resolveStudioQuota(s.storage)); err != nil {
+			if errors.Is(err, ErrStudioWorksQuotaExceeded) {
+				return nil, ErrImageStudioGalleryQuotaExceeded
+			}
+			return nil, err
+		}
+		entry.Saved = true
+		entry.ExpiresAt = 0
+	}
+	if entry.ExpiresAt == 0 {
+		s.updateLocalAssetExpiry(ctx, entry.URL, 0)
+	}
+	return entry, nil
+}
+
+func (s *ImageStudioGalleryService) cleanupExpiredImageEntry(
+	ctx context.Context,
+	entry *ImageStudioGalleryEntry,
+) {
+	if entry == nil {
+		return
+	}
+	for _, objectKey := range []string{entry.ObjectKey, entry.ThumbObjectKey} {
+		if objectKey == "" {
+			continue
+		}
+		if err := s.storage.DeleteObject(ctx, objectKey); err != nil {
+			logger.L().Warn("studio_work.expired_object_delete_failed",
+				zap.String("object_key", objectKey), zap.Error(err))
+		}
+	}
+	if err := s.store.Delete(ctx, entry.UserID, entry.ID); err != nil && !errors.Is(err, ErrStudioWorkNotFound) {
+		logger.L().Warn("studio_work.expired_row_delete_failed",
+			zap.String("work_id", entry.ID), zap.Error(err))
+	}
 }
 
 func (s *ImageStudioGalleryService) userStorageKey(ctx context.Context, userID int64) (string, error) {
@@ -328,6 +415,23 @@ func (s *ImageStudioGalleryService) SaveExistingObject(
 ) (*ImageStudioGalleryEntry, error) {
 	if s == nil || s.store == nil || s.storage == nil || userID <= 0 || strings.TrimSpace(objectKey) == "" {
 		return nil, ErrImageStudioGalleryUnavailable
+	}
+	sourceID := ""
+	if len(options) > 0 {
+		sourceID = normalizeStudioSourceID(options[0].SourceID)
+	}
+	if sourceID != "" {
+		existing, findErr := s.store.FindBySourceID(ctx, userID, sourceID)
+		switch {
+		case findErr == nil && existing != nil:
+			if existing.ExpiresAt > 0 && existing.ExpiresAt <= time.Now().UTC().Unix() {
+				s.cleanupExpiredImageEntry(ctx, existing)
+			} else {
+				return s.saveExistingImageEntry(ctx, userID, existing, saved)
+			}
+		case findErr != nil && !errors.Is(findErr, ErrStudioWorkNotFound):
+			return nil, findErr
+		}
 	}
 	count, err := s.store.Count(ctx, userID)
 	if err != nil {
@@ -364,6 +468,7 @@ func (s *ImageStudioGalleryService) SaveExistingObject(
 	entry := &ImageStudioGalleryEntry{
 		ID:         strings.ReplaceAll(uuid.NewString(), "-", ""),
 		UserID:     userID,
+		SourceID:   sourceID,
 		ObjectKey:  strings.TrimSpace(objectKey),
 		URL:        strings.TrimSpace(url),
 		Prompt:     strings.TrimSpace(prompt),
@@ -377,6 +482,13 @@ func (s *ImageStudioGalleryService) SaveExistingObject(
 		ExpiresAt:  expiresAt,
 	}
 	if err := s.store.Save(ctx, entry, resolveStudioQuota(s.storage)); err != nil {
+		if errors.Is(err, ErrStudioWorkAlreadyExists) && sourceID != "" {
+			existing, findErr := s.store.FindBySourceID(ctx, userID, sourceID)
+			if findErr != nil {
+				return nil, findErr
+			}
+			return s.saveExistingImageEntry(ctx, userID, existing, saved)
+		}
 		return nil, err
 	}
 	s.updateLocalAssetExpiry(ctx, entry.URL, entry.ExpiresAt)

@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"strings"
 	"testing"
 	"time"
 
@@ -43,6 +44,19 @@ func (s *videoGalleryStoreStub) ObjectKey(_ context.Context, _ int64, id string)
 		return "", ErrStudioWorkNotFound
 	}
 	return key, nil
+}
+
+func (s *videoGalleryStoreStub) FindBySourceID(
+	_ context.Context,
+	userID int64,
+	sourceID string,
+) (*VideoStudioGalleryEntry, error) {
+	for _, entry := range s.saved {
+		if entry != nil && entry.UserID == userID && entry.SourceID == sourceID {
+			return entry, nil
+		}
+	}
+	return nil, ErrStudioWorkNotFound
 }
 
 func (s *videoGalleryStoreStub) Delete(_ context.Context, _ int64, id string) error {
@@ -151,6 +165,17 @@ func (s *videoMediaSaverStub) FetchVideoURL(context.Context, string) ([]byte, st
 	return mp4Bytes(), "video/mp4", nil
 }
 
+func (s *videoMediaSaverStub) PresignImageObjects(
+	_ context.Context,
+	keys []string,
+) (map[string]string, error) {
+	resolved := make(map[string]string, len(keys))
+	for _, key := range keys {
+		resolved[key] = "https://fresh.example.com/" + strings.TrimLeft(key, "/")
+	}
+	return resolved, nil
+}
+
 func (s *videoMediaSaverStub) GalleryRetention() time.Duration { return 30 * 24 * time.Hour }
 
 func (s *videoMediaSaverStub) DeleteObject(_ context.Context, key string) error {
@@ -197,6 +222,29 @@ func TestVideoStudioGalleryArchivesOnlyVideos(t *testing.T) {
 	require.True(t, bytes.HasPrefix([]byte(entry.ObjectKey), []byte(videoStoragePrefix)),
 		"object_key 必须带 videos/ 前缀，删除时才能定位对象")
 	require.Len(t, store.saved, 1)
+}
+
+func TestVideoStudioGalleryArchiveIsIdempotentBySourceID(t *testing.T) {
+	store := &videoGalleryStoreStub{}
+	saver := &videoMediaSaverStub{}
+	svc := NewVideoStudioGalleryService(store, saver)
+	options := VideoStudioGallerySaveOptions{SourceID: "seedance:task-123"}
+
+	first, err := svc.Save(
+		context.Background(), 42, "同一个镜头", "seedance-2.0-fast", "mp4", 8,
+		"video/mp4", mp4Bytes(), false, options,
+	)
+	require.NoError(t, err)
+	second, err := svc.Save(
+		context.Background(), 42, "同一个镜头", "seedance-2.0-fast", "mp4", 8,
+		"video/mp4", mp4Bytes(), false, options,
+	)
+
+	require.NoError(t, err)
+	require.Equal(t, first.ID, second.ID)
+	require.Equal(t, "seedance:task-123", second.SourceID)
+	require.Len(t, store.saved, 1)
+	require.Len(t, saver.keys, 1, "retry must return the existing row before uploading another object")
 }
 
 func TestVideoStudioGalleryUploadReferenceAssetSkipsGalleryRows(t *testing.T) {
@@ -246,6 +294,25 @@ func TestVideoStudioGalleryListHidesLegacyReferenceVideos(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 	require.Equal(t, "generated-video", entries[0].ID)
+}
+
+func TestVideoStudioGalleryListRefreshesArchivedVideoURLs(t *testing.T) {
+	store := &videoGalleryStoreStub{saved: []*VideoStudioGalleryEntry{{
+		ID:        "video-1",
+		ObjectKey: "videos/users/42/video-1.mp4",
+		URL:       "https://expired.example.com/video-1.mp4?signature=old",
+	}}}
+	svc := NewVideoStudioGalleryService(store, &videoMediaSaverStub{})
+
+	entries, err := svc.List(context.Background(), 42, 10, nil)
+
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	require.Equal(
+		t,
+		"https://fresh.example.com/videos/users/42/video-1.mp4",
+		entries[0].URL,
+	)
 }
 
 func TestVideoStudioGalleryRejectsOversizedArchives(t *testing.T) {

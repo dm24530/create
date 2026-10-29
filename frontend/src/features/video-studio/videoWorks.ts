@@ -7,6 +7,7 @@ export interface VideoWorkRecord {
   id: string
   provider: VideoProvider
   requestId: string
+  sourceId?: string
   keyId: number
   model: string
   prompt: string
@@ -18,6 +19,7 @@ export interface VideoWorkRecord {
   videoUrl: string
   // 归档到对象存储后的长期地址（后端记录），换浏览器也能继续播放。
   archivedUrl?: string
+  archivedId?: string
   archivedSaved?: boolean
   archivedExpiresAt?: number
   createdAt: number

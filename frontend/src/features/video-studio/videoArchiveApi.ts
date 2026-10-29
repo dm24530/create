@@ -4,6 +4,7 @@ import { apiClient } from '@/api/client'
 
 export interface ArchivedVideoEntry {
   id: string
+  source_id?: string
   url: string
   prompt: string
   model: string
@@ -21,6 +22,7 @@ export interface ArchiveVideoRequest {
   // 二选一：公开直链交给服务端抓取；浏览器已拿到字节的（如需要密钥的内容接口）直接上传。
   video_url?: string
   video_data_url?: string
+  source_id?: string
   prompt: string
   model: string
   format: string

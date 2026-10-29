@@ -1458,6 +1458,75 @@ describe('VideoStudioView unfinished work resumption', () => {
     ).toBe(pollsAfterMount)
   })
 
+  it('does not show the archived copy and the resumed task as two cards', async () => {
+    saveVideoWork({
+      id: 'vw_duplicate_archive',
+      provider: 'seedance',
+      requestId: 'task-duplicate-archive',
+      keyId: 7,
+      model: 'seedance-2-720p',
+      prompt: '同一个任务的视频',
+      durationSeconds: 8,
+      resolution: '720p',
+      aspectRatio: '16:9',
+      generateAudio: false,
+      referenceCounts: { images: 0, videos: 0, audios: 0 },
+      videoUrl: 'blob:expired-duplicate',
+      createdAt: Date.now(),
+      status: 'succeeded',
+      statusMessage: '',
+    })
+    listArchivedVideos.mockResolvedValue([{
+      id: 'archive-task-duplicate-archive',
+      source_id: 'seedance:task-duplicate-archive',
+      url: 'https://r2.example.com/task-duplicate-archive.mp4',
+      prompt: '同一个任务的视频',
+      model: 'seedance-2-720p',
+      format: 'mp4',
+      duration_seconds: 8,
+      saved: false,
+      created_at: Math.floor(Date.now() / 1000),
+      expires_at: Math.floor(Date.now() / 1000) + 86400,
+    }])
+    archiveVideo.mockResolvedValue({
+      id: 'archive-task-duplicate-archive',
+      source_id: 'seedance:task-duplicate-archive',
+      url: 'https://r2.example.com/task-duplicate-archive.mp4',
+      prompt: '同一个任务的视频',
+      model: 'seedance-2-720p',
+      format: 'mp4',
+      duration_seconds: 8,
+      saved: false,
+      created_at: Math.floor(Date.now() / 1000),
+      expires_at: Math.floor(Date.now() / 1000) + 86400,
+    })
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/models')) return jsonResponse({ data: [{ id: 'seedance-2-720p' }] })
+      if (url.includes('/contents/generations/tasks/task-duplicate-archive')) {
+        return jsonResponse({
+          id: 'task-duplicate-archive',
+          status: 'completed',
+          content: { video_url: 'https://upstream.example.com/task-duplicate-archive.mp4' },
+        })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountStudio()
+    await flushPromises()
+    await flushPromises()
+    await flushPromises()
+
+    expect(wrapper.findAll('.video-grid article')).toHaveLength(1)
+    const stored = JSON.parse(localStorage.getItem('sub2api:video-studio:works') || '[]')
+    expect(stored.find((item: { id: string }) => item.id === 'vw_duplicate_archive')).toMatchObject({
+      archivedId: 'archive-task-duplicate-archive',
+      sourceId: 'seedance:task-duplicate-archive',
+    })
+  })
+
   it('restores a failed task after refresh without polling it again', async () => {
     saveVideoWork({
       id: 'vw_failed_restore',

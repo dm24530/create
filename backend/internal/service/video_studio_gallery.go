@@ -55,6 +55,8 @@ var (
 type VideoStudioGalleryEntry struct {
 	ID     string `json:"id"`
 	UserID int64  `json:"-"`
+	// SourceID identifies the upstream generation task and makes archive retries idempotent.
+	SourceID string `json:"source_id,omitempty"`
 	// ObjectKey 是对象存储里的完整键（含 videos/ 前缀），删除作品时用它删对象。
 	ObjectKey       string `json:"-"`
 	URL             string `json:"url"`
@@ -73,6 +75,7 @@ type VideoStudioGalleryEntry struct {
 type VideoStudioGallerySaveOptions struct {
 	CreatedAt int64
 	SortOrder int64
+	SourceID  string
 }
 
 type VideoStudioGalleryStore interface {
@@ -89,6 +92,7 @@ type VideoStudioGalleryStore interface {
 	SweepExpired(ctx context.Context, batch int) ([]string, error)
 	// ObjectKey 返回记录的 object_key；记录不存在时返回 ErrStudioWorkNotFound。
 	ObjectKey(ctx context.Context, userID int64, id string) (string, error)
+	FindBySourceID(ctx context.Context, userID int64, sourceID string) (*VideoStudioGalleryEntry, error)
 	Delete(ctx context.Context, userID int64, id string) error
 }
 
@@ -222,6 +226,35 @@ func (s *VideoStudioGalleryService) Save(
 		return nil, ErrVideoStudioUnsupportedType
 	}
 
+	sourceID := ""
+	if len(options) > 0 {
+		sourceID = strings.TrimSpace(options[0].SourceID)
+		if len(sourceID) > 160 {
+			sourceID = sourceID[:160]
+		}
+	}
+	if sourceID != "" {
+		existing, findErr := s.store.FindBySourceID(ctx, userID, sourceID)
+		switch {
+		case findErr == nil && existing != nil:
+			if existing.ExpiresAt > 0 && existing.ExpiresAt <= time.Now().UTC().Unix() {
+				if existing.ObjectKey != "" {
+					if deleteErr := s.storage.DeleteObject(ctx, existing.ObjectKey); deleteErr != nil {
+						logger.L().Warn("video_studio.expired_archive_delete_failed",
+							zap.String("object_key", existing.ObjectKey), zap.Error(deleteErr))
+					}
+				}
+				if deleteErr := s.store.Delete(ctx, userID, existing.ID); deleteErr != nil {
+					return nil, deleteErr
+				}
+			} else {
+				return s.saveExistingVideoEntry(ctx, userID, existing, saved)
+			}
+		case findErr != nil && !errors.Is(findErr, ErrStudioWorkNotFound):
+			return nil, findErr
+		}
+	}
+
 	count, err := s.store.Count(ctx, userID)
 	if err != nil {
 		return nil, err
@@ -271,6 +304,7 @@ func (s *VideoStudioGalleryService) Save(
 	entry := &VideoStudioGalleryEntry{
 		ID:              id,
 		UserID:          userID,
+		SourceID:        sourceID,
 		ObjectKey:       videoStoragePrefix + key,
 		URL:             url,
 		Prompt:          strings.TrimSpace(prompt),
@@ -283,6 +317,19 @@ func (s *VideoStudioGalleryService) Save(
 		ExpiresAt:       expiresAt,
 	}
 	if err := s.store.Save(ctx, entry, resolveStudioQuota(s.storage)); err != nil {
+		if errors.Is(err, ErrStudioWorkAlreadyExists) && sourceID != "" {
+			if entry.ObjectKey != "" {
+				if deleteErr := s.storage.DeleteObject(ctx, entry.ObjectKey); deleteErr != nil {
+					logger.L().Warn("video_studio.duplicate_archive_delete_failed",
+						zap.String("object_key", entry.ObjectKey), zap.Error(deleteErr))
+				}
+			}
+			existing, findErr := s.store.FindBySourceID(ctx, userID, sourceID)
+			if findErr != nil {
+				return nil, findErr
+			}
+			return s.saveExistingVideoEntry(ctx, userID, existing, saved)
+		}
 		if errors.Is(err, ErrStudioWorksQuotaExceeded) {
 			// 并发下抢先失败：刚上传的对象要撤掉，不然就成了没人认领的孤儿。
 			if entry.ObjectKey != "" {
@@ -303,6 +350,28 @@ func (s *VideoStudioGalleryService) Save(
 			return nil, ErrStudioWorksTempLimitExceeded
 		}
 		return nil, err
+	}
+	return entry, nil
+}
+
+func (s *VideoStudioGalleryService) saveExistingVideoEntry(
+	ctx context.Context,
+	userID int64,
+	entry *VideoStudioGalleryEntry,
+	saved bool,
+) (*VideoStudioGalleryEntry, error) {
+	if entry == nil {
+		return nil, ErrStudioWorkNotFound
+	}
+	if saved && !entry.Saved {
+		if err := s.store.Pin(ctx, userID, entry.ID, resolveStudioQuota(s.storage)); err != nil {
+			if errors.Is(err, ErrStudioWorksQuotaExceeded) {
+				return nil, ErrVideoStudioGalleryQuotaExceeded
+			}
+			return nil, err
+		}
+		entry.Saved = true
+		entry.ExpiresAt = 0
 	}
 	return entry, nil
 }
@@ -356,6 +425,54 @@ func (s *VideoStudioGalleryService) List(
 			continue
 		}
 		visible = append(visible, entry)
+	}
+	entries = visible
+	if batchResolver, ok := s.storage.(ImageStudioObjectURLBatchResolver); ok {
+		keys := make([]string, 0, len(entries))
+		seen := make(map[string]struct{}, len(entries))
+		for _, entry := range entries {
+			if entry == nil {
+				continue
+			}
+			key := strings.TrimSpace(entry.ObjectKey)
+			if key == "" {
+				continue
+			}
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			keys = append(keys, key)
+		}
+		if len(keys) > 0 {
+			resolved, resolveErr := batchResolver.PresignImageObjects(ctx, keys)
+			if resolveErr != nil {
+				return entries, nil
+			}
+			for _, entry := range entries {
+				if entry == nil {
+					continue
+				}
+				if resolvedURL := resolved[strings.TrimSpace(entry.ObjectKey)]; resolvedURL != "" {
+					entry.URL = resolvedURL
+				}
+			}
+		}
+		return entries, nil
+	}
+	if resolver, ok := s.storage.(ImageStudioObjectURLResolver); ok {
+		for _, entry := range entries {
+			if entry == nil {
+				continue
+			}
+			key := strings.TrimSpace(entry.ObjectKey)
+			if key == "" {
+				continue
+			}
+			if resolved, resolveErr := resolver.PresignImageObject(ctx, key); resolveErr == nil && resolved != "" {
+				entry.URL = resolved
+			}
+		}
 	}
 	return visible, nil
 }

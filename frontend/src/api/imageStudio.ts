@@ -2,6 +2,7 @@ import { apiClient } from './client'
 
 export interface ImageStudioGalleryEntry {
   id: string
+  source_id?: string
   url: string
   thumb_url?: string
   prompt: string
@@ -20,6 +21,7 @@ export interface ImageStudioGalleryEntry {
 export interface SaveImageStudioGalleryRequest {
   image_data_url?: string
   image_url?: string
+  source_id?: string
   prompt: string
   model: string
   size: string

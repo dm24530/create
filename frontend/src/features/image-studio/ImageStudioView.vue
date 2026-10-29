@@ -794,6 +794,7 @@ interface GeneratedImage {
   displayOrder?: number
   // Persisted gallery identity survives remounts without relying on signed URLs.
   galleryId?: string
+  gallerySourceId?: string
   restoredFromSnapshot?: boolean
 }
 
@@ -1768,6 +1769,10 @@ async function loadGallery(epoch = studioUserEpoch, ownerId = studioStateOwnerId
       const entry = entryById.get(String(image.id))
         || entryById.get(String(image.galleryId || ''))
         || entryById.get(String(mappedId || ''))
+        || entries.find((candidate) =>
+          Boolean(candidate.source_id) &&
+          candidate.source_id === imageGallerySourceID(image),
+        )
         || entries.find((candidate) => sameStoredObject(image.src, candidate.url))
         || entries.find((candidate) => sameGalleryDisplayOrder(image, candidate))
       if (!entry) continue
@@ -1776,6 +1781,7 @@ async function loadGallery(epoch = studioUserEpoch, ownerId = studioStateOwnerId
         localToGalleryId.value.set(String(image.id), String(entry.id))
       }
       image.galleryId = String(entry.id)
+      image.gallerySourceId = entry.source_id || image.gallerySourceId
       const storedURL = resolveImageAssetURL(String(entry.url || ''))
       if (storedURL && !sameStoredObject(image.src, storedURL)) {
         image.src = storedURL
@@ -1908,6 +1914,7 @@ function galleryEntryToImage(entry: ImageStudioGalleryEntry, index: number): Gen
   return {
     id: entry.id,
     galleryId: entry.id,
+    gallerySourceId: entry.source_id,
     title: `历史图片 ${index + 1}`,
     src: resolveImageAssetURL(entry.url),
     thumbSrc: entry.thumb_url || '',
@@ -2197,6 +2204,7 @@ async function persistGeneratedImages(
       galleryBackedIds.value.add(String(result.value.entry.id))
       localToGalleryId.value.set(String(result.value.item.id), String(result.value.entry.id))
       result.value.item.galleryId = String(result.value.entry.id)
+      result.value.item.gallerySourceId = result.value.entry.source_id || imageGallerySourceID(result.value.item)
       // 记住服务端状态，卡片上才能显示"还剩 N 天 / 已保存"。
       result.value.item.saved = result.value.entry.saved !== false
       result.value.item.expiresAt = result.value.entry.expires_at || 0
@@ -2265,6 +2273,7 @@ async function saveImageToGallery(
     : { image_url: image.src }
   return imageStudioGalleryAPI.save({
     ...source,
+    source_id: imageGallerySourceID(image),
     prompt,
     model,
     size: image.size || size.value,
@@ -2548,6 +2557,7 @@ async function savePreviewToGallery() {
     galleryBackedIds.value.add(String(entry.id))
     localToGalleryId.value.set(String(image.id), String(entry.id))
     image.galleryId = String(entry.id)
+    image.gallerySourceId = entry.source_id || imageGallerySourceID(image)
     image.saved = entry.saved !== false
     image.expiresAt = entry.expires_at || 0
     image.prompt = promptText
@@ -2579,6 +2589,13 @@ async function loadStudioQuota(epoch = studioUserEpoch, ownerId = studioStateOwn
 function galleryIdFor(image: GeneratedImage): string {
   const local = String(image.id)
   return String(image.galleryId || '') || localToGalleryId.value.get(local) || local
+}
+
+function imageGallerySourceID(image: GeneratedImage): string {
+  const taskId = String(image.gatewayTaskId || image.taskId || '').trim()
+  return taskId
+    ? `image-task:${taskId}:0`
+    : String(image.gallerySourceId || '')
 }
 
 async function galleryIdForDownload(image: GeneratedImage): Promise<string> {

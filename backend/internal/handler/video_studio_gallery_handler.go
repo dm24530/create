@@ -26,6 +26,7 @@ type saveVideoStudioGalleryRequest struct {
 	Model           string `json:"model"`
 	Format          string `json:"format"`
 	DurationSeconds int    `json:"duration_seconds"`
+	SourceID        string `json:"source_id"`
 	CreatedAt       int64  `json:"created_at"`
 	SortOrder       int64  `json:"sort_order"`
 	// Saved 为真表示直接存进「我的作品」（长期有效、计入配额）；
@@ -118,6 +119,7 @@ func (h *VideoStudioGalleryHandler) Save(c *gin.Context) {
 			service.VideoStudioGallerySaveOptions{
 				CreatedAt: request.CreatedAt,
 				SortOrder: request.SortOrder,
+				SourceID:  request.SourceID,
 			},
 		)
 	case videoURL != "":
@@ -126,6 +128,7 @@ func (h *VideoStudioGalleryHandler) Save(c *gin.Context) {
 			service.VideoStudioGallerySaveOptions{
 				CreatedAt: request.CreatedAt,
 				SortOrder: request.SortOrder,
+				SourceID:  request.SourceID,
 			},
 		)
 	default:

@@ -75,6 +75,19 @@ func (s *galleryHandlerStoreStub) ObjectKey(context.Context, int64, string) (str
 	return "", service.ErrStudioWorkNotFound
 }
 
+func (s *galleryHandlerStoreStub) FindBySourceID(
+	_ context.Context,
+	userID int64,
+	sourceID string,
+) (*service.ImageStudioGalleryEntry, error) {
+	for _, entry := range s.entries {
+		if entry != nil && entry.UserID == userID && entry.SourceID == sourceID {
+			return entry, nil
+		}
+	}
+	return nil, service.ErrStudioWorkNotFound
+}
+
 func (s *galleryHandlerStoreStub) UpdateThumb(context.Context, int64, string, string, string) error {
 	return nil
 }
@@ -269,6 +282,45 @@ func TestImageStudioGallerySaveFromTaskRequiresCompletedTask(t *testing.T) {
 
 	require.Equal(t, http.StatusConflict, recorder.Code)
 	require.Empty(t, galleryStore.entries)
+}
+
+func TestImageStudioGallerySaveFromTaskIsIdempotent(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	taskStore := &asyncImageMemoryStore{tasks: map[string]*service.ImageTaskRecord{
+		"imgtask_idempotent": {
+			ID:         "imgtask_idempotent",
+			UserID:     7,
+			APIKeyID:   9,
+			Status:     service.ImageTaskStatusCompleted,
+			HTTPStatus: http.StatusOK,
+			Result: json.RawMessage(
+				`{"data":[{"object_key":"images/users/7/task-idempotent.png","url":"https://cdn.example.com/task-idempotent.png","mime_type":"image/png"}]}`,
+			),
+		},
+	}}
+	tasks := service.NewImageTaskServiceWithUploader(taskStore, nil, time.Hour, time.Minute)
+	galleryStore := &galleryHandlerStoreStub{}
+	h := NewImageStudioGalleryHandler(
+		service.NewImageStudioGalleryService(galleryStore, &galleryHandlerSaverStub{}),
+		tasks,
+	)
+	router := galleryTaskTestRouter(7, h)
+	body := `{
+		"task_id":"imgtask_idempotent",
+		"image_index":0,
+		"prompt":"cat",
+		"model":"gpt-image-1",
+		"size":"1024x1024",
+		"format":"png",
+		"saved":false
+	}`
+
+	first := serveGalleryTaskSave(router, body)
+	second := serveGalleryTaskSave(router, body)
+
+	require.Equal(t, http.StatusOK, first.Code)
+	require.Equal(t, http.StatusOK, second.Code)
+	require.Len(t, galleryStore.entries, 1)
 }
 
 func TestImageStudioGallerySaveFromTaskReportsUnavailableGallery(t *testing.T) {
