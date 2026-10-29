@@ -299,7 +299,7 @@ func (s *VideoStudioGalleryService) Save(
 		expiresAt = now.Add(s.tempRetention()).Unix()
 	}
 	if sortOrder <= 0 {
-		sortOrder = createdAt.Unix() * 1000
+		sortOrder = createdAt.Unix() * 1_000_000
 	}
 	entry := &VideoStudioGalleryEntry{
 		ID:              id,

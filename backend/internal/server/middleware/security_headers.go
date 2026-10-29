@@ -71,6 +71,10 @@ var requiredCSPDirectiveValues = []struct {
 	{"frame-src", TencentCaptchaGlobalDomain},
 	{"frame-src", TencentCaptchaPrehandleDomain},
 	{"worker-src", TencentCaptchaWorkerSource},
+	// Generated videos are served from object storage or as authenticated blobs.
+	{"media-src", "data:"},
+	{"media-src", "blob:"},
+	{"media-src", "https:"},
 	{"script-src", StripeDomain},
 	{"frame-src", StripeDomain},
 	{"script-src", AirwallexStaticDomain},

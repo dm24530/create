@@ -856,6 +856,28 @@ func TestImageStudioGallerySaveUsesPerImageCompletionTimeAndDuration(t *testing.
 	)
 }
 
+func TestImageStudioGalleryUsesMicrosecondSortOrderWhenMissing(t *testing.T) {
+	store := &galleryStoreStub{}
+	svc := NewImageStudioGalleryService(store, &gallerySaverStub{retention: 24 * time.Hour})
+	completedAt := time.Now().UTC().Add(-time.Minute).Unix()
+
+	entry, err := svc.Save(
+		context.Background(),
+		42,
+		"p",
+		"m",
+		"1x1",
+		"png",
+		"image/png",
+		smallPNG(t),
+		false,
+		ImageStudioGallerySaveOptions{CreatedAt: completedAt},
+	)
+
+	require.NoError(t, err)
+	require.Equal(t, completedAt*1_000_000, entry.SortOrder)
+}
+
 func TestImageStudioGalleryRejectsClientTimeForExpiry(t *testing.T) {
 	store := &galleryStoreStub{}
 	svc := NewImageStudioGalleryService(store, &gallerySaverStub{retention: 24 * time.Hour})

@@ -1339,6 +1339,14 @@ onBeforeUnmount(() => {
   color: rgb(242 237 229);
 }
 
+:global(.dark .work-detail__meta dt) {
+  color: rgb(167 159 148);
+}
+
+:global(.dark .work-detail__meta dd) {
+  color: rgb(242 237 229);
+}
+
 :global(.dark .works__empty-icon) {
   border-color: rgb(66 61 55);
   background: rgb(35 33 30);

@@ -336,7 +336,7 @@ describe('VideoStudioView model loading', () => {
     expect(video.attributes('controls')).toBeDefined()
   })
 
-  it('appends loaded history without moving existing task slots', async () => {
+  it('places loaded history in its original slot without disturbing existing task order', async () => {
     let createCount = 0
     const pendingPoll = new Promise<Response>(() => {})
     vi.mocked(fetch).mockImplementation(async (input, init) => {
@@ -385,12 +385,13 @@ describe('VideoStudioView model loading', () => {
     }])
     await wrapper.get('button.studio-results__action').trigger('click')
     await flushPromises()
+    await wrapper.vm.$nextTick()
 
     cards = wrapper.findAll('.video-grid article')
     expect(cards).toHaveLength(3)
-    expect(cards[0].text()).toContain('generation failed')
-    expect(cards[1].text()).toContain('排队中')
-    expect(cards[2].get('video').attributes('src')).toBe('https://cdn.example.com/newer-archive.mp4')
+    expect(cards[0].get('video').attributes('src')).toBe('https://cdn.example.com/newer-archive.mp4')
+    expect(cards[1].text()).toContain('generation failed')
+    expect(cards[2].text()).toContain('排队中')
   })
 
   it('does not expose raw no-service errors in the composer', async () => {
@@ -1407,6 +1408,72 @@ describe('VideoStudioView unfinished work resumption', () => {
       configurable: true,
       value: { hostname: 'localhost' },
     })
+  })
+
+  it('restores failed tasks and archived videos in their original creation slots', async () => {
+    const now = Date.now()
+    saveVideoWork({
+      id: 'vw-failed-middle',
+      provider: 'seedance',
+      requestId: 'task-failed-middle',
+      keyId: 7,
+      model: 'seedance-2-720p',
+      prompt: '中间失败的镜头',
+      durationSeconds: 5,
+      resolution: '720p',
+      aspectRatio: '16:9',
+      generateAudio: false,
+      referenceCounts: { images: 0, videos: 0, audios: 0 },
+      videoUrl: '',
+      createdAt: now - 10 * 60 * 1000,
+      displayOrder: 1500,
+      expiresAt: Math.floor(now / 1000) + 86400,
+      status: 'failed',
+      statusMessage: '中间失败',
+    })
+    listArchivedVideos.mockResolvedValue([
+      {
+        id: 'archive-newer',
+        source_id: 'seedance:task-newer',
+        url: 'https://cdn.example.com/newer.mp4',
+        prompt: '较新的成功视频',
+        model: 'seedance-2-720p',
+        format: 'mp4',
+        duration_seconds: 5,
+        saved: false,
+        created_at: Math.floor(now / 1000),
+        sort_order: 2000,
+        expires_at: Math.floor(now / 1000) + 86400,
+      },
+      {
+        id: 'archive-older',
+        source_id: 'seedance:task-older',
+        url: 'https://cdn.example.com/older.mp4',
+        prompt: '较旧的成功视频',
+        model: 'seedance-2-720p',
+        format: 'mp4',
+        duration_seconds: 5,
+        saved: false,
+        created_at: Math.floor(now / 1000) - 20 * 60,
+        sort_order: 1000,
+        expires_at: Math.floor(now / 1000) + 86400,
+      },
+    ])
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/models')) return jsonResponse({ data: [] })
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountStudio()
+    await flushPromises()
+    await flushPromises()
+
+    const cards = wrapper.findAll('.video-grid article')
+    expect(cards).toHaveLength(3)
+    expect(cards[0].text()).toContain('较新的成功视频')
+    expect(cards[1].text()).toContain('中间失败')
+    expect(cards[2].text()).toContain('较旧的成功视频')
   })
 
   it('does not mount a second card for the same unfinished record on refresh', async () => {

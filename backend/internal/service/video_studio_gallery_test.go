@@ -247,6 +247,28 @@ func TestVideoStudioGalleryArchiveIsIdempotentBySourceID(t *testing.T) {
 	require.Len(t, saver.keys, 1, "retry must return the existing row before uploading another object")
 }
 
+func TestVideoStudioGalleryUsesMicrosecondSortOrderWhenMissing(t *testing.T) {
+	store := &videoGalleryStoreStub{}
+	svc := NewVideoStudioGalleryService(store, &videoMediaSaverStub{})
+	createdAt := time.Now().UTC().Add(-time.Minute).Unix()
+
+	entry, err := svc.Save(
+		context.Background(),
+		42,
+		"稳定位置",
+		"seedance-2-720p",
+		"mp4",
+		5,
+		"video/mp4",
+		mp4Bytes(),
+		false,
+		VideoStudioGallerySaveOptions{CreatedAt: createdAt},
+	)
+
+	require.NoError(t, err)
+	require.Equal(t, createdAt*1_000_000, entry.SortOrder)
+}
+
 func TestVideoStudioGalleryUploadReferenceAssetSkipsGalleryRows(t *testing.T) {
 	store := &videoGalleryStoreStub{}
 	saver := &videoMediaSaverStub{}

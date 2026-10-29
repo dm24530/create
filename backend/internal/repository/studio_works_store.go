@@ -20,6 +20,17 @@ const studioWorksColumns = `
 	EXTRACT(EPOCH FROM created_at)::bigint AS created_at,
 	COALESCE(EXTRACT(EPOCH FROM expires_at)::bigint, 0) AS expires_at`
 
+// Older rows stored sort_order as milliseconds or seconds, while current
+// clients use microseconds. Normalize while ordering so legacy works do not
+// jump ahead of or behind newly generated slots.
+const studioWorksOrderExpression = `
+	CASE
+		WHEN sort_order >= 100000000000000 THEN sort_order
+		WHEN sort_order >= 100000000000 THEN sort_order * 1000
+		WHEN sort_order > 0 THEN sort_order * 1000000
+		ELSE EXTRACT(EPOCH FROM created_at)::bigint * 1000000
+	END`
+
 type studioWorksDB struct {
 	db *sql.DB
 }
@@ -132,7 +143,7 @@ func (s *studioWorksDB) list(
 		query += fmt.Sprintf(" AND saved = $%d", len(args)+1)
 		args = append(args, *saved)
 	}
-	query += fmt.Sprintf(" ORDER BY sort_order DESC, created_at DESC, id DESC LIMIT $%d", len(args)+1)
+	query += fmt.Sprintf(" ORDER BY "+studioWorksOrderExpression+" DESC, created_at DESC, id DESC LIMIT $%d", len(args)+1)
 	args = append(args, limit)
 
 	rows, err := s.db.QueryContext(ctx, query, args...)

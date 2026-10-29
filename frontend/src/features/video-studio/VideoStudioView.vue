@@ -698,6 +698,7 @@ import {
 import { videoStudioDraft } from './videoStudioDraft'
 import { findVideoInspiration } from './videoInspiration'
 import { formatVideoElapsedSeconds } from './videoElapsed'
+import { normalizeStudioDisplayOrder } from '@/features/studioDisplayOrder'
 
 interface StudioTask {
   localId: string
@@ -882,6 +883,19 @@ function allocateVideoBatchDisplayOrder(count: number) {
     videoDisplayOrderCursor + batchSize + 1,
   )
   return videoDisplayOrderCursor
+}
+
+function videoTaskOrder(task: StudioTask): number {
+  return normalizeStudioDisplayOrder(task.displayOrder)
+    || normalizeStudioDisplayOrder(task.createdAt)
+}
+
+function sortVideoTasks(items: StudioTask[]): StudioTask[] {
+  return items.sort((a, b) =>
+    videoTaskOrder(b) - videoTaskOrder(a)
+    || (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0)
+    || a.localId.localeCompare(b.localId),
+  )
 }
 
 let nextReferenceId = Math.max(1, ...references.value.map((item) => item.id + 1))
@@ -1274,6 +1288,7 @@ function resumeWorks() {
     void runTask(tasks.value[tasks.value.length - 1], null)
   }
   for (const id of expiredIds) removeVideoWork(id)
+  sortVideoTasks(tasks.value)
   works.value = listVideoWorks()
 }
 
@@ -1350,7 +1365,7 @@ function taskFromArchived(entry: ArchivedVideoEntry): StudioTask {
     revokeUrl: false,
     error: '',
     createdAt: Number(entry.created_at || 0) * 1000,
-    displayOrder: Number(entry.sort_order || 0) || Number(entry.created_at || 0) * 1000,
+    displayOrder: Number(entry.sort_order || 0) || Number(entry.created_at || 0) * 1_000_000,
     expiresAt: 0,
     archivedId: entry.id,
     archivedSaved: entry.saved,
@@ -1472,8 +1487,9 @@ async function loadArchivedResults() {
         (!entry.source_id || !existingSourceIds.has(entry.source_id)),
       )
       .map(taskFromArchived)
-    if (!imported.length) return
-    tasks.value = [...tasks.value, ...imported]
+    if (imported.length) {
+      tasks.value = sortVideoTasks([...tasks.value, ...imported])
+    }
   } catch {
     // 对象存储未启用时仍保留当前会话结果，不阻断生成。
   } finally {
@@ -3150,6 +3166,14 @@ onBeforeUnmount(() => {
 
 :global(.dark .preview__prompt) {
   color: rgb(227 219 208);
+}
+
+:global(.dark .preview__meta dt) {
+  color: rgb(167 159 148);
+}
+
+:global(.dark .preview__meta dd) {
+  color: rgb(242 237 229);
 }
 
 :global(.dark .reference-chip) {

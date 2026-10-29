@@ -292,7 +292,7 @@ func (s *ImageStudioGalleryService) Save(
 		expiresAt = serverNow.Add(s.tempRetention()).Unix()
 	}
 	if sortOrder <= 0 {
-		sortOrder = createdAt.Unix() * 1000
+		sortOrder = createdAt.Unix() * 1_000_000
 	}
 	entry := &ImageStudioGalleryEntry{
 		ID:       id,
@@ -463,7 +463,7 @@ func (s *ImageStudioGalleryService) SaveExistingObject(
 		expiresAt = serverNow.Add(s.tempRetention()).Unix()
 	}
 	if sortOrder <= 0 {
-		sortOrder = createdAt.Unix() * 1000
+		sortOrder = createdAt.Unix() * 1_000_000
 	}
 	entry := &ImageStudioGalleryEntry{
 		ID:         strings.ReplaceAll(uuid.NewString(), "-", ""),

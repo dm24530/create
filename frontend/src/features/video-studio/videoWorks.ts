@@ -2,6 +2,7 @@
 // 记录任务 ID 与参数，视频地址缺失时可按需重新查询任务或重新下载内容。
 
 import type { VideoProvider, VideoTaskStatus } from './videoStudioApi'
+import { normalizeStudioDisplayOrder } from '@/features/studioDisplayOrder'
 
 export interface VideoWorkRecord {
   id: string
@@ -35,10 +36,8 @@ export const VIDEO_WORKS_STORAGE_KEY = 'sub2api:video-studio:works'
 const MAX_RECORDS = 100
 
 function videoWorkOrder(record: VideoWorkRecord) {
-  const explicit = Number(record.displayOrder)
-  if (Number.isFinite(explicit) && explicit > 0) return explicit
-  const createdAt = Number(record.createdAt)
-  return Number.isFinite(createdAt) ? createdAt * 1000 : 0
+  return normalizeStudioDisplayOrder(record.displayOrder)
+    || normalizeStudioDisplayOrder(record.createdAt)
 }
 
 function sortVideoWorks(records: VideoWorkRecord[]) {

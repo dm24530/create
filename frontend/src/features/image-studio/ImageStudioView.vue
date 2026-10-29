@@ -724,6 +724,7 @@ import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Toggle from '@/components/common/Toggle.vue'
 import ImageStudioSelect from './ImageStudioSelect.vue'
 import { IMAGE_STUDIO_DEFAULT_PROMPT, imageStudioDraft, resetImageStudioDraft } from './imageStudioDraft'
+import { normalizeStudioDisplayOrder } from '@/features/studioDisplayOrder'
 import {
   IMAGE_STUDIO_GALLERY_CHANGED_EVENT,
 } from './galleryEvents'
@@ -944,10 +945,8 @@ function allocateImageBatchDisplayOrder(count: number) {
 }
 
 function imageDisplayOrder(image: GeneratedImage) {
-  const explicit = Number(image.displayOrder)
-  if (Number.isFinite(explicit) && explicit > 0) return explicit
-  const createdAt = Number(image.createdAt)
-  return Number.isFinite(createdAt) && createdAt > 0 ? createdAt * 1000 : 0
+  return normalizeStudioDisplayOrder(image.displayOrder)
+    || normalizeStudioDisplayOrder(image.createdAt)
 }
 
 function mergeImagesByDisplayOrder(
