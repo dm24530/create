@@ -725,6 +725,9 @@ import Toggle from '@/components/common/Toggle.vue'
 import ImageStudioSelect from './ImageStudioSelect.vue'
 import { IMAGE_STUDIO_DEFAULT_PROMPT, imageStudioDraft, resetImageStudioDraft } from './imageStudioDraft'
 import {
+  IMAGE_STUDIO_GALLERY_CHANGED_EVENT,
+} from './galleryEvents'
+import {
   imageNeedsLocalResize,
   LOCAL_IMAGE_MAX_EDGE,
   processImageForDisplay,
@@ -1374,6 +1377,7 @@ async function switchStudioUser(userId?: number | string | null) {
   await loadData()
 }
 let componentDisposed = false
+let studioLoadedOnce = false
 let nextReferenceId = Math.max(1, ...references.value.map((item) => item.id + 1))
 let modelRequestId = 0
 
@@ -1737,7 +1741,13 @@ async function loadData(epoch = studioUserEpoch, ownerId = studioStateOwnerId.va
     loadStudioQuota(epoch, ownerId),
   ])
   if (epoch !== studioUserEpoch || ownerId !== studioStateOwnerId.value) return
+  studioLoadedOnce = true
   void resumeGatewayGeneration(images.value.filter((item) => item.pending && item.gatewayPollUrl))
+}
+
+function refreshGalleryAfterExternalChange() {
+  if (componentDisposed) return
+  void Promise.allSettled([loadGallery(), loadStudioQuota()])
 }
 
 async function loadGallery(epoch = studioUserEpoch, ownerId = studioStateOwnerId.value) {
@@ -4333,6 +4343,7 @@ onMounted(() => {
   document.addEventListener('click', handleSizeOutside)
   document.addEventListener('pointerdown', closeImageDownloadMenu)
   document.addEventListener('keydown', handleSizeEscape)
+  window.addEventListener(IMAGE_STUDIO_GALLERY_CHANGED_EVENT, refreshGalleryAfterExternalChange)
   applyInspirationFromRoute()
   void loadData()
 })
@@ -4346,6 +4357,7 @@ onActivated(() => {
   if (activeGenerations.value > 0 || images.value.some((image) => image.pending)) {
     startGenerationClock()
   }
+  if (studioLoadedOnce) refreshGalleryAfterExternalChange()
   applyInspirationFromRoute()
   const restored = images.value.filter((item) => item.pending && item.taskId && !item.gatewayPollUrl)
   if (restored.length) void resumePersistentGeneration(restored)
@@ -4363,6 +4375,7 @@ onBeforeUnmount(() => {
   document.removeEventListener('click', handleSizeOutside)
   document.removeEventListener('pointerdown', closeImageDownloadMenu)
   document.removeEventListener('keydown', handleSizeEscape)
+  window.removeEventListener(IMAGE_STUDIO_GALLERY_CHANGED_EVENT, refreshGalleryAfterExternalChange)
   for (const timer of imageMediaTimeoutIds.values()) {
     clearTimeout(timer)
   }

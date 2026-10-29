@@ -94,13 +94,13 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                         <select
                             aria-label={t("settingsPanels.image.outputFormat")}
                             className="h-full w-full cursor-pointer appearance-none bg-transparent px-4 pr-9 outline-none"
-                            style={{ color: theme.node.text }}
+                            style={{ background: theme.node.fill, color: theme.node.text }}
                             value={outputFormat}
                             onMouseDown={(event) => event.stopPropagation()}
                             onChange={(event) => changeOutputFormat(event.target.value)}
                         >
-                            <option value="png">PNG</option>
-                            <option value="jpeg">JPG</option>
+                            <option value="png" style={{ background: theme.toolbar.panel, color: theme.node.text }}>PNG</option>
+                            <option value="jpeg" style={{ background: theme.toolbar.panel, color: theme.node.text }}>JPG</option>
                         </select>
                         <ChevronDown className="pointer-events-none absolute right-3 size-3.5 opacity-55" />
                     </label>

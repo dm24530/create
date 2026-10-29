@@ -347,6 +347,7 @@ import AppLayout from '@/components/layout/AppLayout.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Icon from '@/components/icons/Icon.vue'
 import StudioNav from '@/components/layout/StudioNav.vue'
+import { notifyImageStudioGalleryChanged } from '@/features/image-studio/galleryEvents'
 import {
   authAPI,
   imageStudioGalleryAPI,
@@ -504,6 +505,7 @@ async function pinImageWork(entry: ImageStudioGalleryEntry) {
     await imageStudioGalleryAPI.pin(entry.id)
     entry.saved = true
     entry.expires_at = 0
+    notifyImageStudioGalleryChanged()
     await loadStudioQuota()
   } catch (error) {
     errorMessage.value = isStudioQuotaError(error)
@@ -536,6 +538,7 @@ async function removeImageWork(entry: ImageStudioGalleryEntry) {
     await imageStudioGalleryAPI.delete(entry.id)
     images.value = images.value.filter((item) => item.id !== entry.id)
     if (activeImage.value?.id === entry.id) activeImage.value = null
+    notifyImageStudioGalleryChanged()
     await loadStudioQuota()
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '删除图片失败'
@@ -548,6 +551,7 @@ async function unpinImageWork(entry: ImageStudioGalleryEntry) {
     await imageStudioGalleryAPI.unpin(entry.id)
     images.value = images.value.filter((item) => item.id !== entry.id)
     if (activeImage.value?.id === entry.id) activeImage.value = null
+    notifyImageStudioGalleryChanged()
     await loadStudioQuota()
   } catch (error) {
     if (isStudioWorkExpiredError(error)) {
@@ -558,6 +562,7 @@ async function unpinImageWork(entry: ImageStudioGalleryEntry) {
         await imageStudioGalleryAPI.delete(entry.id)
         images.value = images.value.filter((item) => item.id !== entry.id)
         if (activeImage.value?.id === entry.id) activeImage.value = null
+        notifyImageStudioGalleryChanged()
         await loadStudioQuota()
       } catch (deleteError) {
         errorMessage.value = deleteError instanceof Error ? deleteError.message : '删除图片失败'

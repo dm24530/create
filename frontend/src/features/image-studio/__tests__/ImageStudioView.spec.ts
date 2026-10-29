@@ -1558,6 +1558,46 @@ describe('ImageStudioView gallery', () => {
     expect(wrapper.find('[data-testid="save-preview-to-gallery"]').exists()).toBe(false)
   })
 
+  it('shows the save action again after a saved gallery image is unpinned', async () => {
+    const galleryEntry = {
+      id: 'gallery-repin',
+      url: 'https://cdn.example.com/gallery-repin.png',
+      prompt: 'a dog',
+      model: 'gemini-3.1-flash-image-preview',
+      size: '3840x3840',
+      format: 'jpeg',
+      saved: true,
+      created_at: 1,
+      expires_at: 0,
+    }
+    listGallery.mockResolvedValue([galleryEntry])
+
+    const wrapper = mountImageStudio()
+    await flushPromises()
+
+    const imageButton = wrapper.findAll('button').find((button) =>
+      button.find('img[src="https://cdn.example.com/gallery-repin.png"]').exists(),
+    )
+    await imageButton!.trigger('click')
+    expect(wrapper.get('[data-testid="preview-saved-state"]').text()).toContain('已保存到我的作品')
+
+    listGallery.mockResolvedValue([{
+      ...galleryEntry,
+      saved: false,
+      expires_at: Math.floor(Date.now() / 1000) + 86_400,
+    }])
+    window.dispatchEvent(new CustomEvent('image-studio-gallery-changed'))
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="preview-saved-state"]').exists()).toBe(false)
+    const saveButton = wrapper.get('[data-testid="save-preview-to-gallery"]')
+    await saveButton.trigger('click')
+    await flushPromises()
+
+    expect(pinGallery).toHaveBeenCalledWith('gallery-repin')
+    expect(wrapper.get('[data-testid="preview-saved-state"]').text()).toContain('已保存到我的作品')
+  })
+
   it('opens the image detail dialog and copies the original prompt', async () => {
     listGallery.mockResolvedValue([
       {
