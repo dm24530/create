@@ -51,11 +51,15 @@ const keys = [
 
 const postMessage = vi.fn()
 
-function mountHost() {
+function mountHost(options: { role?: 'user' | 'admin' } = {}) {
   const pinia = createPinia()
   setActivePinia(pinia)
   const authStore = useAuthStore(pinia)
-  authStore.user = { id: 101, email: 'first@example.com', role: 'user' } as any
+  authStore.user = {
+    id: 101,
+    email: options.role === 'admin' ? 'admin@example.com' : 'first@example.com',
+    role: options.role || 'user',
+  } as any
   authStore.token = 'token-user-101'
   return mount(CanvasHostView, {
     global: {
@@ -149,6 +153,17 @@ describe('CanvasHostView account switching', () => {
     expect(src).not.toContain('localhost:3001')
   })
 
+  it('opens the canvas library for an admin without a generation key', async () => {
+    listKeys.mockResolvedValue({ items: [] })
+
+    const wrapper = mountHost({ role: 'admin' })
+    await flushPromises()
+    await flushPromises()
+
+    expect(wrapper.find('iframe').exists()).toBe(true)
+    expect(wrapper.text()).not.toContain('请先在生图工作台选择一个可用的 API Key')
+  })
+
   it('retries a transient canvas context network failure', async () => {
     getPublicSettings
       .mockRejectedValueOnce(new TypeError('Failed to fetch'))
@@ -178,5 +193,6 @@ describe('CanvasHostView account switching', () => {
 
     expect(wrapper.text()).toContain('画布加载失败')
     expect(wrapper.text()).toContain('源站返回 502')
+    expect(wrapper.find('iframe').exists()).toBe(true)
   })
 })

@@ -1,26 +1,26 @@
 <template>
   <AppLayout>
     <div class="canvas-host" :class="{ 'canvas-host--dark': isDark }">
-      <div v-if="error" class="canvas-host__error">
+      <iframe
+        v-if="frameURL"
+        ref="frameRef"
+        :src="frameURL"
+        class="canvas-host__frame"
+        allow="clipboard-read; clipboard-write; fullscreen"
+        @load="handleFrameLoad"
+      />
+      <div v-if="error" class="canvas-host__error canvas-host__error--overlay">
         <h1>画布加载失败</h1>
         <p>{{ error }}</p>
         <button type="button" @click="loadContext">重试</button>
       </div>
-
-      <template v-else>
-        <iframe
-          v-if="frameURL"
-          ref="frameRef"
-          :src="frameURL"
-          class="canvas-host__frame"
-          allow="clipboard-read; clipboard-write; fullscreen"
-          @load="handleFrameLoad"
-        />
-        <div v-if="!frameURL || loading || !frameReady" class="canvas-host__loading canvas-host__loading--overlay">
-          <span class="canvas-host__spinner" />
-          <p>{{ loading ? '正在加载无限画布...' : '正在启动无限画布...' }}</p>
-        </div>
-      </template>
+      <div
+        v-else-if="!frameURL || !frameReady"
+        class="canvas-host__loading canvas-host__loading--overlay"
+      >
+        <span class="canvas-host__spinner" />
+        <p>{{ frameLoaded ? '正在启动无限画布...' : '正在加载无限画布...' }}</p>
+      </div>
     </div>
   </AppLayout>
 </template>
@@ -142,19 +142,16 @@ async function loadContext() {
     )
     if (!isCurrentRequest()) return
     const creatorKey = selectCanvasCreatorKey(keyResponse.items || [], localStorage, ownerID)
-    if (!creatorKey) {
-      throw new Error('请先在生图工作台选择一个可用的 API Key')
-    }
     const videoCreatorKey = selectCanvasVideoCreatorKey(keyResponse.items || [], localStorage, ownerID)
     const baseURL = import.meta.env.DEV
       ? '/v1'
       : new URL(resolved, window.location.origin).toString().replace(/\/+$/, '')
     bootstrapPayload.value = {
       baseUrl: baseURL,
-      apiKey: creatorKey.key,
+      apiKey: creatorKey?.key || '',
       videoApiKey: videoCreatorKey?.key || '',
       accessToken: authStore.token || '',
-      channelName: canvasChannelName(creatorKey),
+      channelName: creatorKey ? canvasChannelName(creatorKey) : '',
       videoChannelName: videoCreatorKey ? canvasChannelName(videoCreatorKey) : '',
       locale: canvasLocale.value,
     }
@@ -318,6 +315,21 @@ watch(() => authStore.token, (token) => {
   position: absolute;
   z-index: 1;
   inset: 0;
+}
+
+.canvas-host__error--overlay {
+  position: absolute;
+  z-index: 2;
+  top: 1rem;
+  left: 50%;
+  width: min(32rem, calc(100% - 2rem));
+  height: auto;
+  padding: 1rem 1.25rem;
+  border: 1px solid rgb(248 113 113 / 0.45);
+  border-radius: 0.75rem;
+  background: color-mix(in srgb, var(--canvas-host-bg) 96%, transparent);
+  box-shadow: 0 12px 36px rgb(15 23 42 / 0.16);
+  transform: translateX(-50%);
 }
 
 .canvas-host__loading p,

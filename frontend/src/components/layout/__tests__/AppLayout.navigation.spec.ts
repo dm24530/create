@@ -56,7 +56,8 @@ describe('AppLayout navigation', () => {
 
     expect(canvasHost).toContain('/canvas?embed=1')
     expect(canvasHost).toContain('create-canvas-ready')
-    expect(canvasHost).toContain('v-if="!frameURL || loading || !frameReady"')
+    expect(canvasHost).toContain('v-if="frameURL"')
+    expect(canvasHost).toContain('v-else-if="!frameURL || !frameReady"')
     expect(appSource).toContain('<CanvasHostView />')
     expect(appSource).toContain('v-show="isCanvasRoute"')
     expect(canvasMain).not.toContain('bootstrapManagedConfigFromParent().finally')
