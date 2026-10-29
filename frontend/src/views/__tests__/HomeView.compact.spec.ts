@@ -56,7 +56,11 @@ function mountHome(settings: Record<string, unknown> = {}) {
 }
 
 function compactDestination(wrapper: ReturnType<typeof mountHome>) {
-  return wrapper.get('[data-testid="compact-home"]').findComponent(RouterLinkStub).props('to')
+  return wrapper
+    .get('[data-testid="compact-home"]')
+    .findAllComponents(RouterLinkStub)
+    .find((link) => !link.text().includes('nav.canvas'))
+    ?.props('to')
 }
 
 function modelPlazaDestination(wrapper: ReturnType<typeof mountHome>) {
@@ -66,6 +70,13 @@ function modelPlazaDestination(wrapper: ReturnType<typeof mountHome>) {
       const to = link.props('to')
       return to === '/model-plaza' || to?.query?.openModelPlaza === '1'
     })
+    ?.props('to')
+}
+
+function canvasDestination(wrapper: ReturnType<typeof mountHome>) {
+  return wrapper
+    .findAllComponents(RouterLinkStub)
+    .find((link) => link.text().includes('nav.canvas'))
     ?.props('to')
 }
 
@@ -187,5 +198,26 @@ describe('HomeView compact mode', () => {
     })
 
     expect(modelPlazaDestination(wrapper)).toBeUndefined()
+  })
+
+  it('shows the infinite canvas entry on the public home when it is open to users', () => {
+    const wrapper = mountHome({ canvas_admin_only: false })
+
+    expect(canvasDestination(wrapper)).toBe('/login')
+  })
+
+  it('hides the infinite canvas entry from anonymous visitors in admin-only mode', () => {
+    const wrapper = mountHome({ canvas_admin_only: true })
+
+    expect(canvasDestination(wrapper)).toBeUndefined()
+  })
+
+  it('shows the infinite canvas entry in compact home when it is open to users', () => {
+    const wrapper = mountHome({
+      compact_home_enabled: true,
+      canvas_admin_only: false,
+    })
+
+    expect(canvasDestination(wrapper)).toBe('/login')
   })
 })

@@ -8,6 +8,7 @@
       <nav class="landing-desktop-nav" aria-label="Primary">
         <RouterLink to="/image-studio">{{ t('home.landing.nav.image') }}</RouterLink>
         <RouterLink to="/video-studio">{{ t('home.landing.nav.video') }}</RouterLink>
+        <RouterLink v-if="showCanvasEntry" :to="canvasTarget">{{ t('home.landing.nav.canvas') }}</RouterLink>
         <RouterLink to="/video-inspiration">{{ t('home.landing.nav.inspiration') }}</RouterLink>
         <RouterLink to="/video-works">{{ t('home.landing.nav.works') }}</RouterLink>
         <RouterLink v-if="showModelPlazaEntry" :to="modelPlazaDestination">{{ t('home.landing.nav.models') }}</RouterLink>
@@ -29,6 +30,7 @@
     <nav v-if="mobileOpen" class="landing-mobile-nav" aria-label="Mobile navigation">
       <RouterLink to="/image-studio" @click="mobileOpen = false">{{ t('home.landing.nav.image') }}</RouterLink>
       <RouterLink to="/video-studio" @click="mobileOpen = false">{{ t('home.landing.nav.video') }}</RouterLink>
+      <RouterLink v-if="showCanvasEntry" :to="canvasTarget" @click="mobileOpen = false">{{ t('home.landing.nav.canvas') }}</RouterLink>
       <RouterLink to="/video-inspiration" @click="mobileOpen = false">{{ t('home.landing.nav.inspiration') }}</RouterLink>
       <RouterLink to="/video-works" @click="mobileOpen = false">{{ t('home.landing.nav.works') }}</RouterLink>
       <RouterLink v-if="showModelPlazaEntry" :to="modelPlazaDestination" @click="mobileOpen = false">{{ t('home.landing.nav.models') }}</RouterLink>
@@ -255,6 +257,7 @@ const props = defineProps<{
   isAuthenticated: boolean
   dashboardPath: string
   showModelPlazaEntry: boolean
+  showCanvasEntry: boolean
 }>()
 
 const { t } = useI18n()
@@ -395,6 +398,7 @@ onBeforeUnmount(() => {
 const currentYear = computed(() => new Date().getFullYear())
 const imageTarget = computed(() => (props.isAuthenticated ? '/image-studio' : '/login'))
 const videoTarget = computed(() => (props.isAuthenticated ? '/video-studio' : '/login'))
+const canvasTarget = computed(() => (props.isAuthenticated ? '/canvas' : '/login'))
 const workspaceTarget = computed(() => (props.isAuthenticated ? props.dashboardPath : '/login'))
 
 const galleryItems = computed(() => [

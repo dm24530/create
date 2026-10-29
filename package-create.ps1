@@ -1,6 +1,7 @@
 param(
   [string]$Tag = "create:20261028-video-reference-isolation",
-  [string]$PackageName = "create-update-20261028-video-reference-isolation"
+  [string]$PackageName = "create-update-20261028-video-reference-isolation",
+  [string]$Version = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -12,6 +13,15 @@ $imageArchiveName = (($Tag -replace '[^A-Za-z0-9._-]', '-') + '.tar')
 $imageTar = Join-Path $stageDir $imageArchiveName
 $archivePath = Join-Path $releaseDir "$PackageName.tar.gz"
 $checksumPath = "$archivePath.sha256"
+
+function Write-Utf8NoBom {
+  param(
+    [string]$Path,
+    [string]$Value
+  )
+  $encoding = New-Object System.Text.UTF8Encoding($false)
+  [IO.File]::WriteAllText($Path, $Value, $encoding)
+}
 
 function Get-SourceFingerprint {
   param([string]$Root)
@@ -124,6 +134,14 @@ if ($fingerprintBefore -ne $fingerprintSnapshot) {
 
 $commit = (git rev-parse --short HEAD).Trim()
 if ($LASTEXITCODE -ne 0) { throw "git revision lookup failed" }
+if (-not $Version) {
+  $Version = (git describe --tags --exact-match 2>$null)
+  if ($LASTEXITCODE -ne 0 -or -not $Version) {
+    $Version = (Get-Content -Raw (Join-Path $repoRoot "backend/cmd/server/VERSION")).Trim()
+  }
+}
+$Version = $Version.Trim().TrimStart("v")
+if (-not $Version) { throw "release version lookup failed" }
 
 docker build `
   --build-arg NODE_IMAGE=docker.m.daocloud.io/library/node:24-alpine `
@@ -133,6 +151,7 @@ docker build `
   --build-arg NPM_CONFIG_REGISTRY=https://registry.npmmirror.com `
   --build-arg GOPROXY=https://goproxy.cn,direct `
   --build-arg GOSUMDB=sum.golang.google.cn `
+  --build-arg VERSION=$Version `
   --build-arg COMMIT=$commit `
   -t $Tag `
   -t create:latest `
@@ -159,7 +178,7 @@ Copy-Item -Force (Join-Path $repoRoot "deploy/docker-compose.create.yml") $stage
 $updateScript = Get-Content -Raw (Join-Path $repoRoot "release/create-update/update-server.sh")
 $updateScript = $updateScript -replace '(?m)^TARGET_IMAGE=.*$', ('TARGET_IMAGE="${TARGET_IMAGE:-' + $Tag + '}"')
 $updateScript = $updateScript -replace '(?m)^IMAGE_TAR=.*$', ('IMAGE_TAR="${IMAGE_TAR:-${SCRIPT_DIR}/' + $imageArchiveName + '}"')
-Set-Content -LiteralPath (Join-Path $stageDir "update-server.sh") -Value $updateScript -Encoding utf8NoBOM
+Write-Utf8NoBom -Path (Join-Path $stageDir "update-server.sh") -Value $updateScript
 
 $readme = @"
 Create update package
@@ -194,7 +213,7 @@ The script:
 
 It does not delete PostgreSQL, Redis, application data, or R2 objects.
 "@
-Set-Content -LiteralPath (Join-Path $stageDir "README.txt") -Value $readme -Encoding utf8NoBOM
+Write-Utf8NoBom -Path (Join-Path $stageDir "README.txt") -Value $readme
 
 foreach ($required in @("update-server.sh", "README.txt")) {
   $path = Join-Path $stageDir $required
@@ -207,8 +226,7 @@ tar -czf $archivePath -C $releaseDir $stageName
 if ($LASTEXITCODE -ne 0) { throw "archive creation failed" }
 
 $hash = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash
-"$hash  $([IO.Path]::GetFileName($archivePath))" |
-  Set-Content -LiteralPath $checksumPath -Encoding ascii
+Write-Utf8NoBom -Path $checksumPath -Value "$hash  $([IO.Path]::GetFileName($archivePath))`n"
 
 Write-Host ""
 Write-Host "Package:     $archivePath"

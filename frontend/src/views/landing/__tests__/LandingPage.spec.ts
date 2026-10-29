@@ -14,6 +14,7 @@ vi.mock('vue-i18n', async (importOriginal) => {
 function mountPage(overrides: Partial<{
   isAuthenticated: boolean
   showModelPlazaEntry: boolean
+  showCanvasEntry: boolean
 }> = {}) {
   return mount(LandingPage, {
     props: {
@@ -23,6 +24,7 @@ function mountPage(overrides: Partial<{
       isAuthenticated: false,
       dashboardPath: '/dashboard',
       showModelPlazaEntry: false,
+      showCanvasEntry: false,
       ...overrides,
     },
     global: {
@@ -36,6 +38,23 @@ function mountPage(overrides: Partial<{
 }
 
 describe('LandingPage', () => {
+  it('shows the infinite canvas entry in desktop and mobile navigation when enabled', async () => {
+    const wrapper = mountPage({ showCanvasEntry: true })
+
+    expect(wrapper.get('.landing-desktop-nav').text()).toContain('home.landing.nav.canvas')
+    expect(wrapper.get('.landing-desktop-nav').findAllComponents(RouterLinkStub).some(
+      (link) => link.props('to') === '/login' && link.text().includes('home.landing.nav.canvas'),
+    )).toBe(true)
+    await wrapper.get('.landing-menu-toggle').trigger('click')
+    expect(wrapper.get('.landing-mobile-nav').text()).toContain('home.landing.nav.canvas')
+  })
+
+  it('hides the infinite canvas navigation entry when disabled', () => {
+    const wrapper = mountPage({ showCanvasEntry: false })
+
+    expect(wrapper.get('.landing-desktop-nav').text()).not.toContain('home.landing.nav.canvas')
+  })
+
   it('renders the navigation brand as text only', () => {
     const wrapper = mountPage()
     const brand = wrapper.get('.landing-brand')

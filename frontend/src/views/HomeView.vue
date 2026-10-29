@@ -38,6 +38,15 @@
             <Icon name="book" size="md" />
           </a>
           <router-link
+            v-if="showCanvasEntry"
+            :to="canvasTarget"
+            class="flex h-10 shrink-0 items-center gap-1.5 rounded-lg px-2.5 text-sm font-medium text-gray-500 hover:bg-gray-100 hover:text-gray-700 dark:text-dark-400 dark:hover:bg-dark-800 dark:hover:text-white"
+            :title="t('nav.canvas')"
+          >
+            <Icon name="frame" size="md" />
+            <span class="hidden sm:inline">{{ t('nav.canvas') }}</span>
+          </router-link>
+          <router-link
             v-if="showModelPlazaEntry"
             :to="modelPlazaDestination"
             class="flex h-10 shrink-0 items-center gap-1.5 rounded-lg px-2.5 text-sm font-medium text-gray-500 hover:bg-gray-100 hover:text-gray-700 dark:text-dark-400 dark:hover:bg-dark-800 dark:hover:text-white"
@@ -95,6 +104,7 @@
     :is-authenticated="isAuthenticated"
     :dashboard-path="dashboardPath"
     :show-model-plaza-entry="showModelPlazaEntry"
+    :show-canvas-entry="showCanvasEntry"
   />
 </template>
 
@@ -140,6 +150,10 @@ const showModelPlazaEntry = computed(
   () => modelPlazaEnabled.value && (isAuthenticated.value || !modelPlazaRequiresAuth.value),
 )
 const isAdmin = computed(() => authStore.isAdmin)
+const showCanvasEntry = computed(
+  () => isAdmin.value || !isFeatureFlagEnabled(FeatureFlags.canvasAdminOnly),
+)
+const canvasTarget = computed(() => isAuthenticated.value ? '/canvas' : '/login')
 const dashboardPath = computed(() => isAdmin.value ? '/admin/dashboard' : '/image-studio')
 const modelPlazaDestination = computed(() => (
   isAuthenticated.value
