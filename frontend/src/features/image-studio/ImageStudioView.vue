@@ -76,6 +76,7 @@
               class="image-result-card__media relative block w-full overflow-hidden"
               :disabled="image.pending || image.failed"
               @click="!image.pending && !image.failed && (previewImage = image)"
+              @contextmenu.prevent.stop="openImageDownloadMenu($event, image)"
             >
               <div
                 v-if="image.pending"
@@ -135,6 +136,13 @@
                   @error="handleImageMediaError(image)"
                 />
               </template>
+              <span
+                v-if="!image.pending && !image.failed && isShowingThumbnail(image)"
+                class="absolute bottom-2 left-2 rounded-md bg-black/60 px-2 py-1 text-[10px] font-medium text-white backdrop-blur-sm"
+                data-testid="image-thumbnail-badge"
+              >
+                缩略图预览
+              </span>
             </button>
               <div class="flex items-center justify-between gap-2 px-3 py-2">
                 <div class="min-w-0">
@@ -578,7 +586,15 @@
             decoding="async"
             @load="markImageMediaLoaded(previewImage)"
             @error="handleImageMediaError(previewImage)"
+            @contextmenu.prevent.stop="openImageDownloadMenu($event, previewImage)"
           />
+          <span
+            v-if="isPreviewShowingThumbnail(previewImage)"
+            class="absolute bottom-3 left-3 rounded-md bg-black/60 px-2 py-1 text-[11px] font-medium text-white backdrop-blur-sm"
+            data-testid="preview-thumbnail-badge"
+          >
+            缩略图预览
+          </span>
         </div>
         <section class="image-detail-dialog__panel">
           <div class="image-detail-dialog__section-head">
@@ -664,6 +680,28 @@
       </template>
     </BaseDialog>
 
+    <div
+      v-if="imageDownloadMenu"
+      class="fixed z-[100] w-52 overflow-hidden rounded-xl border border-gray-200 bg-white py-1 shadow-2xl dark:border-dark-700 dark:bg-dark-800"
+      :style="{ left: `${imageDownloadMenu.x}px`, top: `${imageDownloadMenu.y}px` }"
+      data-testid="image-context-menu"
+      @pointerdown.stop
+    >
+      <div class="px-3 py-2 text-[11px] font-medium text-gray-500 dark:text-gray-400">
+        {{ isPreviewShowingThumbnail(imageDownloadMenu.image) || isShowingThumbnail(imageDownloadMenu.image) ? '缩略图预览' : '图片操作' }}
+      </div>
+      <button
+        type="button"
+        class="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-gray-700 transition hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-dark-700"
+        data-testid="download-original-image"
+        :disabled="isImageDownloading(imageDownloadMenu.image)"
+        @click="downloadOriginalFromMenu"
+      >
+        <Icon name="download" size="sm" />
+        <span>下载原图（高清）</span>
+      </button>
+    </div>
+
     <ConfirmDialog
       :show="!!pendingDeleteImage"
       title="删除作品"
@@ -714,7 +752,7 @@ import { resolvePlaygroundApiEndpoint } from '@/utils/apiEndpoint'
 const IMAGE_GENERATION_TIMEOUT_MS = 3 * 60 * 1000
 const IMAGE_ASYNC_SUBMIT_TIMEOUT_MS = 2 * 60 * 1000
 const IMAGE_GENERATION_TIMEOUT_MESSAGE = '图片生成超过 3 分钟，已停止等待，请重新生成'
-const IMAGE_MEDIA_LOAD_TIMEOUT_MS = 3_000
+const IMAGE_MEDIA_LOAD_TIMEOUT_MS = 10_000
 const reportedGenerationFailures = new Set<string>()
 const reportedVisibleErrors = new Set<string>()
 
@@ -751,6 +789,8 @@ interface GeneratedImage {
   expiresAt?: number
   createdAt?: number
   displayOrder?: number
+  // Persisted gallery identity survives remounts without relying on signed URLs.
+  galleryId?: string
   restoredFromSnapshot?: boolean
 }
 
@@ -840,6 +880,7 @@ const generationRequestSnapshots = new Map<string, GenerationRequestSnapshot>()
 const retryingFailureIds = ref<Set<string>>(new Set())
 const previewImage = ref<GeneratedImage | null>(null)
 const previewDisplaySrc = ref('')
+const imageDownloadMenu = ref<{ x: number; y: number; image: GeneratedImage } | null>(null)
 const loadedImageMediaIds = ref<Set<string>>(new Set())
 const failedImageMediaIds = ref<Set<string>>(new Set())
 const imageMediaRetryNonce = ref<Map<string, number>>(new Map())
@@ -1279,6 +1320,7 @@ function clearStudioUserState() {
   studioUserEpoch += 1
   if (previewImage.value) previewImage.value = null
   previewDisplaySrc.value = ''
+  imageDownloadMenu.value = null
   images.value = []
   keys.value = []
   selectedKeyId.value = ''
@@ -1369,7 +1411,9 @@ function handleSizeOutside(event: MouseEvent) {
 }
 
 function handleSizeEscape(event: KeyboardEvent) {
-  if (event.key === 'Escape') sizeMenuOpen.value = false
+  if (event.key !== 'Escape') return
+  sizeMenuOpen.value = false
+  imageDownloadMenu.value = null
 }
 
 function toggleCustomSize() {
@@ -1712,13 +1756,16 @@ async function loadGallery(epoch = studioUserEpoch, ownerId = studioStateOwnerId
     for (const image of images.value) {
       const mappedId = localToGalleryId.value.get(String(image.id))
       const entry = entryById.get(String(image.id))
+        || entryById.get(String(image.galleryId || ''))
         || entryById.get(String(mappedId || ''))
         || entries.find((candidate) => sameStoredObject(image.src, candidate.url))
+        || entries.find((candidate) => sameGalleryDisplayOrder(image, candidate))
       if (!entry) continue
       matchedGalleryIds.add(String(entry.id))
       if (mappedId !== String(entry.id)) {
         localToGalleryId.value.set(String(image.id), String(entry.id))
       }
+      image.galleryId = String(entry.id)
       const storedURL = resolveImageAssetURL(String(entry.url || ''))
       if (storedURL && !sameStoredObject(image.src, storedURL)) {
         image.src = storedURL
@@ -1789,6 +1836,14 @@ function sameStoredObject(current: string | undefined, next: string | undefined)
   }
 }
 
+function sameGalleryDisplayOrder(image: GeneratedImage, entry: ImageStudioGalleryEntry) {
+  const imageOrder = Number(image.displayOrder || 0)
+  const entryOrder = Number(entry.sort_order || 0)
+  if (imageOrder <= 0 || entryOrder <= 0 || imageOrder !== entryOrder) return false
+  return String(image.prompt || '') === String(entry.prompt || '')
+    && String(image.model || '') === String(entry.model || '')
+}
+
 function isInlineImageSource(value: string | undefined) {
   return Boolean(value && (/^data:image\//i.test(value) || /^blob:/i.test(value)))
 }
@@ -1842,6 +1897,7 @@ function blobToDataURL(blob: Blob): Promise<string> {
 function galleryEntryToImage(entry: ImageStudioGalleryEntry, index: number): GeneratedImage {
   return {
     id: entry.id,
+    galleryId: entry.id,
     title: `历史图片 ${index + 1}`,
     src: resolveImageAssetURL(entry.url),
     thumbSrc: entry.thumb_url || '',
@@ -2130,6 +2186,7 @@ async function persistGeneratedImages(
       locallySavedGalleryIds.add(String(result.value.entry.id))
       galleryBackedIds.value.add(String(result.value.entry.id))
       localToGalleryId.value.set(String(result.value.item.id), String(result.value.entry.id))
+      result.value.item.galleryId = String(result.value.entry.id)
       // 记住服务端状态，卡片上才能显示"还剩 N 天 / 已保存"。
       result.value.item.saved = result.value.entry.saved !== false
       result.value.item.expiresAt = result.value.entry.expires_at || 0
@@ -2261,6 +2318,14 @@ function imageMediaDisplaySrc(image: GeneratedImage, preferred?: string) {
   } catch {
     return source
   }
+}
+
+function isShowingThumbnail(image: GeneratedImage) {
+  return Boolean(image.thumbSrc && image.src && image.thumbSrc !== image.src)
+}
+
+function isPreviewShowingThumbnail(image: GeneratedImage) {
+  return Boolean(previewDisplaySrc.value && image.src && previewDisplaySrc.value !== image.src)
 }
 
 function isImageMediaLoaded(image: GeneratedImage) {
@@ -2472,6 +2537,7 @@ async function savePreviewToGallery() {
     locallySavedGalleryIds.add(String(entry.id))
     galleryBackedIds.value.add(String(entry.id))
     localToGalleryId.value.set(String(image.id), String(entry.id))
+    image.galleryId = String(entry.id)
     image.saved = entry.saved !== false
     image.expiresAt = entry.expires_at || 0
     image.prompt = promptText
@@ -2502,7 +2568,7 @@ async function loadStudioQuota(epoch = studioUserEpoch, ownerId = studioStateOwn
 // 刚保存进图库的图片卡片上还是本地 id，所以要先用映射换成服务端的作品 id。
 function galleryIdFor(image: GeneratedImage): string {
   const local = String(image.id)
-  return localToGalleryId.value.get(local) || local
+  return String(image.galleryId || '') || localToGalleryId.value.get(local) || local
 }
 
 async function galleryIdForDownload(image: GeneratedImage): Promise<string> {
@@ -4103,6 +4169,27 @@ async function downloadImage(image: GeneratedImage) {
   }
 }
 
+function openImageDownloadMenu(event: MouseEvent, image: GeneratedImage) {
+  if (image.pending || image.failed) return
+  const width = 208
+  const height = 78
+  imageDownloadMenu.value = {
+    x: Math.max(8, Math.min(event.clientX, window.innerWidth - width - 8)),
+    y: Math.max(8, Math.min(event.clientY, window.innerHeight - height - 8)),
+    image,
+  }
+}
+
+function closeImageDownloadMenu() {
+  imageDownloadMenu.value = null
+}
+
+function downloadOriginalFromMenu() {
+  const image = imageDownloadMenu.value?.image
+  closeImageDownloadMenu()
+  if (image) void downloadImage(image)
+}
+
 function isImageDownloading(image: GeneratedImage) {
   return downloadingImageIds.value.has(imageMediaId(image))
 }
@@ -4244,6 +4331,7 @@ watch(
 onMounted(() => {
   componentDisposed = false
   document.addEventListener('click', handleSizeOutside)
+  document.addEventListener('pointerdown', closeImageDownloadMenu)
   document.addEventListener('keydown', handleSizeEscape)
   applyInspirationFromRoute()
   void loadData()
@@ -4273,6 +4361,7 @@ onBeforeUnmount(() => {
   stopGenerationClock()
   if (studioStateOwnerId.value) writeStudioSnapshot(studioStateOwnerId.value)
   document.removeEventListener('click', handleSizeOutside)
+  document.removeEventListener('pointerdown', closeImageDownloadMenu)
   document.removeEventListener('keydown', handleSizeEscape)
   for (const timer of imageMediaTimeoutIds.values()) {
     clearTimeout(timer)
@@ -4819,6 +4908,7 @@ onBeforeUnmount(() => {
 }
 
 .image-detail-dialog__media {
+  position: relative;
   display: flex;
   min-height: 28rem;
   align-items: center;

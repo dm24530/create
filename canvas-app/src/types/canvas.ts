@@ -33,6 +33,8 @@ export type CanvasNodeImage = {
     taskProvider?: "gemini" | "openai";
     errorDetails?: string;
     content: string;
+    /** The current content is a low-resolution preview; the original is still being prepared. */
+    previewOnly?: boolean;
     storageKey?: string;
     cloudAssetId?: string;
     cloudURL?: string;
@@ -53,6 +55,8 @@ export type CanvasNodeText = {
 
 export type CanvasNodeMetadata = {
     content?: string;
+    /** The primary image currently shows a low-resolution preview. */
+    previewOnly?: boolean;
     composerContent?: string;
     prompt?: string;
     status?: CanvasNodeStatus;

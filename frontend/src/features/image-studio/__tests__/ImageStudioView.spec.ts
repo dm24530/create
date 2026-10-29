@@ -1276,6 +1276,87 @@ describe('ImageStudioView gallery', () => {
     expect(secondWrapper.findAll('img[src="https://cdn.example.com/gallery-1.png"]')).toHaveLength(1)
   })
 
+  it('keeps one generated work after remount when the saved and gallery URLs differ', async () => {
+    listKeys.mockResolvedValue({
+      items: [{ id: 1, name: 'dd', key: 'sk-local', status: 'active', group_id: 2 }],
+    })
+    getPublicSettings.mockResolvedValue({ api_base_url: '/v1' })
+    let phase = 1
+    let savedSortOrder = 0
+    let savedPrompt = ''
+    let savedModel = ''
+    const galleryEntry = {
+      id: 'gallery-1',
+      url: 'https://cdn.example.com/gallery-1.png',
+      prompt: 'a cat',
+      model: 'gpt-image-1',
+      size: '1024x1024',
+      format: 'png',
+      saved: false,
+      created_at: 2,
+      expires_at: 9999999999,
+    }
+    listGallery.mockImplementation(async () => phase === 1
+      ? []
+      : [{
+          ...galleryEntry,
+          prompt: savedPrompt,
+          model: savedModel,
+          sort_order: savedSortOrder,
+        }])
+    saveGallery.mockImplementation(async (request: {
+      prompt?: string
+      model?: string
+      sort_order?: number
+    }) => {
+      savedSortOrder = Number(request.sort_order || 0)
+      savedPrompt = String(request.prompt || '')
+      savedModel = String(request.model || '')
+      return {
+        ...galleryEntry,
+        url: 'https://task-storage.example.com/generated-1.png',
+        prompt: savedPrompt,
+        model: savedModel,
+        sort_order: savedSortOrder,
+      }
+    })
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/images/batches/models')) {
+        return { ok: true, json: async () => ({ data: [] }) } as Response
+      }
+      if (url.endsWith('/models')) {
+        return { ok: true, json: async () => ({ data: [{ id: 'gpt-image-1' }] }) } as Response
+      }
+      if (url.endsWith('/images/generations/async')) return asyncImageUnavailableResponse()
+      if (url.endsWith('/images/generations')) {
+        return { ok: true, json: async () => ({ data: [{ b64_json: 'aGVsbG8=' }] }) } as Response
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const firstWrapper = mountImageStudio()
+    await flushPromises()
+    await flushPromises()
+    await firstWrapper.get('form').trigger('submit')
+    await flushPromises()
+    await flushPromises()
+    expect(firstWrapper.findAll('[data-testid="image-results-grid"] article')).toHaveLength(1)
+    firstWrapper.unmount()
+
+    const snapshotKey = 'sub2api:image-studio:snapshot-v1:2'
+    const legacySnapshot = JSON.parse(sessionStorage.getItem(snapshotKey) || '{}')
+    for (const image of legacySnapshot.images || []) delete image.galleryId
+    sessionStorage.setItem(snapshotKey, JSON.stringify(legacySnapshot))
+
+    phase = 2
+    const secondWrapper = mountImageStudio()
+    await flushPromises()
+    await flushPromises()
+
+    expect(secondWrapper.findAll('[data-testid="image-results-grid"] article')).toHaveLength(1)
+  })
+
   it('continues numeric image ids after restoring a snapshot', async () => {
     listKeys.mockResolvedValue({
       items: [{ id: 1, name: 'dd', key: 'sk-local', status: 'active', group_id: 2 }],
@@ -1354,6 +1435,39 @@ describe('ImageStudioView gallery', () => {
     expect(wrapper.get('.image-detail-dialog__media img').attributes('src')).toBe(
       'https://cdn.example.com/gallery-1-thumb.jpg',
     )
+  })
+
+  it('labels thumbnail previews and right-click downloads the original', async () => {
+    const linkClick = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined)
+    listGallery.mockResolvedValue([{
+      id: 'gallery-thumbnail',
+      url: 'https://cdn.example.com/gallery-original.png',
+      thumb_url: 'https://cdn.example.com/gallery-thumbnail.jpg',
+      prompt: 'a cat',
+      model: 'gpt-image-1',
+      size: '3840x3840',
+      format: 'png',
+      saved: false,
+      created_at: 1,
+      expires_at: 9999999999,
+    }])
+
+    const wrapper = mountImageStudio()
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="image-thumbnail-badge"]').text()).toBe('缩略图预览')
+    const media = wrapper.get('[data-testid="image-results-grid"] article > button')
+    await media.trigger('contextmenu', { clientX: 24, clientY: 30 })
+
+    const menu = wrapper.get('[data-testid="image-context-menu"]')
+    expect(menu.text()).toContain('缩略图预览')
+    expect(menu.text()).toContain('下载原图（高清）')
+
+    await wrapper.get('[data-testid="download-original-image"]').trigger('click')
+    await flushPromises()
+
+    expect(downloadURLGallery).toHaveBeenCalledWith('gallery-thumbnail')
+    linkClick.mockRestore()
   })
 
   it('keeps gallery images in flat display order', async () => {
@@ -3213,7 +3327,7 @@ describe('ImageStudioView gallery', () => {
     })
   })
 
-  it('recovers a stalled remote thumbnail after the short timeout', async () => {
+  it('recovers a stalled remote thumbnail after the load timeout', async () => {
     vi.useFakeTimers()
     try {
       listGallery.mockResolvedValue([{
@@ -3231,7 +3345,7 @@ describe('ImageStudioView gallery', () => {
       const wrapper = mountImageStudio()
       await flushPromises()
 
-      await vi.advanceTimersByTimeAsync(3_000)
+      await vi.advanceTimersByTimeAsync(10_000)
       await flushPromises()
 
       expect(thumbnailGallery).toHaveBeenCalledWith('gallery-stalled')
@@ -3263,13 +3377,13 @@ describe('ImageStudioView gallery', () => {
       await flushPromises()
       expect(wrapper.find('[data-testid="image-media-loading"]').exists()).toBe(true)
 
-      await vi.advanceTimersByTimeAsync(3_000)
+      await vi.advanceTimersByTimeAsync(10_000)
       await flushPromises()
       expect(wrapper.get('img[alt="历史图片 1"]').attributes('src')).toBe(
         'https://cdn.example.com/slow-original.png',
       )
 
-      await vi.advanceTimersByTimeAsync(3_000)
+      await vi.advanceTimersByTimeAsync(10_000)
       await flushPromises()
       expect(wrapper.find('[data-testid="image-media-error"]').exists()).toBe(true)
     } finally {

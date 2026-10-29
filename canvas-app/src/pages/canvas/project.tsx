@@ -512,6 +512,7 @@ function InfiniteCanvasPage() {
                                                       status: NODE_STATUS_SUCCESS,
                                                       errorDetails: undefined,
                                                       content: preview.dataUrl,
+                                                      previewOnly: true,
                                                       storageKey: undefined,
                                                       naturalWidth: undefined,
                                                       naturalHeight: undefined,
@@ -523,6 +524,7 @@ function InfiniteCanvasPage() {
                                                                     ...entry,
                                                                     status: NODE_STATUS_SUCCESS,
                                                                     content: preview.dataUrl,
+                                                                    previewOnly: true,
                                                                     storageKey: undefined,
                                                                     naturalWidth: 0,
                                                                     naturalHeight: 0,
@@ -552,10 +554,11 @@ function InfiniteCanvasPage() {
                                                   ...item.metadata,
                                                   status: NODE_STATUS_SUCCESS,
                                                   content: item.metadata?.primaryImageId ? item.metadata.content : previewDataUrl,
+                                                  previewOnly: item.metadata?.primaryImageId ? item.metadata?.previewOnly : true,
                                                   errorDetails: undefined,
                                                   images: item.metadata?.images?.map((entry) =>
                                                       entry.id === image.id
-                                                          ? { ...entry, status: NODE_STATUS_SUCCESS, content: previewDataUrl, errorDetails: undefined }
+                                                          ? { ...entry, status: NODE_STATUS_SUCCESS, content: previewDataUrl, previewOnly: true, errorDetails: undefined }
                                                           : entry,
                                                   ),
                                               },
@@ -1270,7 +1273,11 @@ function InfiniteCanvasPage() {
     const angleNode = angleNodeId ? nodeById.get(angleNodeId) || null : null;
     const contextMenuNode = contextMenu?.type === "node" ? nodeById.get(contextMenu.nodeId) || null : null;
     const previewNode = previewNodeId ? nodeById.get(previewNodeId) || null : null;
-    const previewContent = previewImageId ? previewNode?.metadata?.images?.find((image) => image.id === previewImageId)?.content : previewNode?.metadata?.content;
+    const previewImage = previewImageId ? previewNode?.metadata?.images?.find((image) => image.id === previewImageId) : undefined;
+    const previewContent = previewImage?.content || (!previewImageId ? previewNode?.metadata?.content : "");
+    const previewDownloadPending = previewImageId
+        ? Boolean(previewImage?.previewOnly)
+        : Boolean(previewNode && canvasNodeImageIsPreviewOnly(previewNode));
     const hasMultipleSelectedNodes = selectedNodeIds.size > 1;
     const selectedNodes = useMemo(() => nodes.filter((node) => selectedNodeIds.has(node.id)), [nodes, selectedNodeIds]);
     const canGroupSelection = canGroupSelectedNodes(selectedNodeIds, nodes);
@@ -2281,6 +2288,7 @@ function InfiniteCanvasPage() {
                     metadata: {
                         ...node.metadata,
                         content: image.content,
+                        previewOnly: Boolean(image.previewOnly),
                         storageKey: image.storageKey,
                         naturalWidth: image.naturalWidth,
                         naturalHeight: image.naturalHeight,
@@ -2339,14 +2347,22 @@ function InfiniteCanvasPage() {
 
     const downloadNodeImage = useCallback((node: CanvasNodeData) => {
         if ((node.type !== CanvasNodeType.Image && node.type !== CanvasNodeType.Video && node.type !== CanvasNodeType.Audio) || !node.metadata?.content) return;
+        if (node.type === CanvasNodeType.Image && canvasNodeImageIsPreviewOnly(node)) {
+            message.warning(t("canvas.node.originalProcessing"));
+            return;
+        }
         saveAs(node.metadata.content, `canvas-${node.type}-${node.id}.${node.type === CanvasNodeType.Video ? "mp4" : node.type === CanvasNodeType.Audio ? audioExtension(node.metadata.mimeType) : imageExtension(node.metadata.mimeType || node.metadata.content)}`);
-    }, []);
+    }, [message, t]);
 
     const downloadBatchImage = useCallback((node: CanvasNodeData, imageId: string) => {
         const image = node.metadata?.images?.find((item) => item.id === imageId);
         if (!image?.content) return;
+        if (image.previewOnly) {
+            message.warning(t("canvas.node.originalProcessing"));
+            return;
+        }
         saveAs(image.content, `canvas-image-${node.id}-${image.id}.${imageExtension(image.mimeType || image.content)}`);
-    }, []);
+    }, [message, t]);
 
     const captureVideoNodeFrame = useCallback(
         async (nodeId: string, position: VideoFramePosition) => {
@@ -2896,6 +2912,7 @@ function InfiniteCanvasPage() {
                                           metadata: {
                                               ...node.metadata,
                                               content: preview.dataUrl,
+                                              previewOnly: true,
                                               storageKey: undefined,
                                               naturalWidth: undefined,
                                               naturalHeight: undefined,
@@ -2922,7 +2939,7 @@ function InfiniteCanvasPage() {
                           : await requestGeneration(taskConfig, context.prompt, requestOptions).then((items) => items[0]);
                     const displayUrl = image.previewDataUrl || image.dataUrl;
                     setNodes((prev) =>
-                        prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, content: displayUrl, storageKey: undefined, naturalWidth: undefined, naturalHeight: undefined, bytes: undefined, mimeType: undefined, prompt: scene, model: generationConfig.model, status: NODE_STATUS_SUCCESS, errorDetails: undefined } } : node)),
+                        prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, content: displayUrl, previewOnly: Boolean(image.previewDataUrl), storageKey: undefined, naturalWidth: undefined, naturalHeight: undefined, bytes: undefined, mimeType: undefined, prompt: scene, model: generationConfig.model, status: NODE_STATUS_SUCCESS, errorDetails: undefined } } : node)),
                     );
                     void uploadImage(image.dataUrl, { signal: controller.signal })
                         .then((uploaded) => {
@@ -3088,6 +3105,7 @@ function InfiniteCanvasPage() {
                                         id: imageId,
                                         status: NODE_STATUS_SUCCESS,
                                         content: preview.dataUrl,
+                                        previewOnly: true,
                                         naturalWidth: 0,
                                         naturalHeight: 0,
                                         bytes: 0,
@@ -3104,6 +3122,7 @@ function InfiniteCanvasPage() {
                                         status: NODE_STATUS_SUCCESS,
                                         errorDetails: undefined,
                                                 content: previewItem.content,
+                                                previewOnly: true,
                                                 storageKey: undefined,
                                                 naturalWidth: undefined,
                                                 naturalHeight: undefined,
@@ -3162,6 +3181,7 @@ function InfiniteCanvasPage() {
                                     id: imageId,
                                     status: NODE_STATUS_SUCCESS,
                                     content: displayUrl,
+                                    previewOnly: Boolean(image.previewDataUrl),
                                     naturalWidth: 0,
                                     naturalHeight: 0,
                                     bytes: 0,
@@ -3177,6 +3197,7 @@ function InfiniteCanvasPage() {
                                             metadata: {
                                                 ...node.metadata,
                                                 content: item.content,
+                                                previewOnly: Boolean(image.previewDataUrl),
                                                 storageKey: undefined,
                                                 naturalWidth: undefined,
                                                 naturalHeight: undefined,
@@ -3198,6 +3219,7 @@ function InfiniteCanvasPage() {
                                             id: imageId,
                                             status: NODE_STATUS_SUCCESS,
                                             content: uploaded.url,
+                                            previewOnly: false,
                                             storageKey: uploaded.storageKey,
                                             naturalWidth: uploaded.width,
                                             naturalHeight: uploaded.height,
@@ -3207,7 +3229,20 @@ function InfiniteCanvasPage() {
                                         setNodes((prev) => prev.map((node) => {
                                             if (node.id !== rootId) return node;
                                             const images = node.metadata?.images?.map((image) => (image.id === imageId ? cachedItem : image)) || [];
-                                            if (node.metadata?.primaryImageId) return { ...node, metadata: { ...node.metadata, images } };
+                                            if (node.metadata?.primaryImageId) return {
+                                                ...node,
+                                                metadata: {
+                                                    ...node.metadata,
+                                                    content: cachedItem.content,
+                                                    previewOnly: false,
+                                                    storageKey: cachedItem.storageKey,
+                                                    naturalWidth: cachedItem.naturalWidth,
+                                                    naturalHeight: cachedItem.naturalHeight,
+                                                    bytes: cachedItem.bytes,
+                                                    mimeType: cachedItem.mimeType,
+                                                    images,
+                                                },
+                                            };
                                             const center = { x: node.position.x + node.width / 2, y: node.position.y + node.height / 2 };
                                             return {
                                                 ...node,
@@ -3216,6 +3251,7 @@ function InfiniteCanvasPage() {
                                                 metadata: {
                                                     ...node.metadata,
                                                     content: cachedItem.content,
+                                                    previewOnly: false,
                                                     storageKey: cachedItem.storageKey,
                                                     naturalWidth: cachedItem.naturalWidth,
                                                     naturalHeight: cachedItem.naturalHeight,
@@ -3625,6 +3661,7 @@ function InfiniteCanvasPage() {
                                                                 ...entry,
                                                                 status: NODE_STATUS_SUCCESS,
                                                                 content: preview.dataUrl,
+                                                                previewOnly: true,
                                                                 storageKey: undefined,
                                                                 naturalWidth: 0,
                                                                 naturalHeight: 0,
@@ -3659,9 +3696,10 @@ function InfiniteCanvasPage() {
                                           status: NODE_STATUS_SUCCESS,
                                           errorDetails: undefined,
                                           content: item.metadata?.primaryImageId === retryImageId ? previewDataUrl : item.metadata?.content,
+                                          previewOnly: item.metadata?.primaryImageId === retryImageId ? true : item.metadata?.previewOnly,
                                           images: item.metadata?.images?.map((entry) =>
                                               entry.id === retryImageId
-                                                  ? { ...entry, status: NODE_STATUS_SUCCESS, content: previewDataUrl, errorDetails: undefined }
+                                                  ? { ...entry, status: NODE_STATUS_SUCCESS, content: previewDataUrl, previewOnly: true, errorDetails: undefined }
                                                   : entry,
                                           ),
                                       },
@@ -3677,6 +3715,7 @@ function InfiniteCanvasPage() {
                     id: retryImageId,
                     status: NODE_STATUS_SUCCESS,
                     content: uploadedImage.url,
+                    previewOnly: false,
                     storageKey: uploadedImage.storageKey,
                     naturalWidth: uploadedImage.width,
                     naturalHeight: uploadedImage.height,
@@ -4165,7 +4204,7 @@ function InfiniteCanvasPage() {
                                     {retainedPreview.title || t(retainedPreview.video ? "assets.kinds.video" : "assets.kinds.image")}
                                 </div>
                                 <div className="overflow-hidden" style={{ width: retainedPreview.width, height: retainedPreview.height }}>
-                                    {retainedPreview.video ? <video src={retainedPreview.src} muted playsInline preload="metadata" className="size-full object-contain" /> : <img src={retainedPreview.src} alt={retainedPreview.title} className="size-full object-contain" />}
+                                    {retainedPreview.video ? <video src={retainedPreview.src} muted playsInline preload="metadata" className="size-full object-contain" onContextMenu={(event) => event.preventDefault()} /> : <img src={retainedPreview.src} alt={retainedPreview.title} className="size-full object-contain" onContextMenu={(event) => event.preventDefault()} />}
                                 </div>
                             </>
                         ) : null}
@@ -4245,12 +4284,19 @@ function InfiniteCanvasPage() {
                     <CanvasNodeContextMenu
                         menu={contextMenu}
                         canCaptureVideoFrame={contextMenuNode?.type === CanvasNodeType.Video && Boolean(contextMenuNode.metadata?.content)}
+                        canDownloadImage={contextMenuNode?.type === CanvasNodeType.Image && Boolean(contextMenuNode.metadata?.content)}
+                        imageDownloadPending={contextMenuNode ? canvasNodeImageIsPreviewOnly(contextMenuNode) : false}
                         canGroup={contextMenu.type === "node" && canGroupSelection}
                         canUngroup={contextMenu.type === "node" && canUngroupSelection}
                         onClose={() => setContextMenu(null)}
                         onCaptureVideoFrame={(position) => {
                             if (contextMenu.type !== "node") return;
                             void captureVideoNodeFrame(contextMenu.nodeId, position);
+                        }}
+                        onDownloadImage={() => {
+                            if (!contextMenuNode) return;
+                            downloadNodeImage(contextMenuNode);
+                            setContextMenu(null);
                         }}
                         onDuplicate={() => {
                             if (contextMenu.type !== "node") return;
@@ -4298,11 +4344,25 @@ function InfiniteCanvasPage() {
                     open={Boolean(previewContent)}
                     centered
                     onCancel={() => setPreviewNodeId(null)}
-                    footer={null}
+                    footer={
+                        <Button
+                            disabled={previewDownloadPending || !previewNode || !previewContent}
+                            onClick={() => {
+                                if (!previewNode) return;
+                                if (previewImageId) downloadBatchImage(previewNode, previewImageId);
+                                else downloadNodeImage(previewNode);
+                            }}
+                        >
+                            {previewDownloadPending ? t("canvas.node.originalProcessing") : t("canvas.node.downloadOriginal")}
+                        </Button>
+                    }
                     width="auto"
                     styles={{ body: { padding: 0, display: "flex", justifyContent: "center", alignItems: "center", maxHeight: "80vh" } }}
                 >
-                    {previewContent ? <img src={previewContent} alt={previewNode?.title || t("assets.kinds.image")} style={{ maxWidth: "100%", maxHeight: "80vh", objectFit: "contain" }} /> : null}
+                    <div className="relative">
+                        {previewContent ? <img src={previewContent} alt={previewNode?.title || t("assets.kinds.image")} style={{ maxWidth: "100%", maxHeight: "80vh", objectFit: "contain" }} onContextMenu={(event) => event.preventDefault()} /> : null}
+                        {previewDownloadPending ? <span className="absolute bottom-3 left-3 rounded-md bg-black/65 px-2 py-1 text-xs font-medium text-white">{t("canvas.node.thumbnailPreview")}</span> : null}
+                    </div>
                 </Modal>
 
                 <Modal
@@ -4326,4 +4386,11 @@ function InfiniteCanvasPage() {
             </section>
         </main>
     );
+}
+
+function canvasNodeImageIsPreviewOnly(node: CanvasNodeData) {
+    if (node.type !== CanvasNodeType.Image) return false;
+    const primaryImageId = node.metadata?.primaryImageId || node.metadata?.images?.[0]?.id;
+    const primaryImage = node.metadata?.images?.find((image) => image.id === primaryImageId);
+    return Boolean(primaryImage?.previewOnly || node.metadata?.previewOnly);
 }

@@ -57,10 +57,11 @@ func (s *galleryStoreStub) ObjectKey(_ context.Context, _ int64, id string) (str
 	return key, nil
 }
 
-func (s *galleryStoreStub) UpdateThumbURL(_ context.Context, _ int64, id, thumbURL string) error {
+func (s *galleryStoreStub) UpdateThumb(_ context.Context, _ int64, id, thumbURL, thumbObjectKey string) error {
 	for _, entry := range s.entries {
 		if entry.ID == id {
 			entry.ThumbURL = thumbURL
+			entry.ThumbObjectKey = thumbObjectKey
 			return nil
 		}
 	}
@@ -202,12 +203,13 @@ func (s *gallerySaverStub) PresignImageObjects(
 	return resolved, nil
 }
 
-func TestImageStudioGalleryListResolvesStoredOriginalsAndPreservesThumbURLs(t *testing.T) {
+func TestImageStudioGalleryListRefreshesSignedOriginalAndThumbnailURLs(t *testing.T) {
 	store := &galleryStoreStub{entries: []*ImageStudioGalleryEntry{{
-		ID:        "work-1",
-		ObjectKey: "images/work-1.png",
-		URL:       "https://old-r2.example.com/work-1.png?X-Amz-Signature=old",
-		ThumbURL:  "https://old-r2.example.com/thumbs/work-1.jpg?X-Amz-Signature=old",
+		ID:             "work-1",
+		ObjectKey:      "images/work-1.png",
+		URL:            "https://old-r2.example.com/work-1.png?X-Amz-Signature=old",
+		ThumbURL:       "https://old-r2.example.com/thumbs/work-1.jpg?X-Amz-Signature=old",
+		ThumbObjectKey: "images/thumbs/work-1.jpg",
 	}}}
 	saver := &gallerySaverStub{resolvedURLs: map[string]string{
 		"images/work-1.png":        "https://gen.example.com/images/work-1.png",
@@ -219,7 +221,7 @@ func TestImageStudioGalleryListResolvesStoredOriginalsAndPreservesThumbURLs(t *t
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 	require.Equal(t, "https://gen.example.com/images/work-1.png", entries[0].URL)
-	require.Equal(t, "https://old-r2.example.com/thumbs/work-1.jpg?X-Amz-Signature=old", entries[0].ThumbURL)
+	require.Equal(t, "https://gen.example.com/images/thumbs/work-1.jpg", entries[0].ThumbURL)
 	require.Equal(t, 1, saver.batchCalls)
 	require.Zero(t, saver.presignCalls)
 }
@@ -309,6 +311,7 @@ func TestImageStudioGallerySaveKeepsWorkPermanently(t *testing.T) {
 	require.Equal(t, int64(0), entry.ExpiresAt, "作品不再有过期时间")
 	require.Equal(t, "images/users/42/"+entry.ID+".png", entry.ObjectKey, "记录里必须存最终对象键（带前缀）")
 	require.Equal(t, "https://cdn.example.com/users/42/thumbs/"+entry.ID+".jpg", entry.ThumbURL)
+	require.Equal(t, "images/users/42/thumbs/"+entry.ID+".jpg", entry.ThumbObjectKey)
 	require.Len(t, store.entries, 1)
 }
 

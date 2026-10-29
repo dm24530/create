@@ -55,10 +55,12 @@ type ImageStudioGalleryEntry struct {
 	ObjectKey string `json:"-"`
 	URL       string `json:"url"`
 	ThumbURL  string `json:"thumb_url,omitempty"`
-	Prompt    string `json:"prompt"`
-	Model     string `json:"model"`
-	Size      string `json:"size"`
-	Format    string `json:"format"`
+	// ThumbObjectKey is private but lets List refresh signed thumbnail URLs.
+	ThumbObjectKey string `json:"-"`
+	Prompt         string `json:"prompt"`
+	Model          string `json:"model"`
+	Size           string `json:"size"`
+	Format         string `json:"format"`
 	// Saved 为真表示用户已把它存进「我的作品」：长期有效。
 	Saved     bool  `json:"saved"`
 	CreatedAt int64 `json:"created_at"`
@@ -90,7 +92,7 @@ type ImageStudioGalleryStore interface {
 	SweepExpired(ctx context.Context, batch int) ([]string, error)
 	// ObjectKey 返回记录的 object_key；记录不存在时返回 ErrStudioWorkNotFound。
 	ObjectKey(ctx context.Context, userID int64, id string) (string, error)
-	UpdateThumbURL(ctx context.Context, userID int64, id, thumbURL string) error
+	UpdateThumb(ctx context.Context, userID int64, id, thumbURL, thumbObjectKey string) error
 	Delete(ctx context.Context, userID int64, id string) error
 }
 
@@ -268,18 +270,19 @@ func (s *ImageStudioGalleryService) Save(
 		ID:     id,
 		UserID: userID,
 		// 存"最终键"（可能带 images/ 之类的前缀），而不是本地拼的那个短键。
-		ObjectKey:  objectKey,
-		URL:        url,
-		ThumbURL:   thumbURL,
-		Prompt:     strings.TrimSpace(prompt),
-		Model:      strings.TrimSpace(model),
-		Size:       strings.TrimSpace(size),
-		Format:     strings.TrimSpace(format),
-		Saved:      saved,
-		CreatedAt:  createdAt.Unix(),
-		SortOrder:  sortOrder,
-		DurationMs: generationDurationMs,
-		ExpiresAt:  expiresAt,
+		ObjectKey:      objectKey,
+		URL:            url,
+		ThumbURL:       thumbURL,
+		ThumbObjectKey: thumbObjectKey,
+		Prompt:         strings.TrimSpace(prompt),
+		Model:          strings.TrimSpace(model),
+		Size:           strings.TrimSpace(size),
+		Format:         strings.TrimSpace(format),
+		Saved:          saved,
+		CreatedAt:      createdAt.Unix(),
+		SortOrder:      sortOrder,
+		DurationMs:     generationDurationMs,
+		ExpiresAt:      expiresAt,
 	}
 	if err := s.store.Save(ctx, entry, resolveStudioQuota(s.storage)); err != nil {
 		if errors.Is(err, ErrStudioWorksQuotaExceeded) {
@@ -453,6 +456,7 @@ func (s *ImageStudioGalleryService) List(
 				keys = append(keys, key)
 			}
 			addObjectKey(entry.ObjectKey)
+			addObjectKey(entry.ThumbObjectKey)
 		}
 		if len(keys) > 0 {
 			resolved, resolveErr := batchResolver.PresignImageObjects(ctx, keys)
@@ -471,6 +475,11 @@ func (s *ImageStudioGalleryService) List(
 				objectKey := strings.TrimSpace(entry.ObjectKey)
 				if resolvedURL := resolved[objectKey]; resolvedURL != "" {
 					entry.URL = resolvedURL
+				}
+				if thumbKey := strings.TrimSpace(entry.ThumbObjectKey); thumbKey != "" {
+					if resolvedURL := resolved[thumbKey]; resolvedURL != "" {
+						entry.ThumbURL = resolvedURL
+					}
 				}
 			}
 		}
@@ -491,6 +500,11 @@ func (s *ImageStudioGalleryService) List(
 			if objectKey != "" {
 				if resolved, resolveErr := resolver.PresignImageObject(ctx, objectKey); resolveErr == nil && resolved != "" {
 					entry.URL = resolved
+				}
+			}
+			if thumbKey := strings.TrimSpace(entry.ThumbObjectKey); thumbKey != "" {
+				if resolved, resolveErr := resolver.PresignImageObject(ctx, thumbKey); resolveErr == nil && resolved != "" {
+					entry.ThumbURL = resolved
 				}
 			}
 		}
@@ -609,7 +623,7 @@ func (s *ImageStudioGalleryService) Thumbnail(ctx context.Context, userID int64,
 		return nil, err
 	}
 	if thumbURL := strings.TrimSpace(entry.ThumbURL); thumbURL != "" {
-		data, _, fetchErr := s.fetchEntryImage(ctx, entry, "", thumbURL)
+		data, _, fetchErr := s.fetchEntryImage(ctx, entry, entry.ThumbObjectKey, thumbURL)
 		if fetchErr == nil {
 			s.cacheThumbnail(cacheKey, data, now)
 			return data, nil
@@ -626,14 +640,18 @@ func (s *ImageStudioGalleryService) Thumbnail(ctx context.Context, userID int64,
 	}
 	// Backfill old rows once: after this, list responses point straight at the
 	// CDN thumbnail and never hit the application server again.
+	userPrefix, keyErr := s.userStorageKey(ctx, userID)
+	if keyErr != nil {
+		return nil, keyErr
+	}
 	if thumbURL, thumbKey, saveErr := s.storage.SaveImageWithKey(
 		ctx,
-		"thumbs/"+id+".jpg",
+		path.Join(userPrefix, "thumbs", id+".jpg"),
 		"image/jpeg",
 		thumb,
 	); saveErr != nil {
 		logger.L().Warn("studio_work.thumbnail_backfill_upload_failed", zap.String("work_id", id), zap.Error(saveErr))
-	} else if updateErr := s.store.UpdateThumbURL(ctx, userID, id, thumbURL); updateErr != nil {
+	} else if updateErr := s.store.UpdateThumb(ctx, userID, id, thumbURL, thumbKey); updateErr != nil {
 		logger.L().Warn("studio_work.thumbnail_backfill_update_failed", zap.String("work_id", id), zap.Error(updateErr))
 		if thumbKey != "" {
 			_ = s.storage.DeleteObject(ctx, thumbKey)

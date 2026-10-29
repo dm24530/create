@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import type { ReactNode } from "react";
-import { BetweenHorizontalStart, GalleryHorizontalEnd, GalleryHorizontal, Group, Plus, Trash2, Ungroup } from "lucide-react";
+import { BetweenHorizontalStart, Download, GalleryHorizontalEnd, GalleryHorizontal, Group, Plus, Trash2, Ungroup } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { canvasThemes } from "@/lib/canvas-theme";
@@ -8,7 +8,7 @@ import { useThemeStore } from "@/stores/use-theme-store";
 import type { ContextMenuState } from "@/types/canvas";
 import type { VideoFramePosition } from "@/lib/canvas/canvas-video-frame";
 
-export function CanvasNodeContextMenu({ menu, canCaptureVideoFrame, canGroup, canUngroup, onClose, onCaptureVideoFrame, onDuplicate, onGroup, onUngroup, onDelete }: { menu: ContextMenuState; canCaptureVideoFrame: boolean; canGroup?: boolean; canUngroup?: boolean; onClose: () => void; onCaptureVideoFrame: (position: VideoFramePosition) => void; onDuplicate: () => void; onGroup?: () => void; onUngroup?: () => void; onDelete: () => void }) {
+export function CanvasNodeContextMenu({ menu, canCaptureVideoFrame, canDownloadImage, imageDownloadPending, canGroup, canUngroup, onClose, onCaptureVideoFrame, onDownloadImage, onDuplicate, onGroup, onUngroup, onDelete }: { menu: ContextMenuState; canCaptureVideoFrame: boolean; canDownloadImage?: boolean; imageDownloadPending?: boolean; canGroup?: boolean; canUngroup?: boolean; onClose: () => void; onCaptureVideoFrame: (position: VideoFramePosition) => void; onDownloadImage?: () => void; onDuplicate: () => void; onGroup?: () => void; onUngroup?: () => void; onDelete: () => void }) {
     const { t } = useTranslation();
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
 
@@ -36,6 +36,7 @@ export function CanvasNodeContextMenu({ menu, canCaptureVideoFrame, canGroup, ca
                     <div className="my-1 border-t" style={{ borderColor: theme.toolbar.border }} />
                 </>
             ) : null}
+            {menu.type === "node" && canDownloadImage ? <MenuButton icon={<Download className="size-4" />} label={imageDownloadPending ? t("canvas.node.originalProcessing") : t("canvas.node.downloadOriginal")} onClick={onDownloadImage} disabled={imageDownloadPending} /> : null}
             {menu.type === "node" && canGroup ? <MenuButton icon={<Group className="size-4" />} label={t("canvas.nodeToolbar.group")} onClick={onGroup} /> : null}
             {menu.type === "node" && canUngroup ? <MenuButton icon={<Ungroup className="size-4" />} label={t("canvas.nodeToolbar.ungroup")} onClick={onUngroup} /> : null}
             {menu.type === "node" ? <MenuButton icon={<Plus className="size-4" />} label={t("canvas.controls.duplicate")} onClick={onDuplicate} /> : null}
@@ -44,11 +45,11 @@ export function CanvasNodeContextMenu({ menu, canCaptureVideoFrame, canGroup, ca
     );
 }
 
-function MenuButton({ icon, label, onClick, danger = false }: { icon: ReactNode; label: string; onClick?: () => void; danger?: boolean }) {
+function MenuButton({ icon, label, onClick, danger = false, disabled = false }: { icon: ReactNode; label: string; onClick?: () => void; danger?: boolean; disabled?: boolean }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
 
     return (
-        <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs transition-colors hover:opacity-80" style={{ color: danger ? "#f87171" : theme.node.text }} onClick={onClick}>
+        <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs transition-colors hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-45" style={{ color: danger ? "#f87171" : theme.node.text }} onClick={onClick} disabled={disabled}>
             {icon}
             <span>{label}</span>
         </button>

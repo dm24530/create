@@ -16,7 +16,7 @@ import (
 // 两种作品共用一张表，用 kind 区分；配额计数刻意不带 kind 条件，
 // 所以「每人 100 个文件」是图片 + 视频合并计算的。
 const studioWorksColumns = `
-	id, user_id, kind, object_key, url, thumb_url, prompt, model, format, size, duration_seconds, duration_ms, saved, sort_order,
+	id, user_id, kind, object_key, url, thumb_url, thumb_object_key, prompt, model, format, size, duration_seconds, duration_ms, saved, sort_order,
 	EXTRACT(EPOCH FROM created_at)::bigint AS created_at,
 	COALESCE(EXTRACT(EPOCH FROM expires_at)::bigint, 0) AS expires_at`
 
@@ -79,9 +79,9 @@ func (s *studioWorksDB) insert(ctx context.Context, entry *studioWorkRow, quota 
 
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO studio_works (
-			id, user_id, kind, object_key, url, thumb_url, prompt, model, format, size, duration_seconds, duration_ms, saved, sort_order, expires_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
-		entry.ID, entry.UserID, entry.Kind, entry.ObjectKey, entry.URL, entry.ThumbURL, entry.Prompt,
+			id, user_id, kind, object_key, url, thumb_url, thumb_object_key, prompt, model, format, size, duration_seconds, duration_ms, saved, sort_order, expires_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
+		entry.ID, entry.UserID, entry.Kind, entry.ObjectKey, entry.URL, entry.ThumbURL, entry.ThumbObjectKey, entry.Prompt,
 		entry.Model, entry.Format, entry.Size, entry.DurationSeconds, entry.DurationMs, entry.Saved, entry.SortOrder, studioWorkExpiry(entry.ExpiresAt),
 	); err != nil {
 		return fmt.Errorf("insert studio work: %w", err)
@@ -129,7 +129,7 @@ func (s *studioWorksDB) list(
 	for rows.Next() {
 		entry := &studioWorkRow{}
 		if err := rows.Scan(
-			&entry.ID, &entry.UserID, &entry.Kind, &entry.ObjectKey, &entry.URL, &entry.ThumbURL, &entry.Prompt,
+			&entry.ID, &entry.UserID, &entry.Kind, &entry.ObjectKey, &entry.URL, &entry.ThumbURL, &entry.ThumbObjectKey, &entry.Prompt,
 			&entry.Model, &entry.Format, &entry.Size, &entry.DurationSeconds, &entry.DurationMs, &entry.Saved, &entry.SortOrder,
 			&entry.CreatedAt, &entry.ExpiresAt,
 		); err != nil {
@@ -300,13 +300,17 @@ func (s *studioWorksDB) objectKey(ctx context.Context, userID int64, id string) 
 	return key, nil
 }
 
-func (s *studioWorksDB) updateThumbURL(ctx context.Context, userID int64, id, thumbURL string) error {
+func (s *studioWorksDB) updateThumb(
+	ctx context.Context,
+	userID int64,
+	id, thumbURL, thumbObjectKey string,
+) error {
 	if s == nil || s.db == nil {
 		return fmt.Errorf("studio works store is unavailable")
 	}
 	result, err := s.db.ExecContext(ctx,
-		`UPDATE studio_works SET thumb_url = $3 WHERE user_id = $1 AND id = $2`,
-		userID, id, thumbURL,
+		`UPDATE studio_works SET thumb_url = $3, thumb_object_key = $4 WHERE user_id = $1 AND id = $2`,
+		userID, id, thumbURL, thumbObjectKey,
 	)
 	if err != nil {
 		return fmt.Errorf("update studio work thumbnail: %w", err)
@@ -348,6 +352,7 @@ type studioWorkRow struct {
 	ObjectKey       string
 	URL             string
 	ThumbURL        string
+	ThumbObjectKey  string
 	Prompt          string
 	Model           string
 	Format          string
@@ -377,16 +382,17 @@ func (s *imageStudioGalleryStore) Save(
 		return fmt.Errorf("studio work entry is nil")
 	}
 	return s.insert(ctx, &studioWorkRow{
-		ID:        entry.ID,
-		UserID:    entry.UserID,
-		Kind:      "image",
-		ObjectKey: entry.ObjectKey,
-		URL:       entry.URL,
-		ThumbURL:  entry.ThumbURL,
-		Prompt:    entry.Prompt,
-		Model:     entry.Model,
-		Format:    entry.Format,
-		Size:      entry.Size,
+		ID:             entry.ID,
+		UserID:         entry.UserID,
+		Kind:           "image",
+		ObjectKey:      entry.ObjectKey,
+		URL:            entry.URL,
+		ThumbURL:       entry.ThumbURL,
+		ThumbObjectKey: entry.ThumbObjectKey,
+		Prompt:         entry.Prompt,
+		Model:          entry.Model,
+		Format:         entry.Format,
+		Size:           entry.Size,
 		DurationMs: sql.NullInt64{
 			Int64: int64(entry.DurationMs),
 			Valid: entry.DurationMs > 0,
@@ -407,20 +413,21 @@ func (s *imageStudioGalleryStore) List(
 	entries := make([]*service.ImageStudioGalleryEntry, 0, len(rows))
 	for _, row := range rows {
 		entries = append(entries, &service.ImageStudioGalleryEntry{
-			ID:         row.ID,
-			UserID:     row.UserID,
-			ObjectKey:  row.ObjectKey,
-			URL:        row.URL,
-			ThumbURL:   row.ThumbURL,
-			Prompt:     row.Prompt,
-			Model:      row.Model,
-			Size:       row.Size,
-			Format:     row.Format,
-			DurationMs: int(row.DurationMs.Int64),
-			Saved:      row.Saved,
-			SortOrder:  row.SortOrder,
-			ExpiresAt:  row.ExpiresAt,
-			CreatedAt:  row.CreatedAt,
+			ID:             row.ID,
+			UserID:         row.UserID,
+			ObjectKey:      row.ObjectKey,
+			URL:            row.URL,
+			ThumbURL:       row.ThumbURL,
+			ThumbObjectKey: row.ThumbObjectKey,
+			Prompt:         row.Prompt,
+			Model:          row.Model,
+			Size:           row.Size,
+			Format:         row.Format,
+			DurationMs:     int(row.DurationMs.Int64),
+			Saved:          row.Saved,
+			SortOrder:      row.SortOrder,
+			ExpiresAt:      row.ExpiresAt,
+			CreatedAt:      row.CreatedAt,
 		})
 	}
 	return entries, nil
@@ -434,8 +441,12 @@ func (s *imageStudioGalleryStore) ObjectKey(ctx context.Context, userID int64, i
 	return s.objectKey(ctx, userID, id)
 }
 
-func (s *imageStudioGalleryStore) UpdateThumbURL(ctx context.Context, userID int64, id, thumbURL string) error {
-	return s.updateThumbURL(ctx, userID, id, thumbURL)
+func (s *imageStudioGalleryStore) UpdateThumb(
+	ctx context.Context,
+	userID int64,
+	id, thumbURL, thumbObjectKey string,
+) error {
+	return s.updateThumb(ctx, userID, id, thumbURL, thumbObjectKey)
 }
 
 func (s *imageStudioGalleryStore) Delete(ctx context.Context, userID int64, id string) error {

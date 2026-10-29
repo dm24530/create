@@ -75,7 +75,7 @@ func (s *galleryHandlerStoreStub) ObjectKey(context.Context, int64, string) (str
 	return "", service.ErrStudioWorkNotFound
 }
 
-func (s *galleryHandlerStoreStub) UpdateThumbURL(context.Context, int64, string, string) error {
+func (s *galleryHandlerStoreStub) UpdateThumb(context.Context, int64, string, string, string) error {
 	return nil
 }
 

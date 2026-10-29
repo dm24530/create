@@ -810,10 +810,12 @@ function ImageContent({
     const primaryImageId = node.metadata?.primaryImageId || images[0]?.id;
     const primaryImage = images.find((image) => image.id === primaryImageId);
     const primaryContent = primaryImage?.cloudURL || primaryImage?.content || node.metadata?.cloudURL || node.metadata?.content;
+    const primaryPreviewOnly = Boolean(primaryImage?.previewOnly || node.metadata?.previewOnly);
     const primaryPreviewUrl = previewUrlFor(primaryImage?.storageKey || node.metadata?.storageKey);
+    const primaryCloudPreviewUrl = primaryImage?.cloudPreviewURL || node.metadata?.cloudPreviewURL;
     const primarySource = primaryContent
         ? pickImageSource({
-              previewUrl: primaryImage?.cloudPreviewURL || node.metadata?.cloudPreviewURL || primaryPreviewUrl,
+              previewUrl: primaryCloudPreviewUrl || primaryPreviewUrl,
               originalUrl: primaryContent,
               naturalWidth: primaryImage?.naturalWidth || node.metadata?.naturalWidth,
               naturalHeight: primaryImage?.naturalHeight || node.metadata?.naturalHeight,
@@ -822,6 +824,10 @@ function ImageContent({
               scale,
           })
         : undefined;
+    const showingThumbnail = primaryPreviewOnly || Boolean(
+        primarySource
+        && ((primaryCloudPreviewUrl && primarySource === primaryCloudPreviewUrl) || (primaryPreviewUrl && primarySource === primaryPreviewUrl)),
+    );
 
     return (
         <BatchFrame batchCount={batchCount} batchExpanded={batchExpanded}>
@@ -836,15 +842,21 @@ function ImageContent({
                         src={primarySource}
                         alt={node.title}
                         draggable={false}
+                        onContextMenu={(event) => event.preventDefault()}
                         onDragStart={(event) => event.preventDefault()}
                         className={`pointer-events-none block h-full w-full select-none ${node.metadata?.freeResize ? "object-fill" : "object-contain"}`}
                     />
                 ) : (
                     <ImageSlotStatus image={primaryImage} startedAt={node.metadata?.generationStartedAt} />
                 )}
+            {showingThumbnail ? (
+                <span className="pointer-events-none absolute bottom-2.5 left-2.5 z-30 rounded-md bg-black/60 px-2 py-1 text-[10px] font-medium text-white backdrop-blur-sm">
+                    {t("canvas.node.thumbnailPreview")}
+                </span>
+            ) : null}
             </div>
             {primaryImage?.status === "error" ? <BatchImageFailureActions placement="left" onRetry={() => onRetryBatchImage?.(primaryImage.id)} onDelete={() => onDeleteBatchImage?.(primaryImage.id)} /> : null}
-            {primaryImage?.content ? (
+            {primaryImage?.content && !primaryPreviewOnly ? (
                 <button type="button" className="pointer-events-none absolute left-2.5 top-2.5 z-30 flex h-8 items-center gap-1 rounded-lg border px-2 text-[10px] font-medium opacity-0 shadow-[0_6px_18px_rgba(15,23,42,.16)] backdrop-blur-md transition hover:scale-[1.02] group-hover/node:pointer-events-auto group-hover/node:opacity-100" style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.toolbar.activeText }} title={t("common.download")} onClick={(event) => (event.stopPropagation(), onDownloadBatchImage?.(primaryImage.id))}>
                     <Download className="size-3" />
                     {t("common.download")}
@@ -885,9 +897,10 @@ function ExpandedImageCard({ node, image, index, scale, onView, onSetPrimary, on
     const x = column * (node.width + 18);
     const y = (row - rows + 1) * (node.height + 18);
     const originalUrl = image.cloudURL || image.content;
+    const cloudPreviewUrl = image.cloudPreviewURL || previewUrlFor(image.storageKey);
     const source = originalUrl
         ? pickImageSource({
-              previewUrl: image.cloudPreviewURL || previewUrlFor(image.storageKey),
+              previewUrl: cloudPreviewUrl,
               originalUrl,
               naturalWidth: image.naturalWidth,
               naturalHeight: image.naturalHeight,
@@ -896,6 +909,7 @@ function ExpandedImageCard({ node, image, index, scale, onView, onSetPrimary, on
               scale,
           })
         : undefined;
+    const showingThumbnail = Boolean(image.previewOnly || (source && cloudPreviewUrl && source === cloudPreviewUrl));
 
     return (
         <div
@@ -922,13 +936,14 @@ function ExpandedImageCard({ node, image, index, scale, onView, onSetPrimary, on
                 onView();
             }}
         >
-            {image.content ? <img src={source} alt={node.title} draggable={false} className="pointer-events-none h-full w-full select-none object-contain" /> : <ImageSlotStatus image={image} startedAt={node.metadata?.generationStartedAt} />}
+            {image.content ? <img src={source} alt={node.title} draggable={false} onContextMenu={(event) => event.preventDefault()} className="pointer-events-none h-full w-full select-none object-contain" /> : <ImageSlotStatus image={image} startedAt={node.metadata?.generationStartedAt} />}
+            {showingThumbnail ? <span className="pointer-events-none absolute bottom-2 left-2 z-30 rounded-md bg-black/60 px-2 py-1 text-[10px] font-medium text-white backdrop-blur-sm">{t("canvas.node.thumbnailPreview")}</span> : null}
             {image.content ? (
                 <div className="pointer-events-none absolute inset-x-2 top-2 flex items-center gap-1 opacity-0 transition-opacity duration-150 group-hover/node:pointer-events-auto group-hover/node:opacity-100">
-                    <button type="button" className="flex h-8 min-w-0 flex-1 items-center justify-center gap-1 rounded-lg border px-1.5 text-[10px] font-medium shadow-[0_6px_18px_rgba(15,23,42,.16)] backdrop-blur-md transition hover:scale-[1.02]" style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.toolbar.activeText }} title={t("common.download")} onClick={(event) => (event.stopPropagation(), onDownload())}>
+                    {!image.previewOnly ? <button type="button" className="flex h-8 min-w-0 flex-1 items-center justify-center gap-1 rounded-lg border px-1.5 text-[10px] font-medium shadow-[0_6px_18px_rgba(15,23,42,.16)] backdrop-blur-md transition hover:scale-[1.02]" style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.toolbar.activeText }} title={t("canvas.node.downloadOriginal")} onClick={(event) => (event.stopPropagation(), onDownload())}>
                         <Download className="size-3 shrink-0" />
-                        <span className="truncate">{t("common.download")}</span>
-                    </button>
+                        <span className="truncate">{t("canvas.node.downloadOriginal")}</span>
+                    </button> : null}
                     <button type="button" className="flex h-8 min-w-0 flex-1 items-center justify-center gap-1 rounded-lg border px-1.5 text-[10px] font-medium shadow-[0_6px_18px_rgba(15,23,42,.16)] backdrop-blur-md transition hover:scale-[1.02]" style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.toolbar.activeText }} title={t("canvas.node.createCopy")} onClick={(event) => (event.stopPropagation(), onDuplicate())}>
                         <Copy className="size-3 shrink-0" />
                         <span className="truncate">{t("canvas.node.createCopy")}</span>
