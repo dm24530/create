@@ -1,9 +1,11 @@
 import { type ReactNode, useState } from "react";
 import { ConfigProvider, Switch } from "antd";
+import { ChevronDown } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import i18n from "@/i18n";
 import { type CanvasTheme } from "@/lib/canvas-theme";
+import { normalizeImageBackground, normalizeImageOutputFormat, supportsTransparentImageBackground } from "@/lib/image-output-format";
 import { computeMediaSize, inferMediaRatio, inferMediaScale, mediaRatioOptions, mediaScaleOptions, readMediaDimensions } from "@/lib/media-size";
 import type { AiConfig } from "@/stores/use-config-store";
 
@@ -23,7 +25,7 @@ export const imageScaleOptions = mediaScaleOptions.map((value) => ({ value, labe
 
 type ImageSettingsPanelProps = {
     config: AiConfig;
-    onConfigChange: (key: "quality" | "size" | "count" | "background", value: string) => void;
+    onConfigChange: (key: "quality" | "size" | "count" | "background" | "outputFormat", value: string) => void;
     theme: CanvasTheme;
     showTitle?: boolean;
     className?: string;
@@ -37,7 +39,10 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
     const quality = config.quality || "auto";
     const count = Math.max(1, Math.min(maxCount, Math.floor(Math.abs(Number(config.count)) || 1)));
     const activeSize = config.size || "auto";
-    const transparentBackground = config.background === "transparent";
+    const outputFormat = normalizeImageOutputFormat(config.outputFormat);
+    const transparentSupported = supportsTransparentImageBackground(config.model);
+    const transparentAvailable = transparentSupported && outputFormat === "png";
+    const transparentBackground = transparentAvailable && normalizeImageBackground(config.model, config.background, outputFormat) === "transparent";
     const selectedScale = inferMediaScale(activeSize);
     const selectedRatio = inferMediaRatio(activeSize);
     const dimensions = readMediaDimensions(activeSize, selectedScale, selectedRatio);
@@ -50,6 +55,16 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
         const height = key === "height" ? next : dimensions.height;
         onConfigChange("size", `${alignDimension(width, snapDimensionToStep)}x${alignDimension(height, snapDimensionToStep)}`);
     };
+    const changeOutputFormat = (value: string) => {
+        const next = normalizeImageOutputFormat(value);
+        onConfigChange("outputFormat", next);
+        if (next !== "png" && config.background === "transparent") onConfigChange("background", "");
+    };
+    const transparencyHint = !transparentSupported
+        ? t("settingsPanels.image.transparentUnsupported")
+        : outputFormat !== "png"
+          ? t("settingsPanels.image.transparentJpegUnavailable")
+          : t("settingsPanels.image.transparentHint");
 
     return (
         <ImageSettingsTheme theme={theme}>
@@ -72,6 +87,23 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                             </OptionPill>
                         ))}
                     </div>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                    <SettingTitle color={theme.node.muted}>{t("settingsPanels.image.outputFormat")}</SettingTitle>
+                    <label className="relative inline-flex h-9 min-w-28 items-center overflow-hidden rounded-full border text-sm" style={{ background: theme.node.fill, borderColor: theme.node.stroke, color: theme.node.text }}>
+                        <select
+                            aria-label={t("settingsPanels.image.outputFormat")}
+                            className="h-full w-full cursor-pointer appearance-none bg-transparent px-4 pr-9 outline-none"
+                            style={{ color: theme.node.text }}
+                            value={outputFormat}
+                            onMouseDown={(event) => event.stopPropagation()}
+                            onChange={(event) => changeOutputFormat(event.target.value)}
+                        >
+                            <option value="png">PNG</option>
+                            <option value="jpeg">JPG</option>
+                        </select>
+                        <ChevronDown className="pointer-events-none absolute right-3 size-3.5 opacity-55" />
+                    </label>
                 </div>
                 <div className="space-y-2.5">
                     <div className="flex items-center justify-between gap-3">
@@ -123,11 +155,11 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                     <div className="space-y-0.5">
                         <SettingTitle color={theme.node.muted}>{t("settingsPanels.image.transparent")}</SettingTitle>
                         <div className="text-xs" style={{ color: theme.node.muted, opacity: 0.75 }}>
-                            {t("settingsPanels.image.transparentHint")}
+                            {transparencyHint}
                         </div>
                     </div>
                     <span onMouseDown={(event) => event.stopPropagation()}>
-                        <Switch size="small" checked={transparentBackground} onChange={(checked) => onConfigChange("background", checked ? "transparent" : "")} />
+                        <Switch size="small" disabled={!transparentAvailable} checked={transparentBackground} onChange={(checked) => onConfigChange("background", checked ? "transparent" : "")} />
                     </span>
                 </div>
                 <div className="space-y-2.5">

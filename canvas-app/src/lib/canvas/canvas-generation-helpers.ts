@@ -3,6 +3,7 @@ import i18n from "@/i18n";
 import { claimLegacyStoredImage, ensureImagePreview, resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { resolveMediaUrl } from "@/services/file-storage";
 import { imageMetadata, referenceUrl } from "@/lib/canvas/canvas-node-factory";
+import { normalizeImageBackground, normalizeImageOutputFormat } from "@/lib/image-output-format";
 import type { NodeGenerationInput } from "@/components/canvas/canvas-node-generation";
 import type { CanvasNodeGenerationMode } from "@/components/canvas/canvas-node-prompt-panel";
 import type { CanvasImageAngleParams } from "@/components/canvas/canvas-node-angle-dialog";
@@ -10,7 +11,11 @@ import type { ReferenceImage } from "@/types/image";
 import { CanvasNodeType, type CanvasAssistantSession, type CanvasConnection, type CanvasNodeData, type CanvasNodeMetadata } from "@/types/canvas";
 
 export function imageExtension(dataUrl: string) {
-    return dataUrl.match(/^data:image[/]([^;]+)/)?.[1] || dataUrl.match(/image[/]([^;]+)/)?.[1] || "png";
+    const mimeSubtype = dataUrl.match(/^data:image[/]([^;]+)/)?.[1] || dataUrl.match(/image[/]([^;]+)/)?.[1] || "png";
+    const normalized = mimeSubtype.trim().toLowerCase();
+    if (normalized === "jpg" || normalized === "jpeg") return "jpg";
+    if (normalized && normalized !== "png") return normalized;
+    return dataUrl.match(/\.(png|jpe?g|webp|gif|avif)(?:[?#]|$)/i)?.[1]?.toLowerCase().replace("jpeg", "jpg") || "png";
 }
 
 export function audioExtension(mimeType?: string) {
@@ -126,13 +131,17 @@ export function getInputSummary(inputs: NodeGenerationInput[]) {
 }
 
 export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | undefined, mode: CanvasNodeGenerationMode): AiConfig {
+    const model = resolveModelForCapability(config, node?.metadata?.model, mode);
+    const outputFormat = normalizeImageOutputFormat(node?.metadata?.outputFormat || config.outputFormat || defaultConfig.outputFormat);
+    const background = normalizeImageBackground(model, node?.metadata?.background ?? config.background ?? defaultConfig.background, outputFormat);
     return {
         ...config,
-        model: resolveModelForCapability(config, node?.metadata?.model, mode),
+        model,
         reasoningEffort: node?.metadata?.reasoningEffort || config.reasoningEffort || defaultConfig.reasoningEffort,
         quality: node?.metadata?.quality || config.quality || defaultConfig.quality,
         size: node?.metadata?.size || config.size || defaultConfig.size,
-        background: node?.metadata?.background ?? config.background ?? defaultConfig.background,
+        background,
+        outputFormat,
         videoSeconds: node?.metadata?.seconds || config.videoSeconds || defaultConfig.videoSeconds,
         vquality: node?.metadata?.vquality || config.vquality || defaultConfig.vquality,
         videoGenerateAudio: node?.metadata?.generateAudio || config.videoGenerateAudio || defaultConfig.videoGenerateAudio,

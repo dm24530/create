@@ -349,10 +349,36 @@ export default function ImagePage() {
                   : await requestGeneration(snapshot.config, snapshot.text, requestOptions);
             const image = result[0];
             if (!image) throw new Error(t("imageWorkbench.missingResult"));
-            const stored = await uploadImage(image.dataUrl);
-            const nextImage: GeneratedImage = { id: image.id, dataUrl: stored.url, ...(stored.storageKey ? { storageKey: stored.storageKey } : {}), durationMs: performance.now() - itemStartedAt, width: stored.width, height: stored.height, bytes: stored.bytes, mimeType: stored.mimeType };
-            setResults((value) => updateResultAt(value, index, { status: "success", image: nextImage }));
-            return nextImage;
+            const immediateImage: GeneratedImage = {
+                id: image.id,
+                dataUrl: image.previewDataUrl || image.dataUrl,
+                durationMs: performance.now() - itemStartedAt,
+                width: 0,
+                height: 0,
+                bytes: 0,
+                mimeType: "",
+            };
+            // Match the canvas behavior: paint the returned image first, then
+            // persist it to local storage in the background.
+            setResults((value) => updateResultAt(value, index, { status: "success", image: immediateImage }));
+            try {
+                const stored = await uploadImage(image.dataUrl);
+                const nextImage: GeneratedImage = {
+                    id: image.id,
+                    dataUrl: stored.url,
+                    ...(stored.storageKey ? { storageKey: stored.storageKey } : {}),
+                    durationMs: performance.now() - itemStartedAt,
+                    width: stored.width,
+                    height: stored.height,
+                    bytes: stored.bytes,
+                    mimeType: stored.mimeType,
+                };
+                setResults((value) => updateResultAt(value, index, { status: "success", image: nextImage }));
+                return nextImage;
+            } catch {
+                // Storage failure must not replace a successfully generated image.
+                return immediateImage;
+            }
         } catch (error) {
             setResults((value) => updateResultAt(value, index, { status: "failed", error: error instanceof Error ? error.message : t("workbench.generationFailed") }));
             throw error;

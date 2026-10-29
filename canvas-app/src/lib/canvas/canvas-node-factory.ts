@@ -1,5 +1,6 @@
 import { getNodeSpec, NODE_DEFAULT_SIZE } from "@/constant/canvas";
 import { nodeSizeFromRatio } from "@/lib/canvas/canvas-node-size";
+import { normalizeImageBackground, normalizeImageOutputFormat } from "@/lib/image-output-format";
 import type { AiConfig } from "@/stores/use-config-store";
 import type { UploadedImage } from "@/services/image-storage";
 import type { UploadedFile } from "@/services/file-storage";
@@ -41,12 +42,15 @@ export function referenceUrl(image: ReferenceImage) {
 }
 
 export function buildImageGenerationMetadata(type: CanvasImageGenerationType, config: AiConfig, count: number, references: ReferenceImage[]): CanvasNodeMetadata {
+    const outputFormat = normalizeImageOutputFormat(config.outputFormat);
+    const background = normalizeImageBackground(config.model, config.background, outputFormat);
     return {
         generationType: type,
         model: config.model,
         size: config.size,
         quality: config.quality,
-        ...(config.background ? { background: config.background } : {}),
+        outputFormat,
+        ...(background ? { background } : {}),
         count,
         references: references.map(referenceUrl).filter((url): url is string => Boolean(url)),
     };

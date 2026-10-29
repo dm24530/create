@@ -4,6 +4,7 @@ import { persist } from "zustand/middleware";
 import { nanoid } from "nanoid";
 
 import i18n from "@/i18n";
+import { normalizeImageOutputFormat } from "@/lib/image-output-format";
 import {
     guessModelCapability,
     type ModelCapability,
@@ -54,6 +55,7 @@ export type AiConfig = {
     quality: string;
     size: string;
     background: string;
+    outputFormat: string;
     count: string;
     canvasImageCount: string;
     proxyEnabled: boolean;
@@ -123,6 +125,7 @@ export const defaultConfig: AiConfig = {
     quality: "auto",
     size: "1:1",
     background: "",
+    outputFormat: "png",
     count: "1",
     canvasImageCount: "1",
     proxyEnabled: false,
@@ -277,6 +280,7 @@ export const useConfigStore = create<ConfigStore>()(
                         audioModel: normalizeModelOptionValue(config.audioModel || defaultConfig.audioModel, channels),
                         audioVoice: config.audioVoice || defaultConfig.audioVoice,
                         audioFormat: config.audioFormat || defaultConfig.audioFormat,
+                        outputFormat: normalizeImageOutputFormat(config.outputFormat),
                         audioSpeed: config.audioSpeed || defaultConfig.audioSpeed,
                         audioInstructions: config.audioInstructions || "",
                         reasoningEffort: config.reasoningEffort || "auto",
