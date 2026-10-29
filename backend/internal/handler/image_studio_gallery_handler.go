@@ -155,6 +155,7 @@ func (h *ImageStudioGalleryHandler) SaveFromTask(c *gin.Context) {
 		Data []struct {
 			ObjectKey string `json:"object_key"`
 			URL       string `json:"url"`
+			MIMEType  string `json:"mime_type"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(record.Result, &payload); err != nil || len(payload.Data) == 0 {
@@ -186,9 +187,10 @@ func (h *ImageStudioGalleryHandler) SaveFromTask(c *gin.Context) {
 		request.Format,
 		saved,
 		service.ImageStudioGallerySaveOptions{
-			DurationMs: request.DurationMs,
-			CreatedAt:  request.CreatedAt,
-			SortOrder:  request.SortOrder,
+			DurationMs:  request.DurationMs,
+			CreatedAt:   request.CreatedAt,
+			SortOrder:   request.SortOrder,
+			ContentType: item.MIMEType,
 		},
 	)
 	if err != nil {

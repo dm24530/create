@@ -263,6 +263,92 @@ function parseImagePayload(payload: ImageApiResponse, fallbackOutputFormat?: str
     return images;
 }
 
+async function normalizeGeneratedImages(images: GeneratedImageResult[], outputFormat: string | undefined) {
+    const target = normalizeImageOutputFormat(outputFormat);
+    const normalized: GeneratedImageResult[] = [];
+    for (const image of images) {
+        normalized.push(await normalizeGeneratedImage(image, target));
+    }
+    return normalized;
+}
+
+async function normalizeGeneratedImage(image: GeneratedImageResult, targetFormat: "png" | "jpeg"): Promise<GeneratedImageResult> {
+    const source = image.dataUrl;
+    const targetMime = imageOutputMimeType(targetFormat);
+    const dataURLMime = source.startsWith("data:image/")
+        ? source.match(/^data:([^;,]+)/i)?.[1]?.toLowerCase().replace("image/jpg", "image/jpeg")
+        : "";
+    if (dataURLMime === targetMime) return image;
+    const isRemote = /^https?:\/\//i.test(source);
+    if (!source.startsWith("data:image/") && !isRemote) return image;
+    if (isRemote && imageMimeFromURL(source) === targetMime) return image;
+    if (typeof document === "undefined") return image;
+
+    let bitmap: ImageBitmap | null = null;
+    try {
+        let sourceImage: CanvasImageSource;
+        let width = 0;
+        let height = 0;
+        let blob: Blob | null = null;
+        if (source.startsWith("data:") || isRemote) {
+            blob = await (await fetch(source)).blob();
+            if (blob.type && blob.type.toLowerCase().replace("image/jpg", "image/jpeg") === targetMime) return image;
+        }
+        if (!blob) return image;
+        if (typeof createImageBitmap === "function") {
+            bitmap = await createImageBitmap(blob);
+            sourceImage = bitmap;
+            width = bitmap.width;
+            height = bitmap.height;
+        } else {
+            const element = await loadCanvasImage(source);
+            sourceImage = element;
+            width = element.naturalWidth;
+            height = element.naturalHeight;
+        }
+        if (!width || !height) return image;
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const context = canvas.getContext("2d");
+        if (!context) return image;
+        if (targetFormat === "jpeg") {
+            context.fillStyle = "#ffffff";
+            context.fillRect(0, 0, width, height);
+        }
+        context.drawImage(sourceImage, 0, 0, width, height);
+        const dataUrl = canvas.toDataURL(targetMime, 0.94);
+        return dataUrl.startsWith(`data:${targetMime};`) ? { ...image, dataUrl } : image;
+    } catch {
+        return image;
+    } finally {
+        bitmap?.close();
+    }
+}
+
+function loadCanvasImage(src: string) {
+    return new Promise<HTMLImageElement>((resolve, reject) => {
+        const image = new Image();
+        if (/^https?:\/\//i.test(src)) image.crossOrigin = "anonymous";
+        image.onload = () => resolve(image);
+        image.onerror = () => reject(new Error(apiText("imageReadFailed")));
+        image.src = src;
+    });
+}
+
+function imageMimeFromURL(source: string) {
+    try {
+        const pathname = new URL(source, window.location.href).pathname.toLowerCase();
+        if (/\.(jpe?g)$/.test(pathname)) return "image/jpeg";
+        if (/\.png$/.test(pathname)) return "image/png";
+        if (/\.webp$/.test(pathname)) return "image/webp";
+        if (/\.gif$/.test(pathname)) return "image/gif";
+    } catch {
+        return "";
+    }
+    return "";
+}
+
 function readApiErrorMessage(value: unknown): string {
     if (!value) return "";
     if (typeof value === "string") {
@@ -749,7 +835,11 @@ export async function submitPersistentImageTask(
         return submitAsyncImageTask(
             requestConfig,
             "/images/generations/async",
-            { model: requestConfig.model, request },
+            {
+                model: requestConfig.model,
+                request,
+                output_format: normalizeImageOutputFormat(requestConfig.outputFormat),
+            },
             "application/json",
             "gemini",
             options,
@@ -849,7 +939,11 @@ async function requestGeminiImagesAsync(
     try {
         submit = await axios.post<AsyncImageTaskResponse>(
             aiApiUrl(config, "/images/generations/async"),
-            { model: config.model, request },
+            {
+                model: config.model,
+                request,
+                output_format: normalizeImageOutputFormat(config.outputFormat),
+            },
             {
                 headers: {
                     ...aiHeaders(config, "application/json"),
@@ -976,14 +1070,20 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
                 params: { size: requestSize, resolution: inferMediaScale(config.size), quality, count: n, format: outputFormat, ...(background ? { background } : {}) },
                 signal: options?.signal,
             });
-            return normalizePluginImages(result).map((dataUrl) => ({ id: nanoid(), dataUrl }));
+            return normalizeGeneratedImages(
+                normalizePluginImages(result).map((dataUrl) => ({ id: nanoid(), dataUrl })),
+                outputFormat,
+            );
         } catch (error) {
             throw new Error(readAxiosError(error, apiText("requestFailed")));
         }
     }
     if (requestConfig.apiFormat === "gemini" || isGeminiImageModel(requestConfig.model)) {
         try {
-            return await requestGeminiImages(requestConfig, prompt, [], n, options);
+            return normalizeGeneratedImages(
+                await requestGeminiImages(requestConfig, prompt, [], n, options),
+                outputFormat,
+            );
         } catch (error) {
             throw new Error(readAxiosError(error, apiText("requestFailed")));
         }
@@ -1011,7 +1111,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
             },
         );
         const images = await parseImagePayload(response.data, outputFormat);
-        return images;
+        return normalizeGeneratedImages(images, outputFormat);
     } catch (error) {
         throw new Error(readAxiosError(error, apiText("requestFailed")));
     }
@@ -1038,14 +1138,20 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
                 params: { size: requestSize, resolution: inferMediaScale(config.size), quality, count: n, format: outputFormat, ...(background ? { background } : {}) },
                 signal: options?.signal,
             });
-            return normalizePluginImages(result).map((dataUrl) => ({ id: nanoid(), dataUrl }));
+            return normalizeGeneratedImages(
+                normalizePluginImages(result).map((dataUrl) => ({ id: nanoid(), dataUrl })),
+                outputFormat,
+            );
         } catch (error) {
             throw new Error(readAxiosError(error, apiText("requestFailed")));
         }
     }
     if (requestConfig.apiFormat === "gemini" || isGeminiImageModel(requestConfig.model)) {
         try {
-            return await requestGeminiImages(requestConfig, requestPrompt, references, n, options);
+            return normalizeGeneratedImages(
+                await requestGeminiImages(requestConfig, requestPrompt, references, n, options),
+                outputFormat,
+            );
         } catch (error) {
             throw new Error(readAxiosError(error, apiText("requestFailed")));
         }
@@ -1078,7 +1184,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     try {
         const response = await axios.post<ImageApiResponse>(aiApiUrl(requestConfig, "/images/edits"), formData, { headers: aiHeaders(requestConfig), signal: options?.signal, timeout: IMAGE_REQUEST_TIMEOUT_MS });
         const images = await parseImagePayload(response.data, outputFormat);
-        return images;
+        return normalizeGeneratedImages(images, outputFormat);
     } catch (error) {
         throw new Error(readAxiosError(error, apiText("requestFailed")));
     }

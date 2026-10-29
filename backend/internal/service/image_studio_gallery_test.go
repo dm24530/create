@@ -370,16 +370,38 @@ func TestImageStudioGallerySaveExistingObjectDoesNotReupload(t *testing.T) {
 		"a cat",
 		"gpt-image-1",
 		"1024x1024",
-		"png",
+		"jpeg",
 		false,
 	)
 	require.NoError(t, err)
 	require.Empty(t, saver.key)
 	require.Empty(t, saver.data)
 	require.Equal(t, "images/users/42/task-1.png", entry.ObjectKey)
+	require.Equal(t, "png", entry.Format)
 	require.False(t, entry.Saved)
 	require.NotZero(t, entry.ExpiresAt)
 	require.Len(t, store.entries, 1)
+}
+
+func TestImageStudioGallerySaveExistingObjectPrefersActualContentType(t *testing.T) {
+	store := &galleryStoreStub{}
+	svc := NewImageStudioGalleryService(store, &gallerySaverStub{})
+
+	entry, err := svc.SaveExistingObject(
+		context.Background(),
+		42,
+		"images/users/42/task-1.jpg",
+		"https://gen.example.com/images/users/42/task-1.jpg",
+		"a cat",
+		"gemini-image",
+		"1024x1024",
+		"jpeg",
+		true,
+		ImageStudioGallerySaveOptions{ContentType: "image/png"},
+	)
+
+	require.NoError(t, err)
+	require.Equal(t, "png", entry.Format)
 }
 
 func TestImageStudioGallerySaveExistingObjectSynchronizesLocalAssetExpiry(t *testing.T) {
@@ -921,4 +943,29 @@ func smallPNG(t *testing.T) []byte {
 		t.Fatalf("encode test png: %v", err)
 	}
 	return buf.Bytes()
+}
+
+func TestImageStudioGallerySaveTranscodesRequestedFormat(t *testing.T) {
+	store := &galleryStoreStub{}
+	saver := &gallerySaverStub{}
+	svc := NewImageStudioGalleryService(store, saver)
+
+	entry, err := svc.Save(
+		context.Background(),
+		42,
+		"a dog",
+		"gemini-image",
+		"4096x4096",
+		"jpeg",
+		"image/png",
+		smallPNG(t),
+		true,
+	)
+	require.NoError(t, err)
+	require.Equal(t, "image/jpeg", saver.contentType)
+	require.Equal(t, "jpeg", entry.Format)
+	require.Contains(t, saver.key, ".jpg")
+	_, format, err := image.Decode(bytes.NewReader(saver.data))
+	require.NoError(t, err)
+	require.Equal(t, "jpeg", format)
 }

@@ -64,6 +64,7 @@ type ImageTaskExecution struct {
 	Platform          string `json:"platform"`
 	RequestPath       string `json:"request_path,omitempty"`
 	GeminiModel       string `json:"gemini_model,omitempty"`
+	OutputFormat      string `json:"output_format,omitempty"`
 	ContentType       string `json:"content_type,omitempty"`
 	CompressedBody    []byte `json:"compressed_body,omitempty"`
 	BodyEncoding      string `json:"body_encoding,omitempty"`
@@ -527,6 +528,10 @@ func (s *ImageTaskService) Complete(ctx context.Context, id string, statusCode i
 		if err != nil {
 			return err
 		}
+		outputFormat := ""
+		if task.Execution != nil {
+			outputFormat = task.Execution.OutputFormat
+		}
 		previewPublished := false
 		rewritten, err := uploader.RewriteWithPreview(ctx, task.UserID, id, result, func(preview json.RawMessage) error {
 			if previewPublished {
@@ -534,7 +539,7 @@ func (s *ImageTaskService) Complete(ctx context.Context, id string, statusCode i
 			}
 			previewPublished = true
 			return s.saveState(ctx, id, ImageTaskStatusPreviewReady, statusCode, preview, nil, false)
-		})
+		}, ImageRewriteOptions{OutputFormat: outputFormat})
 		if err != nil {
 			// 转存失败不回退存 base64，避免大 blob 撑爆 Redis：直接把任务标记为失败。
 			logger.L().Error("image_task.offload_failed", zap.String("task_id", id), zap.Error(err))

@@ -8,11 +8,15 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"image/color"
+	_ "image/gif"
 	"image/jpeg"
+	"image/png"
 	"io"
 	"mime"
 	"net/http"
 	"net/url"
+	"path"
 	"strconv"
 	"strings"
 	"sync"
@@ -21,9 +25,139 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"go.uber.org/zap"
 	xdraw "golang.org/x/image/draw"
+	_ "golang.org/x/image/webp"
 )
 
 const defaultImageMaxDownloadBytes int64 = 32 << 20 // 32 MiB
+
+type ImageRewriteOptions struct {
+	OutputFormat string
+}
+
+func NormalizeImageOutputFormat(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "jpeg", "jpg":
+		return "jpeg"
+	case "png":
+		return "png"
+	default:
+		return ""
+	}
+}
+
+func ImageOutputFormatFromContentType(contentType string) string {
+	contentType = strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0]))
+	switch {
+	case strings.Contains(contentType, "jpeg"), strings.Contains(contentType, "jpg"):
+		return "jpeg"
+	case strings.Contains(contentType, "png"):
+		return "png"
+	case strings.Contains(contentType, "webp"):
+		return "webp"
+	case strings.Contains(contentType, "gif"):
+		return "gif"
+	default:
+		extensions, err := mime.ExtensionsByType(contentType)
+		if err != nil || len(extensions) == 0 {
+			return ""
+		}
+		return strings.TrimPrefix(strings.ToLower(extensions[0]), ".")
+	}
+}
+
+func ImageOutputFormatFromObjectKey(objectKey string) string {
+	extension := strings.TrimPrefix(strings.ToLower(path.Ext(strings.TrimSpace(objectKey))), ".")
+	return NormalizeImageOutputFormat(extension)
+}
+
+func TranscodeImageOutput(data []byte, contentType, outputFormat string) ([]byte, string, error) {
+	targetFormat := NormalizeImageOutputFormat(outputFormat)
+	if targetFormat == "" || len(data) == 0 {
+		return data, contentType, nil
+	}
+	declaredContentType := strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0]))
+	contentType = detectedImageContentType(data)
+	if contentType == "" {
+		contentType = declaredContentType
+	}
+	if (targetFormat == "jpeg" && contentType == "image/jpeg") ||
+		(targetFormat == "png" && contentType == "image/png") {
+		return data, contentType, nil
+	}
+	source, _, err := image.Decode(bytes.NewReader(data))
+	if err != nil {
+		return nil, "", fmt.Errorf("decode image for %s conversion: %w", targetFormat, err)
+	}
+	var output bytes.Buffer
+	switch targetFormat {
+	case "jpeg":
+		encodeSource := source
+		if opaque, ok := source.(interface{ Opaque() bool }); !ok || !opaque.Opaque() {
+			encodeSource = flattenImageOnWhite(source)
+		}
+		if err := jpeg.Encode(&output, encodeSource, &jpeg.Options{Quality: 92}); err != nil {
+			return nil, "", fmt.Errorf("encode JPEG: %w", err)
+		}
+		return output.Bytes(), "image/jpeg", nil
+	case "png":
+		if err := png.Encode(&output, source); err != nil {
+			return nil, "", fmt.Errorf("encode PNG: %w", err)
+		}
+		return output.Bytes(), "image/png", nil
+	default:
+		return data, contentType, nil
+	}
+}
+
+func flattenImageOnWhite(source image.Image) *image.YCbCr {
+	bounds := source.Bounds()
+	width := bounds.Dx()
+	height := bounds.Dy()
+	destination := image.NewYCbCr(
+		image.Rect(0, 0, width, height),
+		image.YCbCrSubsampleRatio420,
+	)
+	const maxChannel = uint32(0xffff)
+	for y := 0; y < height; y += 2 {
+		for x := 0; x < width; x += 2 {
+			chromaSum := [2]int{}
+			samples := 0
+			for dy := 0; dy < 2 && y+dy < height; dy++ {
+				for dx := 0; dx < 2 && x+dx < width; dx++ {
+					red, green, blue, alpha := source.At(bounds.Min.X+x+dx, bounds.Min.Y+y+dy).RGBA()
+					red += maxChannel - alpha
+					green += maxChannel - alpha
+					blue += maxChannel - alpha
+					if red > maxChannel {
+						red = maxChannel
+					}
+					if green > maxChannel {
+						green = maxChannel
+					}
+					if blue > maxChannel {
+						blue = maxChannel
+					}
+					yy, cb, cr := color.RGBToYCbCr(
+						uint8(red>>8),
+						uint8(green>>8),
+						uint8(blue>>8),
+					)
+					destination.Y[destination.YOffset(destination.Rect.Min.X+x+dx, destination.Rect.Min.Y+y+dy)] = yy
+					chromaSum[0] += int(cb)
+					chromaSum[1] += int(cr)
+					samples++
+				}
+			}
+			if samples == 0 {
+				continue
+			}
+			chromaIndex := destination.COffset(destination.Rect.Min.X+x, destination.Rect.Min.Y+y)
+			destination.Cb[chromaIndex] = uint8(chromaSum[0] / samples)
+			destination.Cr[chromaIndex] = uint8(chromaSum[1] / samples)
+		}
+	}
+	return destination
+}
 
 // ImageStorage 把图片字节写入对象存储并返回可访问 URL。
 //
@@ -157,6 +291,7 @@ func (u *ImageResultUploader) RewriteWithPreview(
 	taskID string,
 	result json.RawMessage,
 	onPreview func(json.RawMessage) error,
+	options ...ImageRewriteOptions,
 ) (json.RawMessage, error) {
 	if u == nil || u.storage == nil {
 		return result, nil
@@ -197,8 +332,16 @@ func (u *ImageResultUploader) RewriteWithPreview(
 	}
 
 	prepared := make([]preparedImage, len(items))
+	outputFormat := ""
+	if len(options) > 0 {
+		outputFormat = options[0].OutputFormat
+	}
 	for i, item := range items {
 		data, contentType, err := u.fetchImageBytes(ctx, item)
+		if err != nil {
+			return nil, fmt.Errorf("image %d: %w", i, err)
+		}
+		data, contentType, err = TranscodeImageOutput(data, contentType, outputFormat)
 		if err != nil {
 			return nil, fmt.Errorf("image %d: %w", i, err)
 		}
@@ -267,6 +410,7 @@ func (u *ImageResultUploader) RewriteWithPreview(
 			item["url"] = encodedJSON(u.localAssets.URL(meta.ID))
 			item["local_asset_id"] = encodedJSON(meta.ID)
 			item["object_key"] = encodedJSON(prepared[i].key)
+			item["mime_type"] = encodedJSON(prepared[i].contentType)
 			delete(item, "b64_json")
 			items[i] = item
 		}
@@ -316,6 +460,7 @@ func (u *ImageResultUploader) RewriteWithPreview(
 				}
 				item["url"] = encodedJSON(url)
 				item["object_key"] = encodedJSON(prepared[index].key)
+				item["mime_type"] = encodedJSON(prepared[index].contentType)
 				delete(item, "b64_json")
 				items[index] = item
 			}

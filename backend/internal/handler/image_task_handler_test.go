@@ -1,10 +1,12 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -488,6 +490,32 @@ func TestInspectGeminiImageRequestSupportsInlineAndFileImages(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 2, stats.ImageCount)
 	require.Equal(t, 3, stats.InlineBytes)
+}
+
+func TestParseGeminiAsyncEnvelopeCapturesOutputFormat(t *testing.T) {
+	body := []byte(`{
+		"model":"gemini-image",
+		"request":{"contents":[{"parts":[{"text":"a dog"}]}]},
+		"output_format":"jpg"
+	}`)
+
+	envelope, err := parseGeminiAsyncEnvelope(body)
+
+	require.NoError(t, err)
+	require.Equal(t, "jpeg", envelope.OutputFormat)
+}
+
+func TestAsyncImageRequestedOutputFormatReadsMultipart(t *testing.T) {
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	require.NoError(t, writer.WriteField("model", "gpt-image-2"))
+	require.NoError(t, writer.WriteField("output_format", "jpg"))
+	require.NoError(t, writer.WriteField("prompt", "a dog"))
+	require.NoError(t, writer.Close())
+
+	format := asyncImageRequestedOutputFormat(body.Bytes(), writer.FormDataContentType(), nil)
+
+	require.Equal(t, "jpeg", format)
 }
 
 func TestParseGeminiAsyncEnvelopeRejectsTooManyImages(t *testing.T) {

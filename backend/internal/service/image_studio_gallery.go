@@ -72,9 +72,10 @@ type ImageStudioGalleryEntry struct {
 }
 
 type ImageStudioGallerySaveOptions struct {
-	DurationMs int
-	CreatedAt  int64
-	SortOrder  int64
+	DurationMs  int
+	CreatedAt   int64
+	SortOrder   int64
+	ContentType string
 }
 
 type ImageStudioGalleryStore interface {
@@ -198,6 +199,10 @@ func (s *ImageStudioGalleryService) Save(
 	if !strings.HasPrefix(contentType, "image/") {
 		contentType = detectImageContentType(data)
 	}
+	data, contentType, err := TranscodeImageOutput(data, contentType, format)
+	if err != nil {
+		return nil, err
+	}
 	count, err := s.store.Count(ctx, userID)
 	if err != nil {
 		return nil, err
@@ -277,7 +282,7 @@ func (s *ImageStudioGalleryService) Save(
 		Prompt:         strings.TrimSpace(prompt),
 		Model:          strings.TrimSpace(model),
 		Size:           strings.TrimSpace(size),
-		Format:         strings.TrimSpace(format),
+		Format:         ImageOutputFormatFromContentType(contentType),
 		Saved:          saved,
 		CreatedAt:      createdAt.Unix(),
 		SortOrder:      sortOrder,
@@ -364,7 +369,7 @@ func (s *ImageStudioGalleryService) SaveExistingObject(
 		Prompt:     strings.TrimSpace(prompt),
 		Model:      strings.TrimSpace(model),
 		Size:       strings.TrimSpace(size),
-		Format:     strings.TrimSpace(format),
+		Format:     imageStudioExistingObjectFormat(objectKey, format, options),
 		Saved:      saved,
 		CreatedAt:  createdAt.Unix(),
 		SortOrder:  sortOrder,
@@ -376,6 +381,25 @@ func (s *ImageStudioGalleryService) SaveExistingObject(
 	}
 	s.updateLocalAssetExpiry(ctx, entry.URL, entry.ExpiresAt)
 	return entry, nil
+}
+
+func imageStudioExistingObjectFormat(
+	objectKey string,
+	requestedFormat string,
+	options []ImageStudioGallerySaveOptions,
+) string {
+	if len(options) > 0 {
+		if format := ImageOutputFormatFromContentType(options[0].ContentType); format != "" {
+			return format
+		}
+	}
+	if format := ImageOutputFormatFromObjectKey(objectKey); format != "" {
+		return format
+	}
+	if format := NormalizeImageOutputFormat(requestedFormat); format != "" {
+		return format
+	}
+	return strings.TrimSpace(requestedFormat)
 }
 
 // SaveFromURL 由服务端下载上游图片并转存到对象存储。

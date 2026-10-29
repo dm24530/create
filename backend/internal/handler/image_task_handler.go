@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -56,9 +58,10 @@ const geminiAsyncImageMaxSingleInlineBytes = 8 << 20
 var errGeminiImageOutputMissing = errors.New("gemini response contained no image output")
 
 type asyncGeminiTaskEnvelope struct {
-	Model   string          `json:"model"`
-	Request json.RawMessage `json:"request"`
-	Stats   geminiImageRequestStats
+	Model        string          `json:"model"`
+	Request      json.RawMessage `json:"request"`
+	OutputFormat string          `json:"output_format"`
+	Stats        geminiImageRequestStats
 }
 
 type imageStudioClientErrorRequest struct {
@@ -275,6 +278,7 @@ func (h *AsyncImageHandler) Submit(c *gin.Context) {
 			Platform:          effectivePlatform,
 			RequestPath:       requestPath,
 			GeminiModel:       geminiModel,
+			OutputFormat:      asyncImageRequestedOutputFormat(body, c.GetHeader("Content-Type"), geminiEnvelope),
 			ContentType:       c.GetHeader("Content-Type"),
 			CompressedBody:    executionBody,
 			UsageRequestID:    imageTaskUsageRequestID(c.Request.Context()),
@@ -1056,7 +1060,42 @@ func parseGeminiAsyncEnvelope(body []byte) (*asyncGeminiTaskEnvelope, error) {
 		return nil, err
 	}
 	envelope.Stats = stats
+	envelope.OutputFormat = service.NormalizeImageOutputFormat(envelope.OutputFormat)
 	return &envelope, nil
+}
+
+func asyncImageRequestedOutputFormat(body []byte, contentType string, geminiEnvelope *asyncGeminiTaskEnvelope) string {
+	if geminiEnvelope != nil {
+		return service.NormalizeImageOutputFormat(geminiEnvelope.OutputFormat)
+	}
+	mediaType, params, err := mime.ParseMediaType(contentType)
+	if err == nil && mediaType == "multipart/form-data" && params["boundary"] != "" {
+		reader := multipart.NewReader(bytes.NewReader(body), params["boundary"])
+		for {
+			part, nextErr := reader.NextPart()
+			if nextErr != nil {
+				return ""
+			}
+			if part.FormName() != "output_format" || part.FileName() != "" {
+				_, _ = io.Copy(io.Discard, part)
+				_ = part.Close()
+				continue
+			}
+			value, readErr := io.ReadAll(io.LimitReader(part, 64))
+			_ = part.Close()
+			if readErr != nil {
+				return ""
+			}
+			return service.NormalizeImageOutputFormat(string(value))
+		}
+	}
+	var payload struct {
+		OutputFormat string `json:"output_format"`
+	}
+	if json.Unmarshal(body, &payload) != nil {
+		return ""
+	}
+	return service.NormalizeImageOutputFormat(payload.OutputFormat)
 }
 
 func inspectGeminiImageRequest(body []byte) (geminiImageRequestStats, error) {

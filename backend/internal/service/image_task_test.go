@@ -3,9 +3,11 @@ package service
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
 	"mime/multipart"
 	"net/http"
 	"testing"
@@ -156,6 +158,36 @@ func TestImageTaskServiceDoesNotStoreRawResultWhenObjectStorageIsDisabled(t *tes
 	require.Equal(t, http.StatusServiceUnavailable, got.HTTPStatus)
 	require.Empty(t, got.Result)
 	require.Contains(t, string(got.Error), "object storage is unavailable")
+}
+
+func TestImageTaskServiceCompleteTranscodesUsingPersistedOutputFormat(t *testing.T) {
+	store := &imageTaskMemoryStore{task: &ImageTaskRecord{
+		ID:       "imgtask_jpeg",
+		UserID:   7,
+		APIKeyID: 9,
+		Status:   ImageTaskStatusProcessing,
+		Execution: &ImageTaskExecution{
+			OutputFormat: "jpeg",
+		},
+	}}
+	storage := &fakeImageStorage{}
+	uploader := NewImageResultUploader(storage, "images/", 0, nil)
+	svc := NewImageTaskServiceWithUploader(store, uploader, time.Hour, time.Minute)
+	validPNG, err := base64.StdEncoding.DecodeString(
+		"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+	)
+	require.NoError(t, err)
+	result := json.RawMessage(`{"data":[{"b64_json":"` + base64.StdEncoding.EncodeToString(validPNG) + `"}]}`)
+
+	require.NoError(t, svc.Complete(context.Background(), store.task.ID, http.StatusOK, result))
+
+	require.Len(t, storage.saved, 1)
+	require.Equal(t, "images/users/7/imgtask_jpeg-0.jpg", storage.saved[0].key)
+	require.Equal(t, "image/jpeg", storage.saved[0].contentType)
+	_, format, err := image.Decode(bytes.NewReader(storage.saved[0].data))
+	require.NoError(t, err)
+	require.Equal(t, "jpeg", format)
+	require.Equal(t, ImageTaskStatusCompleted, store.task.Status)
 }
 
 func TestImageTaskServiceMapsStoreFailures(t *testing.T) {

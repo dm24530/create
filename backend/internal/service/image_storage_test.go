@@ -1,10 +1,15 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"image"
+	"image/color"
+	"image/jpeg"
+	"image/png"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -92,6 +97,78 @@ func TestImageResultUploaderRewritesB64JSON(t *testing.T) {
 	require.JSONEq(t, `"a cat"`, string(parsed.Data[0]["revised_prompt"]), "unrelated fields preserved")
 }
 
+func TestImageResultUploaderTranscodesOutputFormatBeforeUpload(t *testing.T) {
+	storage := &fakeImageStorage{}
+	uploader := NewImageResultUploader(storage, "images/", 0, nil)
+	validPNG, err := base64.StdEncoding.DecodeString(
+		"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+	)
+	require.NoError(t, err)
+	result := json.RawMessage(`{"data":[{"b64_json":"` + base64.StdEncoding.EncodeToString(validPNG) + `"}]}`)
+
+	out, err := uploader.RewriteWithPreview(
+		context.Background(),
+		42,
+		"imgtask_jpeg",
+		result,
+		nil,
+		ImageRewriteOptions{OutputFormat: "jpeg"},
+	)
+	require.NoError(t, err)
+	require.Len(t, storage.saved, 1)
+	require.Equal(t, "images/users/42/imgtask_jpeg-0.jpg", storage.saved[0].key)
+	require.Equal(t, "image/jpeg", storage.saved[0].contentType)
+	_, format, err := image.Decode(bytes.NewReader(storage.saved[0].data))
+	require.NoError(t, err)
+	require.Equal(t, "jpeg", format)
+
+	var parsed struct {
+		Data []struct {
+			MIMEType string `json:"mime_type"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(out, &parsed))
+	require.Equal(t, "image/jpeg", parsed.Data[0].MIMEType)
+}
+
+func TestTranscodeImageOutputUsesActualBytesInsteadOfDeclaredContentType(t *testing.T) {
+	source := image.NewRGBA(image.Rect(0, 0, 2, 2))
+	source.Set(0, 0, color.RGBA{R: 255, A: 128})
+	source.Set(1, 0, color.RGBA{G: 255, A: 255})
+	var pngData bytes.Buffer
+	require.NoError(t, png.Encode(&pngData, source))
+
+	data, contentType, err := TranscodeImageOutput(pngData.Bytes(), "image/jpeg", "jpeg")
+	require.NoError(t, err)
+	require.Equal(t, "image/jpeg", contentType)
+	_, format, err := image.Decode(bytes.NewReader(data))
+	require.NoError(t, err)
+	require.Equal(t, "jpeg", format)
+
+	var jpegData bytes.Buffer
+	require.NoError(t, jpeg.Encode(&jpegData, source, &jpeg.Options{Quality: 90}))
+	data, contentType, err = TranscodeImageOutput(jpegData.Bytes(), "image/png", "jpeg")
+	require.NoError(t, err)
+	require.Equal(t, "image/jpeg", contentType)
+	require.Equal(t, jpegData.Bytes(), data)
+}
+
+func TestTranscodeImageOutputFlattensTransparencyToWhiteForJPEG(t *testing.T) {
+	source := image.NewNRGBA(image.Rect(0, 0, 32, 32))
+	var pngData bytes.Buffer
+	require.NoError(t, png.Encode(&pngData, source))
+
+	data, contentType, err := TranscodeImageOutput(pngData.Bytes(), "image/png", "jpeg")
+	require.NoError(t, err)
+	require.Equal(t, "image/jpeg", contentType)
+	decoded, _, err := image.Decode(bytes.NewReader(data))
+	require.NoError(t, err)
+	red, green, blue, _ := decoded.At(16, 16).RGBA()
+	require.Greater(t, red>>8, uint32(240))
+	require.Greater(t, green>>8, uint32(240))
+	require.Greater(t, blue>>8, uint32(240))
+}
+
 func TestImageResultUploaderUsesOpaqueUserStorageKey(t *testing.T) {
 	storage := &fakeImageStorage{}
 	uploader := NewImageResultUploader(storage, "images/", 0, nil)
@@ -173,12 +250,14 @@ func TestImageResultUploaderStagesOriginalLocallyBeforeRemoteUpload(t *testing.T
 			URL          string `json:"url"`
 			LocalAssetID string `json:"local_asset_id"`
 			ObjectKey    string `json:"object_key"`
+			MIMEType     string `json:"mime_type"`
 		} `json:"data"`
 	}
 	require.NoError(t, json.Unmarshal(out, &parsed))
 	require.Len(t, parsed.Data, 1)
 	require.Equal(t, LocalImageAssetURLPrefix+parsed.Data[0].LocalAssetID, parsed.Data[0].URL)
 	require.Equal(t, "images/users/42/imgtask_local-0.png", parsed.Data[0].ObjectKey)
+	require.Equal(t, "image/png", parsed.Data[0].MIMEType)
 
 	meta, data, err := local.Read(parsed.Data[0].LocalAssetID)
 	require.NoError(t, err)

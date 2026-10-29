@@ -171,7 +171,7 @@ func TestImageStudioGallerySaveFromTaskUsesPersistedObject(t *testing.T) {
 			Status:     service.ImageTaskStatusCompleted,
 			HTTPStatus: http.StatusOK,
 			Result: json.RawMessage(
-				`{"data":[{"object_key":"images/users/7/task-owned.png","url":"https://gen.example.com/images/users/7/task-owned.png"}]}`,
+				`{"data":[{"object_key":"images/users/7/task-owned.png","url":"https://gen.example.com/images/users/7/task-owned.png","mime_type":"image/png"}]}`,
 			),
 		},
 	}}
@@ -191,7 +191,7 @@ func TestImageStudioGallerySaveFromTaskUsesPersistedObject(t *testing.T) {
 			"prompt":"cat",
 			"model":"gpt-image-1",
 			"size":"1024x1024",
-			"format":"png",
+			"format":"jpeg",
 			"saved":true,
 			"object_key":"images/users/99/forged.png"
 		}`),
@@ -203,6 +203,7 @@ func TestImageStudioGallerySaveFromTaskUsesPersistedObject(t *testing.T) {
 	require.Equal(t, http.StatusOK, recorder.Code)
 	require.Len(t, galleryStore.entries, 1)
 	require.Equal(t, "images/users/7/task-owned.png", galleryStore.entries[0].ObjectKey)
+	require.Equal(t, "png", galleryStore.entries[0].Format)
 	require.Equal(t, int64(7), galleryStore.entries[0].UserID)
 	require.True(t, galleryStore.entries[0].Saved)
 	require.Zero(t, saver.saveCalls, "saving from a completed task must not upload the image again")

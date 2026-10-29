@@ -144,7 +144,7 @@
                 缩略图预览
               </span>
             </button>
-              <div class="flex items-center justify-between gap-2 px-3 py-2">
+              <div class="image-result-card__footer flex items-center justify-between gap-2 px-3 py-2">
                 <div class="min-w-0">
                   <p class="truncate text-[11px] text-gray-400">
                     {{ image.createdAt ? `${formatCreatedAt(image.createdAt)} · ${image.meta}` : image.meta }}
@@ -6217,12 +6217,13 @@ onBeforeUnmount(() => {
 .image-results-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  align-items: start;
+  align-items: stretch;
   gap: 1rem;
 }
 
 .image-result-card__media {
   aspect-ratio: 16 / 10;
+  flex: none;
 }
 
 .image-result-card__media img {
@@ -6231,9 +6232,16 @@ onBeforeUnmount(() => {
 }
 
 .image-studio .studio-page__results article {
+  display: flex;
+  height: 100%;
+  flex-direction: column;
   border-radius: 0.55rem;
   background: rgb(255 255 255);
   box-shadow: 0 1px 2px rgb(15 23 42 / 0.03);
+}
+
+.image-result-card__footer {
+  min-height: 4.25rem;
 }
 
 .image-studio .studio-page__results article > button {
