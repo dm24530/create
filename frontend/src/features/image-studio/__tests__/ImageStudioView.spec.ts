@@ -861,6 +861,27 @@ describe('ImageStudioView gallery', () => {
     expect(wrapper.get('article').text()).not.toContain('a cat')
   })
 
+  it('limits fallback thumbnail downloads to four at a time', async () => {
+    listGallery.mockResolvedValue(Array.from({ length: 10 }, (_, index) => ({
+      id: `gallery-${index + 1}`,
+      url: `https://cdn.example.com/gallery-${index + 1}.png`,
+      prompt: `image ${index + 1}`,
+      model: 'gpt-image-1',
+      size: '1024x1024',
+      format: 'png',
+      created_at: index + 1,
+      expires_at: 9999999999,
+    })))
+    thumbnailGallery.mockImplementation(() => new Promise(() => undefined))
+
+    mountImageStudio()
+    await vi.waitFor(() => {
+      expect(thumbnailGallery).toHaveBeenCalledTimes(4)
+    }, { timeout: 2000, interval: 50 })
+    await flushPromises()
+    expect(thumbnailGallery).toHaveBeenCalledTimes(4)
+  })
+
   it('uses a signed direct download URL for gallery images', async () => {
     let clickedHref = ''
     let clickedTarget = ''
@@ -1857,7 +1878,7 @@ describe('ImageStudioView gallery', () => {
     }
   })
 
-  it('stops an unresponsive async image submission at 120 seconds', async () => {
+  it('keeps retrying an unresponsive async submission until the overall deadline', async () => {
     vi.useFakeTimers()
     try {
       listKeys.mockResolvedValue({
@@ -1893,10 +1914,13 @@ describe('ImageStudioView gallery', () => {
 
       await vi.advanceTimersByTimeAsync(2_000)
       await flushPromises()
+      expect(wrapper.find('[data-testid="image-generation-failure"]').exists()).toBe(false)
+
+      await vi.advanceTimersByTimeAsync(60_000)
+      await flushPromises()
 
       const failure = wrapper.get('[data-testid="image-generation-failure"]').text()
-      expect(failure).toContain('请求超时')
-      expect(failure).toContain('2 分钟')
+      expect(failure).toContain('3 分钟')
       expect(reportClientError).toHaveBeenCalledWith(expect.objectContaining({
         error_type: 'client_timeout',
         stage: 'image_generation_failure',
@@ -1904,6 +1928,112 @@ describe('ImageStudioView gallery', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('retries a temporary 503 while submitting an async image task', async () => {
+    listKeys.mockResolvedValue({
+      items: [{ id: 1, name: 'dd', key: 'sk-local', status: 'active', group_id: 2 }],
+    })
+    getPublicSettings.mockResolvedValue({ api_base_url: '/v1' })
+    let submitCalls = 0
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/images/batches/models')) {
+        return { ok: true, json: async () => ({ data: [] }) } as Response
+      }
+      if (url.endsWith('/models')) {
+        return { ok: true, json: async () => ({ data: [{ id: 'gpt-image-1' }] }) } as Response
+      }
+      if (url.endsWith('/images/generations/async')) {
+        submitCalls += 1
+        if (submitCalls === 1) {
+          return { ok: false, status: 503, json: async () => ({ message: 'temporarily unavailable' }) } as Response
+        }
+        return {
+          ok: true,
+          status: 202,
+          json: async () => ({
+            task_id: 'imgtask_after_503',
+            status: 'processing',
+            poll_url: '/v1/images/tasks/imgtask_after_503',
+          }),
+        } as Response
+      }
+      if (url.endsWith('/images/tasks/imgtask_after_503')) {
+        return {
+          ok: true,
+          json: async () => ({
+            task_id: 'imgtask_after_503',
+            status: 'completed',
+            result: { data: [{ b64_json: 'aGVsbG8=', mime_type: 'image/png' }] },
+          }),
+        } as Response
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountImageStudio()
+    await flushPromises()
+    await flushPromises()
+    await wrapper.get('form').trigger('submit')
+
+    await vi.waitFor(() => {
+      expect(wrapper.find('img[alt="生成结果 1"]').exists()).toBe(true)
+    })
+    expect(submitCalls).toBe(2)
+  })
+
+  it('retries a temporary 503 from the task polling endpoint', async () => {
+    listKeys.mockResolvedValue({
+      items: [{ id: 1, name: 'dd', key: 'sk-local', status: 'active', group_id: 2 }],
+    })
+    getPublicSettings.mockResolvedValue({ api_base_url: '/v1' })
+    let pollCalls = 0
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/images/batches/models')) {
+        return { ok: true, json: async () => ({ data: [] }) } as Response
+      }
+      if (url.endsWith('/models')) {
+        return { ok: true, json: async () => ({ data: [{ id: 'gpt-image-1' }] }) } as Response
+      }
+      if (url.endsWith('/images/generations/async')) {
+        return {
+          ok: true,
+          status: 202,
+          json: async () => ({
+            task_id: 'imgtask_poll_503',
+            status: 'processing',
+            poll_url: '/v1/images/tasks/imgtask_poll_503',
+          }),
+        } as Response
+      }
+      if (url.endsWith('/images/tasks/imgtask_poll_503')) {
+        pollCalls += 1
+        if (pollCalls === 1) {
+          return { ok: false, status: 503, json: async () => ({ message: 'temporarily unavailable' }) } as Response
+        }
+        return {
+          ok: true,
+          json: async () => ({
+            task_id: 'imgtask_poll_503',
+            status: 'completed',
+            result: { data: [{ b64_json: 'aGVsbG8=', mime_type: 'image/png' }] },
+          }),
+        } as Response
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountImageStudio()
+    await flushPromises()
+    await flushPromises()
+    await wrapper.get('form').trigger('submit')
+
+    await vi.waitFor(() => {
+      expect(wrapper.find('img[alt="生成结果 1"]').exists()).toBe(true)
+    }, { timeout: 3000 })
+    expect(pollCalls).toBe(2)
   })
 
   it('retries a timed-out status poll until the overall generation deadline', async () => {
@@ -2687,12 +2817,15 @@ describe('ImageStudioView gallery', () => {
     }, { timeout: 2000, interval: 50 })
     expect(wrapper.find('.image-pending-card__preview-status').text()).toContain('预览已生成')
     expect(saveGalleryFromTask).not.toHaveBeenCalled()
+    await wrapper.get('.image-pending-card--preview img').trigger('load')
+    expect(reportDisplay).toHaveBeenCalledTimes(1)
+    expect(reportDisplay).toHaveBeenCalledWith('imgtask_preview_ready', expect.any(Number))
 
     await vi.waitFor(() => {
       expect(wrapper.findAll('.image-pending-card')).toHaveLength(0)
     }, { timeout: 2000, interval: 50 })
     await wrapper.get('img[alt="生成结果 1"]').trigger('load')
-    expect(reportDisplay).toHaveBeenCalledWith('imgtask_preview_ready', expect.any(Number))
+    expect(reportDisplay).toHaveBeenCalledTimes(1)
     expect(saveGalleryFromTask).toHaveBeenCalledWith(expect.objectContaining({
       task_id: 'imgtask_preview_ready',
     }))
@@ -2809,6 +2942,7 @@ describe('ImageStudioView gallery', () => {
       expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer sk-local' }) }),
     )
     expect(wrapper.find('img[alt="生成结果 1"]').exists()).toBe(true)
+    expect(wrapper.findAll('.image-pending-card')).toHaveLength(0)
     expect(localStorage.getItem(imageStudioPendingStorageKey())).toBeNull()
     expect(saveGalleryFromTask).toHaveBeenCalledWith(expect.objectContaining({
       task_id: 'imgtask_server',
@@ -2932,13 +3066,16 @@ describe('ImageStudioView gallery', () => {
     await new Promise((resolve) => window.setTimeout(resolve, 600))
     await flushPromises()
 
-    expect(submitCalls).toBe(2)
-    expect(fetchMock).toHaveBeenCalledWith(
-      expect.stringContaining('/v1/images/tasks/imgtask_partial'),
-      expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer sk-original' }) }),
-    )
+    expect(submitCalls).toBe(3)
+    await vi.waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining('/v1/images/tasks/imgtask_partial'),
+        expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer sk-original' }) }),
+      )
+    })
     expect(wrapper.find('img[alt="生成结果 1"]').exists()).toBe(true)
-    expect(localStorage.getItem(imageStudioPendingStorageKey())).toBeNull()
+    expect(wrapper.findAll('.image-pending-card')).toHaveLength(1)
+    expect(localStorage.getItem(imageStudioPendingStorageKey())).toContain('"gatewaySubmitPending":true')
   })
 
   it('shows the first async image before a slower sibling task finishes', async () => {
@@ -3047,9 +3184,10 @@ describe('ImageStudioView gallery', () => {
     await new Promise((resolve) => window.setTimeout(resolve, 600))
     await flushPromises()
 
-    expect(asyncCalls).toBe(1)
+    expect(asyncCalls).toBe(2)
     expect(syncCalls).toBe(0)
-    expect(wrapper.findAll('.image-pending-card')).toHaveLength(0)
+    expect(wrapper.findAll('.image-pending-card')).toHaveLength(1)
+    expect(localStorage.getItem(imageStudioPendingStorageKey())).toContain('"gatewaySubmitPending":true')
   })
 
   it('does not show the freshly generated image twice when the gallery lists it', async () => {
@@ -4075,7 +4213,42 @@ describe('ImageStudioView gallery', () => {
     expect(wrapper.find('img[alt="生成结果 1"]').exists()).toBe(true)
   })
 
-  it('does not retry an ambiguous gateway submission after reload', async () => {
+  it('recovers an ambiguous gateway submission by idempotency key after reload', async () => {
+    listKeys.mockResolvedValue({
+      items: [{ id: 11, name: 'dd', key: 'sk-ambiguous', status: 'active', group_id: 2 }],
+    })
+    getPublicSettings.mockResolvedValue({ api_base_url: '/v1' })
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/images/batches/models')) {
+        return { ok: true, json: async () => ({ data: [] }) } as Response
+      }
+      if (url.endsWith('/models')) {
+        return { ok: true, json: async () => ({ data: [{ id: 'gpt-image-1' }] }) } as Response
+      }
+      if (url.endsWith('/images/tasks/by-idempotency/ambiguous-client-task')) {
+        return {
+          ok: true,
+          json: async () => ({
+            task_id: 'imgtask_recovered',
+            status: 'completed',
+            result: { data: [{ b64_json: 'aGVsbG8=', mime_type: 'image/png' }] },
+          }),
+        } as Response
+      }
+      if (url.endsWith('/images/tasks/imgtask_recovered')) {
+        return {
+          ok: true,
+          json: async () => ({
+            task_id: 'imgtask_recovered',
+            status: 'completed',
+            result: { data: [{ b64_json: 'aGVsbG8=', mime_type: 'image/png' }] },
+          }),
+        } as Response
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
     localStorage.setItem(imageStudioPendingStorageKey(), JSON.stringify([
       {
         id: 88,
@@ -4097,13 +4270,13 @@ describe('ImageStudioView gallery', () => {
     const wrapper = mountImageStudio()
     await flushPromises()
     await flushPromises()
+    await flushPromises()
 
-    expect(wrapper.findAll('.image-pending-card')).toHaveLength(0)
-    expect(localStorage.getItem(imageStudioPendingStorageKey())).toBeNull()
-    expect(vi.mocked(fetch)).not.toHaveBeenCalledWith(
-      expect.stringContaining('/images/generations'),
-      expect.anything(),
+    expect(vi.mocked(fetch)).toHaveBeenCalledWith(
+      expect.stringContaining('/images/tasks/by-idempotency/ambiguous-client-task'),
+      expect.objectContaining({ headers: { Authorization: 'Bearer sk-ambiguous' } }),
     )
+    expect(wrapper.find('img[alt="生成结果 1"]').exists()).toBe(true)
   })
 })
 

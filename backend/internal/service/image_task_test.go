@@ -123,6 +123,33 @@ func TestImageTaskServiceLifecycleAndOwnership(t *testing.T) {
 	require.NotNil(t, completed.CompletedAt)
 }
 
+func TestImageTaskServiceGetByIdempotencyKey(t *testing.T) {
+	store := &imageTaskMemoryStore{}
+	svc := NewImageTaskServiceWithOptions(store, time.Hour, 10*time.Minute)
+	owner := ImageTaskOwner{UserID: 7, APIKeyID: 9}
+
+	created, replayed, err := svc.CreateWithExecutionIdempotent(
+		context.Background(),
+		owner,
+		&ImageTaskExecution{RequestPath: "/v1/images/generations"},
+		"recover-me",
+		"request-hash",
+	)
+	require.NoError(t, err)
+	require.False(t, replayed)
+
+	recovered, err := svc.GetByIdempotencyKey(context.Background(), owner, "recover-me")
+	require.NoError(t, err)
+	require.Equal(t, created.ID, recovered.ID)
+
+	_, err = svc.GetByIdempotencyKey(
+		context.Background(),
+		ImageTaskOwner{UserID: 8, APIKeyID: 10},
+		"recover-me",
+	)
+	require.ErrorIs(t, err, ErrImageTaskNotFound)
+}
+
 func TestImageTaskServiceInvalidResultBecomesFailed(t *testing.T) {
 	store := &imageTaskMemoryStore{}
 	svc := NewImageTaskServiceWithOptions(store, time.Hour, time.Minute)

@@ -109,7 +109,7 @@ func (s *usageLogImageLinkStore) MarkGenerationDuration(
 		)
 		VALUES ($1, $2, $3, $4, NOW())
 		ON CONFLICT (user_id, api_key_id, request_id) DO UPDATE
-		SET generation_duration_ms = GREATEST(
+		SET generation_duration_ms = COALESCE(
 		        image_generation_metrics.generation_duration_ms,
 		        EXCLUDED.generation_duration_ms
 		    ),
@@ -121,7 +121,7 @@ func (s *usageLogImageLinkStore) MarkGenerationDuration(
 	}
 	_, err = s.sqlDB.ExecContext(ctx, `
 		UPDATE usage_log_image_links
-		SET generation_duration_ms = GREATEST(COALESCE(generation_duration_ms, 0), $4),
+		SET generation_duration_ms = COALESCE(generation_duration_ms, $4),
 		    updated_at = NOW()
 		WHERE user_id = $1 AND api_key_id = $2 AND request_id = $3
 	`, userID, apiKeyID, requestID, durationMs)

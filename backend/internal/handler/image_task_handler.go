@@ -431,6 +431,33 @@ func (h *AsyncImageHandler) Get(c *gin.Context) {
 	c.JSON(http.StatusOK, task)
 }
 
+// GetByIdempotency recovers a task whose submit response was lost.
+func (h *AsyncImageHandler) GetByIdempotency(c *gin.Context) {
+	if !h.pollable() {
+		imageTaskJSONError(c, http.StatusNotFound, "not_found_error", "async image tasks are not enabled")
+		return
+	}
+	apiKey, ok := middleware2.GetAPIKeyFromContext(c)
+	if !ok || apiKey == nil || apiKey.UserID <= 0 || apiKey.ID <= 0 {
+		imageTaskError(c, service.ErrImageTaskForbidden)
+		return
+	}
+	task, err := h.tasks.GetByIdempotencyKey(
+		c.Request.Context(),
+		service.ImageTaskOwner{UserID: apiKey.UserID, APIKeyID: apiKey.ID},
+		c.Param("key"),
+	)
+	if err != nil {
+		imageTaskError(c, err)
+		return
+	}
+	c.Header("Cache-Control", "no-store")
+	if task.Status == service.ImageTaskStatusProcessing || task.Status == service.ImageTaskStatusPreviewReady {
+		c.Header("Retry-After", "3")
+	}
+	c.JSON(http.StatusOK, task)
+}
+
 // ReportClientError records a generation failure that happened in the browser
 // before the backend could persist a final image-task failure.
 func (h *AsyncImageHandler) ReportClientError(c *gin.Context) {
@@ -661,6 +688,13 @@ func (h *AsyncImageHandler) recoverPending() {
 		}
 		claimed, claimErr := h.tasks.Claim(ctx, task.ID, imageTaskLeaseTTL)
 		if claimErr != nil || !claimed {
+			continue
+		}
+		if task.Status == service.ImageTaskStatusPreviewReady {
+			if _, err := h.tasks.FinalizePreview(ctx, task.ID); err != nil {
+				logger.L().Warn("image_task.preview_finalize_failed", zap.String("task_id", task.ID), zap.Error(err))
+			}
+			_ = h.tasks.ReleaseClaim(ctx, task.ID)
 			continue
 		}
 		if task.Execution == nil {

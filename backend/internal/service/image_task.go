@@ -512,6 +512,33 @@ func (s *ImageTaskService) Get(ctx context.Context, owner ImageTaskOwner, id str
 	return imageTaskToPublic(task), nil
 }
 
+// GetByIdempotencyKey lets a client recover a task whose submit response was
+// lost because the browser navigated away or the network dropped.
+func (s *ImageTaskService) GetByIdempotencyKey(
+	ctx context.Context,
+	owner ImageTaskOwner,
+	idempotencyKey string,
+) (*ImageTask, error) {
+	if s == nil || s.store == nil {
+		return nil, ErrImageTaskUnavailable
+	}
+	key, err := NormalizeIdempotencyKey(idempotencyKey)
+	if err != nil {
+		return nil, err
+	}
+	if key == "" {
+		return nil, ErrImageTaskNotFound
+	}
+	taskID, err := s.store.GetIdempotencyTaskID(ctx, owner.APIKeyID, HashIdempotencyKey(key))
+	if err != nil {
+		return nil, ErrImageTaskUnavailable.WithCause(err)
+	}
+	if taskID == "" {
+		return nil, ErrImageTaskNotFound
+	}
+	return s.Get(ctx, owner, taskID)
+}
+
 func (s *ImageTaskService) Complete(ctx context.Context, id string, statusCode int, result json.RawMessage) error {
 	if !json.Valid(result) {
 		return s.Fail(ctx, id, http.StatusBadGateway, imageTaskErrorJSON("api_error", "upstream returned a non-JSON image response"))
@@ -541,13 +568,48 @@ func (s *ImageTaskService) Complete(ctx context.Context, id string, statusCode i
 			return s.saveState(ctx, id, ImageTaskStatusPreviewReady, statusCode, preview, nil, false)
 		}, ImageRewriteOptions{OutputFormat: outputFormat})
 		if err != nil {
-			// 转存失败不回退存 base64，避免大 blob 撑爆 Redis：直接把任务标记为失败。
 			logger.L().Error("image_task.offload_failed", zap.String("task_id", id), zap.Error(err))
+			finalized, finalizeErr := s.FinalizePreview(ctx, id)
+			if finalized && finalizeErr == nil {
+				return nil
+			}
+			if finalizeErr != nil {
+				logger.L().Error("image_task.preview_fallback_failed", zap.String("task_id", id), zap.Error(finalizeErr))
+			}
+			// 连预览也无法持久化时直接失败，绝不把大 blob 落 Redis。
 			return s.Fail(ctx, id, http.StatusBadGateway, imageTaskErrorJSON("api_error", "failed to store generated image to object storage"))
 		}
 		result = rewritten
 	}
 	return s.finish(ctx, id, ImageTaskStatusCompleted, statusCode, result, nil)
+}
+
+// FinalizePreview completes a task from its already-published preview without
+// re-running the upstream request. This is the recovery path after a process
+// restart between preview publication and full-size persistence.
+func (s *ImageTaskService) FinalizePreview(ctx context.Context, id string) (bool, error) {
+	if s == nil || s.store == nil {
+		return false, ErrImageTaskUnavailable
+	}
+	record, err := s.store.Get(ctx, strings.TrimSpace(id))
+	if err != nil {
+		return false, err
+	}
+	if record.Status != ImageTaskStatusPreviewReady {
+		return false, nil
+	}
+	uploader, enabled := s.current()
+	if !enabled || uploader == nil {
+		return false, ErrImageTaskUnavailable
+	}
+	result, err := uploader.PersistPreviewResult(ctx, record.UserID, record.ID, record.Result)
+	if err != nil {
+		return false, err
+	}
+	if err := s.finish(ctx, record.ID, ImageTaskStatusCompleted, record.HTTPStatus, result, nil); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (s *ImageTaskService) Fail(ctx context.Context, id string, statusCode int, taskErr json.RawMessage) error {

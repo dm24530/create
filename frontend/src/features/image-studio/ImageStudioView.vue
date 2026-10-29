@@ -69,7 +69,7 @@
           <article
             v-for="image in images"
             :key="image.id"
-            class="group overflow-hidden rounded-xl border border-gray-200 bg-gray-50 dark:border-dark-700 dark:bg-dark-800"
+            class="image-result-card group overflow-hidden rounded-xl border border-gray-200 bg-gray-50 dark:border-dark-700 dark:bg-dark-800"
           >
             <button
               type="button"
@@ -89,6 +89,7 @@
                     :alt="image.title"
                     class="image-pending-card__preview"
                     decoding="async"
+                    @load="reportImageDisplay(image)"
                   />
                   <div class="image-pending-card__preview-status">
                     <span class="image-generation-spinner" aria-hidden="true"></span>
@@ -128,7 +129,7 @@
                   :srcset="image.thumbSrcSet"
                   :ref="(element) => bindImageMediaElement(image, element)"
                   :alt="image.title"
-                  loading="lazy"
+                  :loading="image.gatewayTaskId ? 'eager' : 'lazy'"
                   decoding="async"
                   class="absolute inset-0 block h-full w-full object-cover"
                   :class="{ 'opacity-0': !isImageMediaLoaded(image) }"
@@ -760,6 +761,13 @@ const IMAGE_MEDIA_LOAD_TIMEOUT_MS = 10_000
 const reportedGenerationFailures = new Set<string>()
 const reportedVisibleErrors = new Set<string>()
 
+class ImageSubmissionUnconfirmed extends Error {
+  constructor(message = '图片任务提交状态暂无法确认，正在等待网络恢复') {
+    super(message)
+    this.name = 'ImageSubmissionUnconfirmed'
+  }
+}
+
 interface GeneratedImage {
   id: number | string
   title: string
@@ -1313,11 +1321,17 @@ const pendingGalleryImageIds = new Map<string, Promise<string>>()
 const galleryRemoteThumbUrls = new Map<string, string>()
 const galleryThumbnailDataUrls = new Map<string, string>()
 const galleryThumbnailRecoveryIds = new Set<string>()
+const GALLERY_THUMBNAIL_CONCURRENCY = 4
+const scheduledGalleryThumbnailLoads = new Map<string, Promise<void>>()
+const queuedGalleryThumbnailLoads: Array<() => void> = []
+let activeGalleryThumbnailLoads = 0
+let galleryThumbnailEpoch = 0
 const imageMediaTimeoutIds = new Map<string, ReturnType<typeof setTimeout>>()
 const imageProcessingTasks = new Map<string, Promise<void>>()
 const studioQuota = ref<{ used: number; limit: number } | null>(null)
 const resumedGenerationBatches = new Set<string>()
 const resumedGatewayBatches = new Set<string>()
+const resumingAmbiguousTaskIDs = new Set<string>()
 
 function clearStudioUserState() {
   studioUserEpoch += 1
@@ -1352,8 +1366,12 @@ function clearStudioUserState() {
   galleryRemoteThumbUrls.clear()
   galleryThumbnailDataUrls.clear()
   galleryThumbnailRecoveryIds.clear()
+  galleryThumbnailEpoch += 1
+  scheduledGalleryThumbnailLoads.clear()
+  queuedGalleryThumbnailLoads.splice(0)
   resumedGenerationBatches.clear()
   resumedGatewayBatches.clear()
+  resumingAmbiguousTaskIDs.clear()
   pendingDeleteImage.value = null
   deletingImage.value = false
   savingPreviewImage.value = false
@@ -1742,6 +1760,9 @@ async function loadData(epoch = studioUserEpoch, ownerId = studioStateOwnerId.va
   ])
   if (epoch !== studioUserEpoch || ownerId !== studioStateOwnerId.value) return
   studioLoadedOnce = true
+  void resumeAmbiguousGatewaySubmissions(
+    images.value.filter((item) => item.pending && item.gatewaySubmitPending && !item.gatewayPollUrl),
+  )
   void resumeGatewayGeneration(images.value.filter((item) => item.pending && item.gatewayPollUrl))
 }
 
@@ -1832,7 +1853,7 @@ async function loadGallery(epoch = studioUserEpoch, ownerId = studioStateOwnerId
       if (
         !isInlineImageSource(localImage?.thumbSrc)
       ) {
-        void loadGalleryThumbnail(entry.id)
+        void scheduleGalleryThumbnail(entry.id)
       }
     }
   } catch {
@@ -1898,6 +1919,43 @@ async function loadGalleryThumbnail(id: string, forceServer = false) {
     resetImageMediaState(image)
     armImageMediaTimeout(image)
   }
+}
+
+function scheduleGalleryThumbnail(id: string, forceServer = false) {
+  const key = `${id}:${forceServer ? 'server' : 'direct'}`
+  const existing = scheduledGalleryThumbnailLoads.get(key)
+  if (existing) return existing
+  const epoch = galleryThumbnailEpoch
+  const task = withGalleryThumbnailSlot(async () => {
+    if (epoch !== galleryThumbnailEpoch) return
+    await loadGalleryThumbnail(id, forceServer)
+  })
+    .finally(() => {
+      if (scheduledGalleryThumbnailLoads.get(key) === task) {
+        scheduledGalleryThumbnailLoads.delete(key)
+      }
+    })
+  scheduledGalleryThumbnailLoads.set(key, task)
+  return task
+}
+
+function withGalleryThumbnailSlot(task: () => Promise<void>) {
+  return new Promise<void>((resolve, reject) => {
+    const run = () => {
+      activeGalleryThumbnailLoads += 1
+      task()
+        .then(resolve, reject)
+        .finally(() => {
+          activeGalleryThumbnailLoads = Math.max(0, activeGalleryThumbnailLoads - 1)
+          queuedGalleryThumbnailLoads.shift()?.()
+        })
+    }
+    if (activeGalleryThumbnailLoads < GALLERY_THUMBNAIL_CONCURRENCY) {
+      run()
+      return
+    }
+    queuedGalleryThumbnailLoads.push(run)
+  })
 }
 
 function blobToDataURL(blob: Blob): Promise<string> {
@@ -1973,14 +2031,7 @@ function restorePendingImages() {
       })
     const timedOutEntries = restoredEntries.filter((item) => item.failed)
     const restoredAll = restoredEntries.filter((item) => item.pending)
-    const ambiguousGatewaySubmissions = restoredAll.filter((item) => (
-      item.gatewaySubmitPending && !item.gatewayPollUrl
-    ))
-    const restored = restoredAll.filter((item) => !ambiguousGatewaySubmissions.includes(item))
-    if (ambiguousGatewaySubmissions.length) {
-      appStore.showWarning('有图片任务的提交结果无法确认，为避免重复扣费未自动重试。请确认作品库后重新生成。', 6000)
-      reportVisibleImageStudioError('有图片任务的提交结果无法确认，为避免重复扣费未自动重试。请确认作品库后重新生成。')
-    }
+    const restored = restoredAll
     if (!restored.length && !timedOutEntries.length) {
       localStorage.removeItem(pendingImageStorageKey(userId))
       return
@@ -1995,7 +2046,7 @@ function restorePendingImages() {
       [...restored, ...timedOutEntries],
     )
     persistPendingImages()
-    const serviceWorkerPending = restored.filter((item) => !item.gatewayPollUrl)
+    const serviceWorkerPending = restored.filter((item) => !item.gatewayPollUrl && !item.gatewaySubmitPending)
     if (serviceWorkerPending.length && 'serviceWorker' in navigator && typeof indexedDB !== 'undefined') {
       appStore.showSuccess(`已恢复 ${restored.length} 个后台生成任务`, 3000)
       void resumePersistentGeneration(serviceWorkerPending)
@@ -2056,6 +2107,15 @@ function applyInspirationFromRoute() {
   } catch {
     // 浏览器存储不可用时按没有待带入提示词处理。
   }
+}
+
+function resumeAmbiguousTasksOnOnline() {
+  const pending = images.value.filter((item) => (
+    item.pending
+    && item.gatewaySubmitPending
+    && !item.gatewayPollUrl
+  ))
+  if (pending.length) void resumeAmbiguousGatewaySubmissions(pending)
 }
 
 function persistPendingImages() {
@@ -2413,7 +2473,7 @@ function handleImageMediaError(image: GeneratedImage) {
     ) {
       galleryThumbnailRecoveryIds.add(mediaID)
       resetImageMediaState(image)
-      void loadGalleryThumbnail(galleryID, true).finally(() => {
+      void scheduleGalleryThumbnail(galleryID, true).finally(() => {
         galleryThumbnailRecoveryIds.delete(mediaID)
       })
       return
@@ -2982,6 +3042,10 @@ async function generate() {
       geminiModel,
       progress.enqueue,
     )
+    const unconfirmedImages = pendingImages.filter((_, index) => (
+      results[index]?.status === 'rejected'
+      && results[index].reason instanceof ImageSubmissionUnconfirmed
+    ))
     for (const result of results) {
       if (result.status === 'rejected') progress.recordError(result.reason)
     }
@@ -2993,11 +3057,20 @@ async function generate() {
       return
     }
     removePendingImages(
-      pendingImages.filter((image) => image.pending && !progress.completedIds.has(image.id)),
+      pendingImages.filter((image) => (
+        image.pending
+        && !progress.completedIds.has(image.id)
+        && !unconfirmedImages.includes(image)
+      )),
       owner,
     )
     if (!isStudioOwnerCurrent(owner)) return
+    if (unconfirmedImages.length) {
+      appStore.showInfo('网络连接异常，图片任务仍在后台确认中', 5000)
+      void resumeAmbiguousGatewaySubmissions(unconfirmedImages)
+    }
     if (progress.generatedCount === 0) {
+      if (unconfirmedImages.length) return
       errorMessage.value = errorMessageFrom(progress.firstError, '生成失败')
       return
     }
@@ -3134,6 +3207,7 @@ function createGenerationProgress(owner: StudioOwnerSnapshot) {
   let persistenceNeedsRefresh = false
 
   const recordError = (error: unknown) => {
+    if (error instanceof ImageSubmissionUnconfirmed) return
     if (error instanceof ImageGenerationStillRunning) {
       stillRunning = true
       return
@@ -3233,6 +3307,7 @@ function applyGenerationFailures(
   results.forEach((result, index) => {
     if (result.status !== 'rejected') return
     if (result.reason instanceof ImageGenerationStillRunning) return
+    if (result.reason instanceof ImageSubmissionUnconfirmed) return
     const image = pendingImages[index]
     if (!image) return
     markImageFailed(image, result.reason)
@@ -3305,7 +3380,10 @@ function reportImageGenerationFailure(image: GeneratedImage, error: unknown, mes
   if (reportedGenerationFailures.has(key)) return
   reportedGenerationFailures.add(key)
   const normalized = message.toLowerCase()
-  const errorType = normalized.includes('超时') || normalized.includes('timeout')
+  const errorType = normalized.includes('超时')
+    || normalized.includes('timeout')
+    || normalized.includes('超过 3 分钟')
+    || normalized.includes('停止等待')
     ? 'client_timeout'
     : normalized.includes('无法连接') || normalized.includes('network')
       ? 'client_network_error'
@@ -3366,6 +3444,17 @@ function gatewayAsyncSubmitUrl(syncUrl: string, geminiModel: boolean) {
   return syncUrl.replace(/\/images\/(generations|edits)$/, '/images/$1/async')
 }
 
+function gatewayIdempotencyLookupUrl(idempotencyKey: string) {
+  return `${apiBaseUrl.value.replace(/\/+$/, '')}/images/tasks/by-idempotency/${encodeURIComponent(idempotencyKey)}`
+}
+
+function gatewayPollUrlForTask(task: any) {
+  const direct = String(task?.poll_url || '').trim()
+  if (direct) return direct
+  const id = String(task?.task_id || task?.id || '').trim()
+  return id ? `${apiBaseUrl.value.replace(/\/+$/, '')}/images/tasks/${encodeURIComponent(id)}` : ''
+}
+
 function gatewayTaskPayload(payload: any) {
   return payload?.data && !payload?.task_id && !payload?.id ? payload.data : payload
 }
@@ -3404,6 +3493,16 @@ class ImageRequestTimeout extends Error {
 function formatRequestTimeout(timeoutMs: number) {
   if (timeoutMs < 60_000) return `${Math.max(1, Math.ceil(timeoutMs / 1_000))} 秒`
   return `${Math.ceil(timeoutMs / 60_000)} 分钟`
+}
+
+function isTransientGatewayError(error: unknown) {
+  if (error instanceof ImageRequestTimeout) return true
+  const message = error instanceof Error ? error.message : String(error || '')
+  return /failed to fetch|network error|networkerror|load failed|fetch failed|econnreset|etimedout|temporarily unavailable/i.test(message)
+}
+
+function isTransientGatewayStatus(status: number) {
+  return status === 408 || status === 429 || status === 502 || status === 503 || status === 504
 }
 
 async function fetchWithTimeout(
@@ -3517,7 +3616,7 @@ async function pollGatewayImageTask(
       payload = await response.json().catch(() => null)
     } catch (error) {
       if (error instanceof ImageGenerationWaitCancelled) throw error
-      if (error instanceof ImageRequestTimeout) {
+      if (isTransientGatewayError(error)) {
         if (Date.now() < deadline) {
           await waitForGatewayPollRetry(gatewayPollInterval(Date.now() - pollStartedAt))
           continue
@@ -3525,6 +3624,13 @@ async function pollGatewayImageTask(
         throw new Error(IMAGE_GENERATION_TIMEOUT_MESSAGE)
       }
       throw error instanceof Error ? error : new Error('查询图片任务失败')
+    }
+    if (isTransientGatewayStatus(response.status)) {
+      if (Date.now() < deadline) {
+        await waitForGatewayPollRetry(gatewayPollInterval(Date.now() - pollStartedAt))
+        continue
+      }
+      throw new Error(IMAGE_GENERATION_TIMEOUT_MESSAGE)
     }
     if (!response.ok) throw gatewayTaskError(payload, response.status)
     const task = gatewayTaskPayload(payload)
@@ -3547,6 +3653,7 @@ async function tryExecuteGatewayAsyncRequests(
   const submitUrl = gatewayAsyncSubmitUrl(syncUrl, geminiModel)
   const submitted: Array<{ image: GeneratedImage; pollUrl: string }> = []
   const results: Array<PromiseSettledResult<any[]> | null> = new Array(pendingImages.length).fill(null)
+  let ambiguousSubmission = false
 
   for (const [imageIndex, image] of pendingImages.entries()) {
     let requestBody: string | FormData = body
@@ -3557,9 +3664,11 @@ async function tryExecuteGatewayAsyncRequests(
         request: JSON.parse(body),
       })
     }
+    const idempotencyKey = image.taskId || createImageGenerationTaskId()
+    image.taskId = idempotencyKey
     const requestHeaders = {
       ...headers,
-      'Idempotency-Key': image.taskId || createImageGenerationTaskId(),
+      'Idempotency-Key': idempotencyKey,
     }
     const generationDeadline = Number(image.startedAt || 0) > 0
       ? Number(image.startedAt) + IMAGE_GENERATION_TIMEOUT_MS
@@ -3577,37 +3686,79 @@ async function tryExecuteGatewayAsyncRequests(
     let response: Response | null = null
     let payload: any = null
     let requestError: unknown = null
-    try {
-      response = await fetchWithTimeout(
-        submitUrl,
-        {
-          method: 'POST',
-          headers: requestHeaders,
-          body: requestBody,
-        },
-        Math.min(IMAGE_ASYNC_SUBMIT_TIMEOUT_MS, Math.max(1, generationDeadline - Date.now())),
-      )
-      payload = await response.json().catch(() => null)
-    } catch (error) {
-      requestError = error
+    let transientSubmitFailure = false
+    for (let attempt = 0; attempt < 3 && !response; attempt += 1) {
+      try {
+        response = await fetchWithTimeout(
+          submitUrl,
+          {
+            method: 'POST',
+            headers: requestHeaders,
+            body: requestBody,
+          },
+          Math.min(IMAGE_ASYNC_SUBMIT_TIMEOUT_MS, Math.max(1, generationDeadline - Date.now())),
+        )
+        payload = await response.json().catch(() => null)
+      } catch (error) {
+        requestError = error
+      }
+      if (response && isTransientGatewayStatus(response.status)) {
+        requestError = gatewayTaskError(payload, response.status)
+        response = null
+      }
+      if (!response && isTransientGatewayError(requestError)) {
+        transientSubmitFailure = true
+        ambiguousSubmission = true
+        if (attempt === 2) break
+        await waitForGatewayPollRetry(500 * (attempt + 1))
+        continue
+      }
+      break
+    }
+    if (!response && transientSubmitFailure) {
+      try {
+        const recovered = await lookupGatewayTaskByIdempotency(idempotencyKey, headers)
+        if (recovered && gatewayPollUrlForTask(recovered)) {
+          response = {
+            ok: true,
+            json: async () => recovered,
+          } as Response
+          payload = recovered
+          requestError = null
+        }
+      } catch {
+        // Preserve the original submission error if recovery also fails.
+      }
     }
     if (!response) {
       const reason = requestError instanceof Error
         ? requestError
         : new Error('提交图片任务失败')
+      if (transientSubmitFailure) {
+        results[imageIndex] = {
+          status: 'rejected',
+          reason: new ImageSubmissionUnconfirmed(),
+        }
+        continue
+      }
       if (!submitted.length) throw reason
       results[imageIndex] = { status: 'rejected', reason }
       continue
     }
     if (response.status === 404) {
-      if (!submitted.length) {
+      if (!submitted.length && !ambiguousSubmission) {
         for (const pendingImage of pendingImages) {
           pendingImage.gatewaySubmitPending = false
         }
         persistPendingImages()
         return null
       }
-      results[imageIndex] = { status: 'rejected', reason: gatewayTaskError(payload, response.status) }
+      results[imageIndex] = {
+        status: 'rejected',
+        reason: ambiguousSubmission
+          ? new ImageSubmissionUnconfirmed()
+          : gatewayTaskError(payload, response.status),
+      }
       continue
     }
     if (!response.ok) {
@@ -3617,17 +3768,18 @@ async function tryExecuteGatewayAsyncRequests(
       continue
     }
     const task = gatewayTaskPayload(payload)
-    if (!task?.poll_url) {
+    const taskPollUrl = gatewayPollUrlForTask(task)
+    if (!taskPollUrl) {
       const error = new Error('服务端没有返回图片任务地址')
       if (!submitted.length) throw error
       results[imageIndex] = { status: 'rejected', reason: error }
       continue
     }
     image.gatewayTaskId = String(task.task_id || task.id || '')
-    image.gatewayPollUrl = String(task.poll_url)
+    image.gatewayPollUrl = taskPollUrl
     image.taskId = image.gatewayTaskId || image.taskId
     image.gatewaySubmitPending = false
-    submitted.push({ image, pollUrl: String(task.poll_url) })
+    submitted.push({ image, pollUrl: taskPollUrl })
     persistPendingImages()
   }
 
@@ -3648,9 +3800,11 @@ async function tryExecuteGatewayAsyncRequests(
       return result.value
     }),
   )
-  for (const image of pendingImages) {
-    if (!image.gatewayPollUrl) image.gatewaySubmitPending = false
-  }
+  pendingImages.forEach((image, index) => {
+    const unconfirmed = results[index]?.status === 'rejected'
+      && results[index].reason instanceof ImageSubmissionUnconfirmed
+    if (!image.gatewayPollUrl && !unconfirmed) image.gatewaySubmitPending = false
+  })
   persistPendingImages()
   submitted.forEach((task, index) => {
     const imageIndex = pendingImages.indexOf(task.image)
@@ -3751,6 +3905,75 @@ async function resumeGatewayGeneration(pendingImages: GeneratedImage[]) {
       }
     }
   }
+}
+
+async function resumeAmbiguousGatewaySubmissions(pendingImages: GeneratedImage[]) {
+  if (!pendingImages.length || !selectedKey.value?.key) return
+  const candidates = pendingImages.filter((image) => (
+    image.taskId && !resumingAmbiguousTaskIDs.has(image.taskId)
+  ))
+  if (!candidates.length) return
+  for (const image of candidates) {
+    if (image.taskId) resumingAmbiguousTaskIDs.add(image.taskId)
+  }
+  const owner = captureStudioOwner()
+  let remaining = candidates
+  try {
+    while (remaining.length && isStudioOwnerCurrent(owner)) {
+      const recovered = new Set<GeneratedImage>()
+      await Promise.allSettled(remaining.map(async (image) => {
+        if (!image.taskId) return
+        const taskKey = image.apiKeyId
+          ? imageCapableKeys.value.find((key) => Number(key.id) === Number(image.apiKeyId))
+          : selectedKey.value
+        if (!taskKey?.key) return
+        const task = await lookupGatewayTaskByIdempotency(image.taskId, {
+          Authorization: `Bearer ${taskKey.key}`,
+        })
+        const pollUrl = gatewayPollUrlForTask(task)
+        if (!isStudioOwnerCurrent(owner) || !pollUrl) return
+        image.gatewayTaskId = String(task?.task_id || task?.id || image.taskId)
+        image.gatewayPollUrl = pollUrl
+        image.gatewaySubmitPending = false
+        recovered.add(image)
+      }))
+      if (recovered.size) {
+        persistPendingImages()
+        void resumeGatewayGeneration(Array.from(recovered))
+      }
+      remaining = remaining.filter((image) => !recovered.has(image))
+      if (!remaining.length || !isStudioOwnerCurrent(owner)) break
+      const deadline = Math.min(...remaining.map((image) => (
+        Number(image.startedAt || 0) > 0
+          ? Number(image.startedAt) + IMAGE_GENERATION_TIMEOUT_MS
+          : Date.now() + IMAGE_GENERATION_TIMEOUT_MS
+      )))
+      if (Date.now() >= deadline) {
+        markPendingImagesTimedOut(remaining, owner)
+        break
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 2000))
+    }
+  } finally {
+    for (const image of candidates) {
+      if (image.taskId) resumingAmbiguousTaskIDs.delete(image.taskId)
+    }
+  }
+}
+
+async function lookupGatewayTaskByIdempotency(
+  idempotencyKey: string,
+  headers: Record<string, string>,
+) {
+  const response = await fetchWithTimeout(
+    gatewayIdempotencyLookupUrl(idempotencyKey),
+    { headers },
+    15_000,
+  )
+  if (response.status === 404) return null
+  const payload = await response.json().catch(() => null)
+  if (!response.ok) throw gatewayTaskError(payload, response.status)
+  return gatewayTaskPayload(payload)
 }
 
 function workerResponseToSettledResult(
@@ -4360,6 +4583,7 @@ onMounted(() => {
   document.addEventListener('pointerdown', closeImageDownloadMenu)
   document.addEventListener('keydown', handleSizeEscape)
   window.addEventListener(IMAGE_STUDIO_GALLERY_CHANGED_EVENT, refreshGalleryAfterExternalChange)
+  window.addEventListener('online', resumeAmbiguousTasksOnOnline)
   applyInspirationFromRoute()
   void loadData()
 })
@@ -4375,8 +4599,10 @@ onActivated(() => {
   }
   if (studioLoadedOnce) refreshGalleryAfterExternalChange()
   applyInspirationFromRoute()
-  const restored = images.value.filter((item) => item.pending && item.taskId && !item.gatewayPollUrl)
+  const restored = images.value.filter((item) => item.pending && item.taskId && !item.gatewayPollUrl && !item.gatewaySubmitPending)
   if (restored.length) void resumePersistentGeneration(restored)
+  const ambiguousPending = images.value.filter((item) => item.pending && item.gatewaySubmitPending && !item.gatewayPollUrl)
+  if (ambiguousPending.length) void resumeAmbiguousGatewaySubmissions(ambiguousPending)
   const gatewayPending = images.value.filter((item) => item.pending && item.gatewayPollUrl)
   if (gatewayPending.length) void resumeGatewayGeneration(gatewayPending)
 })
@@ -4392,6 +4618,7 @@ onBeforeUnmount(() => {
   document.removeEventListener('pointerdown', closeImageDownloadMenu)
   document.removeEventListener('keydown', handleSizeEscape)
   window.removeEventListener(IMAGE_STUDIO_GALLERY_CHANGED_EVENT, refreshGalleryAfterExternalChange)
+  window.removeEventListener('online', resumeAmbiguousTasksOnOnline)
   for (const timer of imageMediaTimeoutIds.values()) {
     clearTimeout(timer)
   }
@@ -6240,6 +6467,11 @@ onBeforeUnmount(() => {
 .image-result-card__media {
   aspect-ratio: 16 / 10;
   flex: none;
+}
+
+.image-result-card {
+  content-visibility: auto;
+  contain-intrinsic-size: 20rem;
 }
 
 .image-result-card__media img {

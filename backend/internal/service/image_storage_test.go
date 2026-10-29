@@ -504,6 +504,34 @@ func TestImageTaskServicePublishesPreviewBeforeOriginalUpload(t *testing.T) {
 	require.Equal(t, "https://cdn.test/images/users/1/"+created.ID+"-0.png", final.ImageURL)
 }
 
+func TestImageTaskServiceFinalizesPreviewWithoutReRunningUpstream(t *testing.T) {
+	store := &imageTaskMemoryStore{}
+	storage := &fakeImageStorage{}
+	uploader := NewImageResultUploader(storage, "images/", 0, nil)
+	svc := NewImageTaskServiceWithUploader(store, uploader, time.Hour, time.Minute)
+	result := json.RawMessage(`{"data":[{"url":"data:image/png;base64,` +
+		base64.StdEncoding.EncodeToString(pngBytes) + `","mime_type":"image/png"}]}`)
+	require.NoError(t, store.Save(context.Background(), &ImageTaskRecord{
+		ID:         "imgtask_preview_recovery",
+		UserID:     1,
+		APIKeyID:   2,
+		Status:     ImageTaskStatusPreviewReady,
+		HTTPStatus: http.StatusOK,
+		Result:     result,
+	}, time.Hour))
+
+	finalized, err := svc.FinalizePreview(context.Background(), "imgtask_preview_recovery")
+	require.NoError(t, err)
+	require.True(t, finalized)
+
+	got, err := store.Get(context.Background(), "imgtask_preview_recovery")
+	require.NoError(t, err)
+	require.Equal(t, ImageTaskStatusCompleted, got.Status)
+	require.Contains(t, string(got.Result), `"object_key"`)
+	require.Contains(t, string(got.Result), `"preview_fallback":true`)
+	require.Len(t, storage.saved, 1)
+}
+
 func TestImageTaskServiceCompletesWithLocalOriginalBeforeRemoteUpload(t *testing.T) {
 	store := &imageTaskMemoryStore{}
 	remote := &fakeImageStorage{}

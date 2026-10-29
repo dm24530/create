@@ -282,6 +282,71 @@ func (u *ImageResultUploader) Rewrite(ctx context.Context, userID int64, taskID 
 	return u.RewriteWithPreview(ctx, userID, taskID, result, nil)
 }
 
+// PersistPreviewResult turns an already-published preview into a durable image.
+// Recovery uses it after a process restart when the full-size original was lost:
+// the user keeps a saveable preview, but the upstream request is never repeated.
+func (u *ImageResultUploader) PersistPreviewResult(
+	ctx context.Context,
+	userID int64,
+	taskID string,
+	result json.RawMessage,
+) (json.RawMessage, error) {
+	if u == nil || (u.storage == nil && u.localAssets == nil) {
+		return nil, errors.New("image storage is unavailable")
+	}
+	if userID <= 0 {
+		return nil, errors.New("image owner user ID is required")
+	}
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(result, &top); err != nil {
+		return nil, fmt.Errorf("parse preview response: %w", err)
+	}
+	rawData, ok := top["data"]
+	if !ok {
+		return nil, errors.New("preview response has no data")
+	}
+	var items []map[string]json.RawMessage
+	if err := json.Unmarshal(rawData, &items); err != nil {
+		return nil, fmt.Errorf("parse preview response data: %w", err)
+	}
+	storageKey := "users/" + strconv.FormatInt(userID, 10)
+	if u.identities != nil {
+		resolved, err := u.identities.StorageKey(ctx, userID)
+		if err != nil {
+			return nil, err
+		}
+		storageKey = resolved
+	}
+	expiresAt := time.Now().UTC().Add(defaultImageTaskTTL).Unix()
+	for i, item := range items {
+		data, contentType, err := u.fetchImageBytes(ctx, item)
+		if err != nil {
+			return nil, fmt.Errorf("preview image %d: %w", i, err)
+		}
+		key := u.buildKey(storageKey, taskID, i, contentType)
+		if u.localAssets != nil {
+			meta, saveErr := u.localAssets.Save(ctx, userID, taskID, key, contentType, expiresAt, data)
+			if saveErr != nil {
+				return nil, fmt.Errorf("preview image %d: stage local: %w", i, saveErr)
+			}
+			item["url"] = encodedJSON(u.localAssets.URL(meta.ID))
+			item["local_asset_id"] = encodedJSON(meta.ID)
+		} else {
+			url, saveErr := u.storage.Save(ctx, key, contentType, data)
+			if saveErr != nil {
+				return nil, fmt.Errorf("preview image %d: upload: %w", i, saveErr)
+			}
+			item["url"] = encodedJSON(url)
+		}
+		item["object_key"] = encodedJSON(key)
+		item["mime_type"] = encodedJSON(contentType)
+		item["preview_fallback"] = encodedJSON(true)
+		delete(item, "b64_json")
+		items[i] = item
+	}
+	return imageResultWithItems(top, items)
+}
+
 // RewriteWithPreview uploads lightweight previews first, then stores the full
 // originals. The preview callback lets the task API surface an image before the
 // potentially large original upload to object storage has finished.
@@ -341,19 +406,16 @@ func (u *ImageResultUploader) RewriteWithPreview(
 		if err != nil {
 			return nil, fmt.Errorf("image %d: %w", i, err)
 		}
-		data, contentType, err = TranscodeImageOutput(data, contentType, outputFormat)
-		if err != nil {
-			return nil, fmt.Errorf("image %d: %w", i, err)
-		}
-		key := u.buildKey(storageKey, taskID, i, contentType)
 		prepared[i] = preparedImage{
 			item:        item,
 			data:        data,
 			contentType: contentType,
-			key:         key,
 		}
 	}
 
+	// Publish the lightweight preview from the raw upstream bytes before the
+	// full-size transcode and object-storage work. The durable image task keeps
+	// running on the server after the browser disconnects.
 	previewItems := make([]map[string]json.RawMessage, 0, len(prepared))
 	for i := range prepared {
 		previewData, thumbErr := buildFastImagePreview(prepared[i].data, 1024)
@@ -381,6 +443,20 @@ func (u *ImageResultUploader) RewriteWithPreview(
 		if err := onPreview(encodedJSON(previewTop)); err != nil {
 			return nil, fmt.Errorf("publish image preview: %w", err)
 		}
+	}
+
+	for i := range prepared {
+		data, contentType, err := TranscodeImageOutput(
+			prepared[i].data,
+			prepared[i].contentType,
+			outputFormat,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("image %d: %w", i, err)
+		}
+		prepared[i].data = data
+		prepared[i].contentType = contentType
+		prepared[i].key = u.buildKey(storageKey, taskID, i, contentType)
 	}
 
 	if u.localAssets != nil {
