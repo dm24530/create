@@ -39,6 +39,7 @@ export type CanvasNodeImage = {
     cloudAssetId?: string;
     cloudURL?: string;
     cloudPreviewURL?: string;
+    cloudSourceObjectKey?: string;
     cloudSyncState?: "pending" | "uploading" | "uploaded" | "failed";
     naturalWidth: number;
     naturalHeight: number;
@@ -94,6 +95,7 @@ export type CanvasNodeMetadata = {
     cloudAssetId?: string;
     cloudURL?: string;
     cloudPreviewURL?: string;
+    cloudSourceObjectKey?: string;
     cloudSyncState?: "pending" | "uploading" | "uploaded" | "failed";
     mimeType?: string;
     bytes?: number;

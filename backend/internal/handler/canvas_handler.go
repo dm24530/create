@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -28,23 +29,33 @@ import (
 )
 
 const (
-	maxCanvasProjectBytes = 12 << 20
-	maxCanvasAssetBytes   = 128 << 20
-	maxCanvasThumbBytes   = 4 << 20
-	canvasProjectPageSize = 50
-	canvasProjectMaxPage  = 100
-	canvasProjectQuota    = 100
-	canvasAssetCountQuota = 5000
-	canvasAssetBytesQuota = int64(2 << 30)
+	maxCanvasProjectBytes   = 12 << 20
+	maxCanvasAssetBytes     = 128 << 20
+	maxCanvasThumbBytes     = 4 << 20
+	canvasProjectPageSize   = 50
+	canvasProjectMaxPage    = 100
+	canvasProjectQuota      = 100
+	canvasAssetCountQuota   = 5000
+	canvasAssetBytesQuota   = int64(2 << 30)
+	canvasUploadIntentLimit = 5
+	canvasUploadIntentTTL   = 20 * time.Minute
 )
 
 var canvasIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+var (
+	errCanvasUploadIntentLimit = errors.New("too many pending canvas uploads")
+	errCanvasUploadStorageFull = errors.New("canvas storage quota exceeded")
+)
 
 type CanvasAssetStorage interface {
 	SaveImageWithKey(ctx context.Context, key, contentType string, data []byte) (string, string, error)
 	SaveImageWithFullKey(ctx context.Context, key, contentType string, data []byte) (string, string, error)
 	DeleteObject(ctx context.Context, key string) error
 	PresignImageObject(ctx context.Context, objectKey string) (string, error)
+	PresignImageUpload(ctx context.Context, objectKey, contentType string) (service.ImageStorageUploadRequest, error)
+	ImageObjectStat(ctx context.Context, objectKey string) (service.ImageObjectMetadata, error)
+	ReadImageObjectPrefix(ctx context.Context, objectKey string, length int64) ([]byte, error)
+	CopyImageObject(ctx context.Context, sourceKey, targetKey, contentType string) error
 	FetchImageURL(ctx context.Context, rawURL string) ([]byte, string, error)
 }
 
@@ -73,26 +84,81 @@ type CanvasProjectRecord struct {
 }
 
 type CanvasAsset struct {
-	ID        string    `json:"id"`
-	ProjectID string    `json:"project_id"`
-	NodeID    string    `json:"node_id"`
-	Kind      string    `json:"kind"`
-	URL       string    `json:"url"`
-	ThumbURL  string    `json:"thumb_url,omitempty"`
-	Width     int       `json:"width"`
-	Height    int       `json:"height"`
-	Bytes     int64     `json:"bytes"`
-	MimeType  string    `json:"mime_type"`
-	SHA256    string    `json:"sha256,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
-	objectKey string
-	thumbKey  string
+	ID              string    `json:"id"`
+	ProjectID       string    `json:"project_id"`
+	NodeID          string    `json:"node_id"`
+	Kind            string    `json:"kind"`
+	URL             string    `json:"url"`
+	ThumbURL        string    `json:"thumb_url,omitempty"`
+	Width           int       `json:"width"`
+	Height          int       `json:"height"`
+	Bytes           int64     `json:"bytes"`
+	MimeType        string    `json:"mime_type"`
+	SHA256          string    `json:"sha256,omitempty"`
+	SourceObjectKey string    `json:"source_object_key,omitempty"`
+	CreatedAt       time.Time `json:"created_at"`
+	objectKey       string
+	thumbKey        string
 }
 
 type putCanvasProjectRequest struct {
 	Title   string          `json:"title"`
 	Graph   json.RawMessage `json:"graph"`
 	Version int             `json:"version"`
+}
+
+type presignCanvasAssetRequest struct {
+	ProjectID            string `json:"project_id"`
+	NodeID               string `json:"node_id"`
+	Kind                 string `json:"kind"`
+	Filename             string `json:"filename"`
+	ContentType          string `json:"content_type"`
+	Bytes                int64  `json:"bytes"`
+	ThumbnailContentType string `json:"thumbnail_content_type"`
+	ThumbnailBytes       int64  `json:"thumbnail_bytes"`
+	SHA256               string `json:"sha256"`
+}
+
+type completeCanvasAssetRequest struct {
+	AssetID              string `json:"asset_id"`
+	ProjectID            string `json:"project_id"`
+	NodeID               string `json:"node_id"`
+	Kind                 string `json:"kind"`
+	Filename             string `json:"filename"`
+	ContentType          string `json:"content_type"`
+	Bytes                int64  `json:"bytes"`
+	ObjectKey            string `json:"object_key"`
+	ThumbnailContentType string `json:"thumbnail_content_type"`
+	ThumbnailBytes       int64  `json:"thumbnail_bytes"`
+	ThumbObjectKey       string `json:"thumb_object_key"`
+	Width                int    `json:"width"`
+	Height               int    `json:"height"`
+	SHA256               string `json:"sha256"`
+}
+
+type promoteCanvasAssetRequest struct {
+	ProjectID       string `json:"project_id"`
+	NodeID          string `json:"node_id"`
+	Kind            string `json:"kind"`
+	SourceObjectKey string `json:"source_object_key"`
+	Width           int    `json:"width"`
+	Height          int    `json:"height"`
+}
+
+type canvasUploadIntent struct {
+	AssetID       string
+	UserID        int64
+	ProjectID     string
+	NodeID        string
+	Kind          string
+	ObjectKey     string
+	ThumbKey      string
+	Bytes         int64
+	ThumbBytes    int64
+	MimeType      string
+	ThumbMimeType string
+	SHA256        string
+	ExpiresAt     time.Time
 }
 
 func NewCanvasHandler(
@@ -437,6 +503,512 @@ func (h *CanvasHandler) DeleteProject(c *gin.Context) {
 	response.Success(c, gin.H{"deleted": true})
 }
 
+// PresignAsset creates browser-to-R2 upload URLs without moving file bytes
+// through the application process.
+func (h *CanvasHandler) PresignAsset(c *gin.Context) {
+	userID, ok := h.userID(c)
+	if !ok {
+		return
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 64<<10)
+	var request presignCanvasAssetRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		response.BadRequest(c, "画布资产上传参数无效")
+		return
+	}
+	projectID := strings.TrimSpace(request.ProjectID)
+	nodeID := truncateCanvasNodeID(request.NodeID)
+	kind, contentType, err := normalizeCanvasAssetInput(request.Kind, request.ContentType)
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	if !canvasIDPattern.MatchString(projectID) {
+		response.BadRequest(c, "画布项目 ID 无效")
+		return
+	}
+	if request.Bytes <= 0 || request.Bytes > maxCanvasAssetBytes {
+		response.BadRequest(c, "画布资产文件为空或过大")
+		return
+	}
+	if !h.ownsProject(c.Request.Context(), userID, projectID) {
+		response.NotFound(c, "画布项目不存在")
+		return
+	}
+	digest := normalizeCanvasSHA256(request.SHA256)
+	if digest != "" {
+		if existing := h.findCanvasAssetByHash(c.Request.Context(), userID, projectID, nodeID, digest); existing != nil {
+			response.Success(c, gin.H{"existing": *existing})
+			return
+		}
+	}
+
+	thumbType := ""
+	pendingThumbKey := ""
+	if strings.TrimSpace(request.ThumbnailContentType) != "" || request.ThumbnailBytes > 0 {
+		if request.ThumbnailBytes <= 0 || request.ThumbnailBytes > maxCanvasThumbBytes {
+			response.BadRequest(c, "画布缩略图为空或过大")
+			return
+		}
+		thumbType, _, err = normalizeCanvasAssetContentType(request.ThumbnailContentType)
+		if err != nil || !strings.HasPrefix(thumbType, "image/") {
+			response.BadRequest(c, "画布缩略图类型无效")
+			return
+		}
+	}
+
+	storageKey, err := h.userStorageKey(c.Request.Context(), userID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	assetID := strings.ReplaceAll(uuid.NewString(), "-", "")
+	extension := canvasContentTypeExtension(contentType)
+	objectKey := canvasAssetPendingKey(storageKey, projectID, assetID, extension)
+	if pendingThumbKey == "" && thumbType != "" {
+		pendingThumbKey = canvasAssetPendingThumbKey(storageKey, projectID, assetID, canvasContentTypeExtension(thumbType))
+	}
+	intent := canvasUploadIntent{
+		AssetID:       assetID,
+		UserID:        userID,
+		ProjectID:     projectID,
+		NodeID:        nodeID,
+		Kind:          kind,
+		ObjectKey:     objectKey,
+		ThumbKey:      pendingThumbKey,
+		Bytes:         request.Bytes,
+		ThumbBytes:    request.ThumbnailBytes,
+		MimeType:      contentType,
+		ThumbMimeType: thumbType,
+		SHA256:        digest,
+		ExpiresAt:     time.Now().UTC().Add(canvasUploadIntentTTL),
+	}
+	if err := h.reserveCanvasUploadIntent(c.Request.Context(), intent); err != nil {
+		switch {
+		case errors.Is(err, errCanvasUploadIntentLimit):
+			response.Error(c, http.StatusTooManyRequests, "待完成上传任务过多，请稍后再试")
+		case errors.Is(err, errCanvasUploadStorageFull):
+			response.Error(c, http.StatusTooManyRequests, "画布存储空间即将达到上限")
+		default:
+			response.InternalError(c, "创建上传任务失败")
+		}
+		return
+	}
+	upload, err := h.storage.PresignImageUpload(c.Request.Context(), objectKey, contentType)
+	if err != nil {
+		h.deleteCanvasUploadIntent(c.Request.Context(), userID, assetID)
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	payload := gin.H{
+		"asset_id":       assetID,
+		"kind":           kind,
+		"object_key":     objectKey,
+		"upload_url":     upload.URL,
+		"content_type":   contentType,
+		"upload_headers": upload.Headers,
+	}
+	if thumbType != "" {
+		thumbKey := pendingThumbKey
+		thumbUpload, presignErr := h.storage.PresignImageUpload(c.Request.Context(), thumbKey, thumbType)
+		if presignErr != nil {
+			h.deleteCanvasUploadIntent(c.Request.Context(), userID, assetID)
+			response.ErrorFrom(c, presignErr)
+			return
+		}
+		payload["thumb_object_key"] = thumbKey
+		payload["thumb_upload_url"] = thumbUpload.URL
+		payload["thumbnail_content_type"] = thumbType
+		payload["thumb_upload_headers"] = thumbUpload.Headers
+	}
+	response.Success(c, payload)
+}
+
+// CompleteAsset verifies directly uploaded objects and registers the canvas
+// asset only after R2 confirms their size and content type.
+func (h *CanvasHandler) CompleteAsset(c *gin.Context) {
+	userID, ok := h.userID(c)
+	if !ok {
+		return
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 64<<10)
+	var request completeCanvasAssetRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		response.BadRequest(c, "画布资产登记参数无效")
+		return
+	}
+	projectID := strings.TrimSpace(request.ProjectID)
+	nodeID := truncateCanvasNodeID(request.NodeID)
+	assetID := strings.TrimSpace(request.AssetID)
+	kind, contentType, err := normalizeCanvasAssetInput(request.Kind, request.ContentType)
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	if !canvasIDPattern.MatchString(projectID) || !canvasIDPattern.MatchString(assetID) {
+		response.BadRequest(c, "画布项目或资产 ID 无效")
+		return
+	}
+	if request.Bytes <= 0 || request.Bytes > maxCanvasAssetBytes {
+		response.BadRequest(c, "画布资产文件为空或过大")
+		return
+	}
+	if !h.ownsProject(c.Request.Context(), userID, projectID) {
+		response.NotFound(c, "画布项目不存在")
+		return
+	}
+
+	if existing := h.findCanvasAssetByID(c.Request.Context(), userID, assetID); existing != nil {
+		if existing.ProjectID != projectID {
+			response.BadRequest(c, "画布资产不属于当前项目")
+			return
+		}
+		h.deleteCanvasUploadIntent(c.Request.Context(), userID, assetID)
+		h.populateCanvasAssetURLs(c.Request.Context(), existing)
+		response.Success(c, *existing)
+		return
+	}
+
+	intent := h.findCanvasUploadIntent(c.Request.Context(), userID, assetID)
+	if intent == nil {
+		response.BadRequest(c, "画布上传任务不存在或已过期")
+		return
+	}
+	invalidIntent := intent.ProjectID != projectID ||
+		intent.NodeID != nodeID ||
+		intent.Kind != kind ||
+		intent.Bytes != request.Bytes ||
+		!canvasContentTypeEqual(intent.MimeType, contentType)
+	if !invalidIntent {
+		invalidIntent = intent.ThumbBytes != request.ThumbnailBytes
+		if !invalidIntent && intent.ThumbBytes > 0 {
+			invalidIntent = !canvasContentTypeEqual(intent.ThumbMimeType, request.ThumbnailContentType)
+		}
+	}
+	if invalidIntent {
+		h.deleteCanvasObjects(c.Request.Context(), intent.ObjectKey, intent.ThumbKey)
+		h.deleteCanvasUploadIntent(c.Request.Context(), userID, assetID)
+		response.BadRequest(c, "画布上传任务与提交内容不匹配")
+		return
+	}
+
+	storageKey, err := h.userStorageKey(c.Request.Context(), userID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	pendingObjectKey := canvasAssetPendingKey(
+		storageKey,
+		projectID,
+		assetID,
+		canvasContentTypeExtension(contentType),
+	)
+	objectKey := strings.TrimSpace(request.ObjectKey)
+	if objectKey != pendingObjectKey || objectKey != intent.ObjectKey {
+		h.deleteCanvasObjects(c.Request.Context(), intent.ObjectKey, intent.ThumbKey)
+		h.deleteCanvasUploadIntent(c.Request.Context(), userID, assetID)
+		response.BadRequest(c, "画布资产对象路径无效")
+		return
+	}
+	meta, err := h.storage.ImageObjectStat(c.Request.Context(), objectKey)
+	if err != nil {
+		response.BadRequest(c, "画布资产上传未完成")
+		return
+	}
+	if meta.Bytes != request.Bytes || !canvasContentTypeEqual(meta.ContentType, contentType) {
+		h.deleteCanvasObjects(c.Request.Context(), objectKey)
+		h.deleteCanvasUploadIntent(c.Request.Context(), userID, assetID)
+		response.BadRequest(c, "画布资产大小或类型不匹配")
+		return
+	}
+	prefix, err := h.storage.ReadImageObjectPrefix(c.Request.Context(), objectKey, 512)
+	if err != nil || !validateCanvasObjectSignature(contentType, prefix) {
+		h.deleteCanvasObjects(c.Request.Context(), objectKey)
+		h.deleteCanvasUploadIntent(c.Request.Context(), userID, assetID)
+		response.BadRequest(c, "画布资产文件内容与类型不匹配")
+		return
+	}
+	finalObjectKey := canvasAssetObjectKey(storageKey, projectID, assetID, canvasContentTypeExtension(contentType))
+	if err := h.storage.CopyImageObject(c.Request.Context(), pendingObjectKey, finalObjectKey, contentType); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	finalMeta, err := h.storage.ImageObjectStat(c.Request.Context(), finalObjectKey)
+	if err != nil || finalMeta.Bytes != request.Bytes || !canvasContentTypeEqual(finalMeta.ContentType, contentType) {
+		h.deleteCanvasObjects(c.Request.Context(), finalObjectKey, pendingObjectKey)
+		h.deleteCanvasUploadIntent(c.Request.Context(), userID, assetID)
+		response.BadRequest(c, "画布资产复制校验失败")
+		return
+	}
+
+	thumbType := ""
+	pendingThumbKey := ""
+	thumbKey := ""
+	if strings.TrimSpace(request.ThumbnailContentType) != "" || request.ThumbnailBytes > 0 || strings.TrimSpace(request.ThumbObjectKey) != "" {
+		if request.ThumbnailBytes <= 0 || request.ThumbnailBytes > maxCanvasThumbBytes {
+			h.deleteCanvasObjects(c.Request.Context(), finalObjectKey, pendingObjectKey)
+			h.deleteCanvasUploadIntent(c.Request.Context(), userID, assetID)
+			response.BadRequest(c, "画布缩略图为空或过大")
+			return
+		}
+		thumbType, _, err = normalizeCanvasAssetContentType(request.ThumbnailContentType)
+		if err != nil || !strings.HasPrefix(thumbType, "image/") {
+			h.deleteCanvasObjects(c.Request.Context(), finalObjectKey, pendingObjectKey)
+			h.deleteCanvasUploadIntent(c.Request.Context(), userID, assetID)
+			response.BadRequest(c, "画布缩略图类型无效")
+			return
+		}
+		pendingThumbKey = canvasAssetPendingThumbKey(storageKey, projectID, assetID, canvasContentTypeExtension(thumbType))
+		if strings.TrimSpace(request.ThumbObjectKey) != pendingThumbKey {
+			h.deleteCanvasObjects(c.Request.Context(), finalObjectKey, pendingObjectKey)
+			h.deleteCanvasUploadIntent(c.Request.Context(), userID, assetID)
+			response.BadRequest(c, "画布缩略图对象路径无效")
+			return
+		}
+		thumbMeta, statErr := h.storage.ImageObjectStat(c.Request.Context(), pendingThumbKey)
+		if statErr != nil || thumbMeta.Bytes != request.ThumbnailBytes || !canvasContentTypeEqual(thumbMeta.ContentType, thumbType) {
+			h.deleteCanvasObjects(c.Request.Context(), pendingThumbKey, finalObjectKey, pendingObjectKey)
+			h.deleteCanvasUploadIntent(c.Request.Context(), userID, assetID)
+			response.BadRequest(c, "画布缩略图大小或类型不匹配")
+			return
+		}
+		thumbPrefix, prefixErr := h.storage.ReadImageObjectPrefix(c.Request.Context(), pendingThumbKey, 512)
+		if prefixErr != nil || !validateCanvasObjectSignature(thumbType, thumbPrefix) {
+			h.deleteCanvasObjects(c.Request.Context(), pendingThumbKey, finalObjectKey, pendingObjectKey)
+			h.deleteCanvasUploadIntent(c.Request.Context(), userID, assetID)
+			response.BadRequest(c, "画布缩略图内容与类型不匹配")
+			return
+		}
+		thumbKey = canvasAssetThumbKey(storageKey, projectID, assetID, canvasContentTypeExtension(thumbType))
+		if err := h.storage.CopyImageObject(c.Request.Context(), pendingThumbKey, thumbKey, thumbType); err != nil {
+			h.deleteCanvasObjects(c.Request.Context(), finalObjectKey, pendingObjectKey)
+			response.ErrorFrom(c, err)
+			return
+		}
+		thumbFinalMeta, finalStatErr := h.storage.ImageObjectStat(c.Request.Context(), thumbKey)
+		if finalStatErr != nil || thumbFinalMeta.Bytes != request.ThumbnailBytes || !canvasContentTypeEqual(thumbFinalMeta.ContentType, thumbType) {
+			h.deleteCanvasObjects(c.Request.Context(), thumbKey, pendingThumbKey, finalObjectKey, pendingObjectKey)
+			h.deleteCanvasUploadIntent(c.Request.Context(), userID, assetID)
+			response.BadRequest(c, "画布缩略图复制校验失败")
+			return
+		}
+	}
+	h.deleteCanvasObjects(c.Request.Context(), pendingObjectKey, pendingThumbKey)
+
+	digest := normalizeCanvasSHA256(request.SHA256)
+	tx, err := h.db.BeginTx(c.Request.Context(), nil)
+	if err != nil {
+		h.deleteCanvasObjects(c.Request.Context(), finalObjectKey, thumbKey)
+		h.deleteCanvasUploadIntent(c.Request.Context(), userID, assetID)
+		response.InternalError(c, "保存画布资产失败")
+		return
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := lockCanvasQuota(c.Request.Context(), tx, "canvas-assets", userID); err != nil {
+		h.deleteCanvasObjects(c.Request.Context(), finalObjectKey, thumbKey)
+		h.deleteCanvasUploadIntent(c.Request.Context(), userID, assetID)
+		response.InternalError(c, "读取画布存储额度失败")
+		return
+	}
+	var assetCount int
+	var storedBytes int64
+	if err := tx.QueryRowContext(c.Request.Context(), `
+		SELECT COUNT(*), COALESCE(SUM(bytes), 0)
+		FROM canvas_assets
+		WHERE user_id = $1
+	`, userID).Scan(&assetCount, &storedBytes); err != nil {
+		h.deleteCanvasObjects(c.Request.Context(), finalObjectKey, thumbKey)
+		h.deleteCanvasUploadIntent(c.Request.Context(), userID, assetID)
+		response.InternalError(c, "读取画布存储额度失败")
+		return
+	}
+	if assetCount >= canvasAssetCountQuota || storedBytes+request.Bytes > canvasAssetBytesQuota {
+		h.deleteCanvasObjects(c.Request.Context(), finalObjectKey, thumbKey)
+		h.deleteCanvasUploadIntent(c.Request.Context(), userID, assetID)
+		response.Error(c, http.StatusTooManyRequests, "画布存储空间已达上限")
+		return
+	}
+	if digest != "" {
+		if existing := findCanvasAssetByHashIn(c.Request.Context(), tx, h.storage, userID, projectID, nodeID, digest); existing != nil {
+			h.deleteCanvasObjects(c.Request.Context(), finalObjectKey, thumbKey)
+			h.deleteCanvasUploadIntent(c.Request.Context(), userID, assetID)
+			response.Success(c, *existing)
+			return
+		}
+	}
+	if _, err = tx.ExecContext(c.Request.Context(), `
+		INSERT INTO canvas_assets (
+			id, user_id, project_id, node_id, kind, object_key, thumb_object_key,
+			width, height, bytes, mime_type, sha256
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+	`, assetID, userID, projectID, nodeID, kind, finalObjectKey, thumbKey,
+		request.Width, request.Height, request.Bytes, contentType, digest); err != nil {
+		h.deleteCanvasObjects(c.Request.Context(), finalObjectKey, thumbKey)
+		h.deleteCanvasUploadIntent(c.Request.Context(), userID, assetID)
+		response.InternalError(c, "保存画布资产失败")
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		h.deleteCanvasObjects(c.Request.Context(), finalObjectKey, thumbKey)
+		h.deleteCanvasUploadIntent(c.Request.Context(), userID, assetID)
+		response.InternalError(c, "保存画布资产失败")
+		return
+	}
+	h.deleteCanvasUploadIntent(c.Request.Context(), userID, assetID)
+	asset := CanvasAsset{
+		ID:        assetID,
+		ProjectID: projectID,
+		NodeID:    nodeID,
+		Kind:      kind,
+		Width:     request.Width,
+		Height:    request.Height,
+		Bytes:     request.Bytes,
+		MimeType:  contentType,
+		SHA256:    digest,
+		CreatedAt: time.Now().UTC(),
+		objectKey: finalObjectKey,
+		thumbKey:  thumbKey,
+	}
+	h.populateCanvasAssetURLs(c.Request.Context(), &asset)
+	response.Created(c, asset)
+}
+
+// PromoteAsset turns an existing generated-image object into a durable canvas
+// asset with an S3-side copy. The browser never downloads and re-uploads the
+// original.
+func (h *CanvasHandler) PromoteAsset(c *gin.Context) {
+	userID, ok := h.userID(c)
+	if !ok {
+		return
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 64<<10)
+	var request promoteCanvasAssetRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		response.BadRequest(c, "画布资产提升参数无效")
+		return
+	}
+	projectID := strings.TrimSpace(request.ProjectID)
+	nodeID := truncateCanvasNodeID(request.NodeID)
+	sourceKey := strings.TrimSpace(request.SourceObjectKey)
+	if !canvasIDPattern.MatchString(projectID) || sourceKey == "" || len(sourceKey) > 1024 {
+		response.BadRequest(c, "画布项目或源对象无效")
+		return
+	}
+	if !h.ownsProject(c.Request.Context(), userID, projectID) {
+		response.NotFound(c, "画布项目不存在")
+		return
+	}
+	storageKey, err := h.userStorageKey(c.Request.Context(), userID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	if !canvasSourceBelongsToUser(sourceKey, storageKey) {
+		response.BadRequest(c, "画布源对象不属于当前用户")
+		return
+	}
+	if existing := h.findCanvasAssetBySourceObjectKey(c.Request.Context(), userID, projectID, sourceKey); existing != nil {
+		h.populateCanvasAssetURLs(c.Request.Context(), existing)
+		response.Success(c, *existing)
+		return
+	}
+	sourceMeta, err := h.storage.ImageObjectStat(c.Request.Context(), sourceKey)
+	if err != nil || sourceMeta.Bytes <= 0 || sourceMeta.Bytes > maxCanvasAssetBytes {
+		response.BadRequest(c, "画布源对象不存在或过大")
+		return
+	}
+	kind, contentType, err := normalizeCanvasAssetInput(request.Kind, sourceMeta.ContentType)
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	sourcePrefix, err := h.storage.ReadImageObjectPrefix(c.Request.Context(), sourceKey, 512)
+	if err != nil || !validateCanvasObjectSignature(contentType, sourcePrefix) {
+		response.BadRequest(c, "画布源对象内容与类型不匹配")
+		return
+	}
+	assetID := strings.ReplaceAll(uuid.NewString(), "-", "")
+	objectKey := canvasAssetObjectKey(storageKey, projectID, assetID, canvasContentTypeExtension(contentType))
+	if err := h.storage.CopyImageObject(c.Request.Context(), sourceKey, objectKey, contentType); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	targetMeta, err := h.storage.ImageObjectStat(c.Request.Context(), objectKey)
+	if err != nil || targetMeta.Bytes != sourceMeta.Bytes || !canvasContentTypeEqual(targetMeta.ContentType, contentType) {
+		h.deleteCanvasObjects(c.Request.Context(), objectKey)
+		response.BadRequest(c, "画布资产复制校验失败")
+		return
+	}
+
+	tx, err := h.db.BeginTx(c.Request.Context(), nil)
+	if err != nil {
+		h.deleteCanvasObjects(c.Request.Context(), objectKey)
+		response.InternalError(c, "保存画布资产失败")
+		return
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := lockCanvasQuota(c.Request.Context(), tx, "canvas-assets", userID); err != nil {
+		h.deleteCanvasObjects(c.Request.Context(), objectKey)
+		response.InternalError(c, "读取画布存储额度失败")
+		return
+	}
+	var assetCount int
+	var storedBytes int64
+	if err := tx.QueryRowContext(c.Request.Context(), `
+		SELECT COUNT(*), COALESCE(SUM(bytes), 0)
+		FROM canvas_assets
+		WHERE user_id = $1
+	`, userID).Scan(&assetCount, &storedBytes); err != nil {
+		h.deleteCanvasObjects(c.Request.Context(), objectKey)
+		response.InternalError(c, "读取画布存储额度失败")
+		return
+	}
+	if assetCount >= canvasAssetCountQuota || storedBytes+sourceMeta.Bytes > canvasAssetBytesQuota {
+		h.deleteCanvasObjects(c.Request.Context(), objectKey)
+		response.Error(c, http.StatusTooManyRequests, "画布存储空间已达上限")
+		return
+	}
+	if _, err = tx.ExecContext(c.Request.Context(), `
+		INSERT INTO canvas_assets (
+			id, user_id, project_id, node_id, kind, object_key, thumb_object_key,
+			width, height, bytes, mime_type, sha256, source_object_key
+		) VALUES ($1,$2,$3,$4,$5,$6,'',$7,$8,$9,$10,'',$11)
+	`, assetID, userID, projectID, nodeID, kind, objectKey,
+		request.Width, request.Height, sourceMeta.Bytes, contentType, sourceKey); err != nil {
+		_ = tx.Rollback()
+		if existing := h.findCanvasAssetBySourceObjectKey(c.Request.Context(), userID, projectID, sourceKey); existing != nil {
+			h.deleteCanvasObjects(c.Request.Context(), objectKey)
+			h.populateCanvasAssetURLs(c.Request.Context(), existing)
+			response.Success(c, *existing)
+			return
+		}
+		h.deleteCanvasObjects(c.Request.Context(), objectKey)
+		response.InternalError(c, "保存画布资产失败")
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		h.deleteCanvasObjects(c.Request.Context(), objectKey)
+		response.InternalError(c, "保存画布资产失败")
+		return
+	}
+	asset := CanvasAsset{
+		ID:              assetID,
+		ProjectID:       projectID,
+		NodeID:          nodeID,
+		Kind:            kind,
+		Width:           request.Width,
+		Height:          request.Height,
+		Bytes:           sourceMeta.Bytes,
+		MimeType:        contentType,
+		SourceObjectKey: sourceKey,
+		CreatedAt:       time.Now().UTC(),
+		objectKey:       objectKey,
+	}
+	h.populateCanvasAssetURLs(c.Request.Context(), &asset)
+	response.Created(c, asset)
+}
+
 func (h *CanvasHandler) UploadAsset(c *gin.Context) {
 	userID, ok := h.userID(c)
 	if !ok {
@@ -498,6 +1070,10 @@ func (h *CanvasHandler) UploadAsset(c *gin.Context) {
 		response.BadRequest(c, "不支持的画布资产类型")
 		return
 	}
+	if !validateCanvasObjectSignature(contentType, data) {
+		response.BadRequest(c, "画布资产文件内容与类型不匹配")
+		return
+	}
 	sum := sha256.Sum256(data)
 	digest := hex.EncodeToString(sum[:])
 	if existing := h.findCanvasAssetByHash(c.Request.Context(), userID, projectID, nodeID, digest); existing != nil {
@@ -527,6 +1103,10 @@ func (h *CanvasHandler) UploadAsset(c *gin.Context) {
 			thumbType := strings.TrimSpace(thumbHeader.Header.Get("Content-Type"))
 			if !strings.HasPrefix(thumbType, "image/") {
 				thumbType = http.DetectContentType(thumbData)
+			}
+			if !isCanvasMimeType(thumbType) || !validateCanvasObjectSignature(thumbType, thumbData) {
+				response.BadRequest(c, "画布缩略图内容与类型不匹配")
+				return
 			}
 			thumbExtension := canvasFileExtension("", thumbType)
 			thumbKey := canvasAssetThumbKey(storageKey, projectID, assetID, thumbExtension)
@@ -596,6 +1176,91 @@ func (h *CanvasHandler) UploadAsset(c *gin.Context) {
 		MimeType:  contentType,
 		CreatedAt: time.Now().UTC(),
 	})
+}
+
+func normalizeCanvasAssetInput(kind, contentType string) (string, string, error) {
+	kind = strings.TrimSpace(kind)
+	if kind == "" {
+		kind = "image"
+	}
+	switch kind {
+	case "image", "video", "audio":
+	default:
+		return "", "", errors.New("不支持的画布资产类型")
+	}
+	normalized, _, err := normalizeCanvasAssetContentType(contentType)
+	if err != nil {
+		return "", "", err
+	}
+	if !isCanvasMimeType(normalized) {
+		return "", "", errors.New("不支持的画布资产类型")
+	}
+	if (kind == "image" && !strings.HasPrefix(normalized, "image/")) ||
+		(kind == "video" && !strings.HasPrefix(normalized, "video/")) ||
+		(kind == "audio" && !strings.HasPrefix(normalized, "audio/")) {
+		return "", "", errors.New("画布资产类型与文件类型不匹配")
+	}
+	return kind, normalized, nil
+}
+
+func normalizeCanvasAssetContentType(value string) (string, string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", "", errors.New("画布资产类型不能为空")
+	}
+	mediaType, params, err := mime.ParseMediaType(value)
+	if err != nil {
+		return "", "", errors.New("画布资产类型无效")
+	}
+	return strings.ToLower(mediaType), params["charset"], nil
+}
+
+func canvasContentTypeEqual(actual, expected string) bool {
+	actualValue, _, actualErr := normalizeCanvasAssetContentType(actual)
+	expectedValue, _, expectedErr := normalizeCanvasAssetContentType(expected)
+	return actualErr == nil && expectedErr == nil && actualValue == expectedValue
+}
+
+func truncateCanvasNodeID(value string) string {
+	nodeID := strings.TrimSpace(value)
+	if len(nodeID) > 128 {
+		return nodeID[:128]
+	}
+	return nodeID
+}
+
+func normalizeCanvasSHA256(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if len(value) != 64 {
+		return ""
+	}
+	if _, err := hex.DecodeString(value); err != nil {
+		return ""
+	}
+	return value
+}
+
+func canvasSourceBelongsToUser(sourceKey, storageKey string) bool {
+	sourceKey = strings.TrimLeft(strings.TrimSpace(sourceKey), "/")
+	storageKey = strings.Trim(strings.TrimSpace(storageKey), "/")
+	if sourceKey == "" || storageKey == "" || strings.Contains(sourceKey, "..") {
+		return false
+	}
+	return strings.Contains("/"+sourceKey, "/"+storageKey+"/")
+}
+
+func (h *CanvasHandler) populateCanvasAssetURLs(ctx context.Context, asset *CanvasAsset) {
+	if asset == nil {
+		return
+	}
+	if resolved, err := h.storage.PresignImageObject(ctx, asset.objectKey); err == nil {
+		asset.URL = resolved
+	}
+	if asset.thumbKey != "" {
+		if resolved, err := h.storage.PresignImageObject(ctx, asset.thumbKey); err == nil {
+			asset.ThumbURL = resolved
+		}
+	}
 }
 
 func (h *CanvasHandler) DeleteAsset(c *gin.Context) {
@@ -799,6 +1464,130 @@ func canvasCloudAssetReferences(graph json.RawMessage) map[string]struct{} {
 	return references
 }
 
+func (h *CanvasHandler) reserveCanvasUploadIntent(ctx context.Context, intent canvasUploadIntent) error {
+	tx, err := h.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM canvas_upload_intents
+		WHERE user_id = $1 AND expires_at <= NOW()
+	`, intent.UserID); err != nil {
+		return err
+	}
+	if err := lockCanvasQuota(ctx, tx, "canvas-uploads", intent.UserID); err != nil {
+		return err
+	}
+	var intentCount int
+	var reservedBytes int64
+	if err := tx.QueryRowContext(ctx, `
+		SELECT COUNT(*), COALESCE(SUM(bytes + thumb_bytes), 0)
+		FROM canvas_upload_intents
+		WHERE user_id = $1 AND expires_at > NOW()
+	`, intent.UserID).Scan(&intentCount, &reservedBytes); err != nil {
+		return err
+	}
+	if intentCount >= canvasUploadIntentLimit {
+		return errCanvasUploadIntentLimit
+	}
+	var assetCount int
+	var storedBytes int64
+	if err := tx.QueryRowContext(ctx, `
+		SELECT COUNT(*), COALESCE(SUM(bytes), 0)
+		FROM canvas_assets
+		WHERE user_id = $1
+	`, intent.UserID).Scan(&assetCount, &storedBytes); err != nil {
+		return err
+	}
+	incomingBytes := intent.Bytes + intent.ThumbBytes
+	if assetCount+intentCount >= canvasAssetCountQuota || storedBytes+reservedBytes+incomingBytes > canvasAssetBytesQuota {
+		return errCanvasUploadStorageFull
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO canvas_upload_intents (
+			asset_id, user_id, project_id, node_id, kind, object_key, thumb_object_key,
+			bytes, thumb_bytes, mime_type, thumb_mime_type, sha256, expires_at
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+	`, intent.AssetID, intent.UserID, intent.ProjectID, intent.NodeID, intent.Kind,
+		intent.ObjectKey, intent.ThumbKey, intent.Bytes, intent.ThumbBytes,
+		intent.MimeType, intent.ThumbMimeType, intent.SHA256, intent.ExpiresAt); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (h *CanvasHandler) findCanvasUploadIntent(ctx context.Context, userID int64, assetID string) *canvasUploadIntent {
+	var intent canvasUploadIntent
+	err := h.db.QueryRowContext(ctx, `
+		SELECT asset_id, user_id, project_id, node_id, kind, object_key, thumb_object_key,
+		       bytes, thumb_bytes, mime_type, thumb_mime_type, sha256, expires_at
+		FROM canvas_upload_intents
+		WHERE asset_id = $1 AND user_id = $2 AND expires_at > NOW()
+	`, assetID, userID).Scan(
+		&intent.AssetID, &intent.UserID, &intent.ProjectID, &intent.NodeID, &intent.Kind,
+		&intent.ObjectKey, &intent.ThumbKey, &intent.Bytes, &intent.ThumbBytes,
+		&intent.MimeType, &intent.ThumbMimeType, &intent.SHA256, &intent.ExpiresAt,
+	)
+	if err != nil {
+		return nil
+	}
+	return &intent
+}
+
+func (h *CanvasHandler) deleteCanvasUploadIntent(ctx context.Context, userID int64, assetID string) {
+	_, _ = h.db.ExecContext(ctx, `
+		DELETE FROM canvas_upload_intents WHERE asset_id = $1 AND user_id = $2
+	`, assetID, userID)
+}
+
+func (h *CanvasHandler) findCanvasAssetBySourceObjectKey(
+	ctx context.Context,
+	userID int64,
+	projectID string,
+	sourceObjectKey string,
+) *CanvasAsset {
+	var item CanvasAsset
+	var objectKey, thumbKey string
+	err := h.db.QueryRowContext(ctx, `
+		SELECT id, project_id, node_id, kind, object_key, thumb_object_key,
+		       width, height, bytes, mime_type, sha256, source_object_key, created_at
+		FROM canvas_assets
+		WHERE user_id = $1 AND project_id = $2 AND source_object_key = $3
+		LIMIT 1
+	`, userID, projectID, sourceObjectKey).Scan(
+		&item.ID, &item.ProjectID, &item.NodeID, &item.Kind, &objectKey, &thumbKey,
+		&item.Width, &item.Height, &item.Bytes, &item.MimeType, &item.SHA256,
+		&item.SourceObjectKey, &item.CreatedAt,
+	)
+	if err != nil {
+		return nil
+	}
+	item.objectKey = objectKey
+	item.thumbKey = thumbKey
+	return &item
+}
+
+func (h *CanvasHandler) findCanvasAssetByID(ctx context.Context, userID int64, assetID string) *CanvasAsset {
+	var item CanvasAsset
+	var objectKey, thumbKey string
+	err := h.db.QueryRowContext(ctx, `
+		SELECT id, project_id, node_id, kind, object_key, thumb_object_key,
+		       width, height, bytes, mime_type, sha256, created_at
+		FROM canvas_assets
+		WHERE id = $1 AND user_id = $2
+	`, assetID, userID).Scan(
+		&item.ID, &item.ProjectID, &item.NodeID, &item.Kind, &objectKey, &thumbKey,
+		&item.Width, &item.Height, &item.Bytes, &item.MimeType, &item.SHA256, &item.CreatedAt,
+	)
+	if err != nil {
+		return nil
+	}
+	item.objectKey = objectKey
+	item.thumbKey = thumbKey
+	return &item
+}
+
 func (h *CanvasHandler) findCanvasAssetByHash(
 	ctx context.Context,
 	userID int64,
@@ -905,10 +1694,44 @@ func canvasFileExtension(filename, contentType string) string {
 	return ".bin"
 }
 
+func canvasContentTypeExtension(contentType string) string {
+	switch strings.ToLower(strings.TrimSpace(contentType)) {
+	case "image/avif":
+		return ".avif"
+	case "image/gif":
+		return ".gif"
+	case "image/jpeg":
+		return ".jpg"
+	case "image/png":
+		return ".png"
+	case "image/webp":
+		return ".webp"
+	case "video/mp4":
+		return ".mp4"
+	case "video/webm":
+		return ".webm"
+	case "audio/mp4":
+		return ".m4a"
+	case "audio/mpeg":
+		return ".mp3"
+	case "audio/ogg":
+		return ".ogg"
+	case "audio/wav":
+		return ".wav"
+	default:
+		return ".bin"
+	}
+}
+
 func isCanvasMimeType(contentType string) bool {
-	return strings.HasPrefix(contentType, "image/") ||
-		strings.HasPrefix(contentType, "video/") ||
-		strings.HasPrefix(contentType, "audio/")
+	switch strings.ToLower(strings.TrimSpace(contentType)) {
+	case "image/png", "image/jpeg", "image/webp", "image/gif", "image/avif",
+		"video/mp4", "video/webm",
+		"audio/mpeg", "audio/wav", "audio/ogg", "audio/mp4":
+		return true
+	default:
+		return false
+	}
 }
 
 func parseCanvasInt(value string) int {
@@ -952,4 +1775,52 @@ func canvasAssetObjectKey(storageKey, projectID, assetID, extension string) stri
 
 func canvasAssetThumbKey(storageKey, projectID, assetID, extension string) string {
 	return fmt.Sprintf("canvas/%s/%s/thumbs/%s%s", storageKey, projectID, assetID, extension)
+}
+
+func canvasAssetPendingKey(storageKey, projectID, assetID, extension string) string {
+	return fmt.Sprintf("canvas-pending/%s/%s/%s%s", storageKey, projectID, assetID, extension)
+}
+
+func canvasAssetPendingThumbKey(storageKey, projectID, assetID, extension string) string {
+	return fmt.Sprintf("canvas-pending/%s/%s/thumbs/%s%s", storageKey, projectID, assetID, extension)
+}
+
+func validateCanvasObjectSignature(contentType string, data []byte) bool {
+	if len(data) == 0 {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(contentType)) {
+	case "image/png":
+		return bytes.HasPrefix(data, []byte{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a})
+	case "image/jpeg":
+		return bytes.HasPrefix(data, []byte{0xff, 0xd8, 0xff})
+	case "image/gif":
+		return bytes.HasPrefix(data, []byte("GIF87a")) || bytes.HasPrefix(data, []byte("GIF89a"))
+	case "image/webp":
+		return len(data) >= 12 && bytes.Equal(data[:4], []byte("RIFF")) && bytes.Equal(data[8:12], []byte("WEBP"))
+	case "image/avif":
+		if len(data) < 12 || !bytes.Equal(data[4:8], []byte("ftyp")) {
+			return false
+		}
+		for offset := 8; offset+4 <= len(data) && offset < 64; offset += 4 {
+			brand := data[offset : offset+4]
+			if bytes.Equal(brand, []byte("avif")) || bytes.Equal(brand, []byte("avis")) {
+				return true
+			}
+		}
+		return false
+	case "video/mp4", "audio/mp4":
+		return len(data) >= 12 && bytes.Equal(data[4:8], []byte("ftyp"))
+	case "video/webm":
+		return bytes.HasPrefix(data, []byte{0x1a, 0x45, 0xdf, 0xa3})
+	case "audio/mpeg":
+		return bytes.HasPrefix(data, []byte("ID3")) ||
+			(len(data) >= 2 && data[0] == 0xff && data[1]&0xe0 == 0xe0)
+	case "audio/wav":
+		return len(data) >= 12 && bytes.Equal(data[:4], []byte("RIFF")) && bytes.Equal(data[8:12], []byte("WAVE"))
+	case "audio/ogg":
+		return bytes.HasPrefix(data, []byte("OggS"))
+	default:
+		return false
+	}
 }

@@ -19,6 +19,7 @@ import (
 
 const settingKeyImageStorageConfig = "image_storage_config"
 const imageStorageSettingsCacheTTL = 5 * time.Second
+const imageStorageUploadPresignTTL = 15 * time.Minute
 
 // ErrImageStorageIncomplete 表示开关已打开但凭证不全，无法启用异步生图。
 //
@@ -428,6 +429,84 @@ func (s *ImageStorageSettingService) PresignImageObject(ctx context.Context, obj
 		return "", ErrImageStorageIncomplete
 	}
 	return resolver.PresignGet(ctx, objectKey)
+}
+
+// PresignImageUpload returns a short-lived browser upload URL for an exact
+// object key and content type. The browser never receives R2 credentials.
+func (s *ImageStorageSettingService) PresignImageUpload(
+	ctx context.Context,
+	objectKey string,
+	contentType string,
+) (ImageStorageUploadRequest, error) {
+	if reason := s.unusableReason(ctx); reason != nil {
+		return ImageStorageUploadRequest{}, reason
+	}
+	uploader, enabled := s.resolve()
+	if !enabled || uploader == nil || uploader.storage == nil {
+		return ImageStorageUploadRequest{}, ErrImageStorageIncomplete
+	}
+	resolver, ok := uploader.storage.(ImageStorageUploadURLResolver)
+	if !ok {
+		return ImageStorageUploadRequest{}, ErrImageStorageIncomplete
+	}
+	return resolver.PresignPut(ctx, objectKey, contentType, imageStorageUploadPresignTTL)
+}
+
+func (s *ImageStorageSettingService) ImageObjectStat(
+	ctx context.Context,
+	objectKey string,
+) (ImageObjectMetadata, error) {
+	if reason := s.unusableReason(ctx); reason != nil {
+		return ImageObjectMetadata{}, reason
+	}
+	uploader, enabled := s.resolve()
+	if !enabled || uploader == nil || uploader.storage == nil {
+		return ImageObjectMetadata{}, ErrImageStorageIncomplete
+	}
+	resolver, ok := uploader.storage.(ImageStorageObjectStatResolver)
+	if !ok {
+		return ImageObjectMetadata{}, ErrImageStorageIncomplete
+	}
+	return resolver.Stat(ctx, objectKey)
+}
+
+func (s *ImageStorageSettingService) ReadImageObjectPrefix(
+	ctx context.Context,
+	objectKey string,
+	length int64,
+) ([]byte, error) {
+	if reason := s.unusableReason(ctx); reason != nil {
+		return nil, reason
+	}
+	uploader, enabled := s.resolve()
+	if !enabled || uploader == nil || uploader.storage == nil {
+		return nil, ErrImageStorageIncomplete
+	}
+	reader, ok := uploader.storage.(ImageStorageObjectPrefixReader)
+	if !ok {
+		return nil, ErrImageStorageIncomplete
+	}
+	return reader.ReadPrefix(ctx, objectKey, length)
+}
+
+func (s *ImageStorageSettingService) CopyImageObject(
+	ctx context.Context,
+	sourceKey string,
+	targetKey string,
+	contentType string,
+) error {
+	if reason := s.unusableReason(ctx); reason != nil {
+		return reason
+	}
+	uploader, enabled := s.resolve()
+	if !enabled || uploader == nil || uploader.storage == nil {
+		return ErrImageStorageIncomplete
+	}
+	copier, ok := uploader.storage.(ImageStorageObjectCopier)
+	if !ok {
+		return ErrImageStorageIncomplete
+	}
+	return copier.Copy(ctx, sourceKey, targetKey, contentType)
 }
 
 func (s *ImageStorageSettingService) PresignImageObjectDownload(

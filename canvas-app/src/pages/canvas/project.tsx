@@ -5,7 +5,7 @@ import { Group, Video } from "lucide-react";
 import { saveAs } from "file-saver";
 import { useTranslation } from "react-i18next";
 
-import { requestEdit, requestGeneration, requestImageQuestion, submitPersistentImageTask, waitForPersistentImageTask, type PersistentImageTask } from "@/services/api/image";
+import { requestEdit, requestGeneration, requestImageQuestion, submitPersistentImageTask, waitForPersistentImageTask, type GeneratedImageResult, type PersistentImageTask } from "@/services/api/image";
 import { requestAudioGeneration, storeGeneratedAudio } from "@/services/api/audio";
 import { createVideoGenerationTask, isVideoTaskFailed, storeGeneratedVideo, waitForVideoGenerationTask } from "@/services/api/video";
 import { defaultConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
@@ -188,14 +188,14 @@ function hasPendingCloudAsset(node: CanvasNodeData) {
     const hasImageEntries = Boolean(metadata.images?.length);
     if (
         mediaNode &&
-        (metadata.storageKey || (node.type === CanvasNodeType.Image && isRemoteURL(metadata.content))) &&
+        (metadata.storageKey || metadata.cloudSourceObjectKey || (node.type === CanvasNodeType.Image && isRemoteURL(metadata.content))) &&
         !(node.type === CanvasNodeType.Image && hasImageEntries) &&
         !metadata.cloudAssetId &&
         metadata.cloudSyncState !== "uploading" &&
         metadata.cloudSyncState !== "failed"
     ) return true;
     return Boolean(metadata.images?.some((image) => (
-        (image.storageKey || (node.type === CanvasNodeType.Image && isRemoteURL(image.content))) &&
+        (image.storageKey || image.cloudSourceObjectKey || (node.type === CanvasNodeType.Image && isRemoteURL(image.content))) &&
         !image.cloudAssetId &&
         image.cloudSyncState !== "uploading" &&
         image.cloudSyncState !== "failed"
@@ -558,7 +558,7 @@ function InfiniteCanvasPage() {
                                                   errorDetails: undefined,
                                                   images: item.metadata?.images?.map((entry) =>
                                                       entry.id === image.id
-                                                          ? { ...entry, status: NODE_STATUS_SUCCESS, content: previewDataUrl, previewOnly: true, errorDetails: undefined }
+                                                          ? { ...entry, status: NODE_STATUS_SUCCESS, content: previewDataUrl, previewOnly: true, cloudSourceObjectKey: generated.objectKey, errorDetails: undefined }
                                                           : entry,
                                                   ),
                                               },
@@ -575,6 +575,7 @@ function InfiniteCanvasPage() {
                             status: NODE_STATUS_SUCCESS,
                             content: uploaded.url,
                             storageKey: uploaded.storageKey,
+                            cloudSourceObjectKey: generated.objectKey,
                             naturalWidth: uploaded.width,
                             naturalHeight: uploaded.height,
                             bytes: uploaded.bytes,
@@ -594,6 +595,7 @@ function InfiniteCanvasPage() {
                                         ...item.metadata,
                                         content: completed.content,
                                         storageKey: completed.storageKey,
+                                        cloudSourceObjectKey: completed.cloudSourceObjectKey,
                                         naturalWidth: completed.naturalWidth,
                                         naturalHeight: completed.naturalHeight,
                                         bytes: completed.bytes,
@@ -946,7 +948,7 @@ function InfiniteCanvasPage() {
                     pendingCloudAssetsRef.current.add(`${node.id}:primary`);
                     for (const image of node.metadata?.images || []) {
                         if (
-                            (image.storageKey || (node.type === CanvasNodeType.Image && isRemoteURL(image.content))) &&
+                            (image.storageKey || image.cloudSourceObjectKey || (node.type === CanvasNodeType.Image && isRemoteURL(image.content))) &&
                             !image.cloudAssetId &&
                             image.cloudSyncState !== "uploading"
                         ) {
@@ -962,7 +964,7 @@ function InfiniteCanvasPage() {
                             ...node.metadata,
                             cloudSyncState: "uploading",
                             images: node.metadata?.images?.map((image) => (
-                                (image.storageKey || (node.type === CanvasNodeType.Image && isRemoteURL(image.content))) && !image.cloudAssetId
+                                (image.storageKey || image.cloudSourceObjectKey || (node.type === CanvasNodeType.Image && isRemoteURL(image.content))) && !image.cloudAssetId
                                     ? { ...image, cloudSyncState: "uploading" }
                                     : image
                             )),
@@ -984,6 +986,7 @@ function InfiniteCanvasPage() {
                                     cloudURL: result.asset.url,
                                     cloudPreviewURL: previewURL,
                                     cloudSyncState: "uploaded" as const,
+                                    cloudSourceObjectKey: undefined,
                                 } : {}),
                                 images: node.metadata?.images?.map((image) => (
                                     image.id === result.imageId
@@ -993,6 +996,7 @@ function InfiniteCanvasPage() {
                                             cloudURL: result.asset.url,
                                             cloudPreviewURL: previewURL,
                                             cloudSyncState: "uploaded" as const,
+                                            cloudSourceObjectKey: undefined,
                                         }
                                         : image
                                 )),
@@ -1010,7 +1014,7 @@ function InfiniteCanvasPage() {
                                 ...node.metadata,
                                 cloudSyncState: "failed",
                                 images: node.metadata?.images?.map((image) => (
-                                    (image.storageKey || (node.type === CanvasNodeType.Image && /^https?:\/\//i.test(image.content || ""))) && !image.cloudAssetId
+                                    (image.storageKey || image.cloudSourceObjectKey || (node.type === CanvasNodeType.Image && /^https?:\/\//i.test(image.content || ""))) && !image.cloudAssetId
                                         ? { ...image, cloudSyncState: "failed" }
                                         : image
                                 )),
@@ -2939,7 +2943,7 @@ function InfiniteCanvasPage() {
                           : await requestGeneration(taskConfig, context.prompt, requestOptions).then((items) => items[0]);
                     const displayUrl = image.previewDataUrl || image.dataUrl;
                     setNodes((prev) =>
-                        prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, content: displayUrl, previewOnly: Boolean(image.previewDataUrl), storageKey: undefined, naturalWidth: undefined, naturalHeight: undefined, bytes: undefined, mimeType: undefined, prompt: scene, model: generationConfig.model, status: NODE_STATUS_SUCCESS, errorDetails: undefined } } : node)),
+                        prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, content: displayUrl, previewOnly: Boolean(image.previewDataUrl), cloudSourceObjectKey: image.objectKey, storageKey: undefined, naturalWidth: undefined, naturalHeight: undefined, bytes: undefined, mimeType: undefined, prompt: scene, model: generationConfig.model, status: NODE_STATUS_SUCCESS, errorDetails: undefined } } : node)),
                     );
                     void uploadImage(image.dataUrl, { signal: controller.signal })
                         .then((uploaded) => {
@@ -3182,6 +3186,7 @@ function InfiniteCanvasPage() {
                                     status: NODE_STATUS_SUCCESS,
                                     content: displayUrl,
                                     previewOnly: Boolean(image.previewDataUrl),
+                                    cloudSourceObjectKey: image.objectKey,
                                     naturalWidth: 0,
                                     naturalHeight: 0,
                                     bytes: 0,
@@ -3198,6 +3203,7 @@ function InfiniteCanvasPage() {
                                                 ...node.metadata,
                                                 content: item.content,
                                                 previewOnly: Boolean(image.previewDataUrl),
+                                                cloudSourceObjectKey: image.objectKey,
                                                 storageKey: undefined,
                                                 naturalWidth: undefined,
                                                 naturalHeight: undefined,
@@ -3221,6 +3227,7 @@ function InfiniteCanvasPage() {
                                             content: uploaded.url,
                                             previewOnly: false,
                                             storageKey: uploaded.storageKey,
+                                            cloudSourceObjectKey: image.objectKey,
                                             naturalWidth: uploaded.width,
                                             naturalHeight: uploaded.height,
                                             bytes: uploaded.bytes,
@@ -3236,6 +3243,7 @@ function InfiniteCanvasPage() {
                                                     content: cachedItem.content,
                                                     previewOnly: false,
                                                     storageKey: cachedItem.storageKey,
+                                                    cloudSourceObjectKey: cachedItem.cloudSourceObjectKey,
                                                     naturalWidth: cachedItem.naturalWidth,
                                                     naturalHeight: cachedItem.naturalHeight,
                                                     bytes: cachedItem.bytes,
@@ -3615,7 +3623,7 @@ function InfiniteCanvasPage() {
 
                 const taskConfig = { ...generationConfig, count: "1" };
                 const persistentTask = await submitPersistentImageTask(taskConfig, prompt, retryImages, { signal: controller.signal });
-                let image;
+                let image: GeneratedImageResult | undefined;
                 if (persistentTask) {
                     rememberPendingImageTask(projectId, node.id, retryImageId, persistentTask, node.metadata?.generationStartedAt);
                     setNodes((prev) =>
@@ -3699,7 +3707,7 @@ function InfiniteCanvasPage() {
                                           previewOnly: item.metadata?.primaryImageId === retryImageId ? true : item.metadata?.previewOnly,
                                           images: item.metadata?.images?.map((entry) =>
                                               entry.id === retryImageId
-                                                  ? { ...entry, status: NODE_STATUS_SUCCESS, content: previewDataUrl, previewOnly: true, errorDetails: undefined }
+                                                  ? { ...entry, status: NODE_STATUS_SUCCESS, content: previewDataUrl, previewOnly: true, cloudSourceObjectKey: image.objectKey, errorDetails: undefined }
                                                   : entry,
                                           ),
                                       },
@@ -3717,6 +3725,7 @@ function InfiniteCanvasPage() {
                     content: uploadedImage.url,
                     previewOnly: false,
                     storageKey: uploadedImage.storageKey,
+                    cloudSourceObjectKey: image.objectKey,
                     naturalWidth: uploadedImage.width,
                     naturalHeight: uploadedImage.height,
                     bytes: uploadedImage.bytes,
@@ -3747,6 +3756,7 @@ function InfiniteCanvasPage() {
                             metadata: {
                                 ...item.metadata,
                                 ...(makePrimary ? imageMetadata(uploadedImage) : { status: NODE_STATUS_SUCCESS }),
+                                ...(makePrimary ? { cloudSourceObjectKey: retryImage.cloudSourceObjectKey } : {}),
                                 images: item.metadata?.images?.map((current) => (current.id === retryImage.id ? retryImage : current)),
                                 primaryImageId: makePrimary ? retryImage.id : item.metadata?.primaryImageId,
                                 prompt,

@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"mime"
+	"net/url"
 	"sort"
 	"strings"
 	"sync"
@@ -250,6 +252,127 @@ func (s *S3ImageStorage) PresignGet(ctx context.Context, key string) (string, er
 		return "", fmt.Errorf("presign url: %w", err)
 	}
 	return result.URL, nil
+}
+
+// PresignPut creates a browser upload URL for the exact key and content type.
+// The caller must send the same Content-Type header when performing the PUT.
+func (s *S3ImageStorage) PresignPut(
+	ctx context.Context,
+	key string,
+	contentType string,
+	expiry time.Duration,
+) (service.ImageStorageUploadRequest, error) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return service.ImageStorageUploadRequest{}, fmt.Errorf("S3 object key is required")
+	}
+	contentType = strings.TrimSpace(contentType)
+	if contentType == "" {
+		return service.ImageStorageUploadRequest{}, fmt.Errorf("S3 content type is required")
+	}
+	if expiry <= 0 {
+		expiry = s.presignExpiry
+	}
+	input := &s3.PutObjectInput{
+		Bucket:      &s.bucket,
+		Key:         &key,
+		ContentType: &contentType,
+	}
+	headers := map[string]string{"Content-Type": contentType}
+	presignClient := s3.NewPresignClient(s.client)
+	result, err := presignClient.PresignPutObject(ctx, input, s3.WithPresignExpires(expiry))
+	if err != nil {
+		return service.ImageStorageUploadRequest{}, fmt.Errorf("presign put url: %w", err)
+	}
+	return service.ImageStorageUploadRequest{URL: result.URL, Headers: headers}, nil
+}
+
+// Stat verifies a directly uploaded object without downloading its bytes.
+func (s *S3ImageStorage) Stat(ctx context.Context, key string) (service.ImageObjectMetadata, error) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return service.ImageObjectMetadata{}, fmt.Errorf("S3 object key is required")
+	}
+	finish := servertiming.ObserveDependency(ctx, "s3")
+	defer finish()
+	result, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{
+		Bucket: &s.bucket,
+		Key:    &key,
+	})
+	if err != nil {
+		return service.ImageObjectMetadata{}, fmt.Errorf("S3 HeadObject: %w", err)
+	}
+	meta := service.ImageObjectMetadata{}
+	if result.ContentLength != nil {
+		meta.Bytes = *result.ContentLength
+	}
+	if result.ContentType != nil {
+		meta.ContentType = *result.ContentType
+	}
+	if result.ETag != nil {
+		meta.ETag = strings.Trim(*result.ETag, `"`)
+	}
+	return meta, nil
+}
+
+func (s *S3ImageStorage) ReadPrefix(ctx context.Context, key string, length int64) ([]byte, error) {
+	key = strings.TrimSpace(key)
+	if key == "" || length <= 0 {
+		return nil, fmt.Errorf("S3 prefix read requires key and positive length")
+	}
+	if length > 4096 {
+		length = 4096
+	}
+	rangeHeader := fmt.Sprintf("bytes=0-%d", length-1)
+	finish := servertiming.ObserveDependency(ctx, "s3")
+	result, err := s.client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: &s.bucket,
+		Key:    &key,
+		Range:  &rangeHeader,
+	})
+	finish()
+	if err != nil {
+		return nil, fmt.Errorf("S3 GetObject range: %w", err)
+	}
+	defer func() { _ = result.Body.Close() }()
+	data, err := io.ReadAll(io.LimitReader(result.Body, length))
+	if err != nil {
+		return nil, fmt.Errorf("S3 read object prefix: %w", err)
+	}
+	return data, nil
+}
+
+// Copy promotes an existing task result to a durable canvas object without
+// routing the bytes through the application or the browser.
+func (s *S3ImageStorage) Copy(ctx context.Context, sourceKey, targetKey, contentType string) error {
+	sourceKey = strings.TrimSpace(sourceKey)
+	targetKey = strings.TrimSpace(targetKey)
+	contentType = strings.TrimSpace(contentType)
+	if sourceKey == "" || targetKey == "" || contentType == "" {
+		return fmt.Errorf("S3 copy requires source, target and content type")
+	}
+	escapedSource := url.PathEscape(sourceKey)
+	escapedSource = strings.ReplaceAll(escapedSource, "%2F", "/")
+	copySource := s.bucket + "/" + escapedSource
+	metadataDirective := types.MetadataDirectiveReplace
+	input := &s3.CopyObjectInput{
+		Bucket:            &s.bucket,
+		Key:               &targetKey,
+		CopySource:        &copySource,
+		ContentType:       &contentType,
+		MetadataDirective: metadataDirective,
+	}
+	if s.publicBaseURL != "" {
+		cacheControl := "public, max-age=31536000, immutable"
+		input.CacheControl = &cacheControl
+	}
+	finish := servertiming.ObserveDependency(ctx, "s3")
+	_, err := s.client.CopyObject(ctx, input)
+	finish()
+	if err != nil {
+		return fmt.Errorf("S3 CopyObject: %w", err)
+	}
+	return nil
 }
 
 func (s *S3ImageStorage) PresignGetDownload(ctx context.Context, key, filename string) (string, error) {

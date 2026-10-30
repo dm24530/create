@@ -98,7 +98,7 @@ type GeminiPayload = {
     promptFeedback?: { blockReason?: string };
 };
 type GeminiStreamState = { buffer: string; text: string; toolCalls: ResponseToolCall[]; error?: string };
-export type GeneratedImageResult = { id: string; dataUrl: string; previewDataUrl?: string };
+export type GeneratedImageResult = { id: string; dataUrl: string; previewDataUrl?: string; objectKey?: string };
 type RequestOptions = {
     signal?: AbortSignal;
     onPreview?: (images: GeneratedImageResult[]) => void;
@@ -249,7 +249,12 @@ function parseImagePayload(payload: ImageApiResponse, fallbackOutputFormat?: str
     const images: GeneratedImageResult[] = [];
     for (const item of imageList) {
         const dataUrl = resolveImageSource(item, fallbackOutputFormat);
-        if (dataUrl) images.push({ id: nanoid(), dataUrl, previewDataUrl: resolveImagePreviewSource(item) });
+        if (dataUrl) images.push({
+            id: nanoid(),
+            dataUrl,
+            previewDataUrl: resolveImagePreviewSource(item),
+            objectKey: typeof item.object_key === "string" && item.object_key.trim() ? item.object_key.trim() : undefined,
+        });
     }
 
     if (images.length === 0) {

@@ -39,8 +39,10 @@ function sanitizeNodeForCloud(node: CanvasNodeData): CanvasNodeData {
     metadata: {
       ...metadata,
       content,
+      cloudSourceObjectKey: undefined,
       images: metadata.images?.map((image) => ({
         ...image,
+        cloudSourceObjectKey: undefined,
         content: image.cloudPreviewURL || image.cloudURL || (
           !image.content?.startsWith("blob:") && !image.content?.startsWith("data:") ? image.content : ""
         ),

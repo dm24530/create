@@ -145,6 +145,9 @@ func RegisterUserRoutes(
 			canvas.DELETE("/projects/:id", h.Canvas.DeleteProject)
 			canvas.GET("/image-proxy", h.Canvas.ProxyImage)
 			canvas.POST("/assets", h.Canvas.UploadAsset)
+			canvas.POST("/assets/presign", h.Canvas.PresignAsset)
+			canvas.POST("/assets/complete", h.Canvas.CompleteAsset)
+			canvas.POST("/assets/promote", h.Canvas.PromoteAsset)
 			canvas.DELETE("/assets/:id", h.Canvas.DeleteAsset)
 		}
 

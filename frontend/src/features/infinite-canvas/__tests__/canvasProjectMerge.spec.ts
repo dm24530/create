@@ -168,7 +168,14 @@ describe('mergeCloudCanvasProjects', () => {
       metadata: {
         content: 'blob:local-image',
         storageKey: 'image:local',
-        images: [{ id: 'image-1', status: 'success', content: 'blob:local-image', storageKey: 'image:local' }],
+        cloudSourceObjectKey: 'images/key/local-task-0.png',
+        images: [{
+          id: 'image-1',
+          status: 'success',
+          content: 'blob:local-image',
+          storageKey: 'image:local',
+          cloudSourceObjectKey: 'images/key/local-task-0.png',
+        }],
         primaryImageId: 'image-1',
       },
     } as any
@@ -203,6 +210,8 @@ describe('mergeCloudCanvasProjects', () => {
     expect(result.projects[0].nodes[0].metadata.content).toBe('blob:local-image')
     expect(result.projects[0].nodes[0].metadata.storageKey).toBe('image:local')
     expect(result.projects[0].nodes[0].metadata.images?.[0].storageKey).toBe('image:local')
+    expect(result.projects[0].nodes[0].metadata.cloudSourceObjectKey).toBe('images/key/local-task-0.png')
+    expect(result.projects[0].nodes[0].metadata.images?.[0].cloudSourceObjectKey).toBe('images/key/local-task-0.png')
     expect(result.projects[0].nodes[0].metadata.cloudAssetId).toBe('asset-1')
   })
 

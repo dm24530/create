@@ -143,6 +143,7 @@ function mergeNodeContents(local: CanvasNodeData, cloud: CanvasNodeData): Canvas
             cloudAssetId: localImage.cloudAssetId || cloudImage.cloudAssetId,
             cloudURL: localImage.cloudURL || cloudImage.cloudURL,
             cloudPreviewURL: localImage.cloudPreviewURL || cloudImage.cloudPreviewURL,
+            cloudSourceObjectKey: localImage.cloudSourceObjectKey || cloudImage.cloudSourceObjectKey,
         };
     });
     return {
@@ -156,6 +157,7 @@ function mergeNodeContents(local: CanvasNodeData, cloud: CanvasNodeData): Canvas
             cloudAssetId: localMeta.cloudAssetId || cloudMeta.cloudAssetId,
             cloudURL: localMeta.cloudURL || cloudMeta.cloudURL,
             cloudPreviewURL: localMeta.cloudPreviewURL || cloudMeta.cloudPreviewURL,
+            cloudSourceObjectKey: localMeta.cloudSourceObjectKey || cloudMeta.cloudSourceObjectKey,
             images,
         },
     };
@@ -177,6 +179,7 @@ function mergeNodeMedia(local: CanvasNodeData, cloud: CanvasNodeData): CanvasNod
             cloudAssetId: image.cloudAssetId || localImage.cloudAssetId,
             cloudURL: image.cloudURL || localImage.cloudURL,
             cloudPreviewURL: image.cloudPreviewURL || localImage.cloudPreviewURL,
+            cloudSourceObjectKey: image.cloudSourceObjectKey || localImage.cloudSourceObjectKey,
             cloudSyncState: image.cloudSyncState || localImage.cloudSyncState,
         };
     });
@@ -191,6 +194,7 @@ function mergeNodeMedia(local: CanvasNodeData, cloud: CanvasNodeData): CanvasNod
             cloudAssetId: cloudMeta.cloudAssetId || localMeta.cloudAssetId,
             cloudURL: cloudMeta.cloudURL || localMeta.cloudURL,
             cloudPreviewURL: cloudMeta.cloudPreviewURL || localMeta.cloudPreviewURL,
+            cloudSourceObjectKey: cloudMeta.cloudSourceObjectKey || localMeta.cloudSourceObjectKey,
             images,
         },
     };

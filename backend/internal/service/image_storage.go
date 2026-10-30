@@ -186,6 +186,40 @@ type ImageStorageURLResolver interface {
 	Exists(ctx context.Context, key string) (bool, error)
 }
 
+// ImageStorageUploadURLResolver creates a short-lived direct-upload URL for an
+// exact object key. R2/Go SDK presigning does not consistently include
+// Content-Type in SignedHeaders, so callers must verify the landed object with
+// ImageStorageObjectStatResolver before making it visible.
+type ImageStorageUploadURLResolver interface {
+	PresignPut(ctx context.Context, key, contentType string, expiry time.Duration) (ImageStorageUploadRequest, error)
+}
+
+type ImageStorageUploadRequest struct {
+	URL     string
+	Headers map[string]string
+}
+
+// ImageObjectMetadata verifies what actually landed in object storage after a
+// direct browser upload. Size and content type are checked before the asset is
+// made visible in a canvas.
+type ImageObjectMetadata struct {
+	Bytes       int64
+	ContentType string
+	ETag        string
+}
+
+type ImageStorageObjectStatResolver interface {
+	Stat(ctx context.Context, key string) (ImageObjectMetadata, error)
+}
+
+type ImageStorageObjectPrefixReader interface {
+	ReadPrefix(ctx context.Context, key string, length int64) ([]byte, error)
+}
+
+type ImageStorageObjectCopier interface {
+	Copy(ctx context.Context, sourceKey, targetKey, contentType string) error
+}
+
 // ImageStorageDownloadURLResolver creates a short-lived direct object URL with
 // an attachment response. Large originals should be downloaded by the browser
 // directly instead of proxying the entire object through the application.

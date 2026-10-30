@@ -129,11 +129,147 @@ export async function uploadCloudCanvasAsset(input: {
   projectId: string;
   nodeId: string;
   kind: "image" | "video" | "audio";
+  file?: Blob;
+  filename: string;
+  thumbnail?: Blob;
+  width?: number;
+  height?: number;
+  sourceObjectKey?: string;
+}) {
+  try {
+    return await uploadCloudCanvasAssetDirect(input);
+  } catch (error) {
+    if (!shouldFallbackCanvasDirectUpload(error) || !input.file) throw error;
+    console.warn("Canvas direct upload unavailable; falling back to the legacy upload endpoint.", error);
+    return uploadCloudCanvasAssetLegacy({ ...input, file: input.file });
+  }
+}
+
+type CanvasPresignResponse = {
+  existing?: CloudCanvasAsset;
+  asset_id?: string;
+  kind?: "image" | "video" | "audio";
+  object_key?: string;
+  upload_url?: string;
+  upload_headers?: Record<string, string>;
+  thumb_object_key?: string;
+  thumb_upload_url?: string;
+  thumb_upload_headers?: Record<string, string>;
+  thumbnail_content_type?: string;
+};
+
+class CanvasDirectUploadError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "CanvasDirectUploadError";
+  }
+}
+
+class CanvasPromotionError extends CanvasDirectUploadError {
+  constructor(message: string) {
+    super(message);
+    this.name = "CanvasPromotionError";
+  }
+}
+
+async function uploadCloudCanvasAssetDirect(input: {
+  projectId: string;
+  nodeId: string;
+  kind: "image" | "video" | "audio";
+  file?: Blob;
+  filename: string;
+  thumbnail?: Blob;
+  width?: number;
+  height?: number;
+  sourceObjectKey?: string;
+}) {
+  if (input.sourceObjectKey) {
+    try {
+      return await cloudRequest<CloudCanvasAsset>("/assets/promote", {
+        method: "POST",
+        body: JSON.stringify({
+          project_id: input.projectId,
+          node_id: input.nodeId,
+          kind: input.kind,
+          source_object_key: input.sourceObjectKey,
+          width: input.width || 0,
+          height: input.height || 0,
+        }),
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Canvas source promotion failed";
+      throw new CanvasPromotionError(message);
+    }
+  }
+  if (!input.file) throw new CanvasDirectUploadError("Canvas direct upload file is unavailable");
+  const contentType = resolveCanvasContentType(input.file.type, input.filename);
+  if (!/^(image|video|audio)\//i.test(contentType)) {
+    throw new CanvasDirectUploadError("Canvas direct upload requires a supported media content type");
+  }
+  const thumbnailContentType = input.thumbnail ? resolveCanvasContentType(input.thumbnail.type, "thumbnail.webp") : "";
+  const sha256 = await sha256Blob(input.file).catch(() => "");
+  const presign = await cloudRequest<CanvasPresignResponse>("/assets/presign", {
+    method: "POST",
+    body: JSON.stringify({
+      project_id: input.projectId,
+      node_id: input.nodeId,
+      kind: input.kind,
+      filename: input.filename,
+      content_type: contentType,
+      bytes: input.file.size,
+      ...(input.thumbnail ? {
+        thumbnail_content_type: thumbnailContentType,
+        thumbnail_bytes: input.thumbnail.size,
+      } : {}),
+      ...(sha256 ? { sha256 } : {}),
+    }),
+  });
+  if (presign.existing) return presign.existing;
+  if (!presign.asset_id || !presign.object_key || !presign.upload_url) {
+    throw new CanvasDirectUploadError("Canvas direct upload presign response is incomplete");
+  }
+
+  await putCanvasObject(presign.upload_url, presign.upload_headers, input.file);
+  if (input.thumbnail) {
+    if (!presign.thumb_object_key || !presign.thumb_upload_url) {
+      throw new CanvasDirectUploadError("Canvas thumbnail direct upload presign response is incomplete");
+    }
+    await putCanvasObject(presign.thumb_upload_url, presign.thumb_upload_headers, input.thumbnail);
+  }
+
+  return cloudRequest<CloudCanvasAsset>("/assets/complete", {
+    method: "POST",
+    body: JSON.stringify({
+      asset_id: presign.asset_id,
+      project_id: input.projectId,
+      node_id: input.nodeId,
+      kind: input.kind,
+      filename: input.filename,
+      content_type: contentType,
+      bytes: input.file.size,
+      object_key: presign.object_key,
+      ...(input.thumbnail ? {
+        thumbnail_content_type: presign.thumbnail_content_type || thumbnailContentType,
+        thumbnail_bytes: input.thumbnail.size,
+        thumb_object_key: presign.thumb_object_key,
+      } : {}),
+      width: input.width || 0,
+      height: input.height || 0,
+      ...(sha256 ? { sha256 } : {}),
+    }),
+  });
+}
+
+async function uploadCloudCanvasAssetLegacy(input: {
+  projectId: string;
+  nodeId: string;
+  kind: "image" | "video" | "audio";
   file: Blob;
   filename: string;
   thumbnail?: Blob;
   width?: number;
   height?: number;
+  sourceObjectKey?: string;
 }) {
   const form = new FormData();
   form.append("project_id", input.projectId);
@@ -147,6 +283,58 @@ export async function uploadCloudCanvasAsset(input: {
     method: "POST",
     body: form,
   });
+}
+
+async function putCanvasObject(url: string, headers: Record<string, string> | undefined, blob: Blob) {
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: "PUT",
+      headers,
+      body: blob,
+      cache: "no-store",
+      credentials: "omit",
+    });
+  } catch (error) {
+    throw new CanvasDirectUploadError(error instanceof Error ? error.message : "Canvas direct upload failed");
+  }
+  if (!response.ok) {
+    throw new CanvasDirectUploadError(`Canvas direct upload failed: ${response.status}`);
+  }
+}
+
+function shouldFallbackCanvasDirectUpload(error: unknown) {
+  if (error instanceof CanvasPromotionError) return true;
+  if (error instanceof CanvasDirectUploadError) return false;
+  const status = (error as { status?: number } | null)?.status;
+  return status === 404 || status === 405 || status === 501;
+}
+
+function resolveCanvasContentType(value: string, filename: string) {
+  const normalized = value.trim().toLowerCase();
+  if (normalized) return normalized;
+  const extension = filename.split(".").pop()?.toLowerCase() || "";
+  const byExtension: Record<string, string> = {
+    avif: "image/avif",
+    gif: "image/gif",
+    jpeg: "image/jpeg",
+    jpg: "image/jpeg",
+    m4a: "audio/mp4",
+    mp3: "audio/mpeg",
+    mp4: "video/mp4",
+    ogg: "audio/ogg",
+    png: "image/png",
+    wav: "audio/wav",
+    webm: "video/webm",
+    webp: "image/webp",
+  };
+  return byExtension[extension] || "application/octet-stream";
+}
+
+async function sha256Blob(blob: Blob) {
+  if (!globalThis.crypto?.subtle || blob.size > 32 * 1024 * 1024) return "";
+  const digest = await globalThis.crypto.subtle.digest("SHA-256", await blob.arrayBuffer());
+  return Array.from(new Uint8Array(digest), (value) => value.toString(16).padStart(2, "0")).join("");
 }
 
 export async function uploadCloudCanvasAssetFromURL(input: {
@@ -191,15 +379,26 @@ export async function uploadPendingCanvasAssets(
     const metadata = node.metadata;
     if (!metadata) continue;
     const hasImageEntries = Boolean(metadata.images?.length);
-    if (node.type === CanvasNodeType.Image && !hasImageEntries && !metadata.cloudAssetId && (metadata.storageKey || isRemoteURL(metadata.content))) {
+    if (node.type === CanvasNodeType.Image && !hasImageEntries && !metadata.cloudAssetId && (metadata.storageKey || metadata.cloudSourceObjectKey || isRemoteURL(metadata.content))) {
       tasks.push(async () => {
         const blob = metadata.storageKey ? await getImageBlob(metadata.storageKey) : undefined;
-        const asset = blob
+        const asset = metadata.cloudSourceObjectKey
           ? await uploadCloudCanvasAsset({
               projectId,
               nodeId: node.id,
               kind: "image",
-              file: blob,
+              file: blob || undefined,
+              filename: canvasFilename(node.id, blob || new Blob([], { type: "image/png" })),
+              width: metadata.naturalWidth,
+              height: metadata.naturalHeight,
+              sourceObjectKey: metadata.cloudSourceObjectKey,
+            })
+          : blob
+          ? await uploadCloudCanvasAsset({
+              projectId,
+              nodeId: node.id,
+              kind: "image",
+              file: blob || undefined,
               filename: canvasFilename(node.id, blob),
               thumbnail: await createImageThumbnail(blob).catch(() => undefined),
               width: metadata.naturalWidth,
@@ -218,11 +417,22 @@ export async function uploadPendingCanvasAssets(
       });
     }
     for (const image of metadata.images || []) {
-      if (image.cloudAssetId || (!image.storageKey && !isRemoteURL(image.content))) continue;
+      if (image.cloudAssetId || (!image.storageKey && !image.cloudSourceObjectKey && !isRemoteURL(image.content))) continue;
       const imageID = image.id;
       tasks.push(async () => {
         const blob = image.storageKey ? await getImageBlob(image.storageKey) : undefined;
-        const asset = blob
+        const asset = image.cloudSourceObjectKey
+          ? await uploadCloudCanvasAsset({
+              projectId,
+              nodeId: node.id,
+              kind: "image",
+              file: blob || undefined,
+              filename: canvasFilename(imageID, blob || new Blob([], { type: "image/png" })),
+              width: image.naturalWidth,
+              height: image.naturalHeight,
+              sourceObjectKey: image.cloudSourceObjectKey,
+            })
+          : blob
           ? await uploadCloudCanvasAsset({
               projectId,
               nodeId: node.id,
