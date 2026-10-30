@@ -11,7 +11,7 @@ import { IMAGE_STUDIO_DEFAULT_PROMPT, imageStudioDraft, resetImageStudioDraft } 
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 
-const { listKeys, getPublicSettings, listGallery, saveGallery, saveGalleryFromTask, pinGallery, deleteGallery, downloadGallery, downloadURLGallery, thumbnailGallery, galleryQuota, reportDisplay, reportClientError, copyToClipboard, imageNeedsLocalResize, processImageForDisplay, tryStartPersistent, waitForPersistent } = vi.hoisted(() => ({
+const { listKeys, getPublicSettings, listGallery, saveGallery, saveGalleryFromTask, pinGallery, deleteGallery, downloadGallery, downloadURLGallery, thumbnailGallery, galleryQuota, reportDisplay, reportClientError, copyToClipboard, imageNeedsLocalResize, processImageForDisplay, prepareGeminiReferenceImages, tryStartPersistent, waitForPersistent } = vi.hoisted(() => ({
   listKeys: vi.fn(),
   getPublicSettings: vi.fn(),
   listGallery: vi.fn(),
@@ -28,6 +28,7 @@ const { listKeys, getPublicSettings, listGallery, saveGallery, saveGalleryFromTa
   copyToClipboard: vi.fn(),
   imageNeedsLocalResize: vi.fn(),
   processImageForDisplay: vi.fn(),
+  prepareGeminiReferenceImages: vi.fn(),
   tryStartPersistent: vi.fn(),
   waitForPersistent: vi.fn(),
 }))
@@ -66,6 +67,14 @@ vi.mock('../imagePostProcess', async (importOriginal) => {
     ...actual,
     imageNeedsLocalResize,
     processImageForDisplay,
+  }
+})
+
+vi.mock('../geminiReferenceImages', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../geminiReferenceImages')>()
+  return {
+    ...actual,
+    prepareGeminiReferenceImages,
   }
 })
 
@@ -169,6 +178,7 @@ function resetCommonMocks() {
   copyToClipboard.mockReset()
   imageNeedsLocalResize.mockReset()
   processImageForDisplay.mockReset()
+  prepareGeminiReferenceImages.mockReset()
   tryStartPersistent.mockReset()
   waitForPersistent.mockReset()
   tryStartPersistent.mockResolvedValue(false)
@@ -196,6 +206,16 @@ function resetCommonMocks() {
     format,
     processed: false,
   }))
+  prepareGeminiReferenceImages.mockImplementation(async (inputs: Array<{ name: string }>) => inputs.map((input, index) => ({
+    name: input.name,
+    blob: new Blob(['compressed'], { type: 'image/webp' }),
+    dataUrl: `data:image/webp;base64,compressed-${index + 1}`,
+    width: 1024,
+    height: 768,
+    bytes: 10,
+    mimeType: 'image/webp',
+    profileIndex: 0,
+  })))
   saveGallery.mockResolvedValue({
     id: 'gallery-1',
     url: 'https://cdn.example.com/gallery-1.png',
@@ -4330,6 +4350,96 @@ describe('ImageStudioView composer controls', () => {
     await wrapper.get('[data-testid="image-reference-1"] .image-composer__remove').trigger('click')
     expect(wrapper.get('[data-testid="reference-index-1"]').text()).toContain('图片 1')
     expect(wrapper.get('[data-testid="image-reference-1"]').text()).toContain('second.png')
+  })
+
+  it('compresses all 14 references before sending a Gemini image request', async () => {
+    listKeys.mockResolvedValue({
+      items: [{
+        id: 1,
+        name: 'gemini',
+        key: 'sk-gemini',
+        status: 'active',
+        group_id: 2,
+        group: { platform: 'gemini', allow_image_generation: true },
+      }],
+    })
+    getPublicSettings.mockResolvedValue({ api_base_url: '/v1' })
+    let generationBody: Record<string, any> | null = null
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = String(input)
+      if (url.endsWith('/images/batches/models')) {
+        return {
+          ok: true,
+          json: async () => ({ data: [{ id: 'gemini-nano-banana-2.1' }] }),
+        } as Response
+      }
+      if (url.endsWith('/images/generations/async')) return asyncImageUnavailableResponse()
+      if (url.includes('gemini-nano-banana-2.1:generateContent')) {
+        generationBody = JSON.parse(String(init?.body || '{}'))
+        return {
+          ok: true,
+          json: async () => ({
+            candidates: [{
+              content: {
+                parts: [{ inlineData: { mimeType: 'image/png', data: 'cmVzdWx0' } }],
+              },
+            }],
+          }),
+        } as Response
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountImageStudio()
+    await flushPromises()
+    await vi.waitFor(() => {
+      expect(wrapper.get('[data-testid="image-model-select"]').text()).toContain('gemini-nano-banana-2.1')
+    })
+
+    const fileInput = wrapper.get('input[type="file"]')
+    Object.defineProperty(fileInput.element, 'files', {
+      configurable: true,
+      value: Array.from({ length: 14 }, (_, index) => (
+        new File([`image-${index + 1}`], `image-${index + 1}.png`, { type: 'image/png' })
+      )),
+    })
+    await fileInput.trigger('change')
+    await vi.waitFor(() => {
+      expect(wrapper.find('[data-testid="image-reference-14"]').exists()).toBe(true)
+    })
+
+    await wrapper.get('form').trigger('submit')
+    await vi.waitFor(() => {
+      expect(generationBody).not.toBeNull()
+    })
+
+    expect(prepareGeminiReferenceImages).toHaveBeenCalledOnce()
+    const geminiParts = generationBody?.contents?.[0]?.parts || []
+    expect(geminiParts.filter((part: any) => part.inlineData?.mimeType === 'image/webp')).toHaveLength(14)
+  })
+
+  it('serializes rapid reference additions so the 14-image cap cannot be bypassed', async () => {
+    const wrapper = mountImageStudio()
+    await flushPromises()
+    const fileInput = wrapper.get('input[type="file"]')
+    Object.defineProperty(fileInput.element, 'files', {
+      configurable: true,
+      value: Array.from({ length: 14 }, (_, index) => (
+        new File([`image-${index + 1}`], `image-${index + 1}.png`, { type: 'image/png' })
+      )),
+    })
+    await fileInput.trigger('change')
+    Object.defineProperty(fileInput.element, 'files', {
+      configurable: true,
+      value: [new File(['extra'], 'extra.png', { type: 'image/png' })],
+    })
+    await fileInput.trigger('change')
+
+    await vi.waitFor(() => {
+      expect(wrapper.find('[data-testid="image-reference-14"]').exists()).toBe(true)
+    })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="image-reference-15"]').exists()).toBe(false)
   })
 
   it('keeps the prompt and reference files when the studio remounts', async () => {

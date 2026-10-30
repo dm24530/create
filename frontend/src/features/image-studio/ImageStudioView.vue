@@ -325,7 +325,15 @@
             </button>
           </div>
           <p class="image-composer__helper">
-            可拖拽或粘贴参考图，最多 14 张。点击图片编号可把「图片1」等引用插入提示词。
+            可拖拽或粘贴参考图，最多 {{ GEMINI_REFERENCE_MAX_IMAGES }} 张。点击图片编号可把「图片1」等引用插入提示词。
+            Gemini 请求会自动等比压缩，每张不超过 1 MB，14 张合计小于 10 MB。
+          </p>
+          <p
+            v-if="optimizingReferences"
+            class="image-composer__helper"
+            data-testid="image-reference-optimization"
+          >
+            {{ referenceOptimizationLabel }}
           </p>
         </section>
 
@@ -535,7 +543,7 @@
         <div class="image-composer__footer">
           <button type="submit" class="image-composer__generate" :disabled="!canGenerate">
             <Icon name="sparkles" size="sm" />
-            {{ generating ? '继续生成' : '开始生成' }}
+            {{ optimizingReferences ? '正在优化参考图' : generating ? '继续生成' : '开始生成' }}
           </button>
         </div>
       </form>
@@ -734,6 +742,11 @@ import {
   LOCAL_IMAGE_MAX_EDGE,
   processImageForDisplay,
 } from './imagePostProcess'
+import {
+  GEMINI_REFERENCE_MAX_IMAGES,
+  prepareGeminiReferenceImages,
+  type PreparedGeminiReference,
+} from './geminiReferenceImages'
 import { extractGeminiImageResults } from './geminiImageResults'
 import { imageDownloadURL, resolveImageAssetURL } from './imageDownload'
 import Icon from '@/components/icons/Icon.vue'
@@ -889,6 +902,9 @@ const generationClockNow = ref(Date.now())
 const activeImageTaskCount = computed(() => images.value.filter((image) => image.pending).length)
 const keyCredentialsReady = ref(false)
 const references = ref<ReferenceItem[]>([])
+const optimizingReferences = ref(false)
+const referenceOptimizationCompleted = ref(0)
+const referenceOptimizationTotal = ref(0)
 const generationRequestSnapshots = new Map<string, GenerationRequestSnapshot>()
 const retryingFailureIds = ref<Set<string>>(new Set())
 const previewImage = ref<GeneratedImage | null>(null)
@@ -1262,7 +1278,7 @@ const imageCapableKeys = computed(() => activeKeys.value.filter(
 ))
 const apiKeyOptions = computed(() => imageCapableKeys.value.map((key) => ({ value: String(key.id), label: key.name })))
 const selectedKey = computed(() => imageCapableKeys.value.find((key) => String(key.id) === selectedKeyId.value) || null)
-const canGenerate = computed(() => Boolean(apiBaseUrl.value && selectedKey.value?.key && imageModel.value.trim() && prompt.value.trim()) && !sizeIssue.value)
+const canGenerate = computed(() => Boolean(apiBaseUrl.value && selectedKey.value?.key && imageModel.value.trim() && prompt.value.trim()) && !sizeIssue.value && !optimizingReferences.value)
 const isGeminiImageModel = computed(() => isGeminiModel(imageModel.value))
 const isGptImageModel = computed(() => imageModel.value.toLowerCase().includes('gpt-image'))
 const isGrokImageModel = computed(() => isGrokImageModelName(imageModel.value))
@@ -1306,6 +1322,11 @@ const canRegeneratePreview = computed(() => Boolean(
   !generating.value,
 ))
 const hasReferences = computed(() => references.value.length > 0)
+const referenceOptimizationLabel = computed(() => (
+  referenceOptimizationTotal.value > 0
+    ? `正在优化参考图 ${referenceOptimizationCompleted.value}/${referenceOptimizationTotal.value}`
+    : '正在优化参考图'
+))
 
 // 本会话里已保存进图库的条目 id：这些图本地已有可显示的副本，
 // 图库列表里再渲染一次就会出现"生成一张却显示两张"的重复卡片。
@@ -1335,6 +1356,7 @@ const resumingAmbiguousTaskIDs = new Set<string>()
 
 function clearStudioUserState() {
   studioUserEpoch += 1
+  referenceAddEpoch += 1
   if (previewImage.value) previewImage.value = null
   previewDisplaySrc.value = ''
   imageDownloadMenu.value = null
@@ -1379,6 +1401,9 @@ function clearStudioUserState() {
   resetImageStudioDraft()
   prompt.value = IMAGE_STUDIO_DEFAULT_PROMPT
   references.value = []
+  optimizingReferences.value = false
+  referenceOptimizationCompleted.value = 0
+  referenceOptimizationTotal.value = 0
   generationRequestSnapshots.clear()
   retryingFailureIds.value.clear()
   nextImageId = 1
@@ -1397,6 +1422,8 @@ async function switchStudioUser(userId?: number | string | null) {
 let componentDisposed = false
 let studioLoadedOnce = false
 let nextReferenceId = Math.max(1, ...references.value.map((item) => item.id + 1))
+let referenceAddEpoch = 0
+let referenceAddQueue: Promise<void> = Promise.resolve()
 let modelRequestId = 0
 
 function resolveEndpoint(configured: string) {
@@ -3011,7 +3038,28 @@ async function generate() {
     let body: string | FormData
     if (geminiModel) {
       headers['Content-Type'] = 'application/json'
-      body = JSON.stringify(buildGeminiPayload(currentPrompt))
+      let preparedReferences: PreparedGeminiReference[] = []
+      if (requestReferences.length) {
+        optimizingReferences.value = true
+        referenceOptimizationCompleted.value = 0
+        referenceOptimizationTotal.value = requestReferences.length
+        try {
+          preparedReferences = await prepareGeminiReferenceImages(
+            requestReferences.map((item) => ({ name: item.name, blob: item.file })),
+            {
+              onProgress: (completed, total) => {
+                if (!isStudioOwnerCurrent(owner)) return
+                referenceOptimizationCompleted.value = completed
+                referenceOptimizationTotal.value = total
+              },
+            },
+          )
+          if (!isStudioOwnerCurrent(owner)) return
+        } finally {
+          optimizingReferences.value = false
+        }
+      }
+      body = JSON.stringify(buildGeminiPayload(currentPrompt, preparedReferences))
       url = buildGeminiURL(imageModel.value)
     } else if (hasReferences.value) {
       body = buildEditForm(currentPrompt)
@@ -4213,12 +4261,14 @@ function buildGeminiURL(model: string) {
   return `${root}${prefix}/models/${encodeURIComponent(model)}:generateContent`
 }
 
-function buildGeminiPayload(text: string) {
+function buildGeminiPayload(text: string, preparedReferences: readonly PreparedGeminiReference[] = []) {
   const parts: any[] = []
-  references.value.forEach((item, index) => {
-    const match = /^data:([^;,]+);base64,(.+)$/i.exec(item.preview)
+  preparedReferences.forEach((item, index) => {
+    const match = /^data:([^;,]+);base64,(.+)$/i.exec(item.dataUrl)
     parts.push({ text: `图片${index + 1}` })
-    parts.push(match ? { inlineData: { mimeType: match[1], data: match[2] } } : { text: item.name })
+    parts.push(match
+      ? { inlineData: { mimeType: item.mimeType, data: match[2] } }
+      : { text: item.name })
   })
   parts.push({ text })
   const imageConfig: Record<string, string> = {
@@ -4316,22 +4366,47 @@ async function pasteComposerPrompt() {
 }
 
 function addFiles(files: File[]) {
-  const available = Math.max(0, 14 - references.value.length)
-  files
-    .filter((file) => ['image/png', 'image/jpeg', 'image/webp'].includes(file.type))
-    .slice(0, available)
-    .forEach((file) => {
-      const reader = new FileReader()
-      reader.onload = () => {
-        references.value.push({
-          id: nextReferenceId++,
-          name: file.name || 'reference.png',
-          file,
-          preview: String(reader.result || ''),
-        })
-      }
-      reader.readAsDataURL(file)
+  const supported = files.filter((file) => ['image/png', 'image/jpeg', 'image/webp'].includes(file.type))
+  if (supported.length !== files.length) {
+    appStore.showWarning('已忽略不支持的参考图，请使用 PNG、JPEG 或 WebP。', 4000)
+  }
+  if (!supported.length) return
+
+  const epoch = referenceAddEpoch
+  referenceAddQueue = referenceAddQueue.then(async () => {
+    if (epoch !== referenceAddEpoch) return
+    const available = Math.max(0, GEMINI_REFERENCE_MAX_IMAGES - references.value.length)
+    if (!available) {
+      appStore.showWarning(`参考图最多 ${GEMINI_REFERENCE_MAX_IMAGES} 张。`, 4000)
+      return
+    }
+    const accepted = supported.slice(0, available)
+    if (accepted.length < supported.length) {
+      appStore.showWarning(`已保留前 ${available} 张，参考图最多 ${GEMINI_REFERENCE_MAX_IMAGES} 张。`, 4000)
+    }
+    const items = await Promise.all(accepted.map(readReferenceFile))
+    if (epoch !== referenceAddEpoch) return
+    const remaining = Math.max(0, GEMINI_REFERENCE_MAX_IMAGES - references.value.length)
+    references.value.push(...items.slice(0, remaining))
+  }).catch((error) => {
+    const message = error instanceof Error ? error.message : '参考图读取失败'
+    errorMessage.value = message
+    appStore.showError(message, 5000)
+  })
+}
+
+function readReferenceFile(file: File) {
+  return new Promise<ReferenceItem>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve({
+      id: nextReferenceId++,
+      name: file.name || 'reference.png',
+      file,
+      preview: String(reader.result || ''),
     })
+    reader.onerror = () => reject(reader.error || new Error(`${file.name || '参考图'}读取失败`))
+    reader.readAsDataURL(file)
+  })
 }
 
 function removeReference(id: number) {

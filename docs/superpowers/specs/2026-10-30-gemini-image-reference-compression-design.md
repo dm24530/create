@@ -20,17 +20,22 @@ over preserving every source image at its original resolution.
 Add a focused helper module for Gemini reference processing:
 
 - Read each selected `File` into a Blob.
-- Downscale the image's long edge and re-encode as WebP.
+- Downscale the image's long edge proportionally and re-encode as WebP.
+  Never crop the image.
 - Try progressively smaller profiles until the complete inline-data payload
   fits the client safety budget:
-  - `2048px`, quality `0.86`
-  - `1536px`, quality `0.82`
-  - `1280px`, quality `0.76`
-  - `1024px`, quality `0.70`
-  - `768px`, quality `0.64`
-- Use a total inline-data safety budget of `10 MiB`, leaving room for JSON
-  structure, prompts, and transport overhead under the backend's `16 MiB`
-  request cap.
+  - `2048px`, quality `0.88`
+  - `1600px`, quality `0.86`
+  - `1280px`, quality `0.82`
+  - `1024px`, quality `0.76`
+  - `768px`, quality `0.70`
+  - `640px`, quality `0.62`
+- Keep every compressed image at or below `1,000,000 bytes`.
+- Keep the combined compressed Blob size strictly below `10,000,000 bytes`.
+  At 14 images this permits an average of about `714,285 bytes` per image.
+- Base64 expansion keeps the final request below the backend's `16 MiB`
+  request cap while leaving room for JSON structure, prompts, and transport
+  overhead.
 - If the smallest profile still exceeds the budget, reject the request before
   sending it and show a direct error explaining that the selected images are
   too complex to submit together.
