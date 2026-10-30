@@ -11,7 +11,7 @@ import { IMAGE_STUDIO_DEFAULT_PROMPT, imageStudioDraft, resetImageStudioDraft } 
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 
-const { listKeys, getPublicSettings, listGallery, saveGallery, saveGalleryFromTask, pinGallery, deleteGallery, downloadGallery, downloadURLGallery, thumbnailGallery, galleryQuota, reportDisplay, reportClientError, copyToClipboard, imageNeedsLocalResize, processImageForDisplay, prepareGeminiReferenceImages, tryStartPersistent, waitForPersistent } = vi.hoisted(() => ({
+const { listKeys, getPublicSettings, listGallery, saveGallery, saveGalleryFromTask, pinGallery, deleteGallery, downloadGallery, downloadURLGallery, thumbnailGallery, galleryQuota, reportDisplay, reportClientError, copyToClipboard, imageNeedsLocalResize, processImageForDisplay, prepareGeminiReferenceImages, createReferenceImagePreview, tryStartPersistent, waitForPersistent } = vi.hoisted(() => ({
   listKeys: vi.fn(),
   getPublicSettings: vi.fn(),
   listGallery: vi.fn(),
@@ -29,6 +29,7 @@ const { listKeys, getPublicSettings, listGallery, saveGallery, saveGalleryFromTa
   imageNeedsLocalResize: vi.fn(),
   processImageForDisplay: vi.fn(),
   prepareGeminiReferenceImages: vi.fn(),
+  createReferenceImagePreview: vi.fn(),
   tryStartPersistent: vi.fn(),
   waitForPersistent: vi.fn(),
 }))
@@ -77,6 +78,10 @@ vi.mock('../geminiReferenceImages', async (importOriginal) => {
     prepareGeminiReferenceImages,
   }
 })
+
+vi.mock('../referenceImagePreview', () => ({
+  createReferenceImagePreview,
+}))
 
 vi.mock('@/composables/useCreatorKey', () => ({
   isCreationServiceUnavailable: (error: unknown) =>
@@ -179,6 +184,7 @@ function resetCommonMocks() {
   imageNeedsLocalResize.mockReset()
   processImageForDisplay.mockReset()
   prepareGeminiReferenceImages.mockReset()
+  createReferenceImagePreview.mockReset()
   tryStartPersistent.mockReset()
   waitForPersistent.mockReset()
   tryStartPersistent.mockResolvedValue(false)
@@ -216,6 +222,7 @@ function resetCommonMocks() {
     mimeType: 'image/webp',
     profileIndex: 0,
   })))
+  createReferenceImagePreview.mockResolvedValue('data:image/jpeg;base64,preview')
   saveGallery.mockResolvedValue({
     id: 'gallery-1',
     url: 'https://cdn.example.com/gallery-1.png',

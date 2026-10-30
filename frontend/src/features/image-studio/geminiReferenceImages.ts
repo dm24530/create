@@ -96,12 +96,17 @@ export async function prepareGeminiReferenceImages(
     throw new Error(`${sources[sourceIndex].name} 压缩后仍超过 ${formatMegabytes(GEMINI_REFERENCE_MAX_IMAGE_BYTES)}`)
   }
 
+  let completed = 0
   const prepared = await mapWithConcurrency(
     sources.map((_, index) => index),
     2,
-    bestWithinPerImageCap,
+    async (sourceIndex) => {
+      const image = await bestWithinPerImageCap(sourceIndex)
+      completed += 1
+      options.onProgress?.(completed, sources.length)
+      return image
+    },
   )
-  options.onProgress?.(prepared.length, prepared.length)
 
   let totalBytes = prepared.reduce((total, image) => total + image.bytes, 0)
   while (totalBytes >= GEMINI_REFERENCE_TOTAL_BYTES) {

@@ -747,6 +747,7 @@ import {
   prepareGeminiReferenceImages,
   type PreparedGeminiReference,
 } from './geminiReferenceImages'
+import { createReferenceImagePreview } from './referenceImagePreview'
 import { extractGeminiImageResults } from './geminiImageResults'
 import { imageDownloadURL, resolveImageAssetURL } from './imageDownload'
 import Icon from '@/components/icons/Icon.vue'
@@ -3031,7 +3032,7 @@ async function generate() {
   const geminiModel = isGeminiModel(imageModel.value)
   const grokModel = isGrokImageModel.value
   const progress = createGenerationProgress(owner)
-  const clearGenerationTimeoutTimer = schedulePendingImagesTimeout(pendingImages, owner)
+  let clearGenerationTimeoutTimer: (() => void) | undefined
   try {
     const headers: Record<string, string> = { Authorization: `Bearer ${selectedKey.value.key}` }
     let url = `${apiBaseUrl.value}${hasReferences.value ? '/images/edits' : '/images/generations'}`
@@ -3082,6 +3083,12 @@ async function generate() {
           : {}),
       })
     }
+    const requestStartedAt = Date.now()
+    pendingImages.forEach((image) => {
+      image.startedAt = requestStartedAt
+    })
+    clearGenerationTimeoutTimer = schedulePendingImagesTimeout(pendingImages, owner)
+    persistPendingImages()
     const results = await executeGenerationRequests(
       pendingImages,
       url,
@@ -3139,7 +3146,7 @@ async function generate() {
     if (!isStudioOwnerCurrent(owner)) return
     errorMessage.value = errorMessageFrom(error, '生成失败')
   } finally {
-    clearGenerationTimeoutTimer()
+    clearGenerationTimeoutTimer?.()
     if (isStudioOwnerCurrent(owner)) {
       activeGenerations.value = Math.max(0, activeGenerations.value - 1)
       generating.value = activeGenerations.value > 0
@@ -4384,7 +4391,11 @@ function addFiles(files: File[]) {
     if (accepted.length < supported.length) {
       appStore.showWarning(`已保留前 ${available} 张，参考图最多 ${GEMINI_REFERENCE_MAX_IMAGES} 张。`, 4000)
     }
-    const items = await Promise.all(accepted.map(readReferenceFile))
+    const items: ReferenceItem[] = []
+    for (const file of accepted) {
+      if (epoch !== referenceAddEpoch) return
+      items.push(await readReferenceFile(file))
+    }
     if (epoch !== referenceAddEpoch) return
     const remaining = Math.max(0, GEMINI_REFERENCE_MAX_IMAGES - references.value.length)
     references.value.push(...items.slice(0, remaining))
@@ -4395,18 +4406,14 @@ function addFiles(files: File[]) {
   })
 }
 
-function readReferenceFile(file: File) {
-  return new Promise<ReferenceItem>((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve({
-      id: nextReferenceId++,
-      name: file.name || 'reference.png',
-      file,
-      preview: String(reader.result || ''),
-    })
-    reader.onerror = () => reject(reader.error || new Error(`${file.name || '参考图'}读取失败`))
-    reader.readAsDataURL(file)
-  })
+async function readReferenceFile(file: File): Promise<ReferenceItem> {
+  const preview = await createReferenceImagePreview(file)
+  return {
+    id: nextReferenceId++,
+    name: file.name || 'reference.png',
+    file,
+    preview,
+  }
 }
 
 function removeReference(id: number) {
