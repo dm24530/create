@@ -4425,6 +4425,75 @@ describe('ImageStudioView composer controls', () => {
     expect(geminiParts.filter((part: any) => part.inlineData?.mimeType === 'image/webp')).toHaveLength(14)
   })
 
+  it('shows model-specific reference and quality limits before generation', async () => {
+    listKeys.mockResolvedValue({
+      items: [{
+        id: 1,
+        name: 'gemini',
+        key: 'sk-gemini',
+        status: 'active',
+        group_id: 2,
+        group: { platform: 'gemini', allow_image_generation: true },
+      }],
+    })
+    getPublicSettings.mockResolvedValue({ api_base_url: '/v1' })
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/images/batches/models')) {
+        return {
+          ok: true,
+          json: async () => ({
+            data: [
+              { id: 'gemini-nano-banana-2.1' },
+              { id: 'gemini-2.5-flash-image' },
+              { id: 'gemini-3.1-flash-lite-image' },
+            ],
+          }),
+        } as Response
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountImageStudio()
+    await flushPromises()
+    await vi.waitFor(() => {
+      expect(wrapper.get('[data-testid="image-model-select"]').text()).toContain('gemini-nano-banana-2.1')
+    })
+    expect(wrapper.get('[data-testid="image-reference-limit-hint"]').text()).toContain('最多 14 张')
+
+    const fileInput = wrapper.get('input[type="file"]')
+    Object.defineProperty(fileInput.element, 'files', {
+      configurable: true,
+      value: Array.from({ length: 14 }, (_, index) => (
+        new File([`image-${index + 1}`], `image-${index + 1}.png`, { type: 'image/png' })
+      )),
+    })
+    await fileInput.trigger('change')
+    await vi.waitFor(() => {
+      expect(wrapper.find('[data-testid="image-reference-14"]').exists()).toBe(true)
+    })
+
+    const modelSelect = wrapper.get('[data-testid="image-model-select"]')
+    await modelSelect.get('button').trigger('click')
+    const flashOption = modelSelect.findAll('button').find((button) => button.text().includes('gemini-2.5-flash-image'))
+    await flashOption!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="image-reference-limit-hint"]').text()).toContain('最多 3 张')
+    expect(wrapper.get('[data-testid="image-reference-limit-warning"]').text()).toContain('请移除 11 张')
+    expect(wrapper.get('button.image-composer__generate').attributes('disabled')).toBeDefined()
+
+    const quality4K = wrapper.get('[data-testid="quality-select"]').findAll('button')
+      .find((button) => button.text() === '4K')
+    await quality4K!.trigger('click')
+    await modelSelect.get('button').trigger('click')
+    const liteOption = modelSelect.findAll('button').find((button) => button.text().includes('gemini-3.1-flash-lite-image'))
+    await liteOption!.trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-testid="image-model-quality-warning"]').text()).toContain('只支持 1K')
+    expect(wrapper.get('[data-testid="quality-select"]').text()).not.toContain('4K')
+  })
+
   it('serializes rapid reference additions so the 14-image cap cannot be bypassed', async () => {
     const wrapper = mountImageStudio()
     await flushPromises()

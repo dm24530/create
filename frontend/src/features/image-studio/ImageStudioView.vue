@@ -324,9 +324,23 @@
               <Icon name="plus" size="md" />
             </button>
           </div>
-          <p class="image-composer__helper">
-            可拖拽或粘贴参考图，最多 {{ GEMINI_REFERENCE_MAX_IMAGES }} 张。点击图片编号可把「图片1」等引用插入提示词。
-            Gemini 请求会自动等比压缩，每张不超过 1 MB，14 张合计小于 10 MB。
+          <p class="image-composer__helper" data-testid="image-reference-limit-hint">
+            可拖拽或粘贴参考图，当前模型最多 {{ effectiveReferenceLimit }} 张。点击图片编号可把「图片1」等引用插入提示词。
+            Gemini 请求会自动等比压缩，每张不超过 1 MB，合计小于 10 MB。
+          </p>
+          <p
+            v-if="referenceLimitIssue"
+            class="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300"
+            data-testid="image-reference-limit-warning"
+          >
+            {{ referenceLimitIssue }}
+          </p>
+          <p
+            v-if="modelQualityIssue"
+            class="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300"
+            data-testid="image-model-quality-warning"
+          >
+            {{ modelQualityIssue }}
           </p>
           <p
             v-if="optimizingReferences"
@@ -743,10 +757,10 @@ import {
   processImageForDisplay,
 } from './imagePostProcess'
 import {
-  GEMINI_REFERENCE_MAX_IMAGES,
   prepareGeminiReferenceImages,
   type PreparedGeminiReference,
 } from './geminiReferenceImages'
+import { resolveGeminiImageModelPolicy, type GeminiImageQuality } from './geminiImageModelPolicy'
 import { createReferenceImagePreview } from './referenceImagePreview'
 import { extractGeminiImageResults } from './geminiImageResults'
 import { imageDownloadURL, resolveImageAssetURL } from './imageDownload'
@@ -1279,8 +1293,24 @@ const imageCapableKeys = computed(() => activeKeys.value.filter(
 ))
 const apiKeyOptions = computed(() => imageCapableKeys.value.map((key) => ({ value: String(key.id), label: key.name })))
 const selectedKey = computed(() => imageCapableKeys.value.find((key) => String(key.id) === selectedKeyId.value) || null)
-const canGenerate = computed(() => Boolean(apiBaseUrl.value && selectedKey.value?.key && imageModel.value.trim() && prompt.value.trim()) && !sizeIssue.value && !optimizingReferences.value)
 const isGeminiImageModel = computed(() => isGeminiModel(imageModel.value))
+const geminiModelPolicy = computed(() => resolveGeminiImageModelPolicy(imageModel.value))
+const effectiveReferenceLimit = computed(() => geminiModelPolicy.value.maxReferences)
+const referenceLimitIssue = computed(() => (
+  references.value.length > effectiveReferenceLimit.value
+    ? `当前模型最多 ${effectiveReferenceLimit.value} 张参考图，已选择 ${references.value.length} 张，请移除 ${references.value.length - effectiveReferenceLimit.value} 张。`
+    : ''
+))
+const modelQualityIssue = computed(() => (
+  isGeminiImageModel.value && !geminiModelPolicy.value.allowedQualities.includes(quality.value as GeminiImageQuality)
+    ? geminiModelPolicy.value.notice
+    : ''
+))
+const canGenerate = computed(() => Boolean(apiBaseUrl.value && selectedKey.value?.key && imageModel.value.trim() && prompt.value.trim())
+  && !sizeIssue.value
+  && !optimizingReferences.value
+  && !referenceLimitIssue.value
+  && !modelQualityIssue.value)
 const isGptImageModel = computed(() => imageModel.value.toLowerCase().includes('gpt-image'))
 const isGrokImageModel = computed(() => isGrokImageModelName(imageModel.value))
 const maxImageEdge = computed(() => (
@@ -1289,13 +1319,14 @@ const maxImageEdge = computed(() => (
 const modelSupportsTransparentBackground = computed(() => (
   !isGeminiImageModel.value && !isGrokImageModel.value
 ))
+const geminiQualityOptions = [
+  { value: 'auto', label: '自动' },
+  { value: 'high', label: '4K' },
+  { value: 'medium', label: '2K' },
+  { value: 'low', label: '1K' },
+] as const
 const qualityDisplayOptions = computed(() => isGeminiImageModel.value
-  ? [
-      qualityOptions[0],
-      { value: 'high', label: '4K' },
-      { value: 'medium', label: '2K' },
-      { value: 'low', label: '1K' },
-    ]
+  ? geminiQualityOptions.filter((option) => geminiModelPolicy.value.allowedQualities.includes(option.value))
   : isGrokImageModel.value
     ? []
     : [
@@ -4382,14 +4413,15 @@ function addFiles(files: File[]) {
   const epoch = referenceAddEpoch
   referenceAddQueue = referenceAddQueue.then(async () => {
     if (epoch !== referenceAddEpoch) return
-    const available = Math.max(0, GEMINI_REFERENCE_MAX_IMAGES - references.value.length)
+    const limit = effectiveReferenceLimit.value
+    const available = Math.max(0, limit - references.value.length)
     if (!available) {
-      appStore.showWarning(`参考图最多 ${GEMINI_REFERENCE_MAX_IMAGES} 张。`, 4000)
+      appStore.showWarning(`当前模型最多 ${limit} 张参考图。`, 4000)
       return
     }
     const accepted = supported.slice(0, available)
     if (accepted.length < supported.length) {
-      appStore.showWarning(`已保留前 ${available} 张，参考图最多 ${GEMINI_REFERENCE_MAX_IMAGES} 张。`, 4000)
+      appStore.showWarning(`已保留前 ${available} 张，当前模型最多 ${limit} 张。`, 4000)
     }
     const items: ReferenceItem[] = []
     for (const file of accepted) {
@@ -4397,7 +4429,7 @@ function addFiles(files: File[]) {
       items.push(await readReferenceFile(file))
     }
     if (epoch !== referenceAddEpoch) return
-    const remaining = Math.max(0, GEMINI_REFERENCE_MAX_IMAGES - references.value.length)
+    const remaining = Math.max(0, effectiveReferenceLimit.value - references.value.length)
     references.value.push(...items.slice(0, remaining))
   }).catch((error) => {
     const message = error instanceof Error ? error.message : '参考图读取失败'
@@ -4616,6 +4648,11 @@ watch([selectedKeyId, apiBaseUrl, () => selectedKey.value?.key], () => {
 watch(imageModel, (model, previousModel) => {
   if (!model || model === previousModel) return
   resetParametersForModel(model)
+  if (referenceLimitIssue.value) {
+    appStore.showWarning(referenceLimitIssue.value, 6000)
+  } else if (modelQualityIssue.value) {
+    appStore.showWarning(modelQualityIssue.value, 6000)
+  }
   if (imageModels.value.includes(model)) {
     writeStudioPreferences({ model })
   }
