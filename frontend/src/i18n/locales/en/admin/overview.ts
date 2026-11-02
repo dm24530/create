@@ -115,6 +115,7 @@ export default {
         publicBaseUrlPlaceholder: 'Leave empty to return presigned links',
         presignExpiryHours: 'Presigned link TTL (hours)',
         galleryRetentionDays: 'Image Studio retention (days)',
+        videoRetentionDays: 'Video Studio retention (days)',
         studioWorksQuota: 'Works quota per user',
         studioWorksQuotaHint: 'Images and videos count together; once full, users must delete an older work before saving another.',
         saved: 'Async image object storage saved',

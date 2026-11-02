@@ -135,8 +135,56 @@ func (h *AsyncImageHandler) cleanupUsageImageLinksLoop() {
 	cleanup := func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		if _, err := h.imageLinks.DeleteExpired(ctx, time.Now(), 500); err != nil {
-			logger.L().Warn("usage_log_image_link.cleanup_failed", zap.Error(err))
+		if h.gateway != nil && h.gateway.imageStorage != nil {
+			if _, err := h.gateway.imageStorage.CleanupExpiredLocalAssets(ctx, time.Now(), 500); err != nil {
+				logger.L().Warn("local_image_asset.cleanup_failed", zap.Error(err))
+			}
+		}
+		for {
+			links, err := h.imageLinks.ListExpired(ctx, time.Now(), 500)
+			if err != nil {
+				logger.L().Warn("usage_log_image_link.cleanup_failed", zap.Error(err))
+				return
+			}
+			if len(links) == 0 {
+				return
+			}
+			deletableTokens := make([]string, 0, len(links))
+			for _, link := range links {
+				if link == nil || strings.TrimSpace(link.LinkToken) == "" {
+					continue
+				}
+				objectKey := strings.TrimSpace(link.ObjectKey)
+				if objectKey != "" {
+					if h.gateway == nil || h.gateway.imageStorage == nil {
+						logger.L().Warn(
+							"usage_log_image_link.object_cleanup_deferred",
+							zap.String("object_key", objectKey),
+							zap.String("reason", "image storage unavailable"),
+						)
+						continue
+					}
+					if err := h.gateway.imageStorage.DeleteObject(ctx, objectKey); err != nil {
+						logger.L().Warn(
+							"usage_log_image_link.object_delete_failed",
+							zap.String("object_key", objectKey),
+							zap.Error(err),
+						)
+						continue
+					}
+				}
+				deletableTokens = append(deletableTokens, link.LinkToken)
+			}
+			if len(deletableTokens) == 0 {
+				return
+			}
+			if _, err := h.imageLinks.DeleteByTokens(ctx, deletableTokens); err != nil {
+				logger.L().Warn("usage_log_image_link.row_delete_failed", zap.Error(err))
+				return
+			}
+			if len(links) < 500 {
+				return
+			}
 		}
 	}
 	cleanup()
@@ -448,6 +496,9 @@ func (h *AsyncImageHandler) GetByIdempotency(c *gin.Context) {
 		c.Param("key"),
 	)
 	if err != nil {
+		if errors.Is(err, service.ErrImageTaskNotFound) {
+			c.Set(service.OpsSkipErrorLogKey, true)
+		}
 		imageTaskError(c, err)
 		return
 	}

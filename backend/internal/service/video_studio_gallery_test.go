@@ -80,8 +80,12 @@ func (s *videoGalleryStoreStub) Unpin(_ context.Context, _ int64, id string, exp
 	return ErrStudioWorkNotFound
 }
 
-func (s *videoGalleryStoreStub) SweepExpired(context.Context, int) ([]string, error) {
+func (s *videoGalleryStoreStub) ListExpired(context.Context, int) ([]ExpiredStudioWork, error) {
 	return nil, nil
+}
+
+func (s *videoGalleryStoreStub) DeleteExpiredByIDs(context.Context, []string) (int, error) {
+	return 0, nil
 }
 
 type videoMediaSaverStub struct {
@@ -176,7 +180,7 @@ func (s *videoMediaSaverStub) PresignImageObjects(
 	return resolved, nil
 }
 
-func (s *videoMediaSaverStub) GalleryRetention() time.Duration { return 30 * 24 * time.Hour }
+func (s *videoMediaSaverStub) VideoRetention() time.Duration { return 30 * 24 * time.Hour }
 
 func (s *videoMediaSaverStub) DeleteObject(_ context.Context, key string) error {
 	s.deletedObject = append(s.deletedObject, key)

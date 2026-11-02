@@ -200,6 +200,137 @@ func collectOpenAIResponseImageOutputSizesFromJSONBytes(body []byte) []string {
 	return counter.Sizes()
 }
 
+func extractOpenAIImageOutputs(body []byte) []GeminiImageOutput {
+	if len(body) > 0 && gjson.ValidBytes(body) {
+		root := gjson.ParseBytes(body)
+		for _, item := range root.Get("data").Array() {
+			if output, ok := openAIImageOutputFromJSONValue(item); ok {
+				return firstOpenAIImageOutput([]GeminiImageOutput{output})
+			}
+		}
+		for _, path := range []string{"output", "response.output"} {
+			for _, item := range root.Get(path).Array() {
+				itemType := strings.TrimSpace(item.Get("type").String())
+				if itemType != "" && itemType != "image_generation_call" && itemType != "image_generation.completed" && itemType != "image_edit.completed" {
+					continue
+				}
+				if output, ok := openAIImageOutputFromJSONValue(item); ok {
+					return firstOpenAIImageOutput([]GeminiImageOutput{output})
+				}
+			}
+		}
+	}
+
+	pointers := collectOpenAIImagePointers(body)
+	if len(pointers) == 0 {
+		return nil
+	}
+	outputs := make([]GeminiImageOutput, 0, len(pointers))
+	for _, pointer := range pointers {
+		mimeType := strings.TrimSpace(pointer.MimeType)
+		if !strings.HasPrefix(strings.ToLower(mimeType), "image/") {
+			mimeType = openAIImageOutputMIMEType(pointer.OutputFormat)
+		}
+		if base64Data := normalizeOpenAIImageBase64(pointer.B64JSON); base64Data != "" {
+			outputs = append(outputs, GeminiImageOutput{Base64: base64Data, MIMEType: mimeType})
+			continue
+		}
+		rawURL := strings.TrimSpace(pointer.DownloadURL)
+		if output, ok := geminiImageOutputFromDataURL(rawURL); ok {
+			outputs = append(outputs, output)
+			continue
+		}
+		if strings.HasPrefix(strings.ToLower(rawURL), "http://") || strings.HasPrefix(strings.ToLower(rawURL), "https://") {
+			outputs = append(outputs, GeminiImageOutput{URL: rawURL, MIMEType: mimeType})
+		}
+	}
+	return outputs
+}
+
+func openAIImageOutputFromJSONValue(item gjson.Result) (GeminiImageOutput, bool) {
+	if !item.Exists() || !item.IsObject() {
+		return GeminiImageOutput{}, false
+	}
+	mimeType := firstNonEmptyString(
+		item.Get("mime_type").String(),
+		item.Get("mimeType").String(),
+		item.Get("content_type").String(),
+	)
+	if !strings.HasPrefix(strings.ToLower(mimeType), "image/") {
+		mimeType = openAIImageOutputMIMEType(item.Get("output_format").String())
+	}
+	for _, key := range []string{"b64_json", "base64", "image_base64"} {
+		if base64Data := normalizeOpenAIImageBase64(item.Get(key).String()); base64Data != "" {
+			return GeminiImageOutput{Base64: base64Data, MIMEType: mimeType}, true
+		}
+	}
+	for _, key := range []string{"url", "download_url", "image_url", "result"} {
+		rawURL := strings.TrimSpace(item.Get(key).String())
+		if output, ok := geminiImageOutputFromDataURL(rawURL); ok {
+			return output, true
+		}
+		if strings.HasPrefix(strings.ToLower(rawURL), "http://") || strings.HasPrefix(strings.ToLower(rawURL), "https://") {
+			return GeminiImageOutput{URL: rawURL, MIMEType: mimeType}, true
+		}
+	}
+	return GeminiImageOutput{}, false
+}
+
+func firstOpenAIImageOutput(outputs []GeminiImageOutput) []GeminiImageOutput {
+	for _, output := range outputs {
+		if strings.TrimSpace(output.Base64) != "" || strings.TrimSpace(output.URL) != "" {
+			return []GeminiImageOutput{output}
+		}
+	}
+	return nil
+}
+
+func openAIImageOutputsFromResponsesResults(results []openAIResponsesImageResult) []GeminiImageOutput {
+	outputs := make([]GeminiImageOutput, 0, len(results))
+	for _, result := range results {
+		if base64Data := normalizeOpenAIImageBase64(result.Result); base64Data != "" {
+			outputs = append(outputs, GeminiImageOutput{
+				Base64:   base64Data,
+				MIMEType: openAIImageOutputMIMEType(result.OutputFormat),
+			})
+			continue
+		}
+		if output, ok := geminiImageOutputFromDataURL(result.Result); ok {
+			outputs = append(outputs, output)
+			continue
+		}
+		if rawURL := strings.TrimSpace(result.Result); strings.HasPrefix(strings.ToLower(rawURL), "http://") || strings.HasPrefix(strings.ToLower(rawURL), "https://") {
+			outputs = append(outputs, GeminiImageOutput{URL: rawURL, MIMEType: imageMIMETypeFromURL(rawURL)})
+		}
+	}
+	return firstOpenAIImageOutput(outputs)
+}
+
+func geminiImageOutputFromDataURL(raw string) (GeminiImageOutput, bool) {
+	raw = strings.TrimSpace(raw)
+	if !strings.HasPrefix(strings.ToLower(raw), "data:image/") {
+		return GeminiImageOutput{}, false
+	}
+	comma := strings.Index(raw, ",")
+	if comma < 0 || comma+1 >= len(raw) {
+		return GeminiImageOutput{}, false
+	}
+	meta := strings.TrimSpace(raw[len("data:"):comma])
+	parts := strings.Split(meta, ";")
+	if len(parts) < 2 || !strings.EqualFold(strings.TrimSpace(parts[len(parts)-1]), "base64") {
+		return GeminiImageOutput{}, false
+	}
+	mimeType := strings.TrimSpace(parts[0])
+	if !strings.HasPrefix(strings.ToLower(mimeType), "image/") {
+		return GeminiImageOutput{}, false
+	}
+	base64Data := normalizeOpenAIImageBase64(raw[comma+1:])
+	if base64Data == "" {
+		return GeminiImageOutput{}, false
+	}
+	return GeminiImageOutput{Base64: base64Data, MIMEType: mimeType}, true
+}
+
 func countOpenAIImageOutputsFromSSEBody(body string) int {
 	counter := newOpenAIImageOutputCounter()
 	counter.AddSSEBody(body)

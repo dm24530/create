@@ -88,6 +88,6 @@ func newOpenAIImagesInsufficientBalanceFailoverError(statusCode int, headers htt
 		Reason:            OpenAIImagesInsufficientBalanceReason,
 		ClientStatusCode:  402,
 		ClientMessage:     OpenAIImagesInsufficientBalanceMessage,
-		NextAccountAction: NextAccountRetry,
+		NextAccountAction: NextAccountStop,
 	}
 }

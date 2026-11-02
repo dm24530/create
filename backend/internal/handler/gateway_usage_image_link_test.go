@@ -29,7 +29,7 @@ func TestGatewayHandlerRecordsSyncGeminiUsageImageLink(t *testing.T) {
 	require.Equal(t, "https://img.example.test/generated.jpg", store.link.ImageURL)
 }
 
-func TestGatewayHandlerRecordsSyncGeminiInlineImageAsDataURL(t *testing.T) {
+func TestGatewayHandlerSkipsInlineImageWithoutObjectStorage(t *testing.T) {
 	store := &asyncImageLinkStore{}
 	h := &GatewayHandler{imageLinks: store}
 	ctx := context.WithValue(context.Background(), ctxkey.RequestID, "local-image-request")
@@ -41,9 +41,24 @@ func TestGatewayHandlerRecordsSyncGeminiInlineImageAsDataURL(t *testing.T) {
 		}},
 	})
 
+	require.Nil(t, store.link)
+}
+
+func TestOpenAIGatewayHandlerRecordsSyncUsageImageLink(t *testing.T) {
+	store := &asyncImageLinkStore{}
+	h := &OpenAIGatewayHandler{imageLinks: store}
+	ctx := context.WithValue(context.Background(), ctxkey.ClientRequestID, "openai-sync-image")
+
+	h.recordUsageImageLink(ctx, &service.APIKey{ID: 11, UserID: 7}, "upstream-request", []service.GeminiImageOutput{{
+		URL:      "https://img.example.test/openai-generated.png",
+		MIMEType: "image/png",
+	}})
+
 	require.NotNil(t, store.link)
-	require.Equal(t, "local:local-image-request", store.link.RequestID)
-	require.Equal(t, "data:image/png;base64,YWJj", store.link.ImageURL)
+	require.Equal(t, "client:openai-sync-image", store.link.RequestID)
+	require.Equal(t, int64(7), store.link.UserID)
+	require.Equal(t, int64(11), store.link.APIKeyID)
+	require.Equal(t, "https://img.example.test/openai-generated.png", store.link.ImageURL)
 }
 
 func TestUsageImageObjectKeyUsesOpaqueUserNamespace(t *testing.T) {
@@ -56,4 +71,11 @@ func TestUsageImageObjectKeyUsesOpaqueUserNamespace(t *testing.T) {
 	require.NotContains(t, first, "users/")
 	require.NotContains(t, first, "client:req-1")
 	require.True(t, strings.HasSuffix(first, ".png"))
+}
+
+func TestNormalizedUsageImageContentTypeUsesActualImageBytes(t *testing.T) {
+	pngHeader := []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n', 0, 0, 0, 0}
+
+	require.Equal(t, "image/png", normalizedUsageImageContentType(pngHeader, "image/jpeg"))
+	require.Equal(t, "image/webp", normalizedUsageImageContentType(nil, "image/webp"))
 }

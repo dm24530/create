@@ -277,6 +277,7 @@ type ImageStorageConfig struct {
 	PublicBaseURL        string `mapstructure:"public_base_url"`      // 配了则返回 public_base_url/key 直链；否则 presigned
 	PresignExpiry        int    `mapstructure:"presign_expiry_hours"` // public_base_url 为空时的 presigned 过期时长(小时)
 	GalleryRetentionDays int    `mapstructure:"gallery_retention_days"`
+	VideoRetentionDays   int    `mapstructure:"video_retention_days"`
 	// StudioWorksQuota 是每个用户的作品配额（图片 + 视频合计），0 表示用内置默认值。
 	StudioWorksQuota int   `mapstructure:"studio_works_quota"`
 	MaxDownloadByte  int64 `mapstructure:"max_download_bytes"` // 下载上游 url 图片的字节上限
@@ -2374,6 +2375,7 @@ func setDefaults() {
 	viper.SetDefault("image_storage.force_path_style", false)
 	viper.SetDefault("image_storage.presign_expiry_hours", 24)
 	viper.SetDefault("image_storage.gallery_retention_days", 7)
+	viper.SetDefault("image_storage.video_retention_days", 7)
 	viper.SetDefault("image_storage.studio_works_quota", 100)
 	viper.SetDefault("image_storage.max_download_bytes", 33554432)
 	// Registered with empty defaults so AutomaticEnv can reach them: viper only

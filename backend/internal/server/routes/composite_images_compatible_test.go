@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/handler"
@@ -81,6 +82,35 @@ func (r *compatibleImagesUsage) Create(_ context.Context, log *service.UsageLog)
 	return true, nil
 }
 
+type compatibleImagesLinks struct {
+	links []*service.UsageLogImageLink
+}
+
+func (s *compatibleImagesLinks) Upsert(_ context.Context, link *service.UsageLogImageLink) error {
+	s.links = append(s.links, link)
+	return nil
+}
+
+func (s *compatibleImagesLinks) GetByToken(context.Context, string) (*service.UsageLogImageLink, error) {
+	return nil, service.ErrUsageLogImageLinkNotFound
+}
+
+func (s *compatibleImagesLinks) ListExpired(context.Context, time.Time, int) ([]*service.UsageLogImageLink, error) {
+	return nil, nil
+}
+
+func (s *compatibleImagesLinks) DeleteByTokens(context.Context, []string) (int64, error) {
+	return 0, nil
+}
+
+func (s *compatibleImagesLinks) MarkDisplayed(context.Context, int64, int64, string, time.Time) error {
+	return nil
+}
+
+func (s *compatibleImagesLinks) MarkGenerationDuration(context.Context, int64, int64, string, int) error {
+	return nil
+}
+
 func TestCompositeCompatibleImagesEndToEnd(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, scenario := range []string{"generation", "json_edit", "multipart_alias", "disabled", "native_only", "restricted"} {
@@ -109,6 +139,8 @@ func TestCompositeCompatibleImagesEndToEnd(t *testing.T) {
 			t.Cleanup(billingCache.Stop)
 			gateway := service.NewOpenAIGatewayService(repo, usage, nil, nil, nil, nil, nil, cfg, nil, nil, service.NewBillingService(cfg, nil), nil, billingCache, upstream, &service.DeferredService{}, nil, nil, nil, nil, nil, nil, nil)
 			imagesHandler := handler.NewOpenAIGatewayHandler(gateway, service.NewConcurrencyService(nil), billingCache, service.NewAPIKeyService(nil, nil, nil, nil, nil, nil, cfg), nil, nil, nil, nil, cfg)
+			links := &compatibleImagesLinks{}
+			imagesHandler.SetImageLinkDeps(links, nil)
 			publicModel := model
 			if scenario == "multipart_alias" {
 				publicModel = "public-image"
@@ -164,6 +196,7 @@ func TestCompositeCompatibleImagesEndToEnd(t *testing.T) {
 			require.Equal(t, 1, usage.logs[0].ImageCount)
 			require.InDelta(t, price, usage.logs[0].ActualCost, 1e-9)
 			require.Equal(t, publicModel, usage.logs[0].RequestedModel)
+			require.Empty(t, links.links, "inline images must not be copied into PostgreSQL without storage")
 		})
 	}
 }

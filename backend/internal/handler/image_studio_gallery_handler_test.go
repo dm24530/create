@@ -67,8 +67,16 @@ func (s *galleryHandlerStoreStub) Unpin(context.Context, int64, string, int64) e
 	return nil
 }
 
-func (s *galleryHandlerStoreStub) SweepExpired(context.Context, int) ([]string, error) {
+func (s *galleryHandlerStoreStub) ListExpired(context.Context, int) ([]service.ExpiredStudioWork, error) {
 	return nil, nil
+}
+
+func (s *galleryHandlerStoreStub) DeleteExpiredByIDs(context.Context, []string) (int, error) {
+	return 0, nil
+}
+
+func (s *galleryHandlerStoreStub) ReconcileTemporaryExpiry(context.Context, int64, int64) (int64, error) {
+	return 0, nil
 }
 
 func (s *galleryHandlerStoreStub) ObjectKey(context.Context, int64, string) (string, error) {
@@ -121,6 +129,10 @@ func (s *galleryHandlerSaverStub) StudioWorksQuota() int {
 }
 
 func (s *galleryHandlerSaverStub) GalleryRetention() time.Duration {
+	return 7 * 24 * time.Hour
+}
+
+func (s *galleryHandlerSaverStub) VideoRetention() time.Duration {
 	return 7 * 24 * time.Hour
 }
 

@@ -252,3 +252,45 @@ func TestOpenAIImageOutputCounter_AddJSONResponse_Exported(t *testing.T) {
 		})
 	}
 }
+
+func TestExtractOpenAIImageOutputs_PrefersInlineImage(t *testing.T) {
+	body := []byte(`{
+		"data": [{
+			"b64_json": "aGVsbG8=",
+			"url": "https://cdn.example.test/generated.png",
+			"output_format": "png"
+		}]
+	}`)
+
+	outputs := extractOpenAIImageOutputs(body)
+	if len(outputs) != 1 {
+		t.Fatalf("expected one image output, got %d", len(outputs))
+	}
+	if outputs[0].Base64 != "aGVsbG8=" || outputs[0].MIMEType != "image/png" {
+		t.Fatalf("unexpected image output: %#v", outputs[0])
+	}
+}
+
+func TestExtractOpenAIImageOutputs_DecodesDataURL(t *testing.T) {
+	body := []byte(`{"data":[{"url":"data:image/webp;base64,d2VicA=="}]}`)
+
+	outputs := extractOpenAIImageOutputs(body)
+	if len(outputs) != 1 {
+		t.Fatalf("expected one image output, got %d", len(outputs))
+	}
+	if outputs[0].Base64 != "d2VicA==" || outputs[0].MIMEType != "image/webp" {
+		t.Fatalf("unexpected image output: %#v", outputs[0])
+	}
+}
+
+func TestExtractOpenAIImageOutputs_AcceptsOpaqueSignedURL(t *testing.T) {
+	body := []byte(`{"data":[{"url":"https://images.example.test/signed/opaque-token"}]}`)
+
+	outputs := extractOpenAIImageOutputs(body)
+	if len(outputs) != 1 {
+		t.Fatalf("expected one image output, got %d", len(outputs))
+	}
+	if outputs[0].URL != "https://images.example.test/signed/opaque-token" {
+		t.Fatalf("unexpected image output: %#v", outputs[0])
+	}
+}

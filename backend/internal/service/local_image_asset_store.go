@@ -297,6 +297,45 @@ func (s *LocalImageAssetStore) ListPending(limit int) ([]*LocalImageAssetMetadat
 	return out, nil
 }
 
+// CleanupExpired removes expired local asset files and their metadata.
+// Uploaded assets are typically metadata-only already; keeping those records
+// after expiry serves no purpose.
+func (s *LocalImageAssetStore) CleanupExpired(now time.Time, limit int) (int, error) {
+	if s == nil {
+		return 0, nil
+	}
+	if limit <= 0 {
+		limit = 200
+	}
+	entries, err := os.ReadDir(filepath.Join(s.root, "meta"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	nowUnix := now.UTC().Unix()
+	cleaned := 0
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		id := strings.TrimSuffix(entry.Name(), ".json")
+		meta, err := s.Get(id)
+		if err != nil || meta.ExpiresAt <= 0 || meta.ExpiresAt > nowUnix {
+			continue
+		}
+		if err := s.Delete(id); err != nil && !errors.Is(err, ErrLocalImageAssetNotFound) {
+			return cleaned, err
+		}
+		cleaned += 1
+		if cleaned >= limit {
+			break
+		}
+	}
+	return cleaned, nil
+}
+
 func (s *LocalImageAssetStore) DeleteByObjectKey(objectKey string) error {
 	objectKey = strings.TrimSpace(objectKey)
 	if s == nil || objectKey == "" {

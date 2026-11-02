@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 
@@ -63,12 +64,16 @@ type openAIImagesFailoverHTTPUpstream struct {
 	service.HTTPUpstream
 	mu         sync.Mutex
 	accountIDs []int64
+	response   *http.Response
 }
 
 func (u *openAIImagesFailoverHTTPUpstream) Do(_ *http.Request, _ string, accountID int64, _ int) (*http.Response, error) {
 	u.mu.Lock()
 	u.accountIDs = append(u.accountIDs, accountID)
 	u.mu.Unlock()
+	if u.response != nil {
+		return u.response, nil
+	}
 	return &http.Response{
 		StatusCode: http.StatusOK,
 		Header: http.Header{
@@ -200,4 +205,105 @@ func TestOpenAIGatewayHandlerImages_ServerErrorFailsOverAndReturnsClearErrorWhen
 	require.Len(t, events, 2)
 	require.Equal(t, "failover", events[0].Kind)
 	require.Equal(t, "failover", events[1].Kind)
+}
+
+func TestOpenAIGatewayHandlerImages_DirectOAuthSkipsInlineImageWithoutStorage(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	groupID := int64(3131)
+	accountRepo := openAIImagesFailoverAccountRepo{accounts: []service.Account{{
+		ID:          31,
+		Name:        "direct-image-account",
+		Platform:    service.PlatformOpenAI,
+		Type:        service.AccountTypeOAuth,
+		Status:      service.StatusActive,
+		Schedulable: true,
+		Credentials: map[string]any{
+			"access_token":       "token-31",
+			"chatgpt_account_id": "account-31",
+		},
+	}}}
+	upstream := &openAIImagesFailoverHTTPUpstream{}
+	upstream.response = &http.Response{
+		StatusCode: http.StatusOK,
+		Header: http.Header{
+			"Content-Type": []string{"application/json"},
+			"X-Request-Id": []string{"upstream-direct-image"},
+		},
+		Body: io.NopCloser(strings.NewReader(`{"data":[{"b64_json":"aW1hZ2U="}],"usage":{"input_tokens":10,"output_tokens":20}}`)),
+	}
+	usageRepo := &openAIWSUsageHandlerUsageLogRepoStub{created: make(chan *service.UsageLog, 1)}
+	links := &asyncImageLinkStore{}
+	cfg := &config.Config{RunMode: config.RunModeSimple}
+	billingService := service.NewBillingCacheService(nil, nil, nil, nil, nil, nil, cfg, nil)
+	t.Cleanup(billingService.Stop)
+	gatewayService := service.NewOpenAIGatewayService(
+		accountRepo,
+		usageRepo,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		cfg,
+		nil,
+		nil,
+		service.NewBillingService(cfg, nil),
+		nil,
+		billingService,
+		upstream,
+		&service.DeferredService{},
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+	)
+	h := NewOpenAIGatewayHandler(
+		gatewayService,
+		service.NewConcurrencyService(nil),
+		billingService,
+		service.NewAPIKeyService(nil, nil, nil, nil, nil, nil, cfg),
+		nil,
+		nil,
+		nil,
+		nil,
+		cfg,
+	)
+	h.SetImageLinkDeps(links, nil)
+	group := &service.Group{
+		ID:                   groupID,
+		Platform:             service.PlatformOpenAI,
+		AllowImageGeneration: true,
+		RateMultiplier:       1,
+	}
+	body := []byte(`{"model":"gpt-image-2.5-sunburst","prompt":"draw","size":"1024x1024"}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = req
+	c.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{
+		ID:      32,
+		UserID:  100,
+		GroupID: &groupID,
+		Group:   group,
+		User:    &service.User{ID: 100},
+	})
+	c.Set(string(middleware2.ContextKeyUser), middleware2.AuthSubject{UserID: 100})
+
+	h.Images(c)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var usageLog *service.UsageLog
+	select {
+	case usageLog = <-usageRepo.created:
+	default:
+		t.Fatal("expected a usage log")
+	}
+	require.Equal(t, int64(100), usageLog.UserID)
+	require.Equal(t, int64(32), usageLog.APIKeyID)
+	require.Equal(t, "aW1hZ2U=", gjson.GetBytes(rec.Body.Bytes(), "data.0.b64_json").String())
+	require.Nil(t, links.link)
 }

@@ -477,6 +477,8 @@ export default {
     exportExcelSuccess: '使用数据导出成功（Excel格式）',
     exportExcelFailed: '使用数据导出失败',
     imageUnit: '张',
+    openImage: '查看生成图片',
+    openFirstImage: '查看首张生成图片（共 {count} 张）',
     userAgent: 'User-Agent',
     ipGeo: {
       fetch: '获取地区',

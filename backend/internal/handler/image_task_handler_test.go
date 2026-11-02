@@ -56,7 +56,11 @@ func (s *asyncImageLinkStore) GetByToken(context.Context, string) (*service.Usag
 	return nil, service.ErrUsageLogImageLinkNotFound
 }
 
-func (s *asyncImageLinkStore) DeleteExpired(context.Context, time.Time, int) (int64, error) {
+func (s *asyncImageLinkStore) ListExpired(context.Context, time.Time, int) ([]*service.UsageLogImageLink, error) {
+	return nil, nil
+}
+
+func (s *asyncImageLinkStore) DeleteByTokens(context.Context, []string) (int64, error) {
 	return 0, nil
 }
 
@@ -666,6 +670,56 @@ func TestAsyncImageHandlerDisabledReturns404(t *testing.T) {
 
 	// No task was created / persisted.
 	require.Empty(t, store.tasks)
+}
+
+func TestAsyncImageHandlerIdempotencyMissDoesNotRecordOpsError(t *testing.T) {
+	setupOpsErrorLogTestQueue(t, 2)
+	gin.SetMode(gin.TestMode)
+
+	store := &asyncImageMemoryStore{tasks: make(map[string]*service.ImageTaskRecord)}
+	tasks := service.NewImageTaskServiceWithUploader(store, nil, time.Hour, time.Minute)
+	h := &AsyncImageHandler{tasks: tasks}
+	ops := service.NewOpsService(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+
+	router := gin.New()
+	router.Use(OpsErrorLoggerMiddleware(ops))
+	router.GET("/v1/images/tasks/by-idempotency/:key", func(c *gin.Context) {
+		c.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{ID: 9, UserID: 7})
+		h.GetByIdempotency(c)
+	})
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(
+		recorder,
+		httptest.NewRequest(http.MethodGet, "/v1/images/tasks/by-idempotency/missing-probe", nil),
+	)
+
+	require.Equal(t, http.StatusNotFound, recorder.Code)
+	require.Contains(t, recorder.Body.String(), "image task not found")
+	require.Zero(t, OpsErrorLogQueueLength(), "idempotency recovery misses are expected probes")
+}
+
+func TestAsyncImageHandlerNormalTaskMissStillRecordsOpsError(t *testing.T) {
+	setupOpsErrorLogTestQueue(t, 2)
+	gin.SetMode(gin.TestMode)
+
+	store := &asyncImageMemoryStore{tasks: make(map[string]*service.ImageTaskRecord)}
+	tasks := service.NewImageTaskServiceWithUploader(store, nil, time.Hour, time.Minute)
+	h := &AsyncImageHandler{tasks: tasks}
+	ops := service.NewOpsService(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+
+	router := gin.New()
+	router.Use(OpsErrorLoggerMiddleware(ops))
+	router.GET("/v1/images/tasks/:task_id", func(c *gin.Context) {
+		c.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{ID: 9, UserID: 7})
+		h.Get(c)
+	})
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/v1/images/tasks/imgtask_missing", nil))
+
+	require.Equal(t, http.StatusNotFound, recorder.Code)
+	require.Equal(t, int64(1), OpsErrorLogQueueLength(), "normal task polling misses remain visible")
 }
 
 func TestAsyncImageHandlerRecoveryFailsLegacyTaskWithoutExecution(t *testing.T) {

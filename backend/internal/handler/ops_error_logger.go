@@ -1137,6 +1137,9 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 		if !ops.IsMonitoringEnabled(c.Request.Context()) {
 			return
 		}
+		if c.GetBool(service.OpsSkipErrorLogKey) {
+			return
+		}
 		if c.GetBool(opsDedicatedErrorRecordedKey) {
 			return
 		}

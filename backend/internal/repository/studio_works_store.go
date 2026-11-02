@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/lib/pq"
 )
 
 // studio_works 是图片图库与视频「我的作品」的唯一持久化存储。
@@ -202,9 +203,10 @@ func (s *studioWorksDB) pin(ctx context.Context, userID int64, id string, quota 
 	}
 
 	var alreadySaved bool
+	var expiresAt sql.NullTime
 	err = tx.QueryRowContext(ctx,
-		`SELECT saved FROM studio_works WHERE user_id = $1 AND id = $2`, userID, id,
-	).Scan(&alreadySaved)
+		`SELECT saved, expires_at FROM studio_works WHERE user_id = $1 AND id = $2`, userID, id,
+	).Scan(&alreadySaved, &expiresAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return service.ErrStudioWorkNotFound
 	}
@@ -213,6 +215,9 @@ func (s *studioWorksDB) pin(ctx context.Context, userID int64, id string, quota 
 	}
 	if alreadySaved {
 		return nil
+	}
+	if expiresAt.Valid && !expiresAt.Time.After(time.Now()) {
+		return service.ErrStudioWorkExpired
 	}
 
 	if quota > 0 {
@@ -272,8 +277,7 @@ func (s *studioWorksDB) unpin(ctx context.Context, userID int64, id string, expi
 	return nil
 }
 
-// sweepExpired 删掉一批到期未保存的记录，并返回它们的 object_key 供调用方删对象。
-func (s *studioWorksDB) sweepExpired(ctx context.Context, batch int) ([]string, error) {
+func (s *studioWorksDB) listExpired(ctx context.Context, batch int) ([]service.ExpiredStudioWork, error) {
 	if s == nil || s.db == nil {
 		return nil, fmt.Errorf("studio works store is unavailable")
 	}
@@ -281,33 +285,83 @@ func (s *studioWorksDB) sweepExpired(ctx context.Context, batch int) ([]string, 
 		batch = 200
 	}
 	rows, err := s.db.QueryContext(ctx, `
-		DELETE FROM studio_works
-		WHERE id IN (
-			SELECT id FROM studio_works
-			WHERE saved = FALSE AND expires_at IS NOT NULL AND expires_at <= NOW()
-			ORDER BY expires_at ASC
-			LIMIT $1
-		)
-		RETURNING object_key`, batch)
+		SELECT id, object_key, thumb_object_key
+		FROM studio_works
+		WHERE saved = FALSE AND expires_at IS NOT NULL AND expires_at <= NOW()
+		ORDER BY expires_at ASC
+		LIMIT $1`, batch)
 	if err != nil {
-		return nil, fmt.Errorf("sweep expired studio works: %w", err)
+		return nil, fmt.Errorf("list expired studio works: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 
-	keys := make([]string, 0, batch)
+	items := make([]service.ExpiredStudioWork, 0, batch)
 	for rows.Next() {
-		var key string
-		if err := rows.Scan(&key); err != nil {
-			return nil, fmt.Errorf("scan swept object key: %w", err)
+		var item service.ExpiredStudioWork
+		var objectKey, thumbObjectKey sql.NullString
+		if err := rows.Scan(&item.ID, &objectKey, &thumbObjectKey); err != nil {
+			return nil, fmt.Errorf("scan expired studio work: %w", err)
 		}
-		if strings.TrimSpace(key) != "" {
-			keys = append(keys, key)
+		if objectKey.Valid {
+			item.ObjectKey = strings.TrimSpace(objectKey.String)
 		}
+		if thumbObjectKey.Valid {
+			item.ThumbObjectKey = strings.TrimSpace(thumbObjectKey.String)
+		}
+		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate swept studio works: %w", err)
 	}
-	return keys, nil
+	return items, nil
+}
+
+func (s *studioWorksDB) deleteExpiredByIDs(ctx context.Context, ids []string) (int, error) {
+	if s == nil || s.db == nil {
+		return 0, fmt.Errorf("studio works store is unavailable")
+	}
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	result, err := s.db.ExecContext(ctx, `
+		DELETE FROM studio_works
+		WHERE saved = FALSE AND id = ANY($1)`, pq.Array(ids))
+	if err != nil {
+		return 0, fmt.Errorf("delete expired studio works: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return int(affected), nil
+}
+
+func (s *studioWorksDB) reconcileTemporaryExpiry(
+	ctx context.Context,
+	imageRetentionSeconds, videoRetentionSeconds int64,
+) (int64, error) {
+	if s == nil || s.db == nil {
+		return 0, fmt.Errorf("studio works store is unavailable")
+	}
+	if imageRetentionSeconds <= 0 || videoRetentionSeconds <= 0 {
+		return 0, nil
+	}
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE studio_works
+		SET expires_at = created_at + (
+			CASE WHEN kind = 'video' THEN $2 ELSE $1 END * INTERVAL '1 second'
+		)
+		WHERE saved = FALSE
+		  AND expires_at IS NOT NULL
+		  AND expires_at IS DISTINCT FROM created_at + (
+			CASE WHEN kind = 'video' THEN $2 ELSE $1 END * INTERVAL '1 second'
+		  )`,
+		imageRetentionSeconds,
+		videoRetentionSeconds)
+	if err != nil {
+		return 0, fmt.Errorf("reconcile temporary studio work expiry: %w", err)
+	}
+	return result.RowsAffected()
 }
 
 func (s *studioWorksDB) objectKey(ctx context.Context, userID int64, id string) (string, error) {
@@ -533,8 +587,19 @@ func (s *imageStudioGalleryStore) Unpin(ctx context.Context, userID int64, id st
 	return s.unpin(ctx, userID, id, expiresAt)
 }
 
-func (s *imageStudioGalleryStore) SweepExpired(ctx context.Context, batch int) ([]string, error) {
-	return s.sweepExpired(ctx, batch)
+func (s *imageStudioGalleryStore) ListExpired(ctx context.Context, batch int) ([]service.ExpiredStudioWork, error) {
+	return s.listExpired(ctx, batch)
+}
+
+func (s *imageStudioGalleryStore) DeleteExpiredByIDs(ctx context.Context, ids []string) (int, error) {
+	return s.deleteExpiredByIDs(ctx, ids)
+}
+
+func (s *imageStudioGalleryStore) ReconcileTemporaryExpiry(
+	ctx context.Context,
+	imageRetentionSeconds, videoRetentionSeconds int64,
+) (int64, error) {
+	return s.reconcileTemporaryExpiry(ctx, imageRetentionSeconds, videoRetentionSeconds)
 }
 
 /* ------------------------------ 视频作品库 ------------------------------ */
@@ -655,6 +720,10 @@ func (s *videoStudioGalleryStore) Unpin(ctx context.Context, userID int64, id st
 	return s.unpin(ctx, userID, id, expiresAt)
 }
 
-func (s *videoStudioGalleryStore) SweepExpired(ctx context.Context, batch int) ([]string, error) {
-	return s.sweepExpired(ctx, batch)
+func (s *videoStudioGalleryStore) ListExpired(ctx context.Context, batch int) ([]service.ExpiredStudioWork, error) {
+	return s.listExpired(ctx, batch)
+}
+
+func (s *videoStudioGalleryStore) DeleteExpiredByIDs(ctx context.Context, ids []string) (int, error) {
+	return s.deleteExpiredByIDs(ctx, ids)
 }

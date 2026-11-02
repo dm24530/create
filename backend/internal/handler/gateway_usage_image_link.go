@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"net/http"
 	"path"
 	"strings"
 	"time"
@@ -19,16 +20,49 @@ func (h *GatewayHandler) recordUsageImageLink(
 	apiKey *service.APIKey,
 	result *service.ForwardResult,
 ) {
-	if h == nil || h.imageLinks == nil || apiKey == nil || result == nil || len(result.ImageOutputs) == 0 {
+	if h == nil || result == nil {
 		return
 	}
-	requestID := service.ResolveUsageBillingRequestID(ctx, result.RequestID)
+	recordUsageImageOutputs(ctx, apiKey, result.RequestID, result.ImageOutputs, h.imageLinks, h.imageStorage)
+}
+
+func (h *OpenAIGatewayHandler) recordUsageImageLink(
+	ctx context.Context,
+	apiKey *service.APIKey,
+	requestIDHint string,
+	outputs []service.GeminiImageOutput,
+) {
+	if h == nil {
+		return
+	}
+	recordUsageImageOutputs(ctx, apiKey, requestIDHint, outputs, h.imageLinks, h.imageStorage)
+}
+
+func recordUsageImageOutputs(
+	ctx context.Context,
+	apiKey *service.APIKey,
+	requestIDHint string,
+	outputs []service.GeminiImageOutput,
+	imageLinks service.UsageLogImageLinkStore,
+	imageStorage *service.ImageStorageSettingService,
+) {
+	if imageLinks == nil || apiKey == nil || len(outputs) == 0 {
+		return
+	}
+	userID := apiKey.UserID
+	if userID <= 0 && apiKey.User != nil {
+		userID = apiKey.User.ID
+	}
+	if userID <= 0 {
+		return
+	}
+	requestID := service.ResolveUsageBillingRequestID(ctx, requestIDHint)
 	if strings.TrimSpace(requestID) == "" {
 		return
 	}
 
 	imageURL := ""
-	for _, output := range result.ImageOutputs {
+	for _, output := range outputs {
 		if value := strings.TrimSpace(output.URL); value != "" {
 			imageURL = value
 			break
@@ -49,46 +83,66 @@ func (h *GatewayHandler) recordUsageImageLink(
 	objectKey := ""
 	linkCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)
 	defer cancel()
-	if h.imageStorage != nil {
-		data, contentType, ok := h.usageImageBytes(linkCtx, result.ImageOutputs, imageURL)
+	persistentLink := strings.HasPrefix(imageURL, "http://") || strings.HasPrefix(imageURL, "https://")
+	if imageStorage != nil {
+		data, contentType, ok := usageImageBytes(linkCtx, imageStorage, outputs, imageURL)
 		if ok {
-			storageKey, storageErr := h.imageStorage.StorageKeyForUser(linkCtx, apiKey.UserID)
+			contentType = normalizedUsageImageContentType(data, contentType)
+			storageKey, storageErr := imageStorage.StorageKeyForUser(linkCtx, userID)
 			if storageErr != nil {
 				logger.L().Warn("usage_image_link.storage_key_failed",
-					zap.Int64("user_id", apiKey.UserID),
+					zap.Int64("user_id", userID),
 					zap.String("request_id", requestID),
 					zap.Error(storageErr))
 			} else {
 				key := usageImageObjectKey(storageKey, requestID, contentType)
-				if resolvedURL, storedKey, err := h.imageStorage.SaveImageWithKey(linkCtx, key, contentType, data); err == nil {
+				if resolvedURL, storedKey, err := imageStorage.SaveImageWithKey(linkCtx, key, contentType, data); err == nil {
 					imageURL = resolvedURL
 					objectKey = storedKey
+					persistentLink = true
 				} else {
 					logger.L().Warn("usage_image_link.persist_failed",
-						zap.Int64("user_id", apiKey.UserID),
+						zap.Int64("user_id", userID),
 						zap.String("request_id", requestID),
 						zap.Error(err))
 				}
 			}
 		}
 	}
-	if err := h.imageLinks.Upsert(linkCtx, &service.UsageLogImageLink{
-		UserID:    apiKey.UserID,
+	// Inline image bodies may be many megabytes. If object storage cannot take
+	// them, leave the usage row without an image link instead of copying the
+	// whole data URL into PostgreSQL for 90 days.
+	if !persistentLink {
+		return
+	}
+	if err := imageLinks.Upsert(linkCtx, &service.UsageLogImageLink{
+		UserID:    userID,
 		APIKeyID:  apiKey.ID,
 		RequestID: requestID,
 		ImageURL:  imageURL,
 		ObjectKey: objectKey,
 	}); err != nil {
 		logger.L().Warn("usage_image_link.store_failed",
-			zap.Int64("user_id", apiKey.UserID),
+			zap.Int64("user_id", userID),
 			zap.Int64("api_key_id", apiKey.ID),
 			zap.String("request_id", requestID),
 			zap.Error(err))
 	}
 }
 
-func (h *GatewayHandler) usageImageBytes(
+func normalizedUsageImageContentType(data []byte, declared string) string {
+	if len(data) > 0 {
+		detected := strings.TrimSpace(strings.Split(http.DetectContentType(data), ";")[0])
+		if strings.HasPrefix(strings.ToLower(detected), "image/") {
+			return detected
+		}
+	}
+	return strings.TrimSpace(declared)
+}
+
+func usageImageBytes(
 	ctx context.Context,
+	imageStorage *service.ImageStorageSettingService,
 	outputs []service.GeminiImageOutput,
 	fallbackURL string,
 ) ([]byte, string, bool) {
@@ -104,10 +158,10 @@ func (h *GatewayHandler) usageImageBytes(
 			}
 		}
 	}
-	if h == nil || h.imageStorage == nil || !strings.HasPrefix(fallbackURL, "http") {
+	if imageStorage == nil || !strings.HasPrefix(fallbackURL, "http") {
 		return nil, "", false
 	}
-	data, contentType, err := h.imageStorage.FetchImageURL(ctx, fallbackURL)
+	data, contentType, err := imageStorage.FetchImageURL(ctx, fallbackURL)
 	if err != nil || len(data) == 0 {
 		return nil, "", false
 	}

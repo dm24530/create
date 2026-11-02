@@ -204,17 +204,17 @@ func codexDirectImagesUsage(body []byte) (OpenAIUsage, bool) {
 	return usage, true
 }
 
-func (s *OpenAIGatewayService) handleCodexDirectImagesNonStreamingResponse(resp *http.Response, c *gin.Context, parsed *OpenAIImagesRequest) (OpenAIUsage, int, []string, error) {
+func (s *OpenAIGatewayService) handleCodexDirectImagesNonStreamingResponse(resp *http.Response, c *gin.Context, parsed *OpenAIImagesRequest) (OpenAIUsage, int, []string, []GeminiImageOutput, error) {
 	body, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, openAITooLargeError)
 	if err != nil {
 		if shouldClassifyOpenAIUpstreamStreamReadError(err) {
 			err = newOpenAIUpstreamStreamReadError(err)
 		}
-		return OpenAIUsage{}, 0, nil, err
+		return OpenAIUsage{}, 0, nil, nil, err
 	}
 	results, err := parseCodexDirectImagesResponse(body)
 	if err != nil {
-		return OpenAIUsage{}, 0, nil, err
+		return OpenAIUsage{}, 0, nil, nil, err
 	}
 	usage, _ := codexDirectImagesUsage(body)
 	if observer := upstreamResponseModelObserverFromContext(c); observer != nil {
@@ -257,5 +257,5 @@ func (s *OpenAIGatewayService) handleCodexDirectImagesNonStreamingResponse(resp 
 		}
 	}
 	c.Data(resp.StatusCode, contentType, body)
-	return usage, len(results), openAIResponsesImageResultSizes(results), nil
+	return usage, len(results), openAIResponsesImageResultSizes(results), openAIImageOutputsFromResponsesResults(results), nil
 }

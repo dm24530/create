@@ -8,6 +8,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 )
 
 type usageLogImageLinkStore struct {
@@ -150,20 +151,57 @@ func (s *usageLogImageLinkStore) MarkDisplayed(
 	return err
 }
 
-func (s *usageLogImageLinkStore) DeleteExpired(ctx context.Context, now time.Time, limit int) (int64, error) {
+func (s *usageLogImageLinkStore) ListExpired(
+	ctx context.Context,
+	now time.Time,
+	limit int,
+) ([]*service.UsageLogImageLink, error) {
 	if limit <= 0 {
 		limit = 500
 	}
+	rows, err := s.sqlDB.QueryContext(ctx, `
+		SELECT user_id, api_key_id, request_id, link_token, image_url, object_key, expires_at
+		FROM usage_log_image_links
+		WHERE expires_at <= $1
+		ORDER BY expires_at
+		LIMIT $2
+	`, now, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	links := make([]*service.UsageLogImageLink, 0, limit)
+	for rows.Next() {
+		var link service.UsageLogImageLink
+		var objectKey sql.NullString
+		if err := rows.Scan(
+			&link.UserID,
+			&link.APIKeyID,
+			&link.RequestID,
+			&link.LinkToken,
+			&link.ImageURL,
+			&objectKey,
+			&link.ExpiresAt,
+		); err != nil {
+			return nil, err
+		}
+		if objectKey.Valid {
+			link.ObjectKey = strings.TrimSpace(objectKey.String)
+		}
+		links = append(links, &link)
+	}
+	return links, rows.Err()
+}
+
+func (s *usageLogImageLinkStore) DeleteByTokens(ctx context.Context, tokens []string) (int64, error) {
+	if len(tokens) == 0 {
+		return 0, nil
+	}
 	result, err := s.sqlDB.ExecContext(ctx, `
 		DELETE FROM usage_log_image_links
-		WHERE (user_id, api_key_id, request_id) IN (
-			SELECT user_id, api_key_id, request_id
-			FROM usage_log_image_links
-			WHERE expires_at <= $1
-			ORDER BY expires_at
-			LIMIT $2
-		)
-	`, now, limit)
+		WHERE link_token = ANY($1)
+	`, pq.Array(tokens))
 	if err != nil {
 		return 0, err
 	}

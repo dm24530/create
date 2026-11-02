@@ -88,8 +88,8 @@ type VideoStudioGalleryStore interface {
 	Pin(ctx context.Context, userID int64, id string, quota int64) error
 	// Unpin 把已保存作品转回临时内容，并写入新的过期时间。
 	Unpin(ctx context.Context, userID int64, id string, expiresAt int64) error
-	// SweepExpired 删掉一批到期未保存的记录，返回它们的对象键。
-	SweepExpired(ctx context.Context, batch int) ([]string, error)
+	ListExpired(ctx context.Context, batch int) ([]ExpiredStudioWork, error)
+	DeleteExpiredByIDs(ctx context.Context, ids []string) (int, error)
 	// ObjectKey 返回记录的 object_key；记录不存在时返回 ErrStudioWorkNotFound。
 	ObjectKey(ctx context.Context, userID int64, id string) (string, error)
 	FindBySourceID(ctx context.Context, userID int64, sourceID string) (*VideoStudioGalleryEntry, error)
@@ -104,7 +104,7 @@ type VideoStudioMediaSaver interface {
 	// StudioWorksQuota 是后台配置的作品配额上限（图片 + 视频合计）。
 	StudioWorksQuota() int
 	FetchVideoURL(ctx context.Context, rawURL string) ([]byte, string, error)
-	GalleryRetention() time.Duration
+	VideoRetention() time.Duration
 }
 
 type videoStudioReferenceImageSaver interface {
@@ -140,7 +140,7 @@ func (s *VideoStudioGalleryService) SetUserStorageIdentityResolver(
 // tempRetention 是"没存进我的作品"的临时视频保留时长，与图片共用同一份保留天数配置。
 func (s *VideoStudioGalleryService) tempRetention() time.Duration {
 	if s != nil && s.storage != nil {
-		if d := s.storage.GalleryRetention(); d > 0 {
+		if d := s.storage.VideoRetention(); d > 0 {
 			return d
 		}
 	}
@@ -551,7 +551,7 @@ func (s *ImageStorageSettingService) SaveVideo(ctx context.Context, key, content
 	}
 	key = videoStoragePrefix + strings.TrimLeft(strings.TrimSpace(key), "/")
 	if storage, ok := uploader.storage.(ImageStorageWithExpiry); ok {
-		return storage.SaveWithExpiry(ctx, key, contentType, data, s.GalleryRetention())
+		return storage.SaveWithExpiry(ctx, key, contentType, data, s.imageURLTTL())
 	}
 	return uploader.storage.Save(ctx, key, contentType, data)
 }
@@ -574,7 +574,7 @@ func (s *ImageStorageSettingService) SaveVideoReferenceAudio(
 	}
 	key = videoStoragePrefix + "references/" + strings.TrimLeft(strings.TrimSpace(key), "/")
 	if storage, ok := uploader.storage.(ImageStorageWithExpiry); ok {
-		return storage.SaveWithExpiry(ctx, key, contentType, data, s.GalleryRetention())
+		return storage.SaveWithExpiry(ctx, key, contentType, data, s.imageURLTTL())
 	}
 	return uploader.storage.Save(ctx, key, contentType, data)
 }

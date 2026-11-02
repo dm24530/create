@@ -82,7 +82,7 @@
                   已保存到我的作品
                 </p>
                 <p v-else class="work-card__state work-card__state--temp">
-                  临时内容 · 还剩 {{ remainingDays(entry) }} 天
+                  {{ remainingDays(entry) > 0 ? `临时内容 · 还剩 ${remainingDays(entry)} 天` : '临时内容 · 已过期' }}
                 </p>
               </div>
               <div class="work-card__actions" @click.stop>
@@ -145,7 +145,7 @@
                   已保存到我的作品
                 </p>
                 <p v-else class="work-card__state work-card__state--temp" data-testid="archived-temp-badge">
-                  临时内容 · 还剩 {{ remainingDays(entry) }} 天
+                  {{ remainingDays(entry) > 0 ? `临时内容 · 还剩 ${remainingDays(entry)} 天` : '临时内容 · 已过期' }}
                 </p>
               </div>
               <div class="work-card__actions">
@@ -291,7 +291,7 @@
             </div>
             <div>
               <dt>状态</dt>
-              <dd>{{ activeImage.saved ? '已保存到我的作品' : `临时内容 · 还剩 ${remainingDays(activeImage)} 天` }}</dd>
+              <dd>{{ activeImage.saved ? '已保存到我的作品' : (remainingDays(activeImage) > 0 ? `临时内容 · 还剩 ${remainingDays(activeImage)} 天` : '临时内容 · 已过期') }}</dd>
             </div>
           </dl>
         </section>
@@ -616,11 +616,11 @@ async function unpinArchived(entry: ArchivedVideoEntry) {
   }
 }
 
-// 临时内容的剩余天数：向上取整，最少显示 1 天。
+// 临时内容的剩余天数：向上取整，过期后显示 0。
 function remainingDays(entry: { expires_at: number }): number {
   const expiresAt = Number(entry.expires_at || 0)
   if (!expiresAt) return 0
-  return Math.max(1, Math.ceil((expiresAt * 1000 - Date.now()) / 86_400_000))
+  return Math.max(0, Math.ceil((expiresAt * 1000 - Date.now()) / 86_400_000))
 }
 
 // 存进「我的作品」：转永久、开始占配额。

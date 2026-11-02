@@ -265,6 +265,16 @@
                 <Icon name="infoCircle" size="xs" class="text-gray-400 group-hover:text-blue-500 dark:text-gray-500 dark:group-hover:text-blue-400" />
               </div>
             </div>
+            <button
+              v-if="safeImageURL(row.image_url) && row.image_count > 0"
+              type="button"
+              data-testid="open-usage-image-inline"
+              class="flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-md text-indigo-500 transition-colors hover:bg-indigo-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/50 dark:hover:bg-indigo-900/20"
+              :title="row.image_count > 1 ? t('usage.openFirstImage', { count: row.image_count }) : t('usage.openImage')"
+              @click="openUsageImage(row)"
+            >
+              <Icon name="eye" size="sm" />
+            </button>
           </div>
         </template>
 

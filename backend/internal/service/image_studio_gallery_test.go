@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"image"
 	"image/png"
 	"strings"
@@ -105,8 +106,20 @@ func (s *galleryStoreStub) Unpin(_ context.Context, _ int64, id string, expiresA
 	return ErrStudioWorkNotFound
 }
 
-func (s *galleryStoreStub) SweepExpired(context.Context, int) ([]string, error) {
-	return s.swept, nil
+func (s *galleryStoreStub) ListExpired(context.Context, int) ([]ExpiredStudioWork, error) {
+	items := make([]ExpiredStudioWork, 0, len(s.swept))
+	for index, key := range s.swept {
+		items = append(items, ExpiredStudioWork{ID: fmt.Sprintf("expired-%d", index), ObjectKey: key})
+	}
+	return items, nil
+}
+
+func (s *galleryStoreStub) DeleteExpiredByIDs(_ context.Context, ids []string) (int, error) {
+	return len(ids), nil
+}
+
+func (s *galleryStoreStub) ReconcileTemporaryExpiry(context.Context, int64, int64) (int64, error) {
+	return 0, nil
 }
 
 type gallerySaverStub struct {
@@ -160,6 +173,10 @@ func (s *gallerySaverStub) GalleryRetention() time.Duration {
 	if s.retention <= 0 {
 		return ImageStudioGalleryTTL
 	}
+	return s.retention
+}
+
+func (s *gallerySaverStub) VideoRetention() time.Duration {
 	return s.retention
 }
 

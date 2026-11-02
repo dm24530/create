@@ -40,7 +40,11 @@ func (s *usageImageLinkStoreStub) GetByToken(context.Context, string) (*service.
 	return s.link, nil
 }
 
-func (s *usageImageLinkStoreStub) DeleteExpired(context.Context, time.Time, int) (int64, error) {
+func (s *usageImageLinkStoreStub) ListExpired(context.Context, time.Time, int) ([]*service.UsageLogImageLink, error) {
+	return nil, nil
+}
+
+func (s *usageImageLinkStoreStub) DeleteByTokens(context.Context, []string) (int64, error) {
 	return 0, nil
 }
 

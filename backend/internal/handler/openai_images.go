@@ -330,6 +330,10 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 						h.handleFailoverExhausted(c, failoverErr, streamStarted)
 						return
 					}
+					if !failoverErr.ShouldRetryNextAccount() {
+						h.handleFailoverExhausted(c, failoverErr, streamStarted)
+						return
+					}
 					if failoverErr.RetryableOnSameAccount {
 						retryLimit := effectiveSameAccountRetryLimit(failoverErr, account)
 						if sameAccountRetryAllowed(failoverErr, sameAccountRetryCount[account.ID], retryLimit) {
@@ -440,6 +444,11 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 					zap.String("model", clientRequestModel),
 					zap.Int64("account_id", account.ID),
 				).Error("openai.images.record_usage_failed", zap.Error(err))
+				return
+			}
+			if result != nil {
+				h.recordUsageImageLink(ctx, apiKey, result.RequestID, result.ImageOutputs)
+				result.ImageOutputs = nil
 			}
 		})
 

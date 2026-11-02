@@ -4305,6 +4305,72 @@ describe('ImageStudioView gallery', () => {
     )
     expect(wrapper.find('img[alt="生成结果 1"]').exists()).toBe(true)
   })
+
+  it('deduplicates ambiguous recovery probes for the same idempotency key', async () => {
+    listKeys.mockResolvedValue({
+      items: [{ id: 11, name: 'dd', key: 'sk-ambiguous', status: 'active', group_id: 2 }],
+    })
+    getPublicSettings.mockResolvedValue({ api_base_url: '/v1' })
+    const fetchMock = vi.mocked(fetch).mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/images/batches/models')) {
+        return { ok: true, json: async () => ({ data: [] }) } as Response
+      }
+      if (url.endsWith('/models')) {
+        return { ok: true, json: async () => ({ data: [{ id: 'gpt-image-1' }] }) } as Response
+      }
+      if (url.endsWith('/images/tasks/by-idempotency/shared-client-task')) {
+        return {
+          ok: true,
+          json: async () => ({
+            task_id: 'imgtask_shared',
+            status: 'completed',
+            result: { data: [{ b64_json: 'aGVsbG8=', mime_type: 'image/png' }] },
+          }),
+        } as Response
+      }
+      if (url.endsWith('/images/tasks/imgtask_shared')) {
+        return {
+          ok: true,
+          json: async () => ({
+            task_id: 'imgtask_shared',
+            status: 'completed',
+            result: { data: [{ b64_json: 'aGVsbG8=', mime_type: 'image/png' }] },
+          }),
+        } as Response
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const pendingImage = {
+      title: '正在生成',
+      src: '',
+      meta: 'PNG · 1024x1024 · gpt-image-1',
+      pending: true,
+      taskId: 'shared-client-task',
+      batchId: 'shared-batch',
+      gatewaySubmitPending: true,
+      apiKeyId: 11,
+      prompt: '一只猫',
+      model: 'gpt-image-1',
+      size: '1024x1024',
+      format: 'png',
+    }
+    localStorage.setItem(imageStudioPendingStorageKey(), JSON.stringify([
+      { ...pendingImage, id: 88 },
+      { ...pendingImage, id: 89 },
+    ]))
+
+    mountImageStudio()
+    await flushPromises()
+    await flushPromises()
+    await flushPromises()
+
+    const recoveryCalls = fetchMock.mock.calls.filter(([input]) => (
+      String(input).endsWith('/images/tasks/by-idempotency/shared-client-task')
+    ))
+    expect(recoveryCalls).toHaveLength(1)
+  })
 })
 
 describe('ImageStudioView composer controls', () => {

@@ -46,10 +46,23 @@ type OpenAIGatewayHandler struct {
 	securityAuditCoordinator   *securityaudit.Coordinator
 	grokMediaEligibilityProber grokMediaEligibilityProber
 	opsService                 *service.OpsService
+	imageLinks                 service.UsageLogImageLinkStore
+	imageStorage               *service.ImageStorageSettingService
 	concurrencyHelper          *ConcurrencyHelper
 	imageLimiter               *imageConcurrencyLimiter
 	maxAccountSwitches         int
 	cfg                        *config.Config
+}
+
+func (h *OpenAIGatewayHandler) SetImageLinkDeps(
+	imageLinks service.UsageLogImageLinkStore,
+	imageStorage *service.ImageStorageSettingService,
+) {
+	if h == nil {
+		return
+	}
+	h.imageLinks = imageLinks
+	h.imageStorage = imageStorage
 }
 
 // SetDownstreamPricing wires optional sub-site price resolution and usage-based

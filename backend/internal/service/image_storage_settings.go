@@ -73,6 +73,7 @@ type ImageStorageSettings struct {
 	PublicBaseURL        string `json:"public_base_url"`
 	PresignExpiry        int    `json:"presign_expiry_hours"`
 	GalleryRetentionDays int    `json:"gallery_retention_days"`
+	VideoRetentionDays   int    `json:"video_retention_days"`
 	// StudioWorksQuota 是每个用户的作品配额（图片 + 视频合计），后台可改。
 	StudioWorksQuota int   `json:"studio_works_quota"`
 	MaxDownloadBytes int64 `json:"max_download_bytes"`
@@ -113,6 +114,8 @@ type ImageStorageSettingService struct {
 	uploader         *ImageResultUploader
 	enabled          bool
 	galleryRetention time.Duration
+	videoRetention   time.Duration
+	imageURLExpiry   time.Duration
 	studioQuota      int
 	// backupConfigGeneration is the BackupService credential generation used to
 	// build the current uploader. Saving backup S3 settings invalidates the image
@@ -128,6 +131,20 @@ func (s *ImageStorageSettingService) SetLocalAssetStore(store *LocalImageAssetSt
 	s.localOnce.Do(func() {
 		go s.localAssetUploadLoop()
 	})
+}
+
+func (s *ImageStorageSettingService) CleanupExpiredLocalAssets(
+	ctx context.Context,
+	now time.Time,
+	limit int,
+) (int, error) {
+	if s == nil || s.localAssets == nil {
+		return 0, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	return s.localAssets.CleanupExpired(now, limit)
 }
 
 func (s *ImageStorageSettingService) SetUserStorageIdentityResolver(
@@ -275,7 +292,7 @@ func (s *ImageStorageSettingService) saveImageWithKey(
 		key = uploader.prefix + key
 	}
 	if storage, ok := uploader.storage.(ImageStorageWithExpiry); ok {
-		url, err := storage.SaveWithExpiry(ctx, key, contentType, data, s.GalleryRetention())
+		url, err := storage.SaveWithExpiry(ctx, key, contentType, data, s.imageURLTTL())
 		return url, key, err
 	}
 	url, err := uploader.storage.Save(ctx, key, contentType, data)
@@ -593,6 +610,8 @@ func (s *ImageStorageSettingService) resolve() (*ImageResultUploader, bool) {
 	s.resolvedAt = now
 	s.uploader, s.enabled = nil, false
 	s.galleryRetention = ImageStudioGalleryTTL
+	s.videoRetention = ImageStudioGalleryTTL
+	s.imageURLExpiry = 24 * time.Hour
 	s.studioQuota = StudioWorksQuotaPerUser
 	if s.backup != nil {
 		s.backupConfigGeneration = s.backup.S3ConfigGeneration()
@@ -606,6 +625,15 @@ func (s *ImageStorageSettingService) resolve() (*ImageResultUploader, bool) {
 	// 配额跟存储开关无关：即使存储没配好，后台设的上限也要能读到并展示给用户。
 	if cfg.StudioWorksQuota > 0 {
 		s.studioQuota = cfg.StudioWorksQuota
+	}
+	if cfg.GalleryRetentionDays > 0 {
+		s.galleryRetention = time.Duration(cfg.GalleryRetentionDays) * 24 * time.Hour
+	}
+	if cfg.VideoRetentionDays > 0 {
+		s.videoRetention = time.Duration(cfg.VideoRetentionDays) * 24 * time.Hour
+	}
+	if cfg.PresignExpiry > 0 {
+		s.imageURLExpiry = time.Duration(cfg.PresignExpiry) * time.Hour
 	}
 	if !cfg.Enabled {
 		return nil, false
@@ -625,9 +653,6 @@ func (s *ImageStorageSettingService) resolve() (*ImageResultUploader, bool) {
 	s.uploader.SetLocalAssets(s.localAssets)
 	s.uploader.SetUserStorageIdentityResolver(s.identities)
 	s.enabled = true
-	if cfg.GalleryRetentionDays > 0 {
-		s.galleryRetention = time.Duration(cfg.GalleryRetentionDays) * 24 * time.Hour
-	}
 	return s.uploader, true
 }
 
@@ -682,6 +707,32 @@ func (s *ImageStorageSettingService) GalleryRetention() time.Duration {
 	return ImageStudioGalleryTTL
 }
 
+func (s *ImageStorageSettingService) VideoRetention() time.Duration {
+	if s == nil {
+		return ImageStudioGalleryTTL
+	}
+	_, _ = s.resolve()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.videoRetention > 0 {
+		return s.videoRetention
+	}
+	return ImageStudioGalleryTTL
+}
+
+func (s *ImageStorageSettingService) imageURLTTL() time.Duration {
+	if s == nil {
+		return 24 * time.Hour
+	}
+	_, _ = s.resolve()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.imageURLExpiry > 0 {
+		return s.imageURLExpiry
+	}
+	return 24 * time.Hour
+}
+
 // Invalidate 丢弃缓存，使下一次请求按最新设置重新解析。
 func (s *ImageStorageSettingService) Invalidate() {
 	if s == nil {
@@ -693,6 +744,8 @@ func (s *ImageStorageSettingService) Invalidate() {
 	s.uploader = nil
 	s.enabled = false
 	s.galleryRetention = ImageStudioGalleryTTL
+	s.videoRetention = ImageStudioGalleryTTL
+	s.imageURLExpiry = 24 * time.Hour
 	s.studioQuota = StudioWorksQuotaPerUser
 	s.mu.Unlock()
 }
@@ -705,6 +758,8 @@ func (s *ImageStorageSettingService) Get(ctx context.Context) (*ImageStorageSett
 	}
 	if settings == nil {
 		settings = settingsFromConfig(s.fallback)
+	} else {
+		normalizeImageStorageSettings(settings)
 	}
 	settings.SecretAccessKey = ""
 	return settings, nil
@@ -831,6 +886,7 @@ func (s *ImageStorageSettingService) toImageStorageConfig(ctx context.Context, i
 		PublicBaseURL:        in.PublicBaseURL,
 		PresignExpiry:        in.PresignExpiry,
 		GalleryRetentionDays: in.GalleryRetentionDays,
+		VideoRetentionDays:   in.VideoRetentionDays,
 		StudioWorksQuota:     in.StudioWorksQuota,
 		MaxDownloadByte:      in.MaxDownloadBytes,
 		Endpoint:             in.Endpoint,
@@ -900,6 +956,7 @@ func settingsFromConfig(cfg config.ImageStorageConfig) *ImageStorageSettings {
 		PublicBaseURL:        cfg.PublicBaseURL,
 		PresignExpiry:        cfg.PresignExpiry,
 		GalleryRetentionDays: cfg.GalleryRetentionDays,
+		VideoRetentionDays:   cfg.VideoRetentionDays,
 		StudioWorksQuota:     cfg.StudioWorksQuota,
 		MaxDownloadBytes:     cfg.MaxDownloadByte,
 		Endpoint:             cfg.Endpoint,
@@ -936,6 +993,12 @@ func normalizeImageStorageSettings(in *ImageStorageSettings) {
 	}
 	if in.GalleryRetentionDays > 365 {
 		in.GalleryRetentionDays = 365
+	}
+	if in.VideoRetentionDays <= 0 {
+		in.VideoRetentionDays = 7
+	}
+	if in.VideoRetentionDays > 365 {
+		in.VideoRetentionDays = 365
 	}
 	// 作品配额：留空或填 0 表示用默认值；上限 10000，避免误填天文数字把库撑坏。
 	if in.StudioWorksQuota <= 0 {

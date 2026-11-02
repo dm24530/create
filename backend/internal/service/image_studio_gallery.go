@@ -83,6 +83,12 @@ type ImageStudioGallerySaveOptions struct {
 	SourceID    string
 }
 
+type ExpiredStudioWork struct {
+	ID             string
+	ObjectKey      string
+	ThumbObjectKey string
+}
+
 type ImageStudioGalleryStore interface {
 	// Save 落库前会在同一事务里核对配额；超额返回 ErrStudioWorksQuotaExceeded。
 	// 计数与插入必须原子，否则并发提交能越过上限。
@@ -94,8 +100,11 @@ type ImageStudioGalleryStore interface {
 	Pin(ctx context.Context, userID int64, id string, quota int64) error
 	// Unpin 把已保存作品转回临时内容，并写入新的过期时间。
 	Unpin(ctx context.Context, userID int64, id string, expiresAt int64) error
-	// SweepExpired 删掉一批到期未保存的记录，返回它们的对象键。
-	SweepExpired(ctx context.Context, batch int) ([]string, error)
+	// ListExpired returns a batch of expired temporary works without deleting
+	// them, so callers can remove storage objects before dropping the rows.
+	ListExpired(ctx context.Context, batch int) ([]ExpiredStudioWork, error)
+	DeleteExpiredByIDs(ctx context.Context, ids []string) (int, error)
+	ReconcileTemporaryExpiry(ctx context.Context, imageRetentionSeconds, videoRetentionSeconds int64) (int64, error)
 	// ObjectKey 返回记录的 object_key；记录不存在时返回 ErrStudioWorkNotFound。
 	ObjectKey(ctx context.Context, userID int64, id string) (string, error)
 	FindBySourceID(ctx context.Context, userID int64, sourceID string) (*ImageStudioGalleryEntry, error)
@@ -112,6 +121,7 @@ type ImageStudioImageSaver interface {
 	// StudioWorksQuota 是后台配置的作品配额上限（图片 + 视频合计）。
 	StudioWorksQuota() int
 	GalleryRetention() time.Duration
+	VideoRetention() time.Duration
 	// FetchImageURL 在服务端下载上游图片，避免浏览器跨域失败导致无法转存。
 	FetchImageURL(ctx context.Context, rawURL string) ([]byte, string, error)
 }
@@ -178,6 +188,15 @@ func ProvideImageStudioGalleryService(
 func (s *ImageStudioGalleryService) tempRetention() time.Duration {
 	if s != nil && s.storage != nil {
 		if d := s.storage.GalleryRetention(); d > 0 {
+			return d
+		}
+	}
+	return ImageStudioGalleryTTL
+}
+
+func (s *ImageStudioGalleryService) videoTempRetention() time.Duration {
+	if s != nil && s.storage != nil {
+		if d := s.storage.VideoRetention(); d > 0 {
 			return d
 		}
 	}
@@ -745,6 +764,10 @@ func (s *ImageStudioGalleryService) Thumbnail(ctx context.Context, userID int64,
 		maxEdge = 1024
 	}
 	cacheKey := id + ":" + strconv.Itoa(maxEdge)
+	entry, err := s.Get(ctx, userID, id)
+	if err != nil {
+		return nil, err
+	}
 	now := time.Now()
 	s.thumbMu.Lock()
 	if cached, ok := s.thumbs[cacheKey]; ok && cached.expiresAt.After(now) {
@@ -754,10 +777,6 @@ func (s *ImageStudioGalleryService) Thumbnail(ctx context.Context, userID int64,
 	}
 	s.thumbMu.Unlock()
 
-	entry, err := s.Get(ctx, userID, id)
-	if err != nil {
-		return nil, err
-	}
 	if thumbURL := strings.TrimSpace(entry.ThumbURL); thumbURL != "" {
 		data, _, fetchErr := s.fetchEntryImage(ctx, entry, entry.ThumbObjectKey, thumbURL)
 		if fetchErr == nil {
@@ -962,27 +981,46 @@ func (s *ImageStudioGalleryService) updateLocalAssetExpiry(
 	}
 }
 
-// SweepExpired 清扫到期未保存的内容：先删记录（store 返回对象键），再删桶里的文件。
-// 图片和视频共用一张表，所以这一个方法就能把两类都清掉。
+// SweepExpired removes expired temporary works. Storage objects are deleted
+// before their rows so transient storage failures remain retryable.
 func (s *ImageStudioGalleryService) SweepExpired(ctx context.Context, batch int) (int, error) {
 	if s == nil || s.store == nil {
 		return 0, nil
 	}
-	keys, err := s.store.SweepExpired(ctx, batch)
+	items, err := s.store.ListExpired(ctx, batch)
 	if err != nil {
 		return 0, err
 	}
-	for _, key := range keys {
-		if strings.TrimSpace(key) == "" || s.storage == nil {
+	deletableIDs := make([]string, 0, len(items))
+	for _, item := range items {
+		if item.ID == "" {
 			continue
 		}
-		if err := s.storage.DeleteObject(ctx, key); err != nil && !isStorageNotConfigured(err) {
-			// 对象没删掉不影响记录已经清掉；留个日志便于人工兜底。
-			logger.L().Warn("studio_work.sweep_object_delete_failed",
-				zap.String("object_key", key), zap.Error(err))
+		failed := false
+		for _, key := range []string{item.ObjectKey, item.ThumbObjectKey} {
+			key = strings.TrimSpace(key)
+			if key == "" || s.storage == nil {
+				continue
+			}
+			if err := s.storage.DeleteObject(ctx, key); err != nil {
+				logger.L().Warn("studio_work.sweep_object_delete_failed",
+					zap.String("object_key", key), zap.Error(err))
+				failed = true
+				break
+			}
+		}
+		if !failed {
+			deletableIDs = append(deletableIDs, item.ID)
 		}
 	}
-	return len(keys), nil
+	if len(deletableIDs) == 0 {
+		return 0, nil
+	}
+	deleted, err := s.store.DeleteExpiredByIDs(ctx, deletableIDs)
+	if err != nil {
+		return 0, err
+	}
+	return deleted, nil
 }
 
 // studioWorksSweepInterval 是临时内容的清扫间隔。启动时先跑一遍，
@@ -1012,6 +1050,14 @@ func (s *ImageStudioGalleryService) StartExpirySweeper(ctx context.Context, inte
 
 func (s *ImageStudioGalleryService) sweepExpiredOnce(ctx context.Context) {
 	const batch = 200
+	if _, err := s.store.ReconcileTemporaryExpiry(
+		ctx,
+		int64(s.tempRetention()/time.Second),
+		int64(s.videoTempRetention()/time.Second),
+	); err != nil {
+		logger.L().Warn("studio_work.reconcile_expiry_failed", zap.Error(err))
+		return
+	}
 	total := 0
 	for {
 		swept, err := s.SweepExpired(ctx, batch)

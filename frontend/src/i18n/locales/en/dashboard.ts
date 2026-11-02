@@ -472,6 +472,8 @@ export default {
     exportExcelSuccess: 'Usage data exported successfully (Excel format)',
     exportExcelFailed: 'Failed to export usage data',
     imageUnit: ' images',
+    openImage: 'View generated image',
+    openFirstImage: 'View first generated image ({count} total)',
     userAgent: 'User-Agent',
     ipGeo: {
       fetch: 'Fetch region',

@@ -38,6 +38,10 @@ const (
 	// ops_error_logger 中间件检查此 key，为 true 时跳过错误记录。
 	OpsSkipPassthroughKey = "ops_skip_passthrough"
 
+	// OpsSkipErrorLogKey lets handlers suppress expected probe failures that are
+	// normal control-flow signals rather than operational errors.
+	OpsSkipErrorLogKey = "ops_skip_error_log"
+
 	// OpsStreamErrorKey 保存 handleStreamingAwareError 在「响应已固化为 HTTP 200 的 SSE 流」
 	// 上就地(in-band)补发错误帧时记录的 OpsStreamError。因为 wire 状态码停留在 200，
 	// ops_error_logger 的 status>=400 采集路径永远不会触发，这类流内失败

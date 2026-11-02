@@ -212,6 +212,38 @@ describe('admin UsageTable tooltip', () => {
     )
   })
 
+  it('keeps token usage visible and opens the image for token-billed image rows', async () => {
+    const open = vi.spyOn(window, 'open').mockReturnValue(null)
+    const row = {
+      ...baseImageRow,
+      billing_mode: 'token',
+      image_count: 1,
+      image_url: '/api/v1/usage/image-links/token',
+      input_tokens: 12,
+      output_tokens: 34,
+    }
+    const wrapper = mount(UsageTable, {
+      props: {
+        data: [row],
+        loading: false,
+        columns: [{ key: 'tokens', label: 'Tokens' }],
+      },
+      global: { stubs: { DataTable: DataTableStub, EmptyState: true, Icon: true, Teleport: true } },
+    })
+
+    expect(wrapper.find('[data-testid="open-usage-count-image"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('12')
+    expect(wrapper.text()).toContain('34')
+    const imageButton = wrapper.get('[data-testid="open-usage-image-inline"]')
+    await imageButton.trigger('click')
+
+    expect(open).toHaveBeenCalledWith(
+      '/api/v1/usage-images/token',
+      '_blank',
+      'noopener,noreferrer',
+    )
+  })
+
   it('shows output TPS in the latency cell using total duration', () => {
     const row = { ...baseImageRow, image_count: 0, billing_mode: 'token', output_tokens: 1000, duration_ms: 20_000, first_token_ms: 10_000 }
     const wrapper = mount(UsageTable, {

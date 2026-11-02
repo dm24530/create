@@ -31,6 +31,8 @@ func TestCodexDirectImagesRouting(t *testing.T) {
 			result, err := svc.ForwardImages(ctx, c, directImagesTestAccount(), body, parsed, "")
 			require.NoError(t, err)
 			require.Equal(t, 1, result.ImageCount)
+			require.Len(t, result.ImageOutputs, 1)
+			require.Equal(t, "aGVsbG8=", result.ImageOutputs[0].Base64)
 			require.Equal(t, 20, result.Usage.ImageOutputTokens)
 			require.Equal(t, model, result.UpstreamModel)
 			require.Equal(t, "/backend-api/codex/images/generations", result.UpstreamEndpoint)

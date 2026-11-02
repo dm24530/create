@@ -138,6 +138,8 @@ func ProvideOpenAIGatewayHandler(
 	billingCacheService *service.BillingCacheService,
 	apiKeyService *service.APIKeyService,
 	usageRecordWorkerPool *service.UsageRecordWorkerPool,
+	imageLinks service.UsageLogImageLinkStore,
+	imageStorage *service.ImageStorageSettingService,
 	errorPassthroughService *service.ErrorPassthroughService,
 	contentModerationService *service.ContentModerationService,
 	opsService *service.OpsService,
@@ -152,6 +154,7 @@ func ProvideOpenAIGatewayHandler(
 	h.compositeResolver = compositeResolver
 	h.securityAuditCoordinator = coordinator
 	h.grokMediaEligibilityProber = grokQuotaService
+	h.SetImageLinkDeps(imageLinks, imageStorage)
 	return h
 }
 

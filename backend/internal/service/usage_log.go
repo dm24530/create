@@ -251,7 +251,8 @@ type UsageLog struct {
 type UsageLogImageLinkStore interface {
 	Upsert(ctx context.Context, link *UsageLogImageLink) error
 	GetByToken(ctx context.Context, token string) (*UsageLogImageLink, error)
-	DeleteExpired(ctx context.Context, now time.Time, limit int) (int64, error)
+	ListExpired(ctx context.Context, now time.Time, limit int) ([]*UsageLogImageLink, error)
+	DeleteByTokens(ctx context.Context, tokens []string) (int64, error)
 	MarkDisplayed(ctx context.Context, userID, apiKeyID int64, requestID string, displayedAt time.Time) error
 	MarkGenerationDuration(ctx context.Context, userID, apiKeyID int64, requestID string, durationMs int) error
 }

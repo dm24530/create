@@ -115,6 +115,7 @@ export default {
         publicBaseUrlPlaceholder: '留空则返回预签名临时链接',
         presignExpiryHours: '预签名链接有效期（小时）',
         galleryRetentionDays: '图片工作台保留天数',
+        videoRetentionDays: '视频工作台保留天数',
         studioWorksQuota: '每个用户的作品配额（个）',
         studioWorksQuotaHint: '图片与视频合计计算，达到上限后用户需要先删除旧作品才能继续保存。',
         saved: '异步生图对象存储配置已保存',

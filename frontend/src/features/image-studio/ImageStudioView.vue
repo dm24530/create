@@ -162,7 +162,7 @@
                     class="text-xs text-amber-600 dark:text-amber-400"
                     data-testid="image-temp-badge"
                   >
-                    临时内容 · 还剩 {{ remainingDays(image) }} 天
+                    {{ remainingDays(image) > 0 ? `临时内容 · 还剩 ${remainingDays(image)} 天` : '临时内容 · 已过期' }}
                   </p>
                 </div>
                 <div v-if="!image.pending && !image.failed" class="flex shrink-0 gap-1">
@@ -1904,6 +1904,7 @@ async function loadGallery(epoch = studioUserEpoch, ownerId = studioStateOwnerId
       return all.findIndex((candidate) => String(candidate.id || candidate.src) === key) === index
     })
     images.value = merged
+    pruneExpiredImages()
     for (const entry of entries) {
       const localImage = images.value.find((item) => (
         String(item.id) === String(entry.id)
@@ -2415,11 +2416,11 @@ function quotaReached(results: Array<{ status: string; reason?: unknown }>): boo
   return results.some((result) => isQuotaError({ reason: result.reason }))
 }
 
-// 临时内容的剩余天数：向上取整，最少显示 1 天。
+// 临时内容的剩余天数：向上取整，过期后显示 0。
 function remainingDays(image: GeneratedImage): number {
   const expiresAt = Number(image.expiresAt || 0)
   if (!expiresAt) return 0
-  return Math.max(1, Math.ceil((expiresAt * 1000 - Date.now()) / 86_400_000))
+  return Math.max(0, Math.ceil((expiresAt * 1000 - Date.now()) / 86_400_000))
 }
 
 function pendingElapsedSeconds(image: GeneratedImage): number {
@@ -2617,6 +2618,37 @@ async function loadPreviewDisplay(image: GeneratedImage) {
 }
 
 let generationClockTimer: ReturnType<typeof setInterval> | null = null
+let expiryPruneTimer: ReturnType<typeof setInterval> | null = null
+
+function pruneExpiredImages() {
+  const nowSeconds = Math.floor(Date.now() / 1000)
+  const expired = images.value.filter((image) => (
+    !image.pending
+    && !image.saved
+    && Number(image.expiresAt || 0) > 0
+    && Number(image.expiresAt) <= nowSeconds
+  ))
+  if (!expired.length) return
+  const expiredIds = new Set(expired.map((image) => imageMediaId(image)))
+  images.value = images.value.filter((image) => !expiredIds.has(imageMediaId(image)))
+  if (previewImage.value && expiredIds.has(imageMediaId(previewImage.value))) {
+    previewImage.value = null
+    previewDisplaySrc.value = ''
+  }
+  if (studioStateOwnerId.value) writeStudioSnapshot(studioStateOwnerId.value)
+}
+
+function startExpiryPruneTimer() {
+  pruneExpiredImages()
+  if (expiryPruneTimer) return
+  expiryPruneTimer = setInterval(pruneExpiredImages, 60_000)
+}
+
+function stopExpiryPruneTimer() {
+  if (!expiryPruneTimer) return
+  clearInterval(expiryPruneTimer)
+  expiryPruneTimer = null
+}
 
 function startGenerationClock() {
   generationClockNow.value = Date.now()
@@ -3995,14 +4027,28 @@ async function resumeGatewayGeneration(pendingImages: GeneratedImage[]) {
 
 async function resumeAmbiguousGatewaySubmissions(pendingImages: GeneratedImage[]) {
   if (!pendingImages.length || !selectedKey.value?.key) return
-  const candidates = pendingImages.filter((image) => (
-    image.taskId && !resumingAmbiguousTaskIDs.has(image.taskId)
-  ))
+  const owner = captureStudioOwner()
+  const candidates: GeneratedImage[] = []
+  const duplicateImages: GeneratedImage[] = []
+  const seenTaskIds = new Set<string>()
+  for (const image of pendingImages) {
+    const taskId = String(image.taskId || '').trim()
+    if (!taskId) continue
+    if (seenTaskIds.has(taskId)) {
+      duplicateImages.push(image)
+      continue
+    }
+    seenTaskIds.add(taskId)
+    if (!resumingAmbiguousTaskIDs.has(taskId)) {
+      image.taskId = taskId
+      candidates.push(image)
+    }
+  }
+  if (duplicateImages.length) removePendingImages(duplicateImages, owner)
   if (!candidates.length) return
   for (const image of candidates) {
     if (image.taskId) resumingAmbiguousTaskIDs.add(image.taskId)
   }
-  const owner = captureStudioOwner()
   let remaining = candidates
   try {
     while (remaining.length && isStudioOwnerCurrent(owner)) {
@@ -4704,6 +4750,7 @@ onMounted(() => {
   window.addEventListener(IMAGE_STUDIO_GALLERY_CHANGED_EVENT, refreshGalleryAfterExternalChange)
   window.addEventListener('online', resumeAmbiguousTasksOnOnline)
   applyInspirationFromRoute()
+  startExpiryPruneTimer()
   void loadData()
 })
 onActivated(() => {
@@ -4717,6 +4764,7 @@ onActivated(() => {
     startGenerationClock()
   }
   if (studioLoadedOnce) refreshGalleryAfterExternalChange()
+  startExpiryPruneTimer()
   applyInspirationFromRoute()
   const restored = images.value.filter((item) => item.pending && item.taskId && !item.gatewayPollUrl && !item.gatewaySubmitPending)
   if (restored.length) void resumePersistentGeneration(restored)
@@ -4727,11 +4775,13 @@ onActivated(() => {
 })
 onDeactivated(() => {
   stopGenerationClock()
+  stopExpiryPruneTimer()
   if (studioStateOwnerId.value) writeStudioSnapshot(studioStateOwnerId.value)
 })
 onBeforeUnmount(() => {
   componentDisposed = true
   stopGenerationClock()
+  stopExpiryPruneTimer()
   if (studioStateOwnerId.value) writeStudioSnapshot(studioStateOwnerId.value)
   document.removeEventListener('click', handleSizeOutside)
   document.removeEventListener('pointerdown', closeImageDownloadMenu)
