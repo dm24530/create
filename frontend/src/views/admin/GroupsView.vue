@@ -938,7 +938,7 @@
           </div>
           <div class="grid grid-cols-3 gap-3">
             <div>
-              <label class="input-label">1K ($)</label>
+              <label class="input-label">{{ t("admin.groups.imagePricing.salePriceLabel", { tier: "1K" }) }}</label>
               <input
                 v-model.number="createForm.image_price_1k"
                 type="number"
@@ -949,7 +949,7 @@
               />
             </div>
             <div>
-              <label class="input-label">2K ($)</label>
+              <label class="input-label">{{ t("admin.groups.imagePricing.salePriceLabel", { tier: "2K" }) }}</label>
               <input
                 v-model.number="createForm.image_price_2k"
                 type="number"
@@ -960,7 +960,7 @@
               />
             </div>
             <div>
-              <label class="input-label">4K ($)</label>
+              <label class="input-label">{{ t("admin.groups.imagePricing.salePriceLabel", { tier: "4K" }) }}</label>
               <input
                 v-model.number="createForm.image_price_4k"
                 type="number"
@@ -968,6 +968,41 @@
                 min="0"
                 class="input"
                 :placeholder="getImagePricePlaceholder(createForm.platform, 'image_price_4k')"
+              />
+            </div>
+          </div>
+          <div class="mt-3 grid grid-cols-3 gap-3">
+            <div>
+              <label class="input-label">{{ t("admin.groups.imagePricing.costPriceLabel", { tier: "1K" }) }}</label>
+              <input
+                v-model.number="createForm.image_cost_price_1k"
+                type="number"
+                step="0.001"
+                min="0"
+                class="input"
+                :placeholder="t('admin.groups.imagePricing.costPricePlaceholder')"
+              />
+            </div>
+            <div>
+              <label class="input-label">{{ t("admin.groups.imagePricing.costPriceLabel", { tier: "2K" }) }}</label>
+              <input
+                v-model.number="createForm.image_cost_price_2k"
+                type="number"
+                step="0.001"
+                min="0"
+                class="input"
+                :placeholder="t('admin.groups.imagePricing.costPricePlaceholder')"
+              />
+            </div>
+            <div>
+              <label class="input-label">{{ t("admin.groups.imagePricing.costPriceLabel", { tier: "4K" }) }}</label>
+              <input
+                v-model.number="createForm.image_cost_price_4k"
+                type="number"
+                step="0.001"
+                min="0"
+                class="input"
+                :placeholder="t('admin.groups.imagePricing.costPricePlaceholder')"
               />
             </div>
           </div>
@@ -982,8 +1017,13 @@
               <div
                 v-for="item in createImageFinalPricePreview"
                 :key="item.label"
+                class="rounded-md border border-gray-200 bg-white p-2 dark:border-dark-600 dark:bg-dark-900"
               >
-                {{ item.label }}: {{ item.value }}
+                <div class="mb-1 font-semibold">{{ item.label }}</div>
+                <div>{{ t("admin.groups.imagePricing.cost") }}: {{ item.cost }}</div>
+                <div>{{ t("admin.groups.imagePricing.salePrice") }}: {{ item.price }}</div>
+                <div>{{ t("admin.groups.imagePricing.profit") }}: {{ item.profit }}</div>
+                <div>{{ t("admin.groups.imagePricing.margin") }}: {{ item.margin }}</div>
               </div>
             </div>
           </div>
@@ -2584,9 +2624,10 @@
           </div>
           <div class="grid grid-cols-3 gap-3">
             <div>
-              <label class="input-label">1K ($)</label>
+              <label class="input-label">{{ t("admin.groups.imagePricing.salePriceLabel", { tier: "1K" }) }}</label>
               <input
                 v-model.number="editForm.image_price_1k"
+                data-testid="edit-image-price-1k"
                 type="number"
                 step="0.001"
                 min="0"
@@ -2595,7 +2636,7 @@
               />
             </div>
             <div>
-              <label class="input-label">2K ($)</label>
+              <label class="input-label">{{ t("admin.groups.imagePricing.salePriceLabel", { tier: "2K" }) }}</label>
               <input
                 v-model.number="editForm.image_price_2k"
                 type="number"
@@ -2606,7 +2647,7 @@
               />
             </div>
             <div>
-              <label class="input-label">4K ($)</label>
+              <label class="input-label">{{ t("admin.groups.imagePricing.salePriceLabel", { tier: "4K" }) }}</label>
               <input
                 v-model.number="editForm.image_price_4k"
                 type="number"
@@ -2614,6 +2655,42 @@
                 min="0"
                 class="input"
                 :placeholder="getImagePricePlaceholder(editForm.platform, 'image_price_4k')"
+              />
+            </div>
+          </div>
+          <div class="mt-3 grid grid-cols-3 gap-3">
+            <div>
+              <label class="input-label">{{ t("admin.groups.imagePricing.costPriceLabel", { tier: "1K" }) }}</label>
+              <input
+                v-model.number="editForm.image_cost_price_1k"
+                data-testid="edit-image-cost-1k"
+                type="number"
+                step="0.001"
+                min="0"
+                class="input"
+                :placeholder="t('admin.groups.imagePricing.costPricePlaceholder')"
+              />
+            </div>
+            <div>
+              <label class="input-label">{{ t("admin.groups.imagePricing.costPriceLabel", { tier: "2K" }) }}</label>
+              <input
+                v-model.number="editForm.image_cost_price_2k"
+                type="number"
+                step="0.001"
+                min="0"
+                class="input"
+                :placeholder="t('admin.groups.imagePricing.costPricePlaceholder')"
+              />
+            </div>
+            <div>
+              <label class="input-label">{{ t("admin.groups.imagePricing.costPriceLabel", { tier: "4K" }) }}</label>
+              <input
+                v-model.number="editForm.image_cost_price_4k"
+                type="number"
+                step="0.001"
+                min="0"
+                class="input"
+                :placeholder="t('admin.groups.imagePricing.costPricePlaceholder')"
               />
             </div>
           </div>
@@ -2628,8 +2705,14 @@
               <div
                 v-for="item in editImageFinalPricePreview"
                 :key="item.label"
+                :data-testid="`edit-image-preview-${item.label.toLowerCase()}`"
+                class="rounded-md border border-gray-200 bg-white p-2 dark:border-dark-600 dark:bg-dark-900"
               >
-                {{ item.label }}: {{ item.value }}
+                <div class="mb-1 font-semibold">{{ item.label }}</div>
+                <div>{{ t("admin.groups.imagePricing.cost") }}: {{ item.cost }}</div>
+                <div>{{ t("admin.groups.imagePricing.salePrice") }}: {{ item.price }}</div>
+                <div>{{ t("admin.groups.imagePricing.profit") }}: {{ item.profit }}</div>
+                <div>{{ t("admin.groups.imagePricing.margin") }}: {{ item.margin }}</div>
               </div>
             </div>
           </div>
@@ -3797,466 +3880,17 @@
       @cancel="cancelUnsupportedLive"
     />
 
-    <!-- Sort Order Modal -->
-    <BaseDialog
+    <GroupSortDialog
       :show="showSortModal"
-      :title="t('admin.groups.sortOrder')"
-      width="normal"
-      @close="closeSortModal"
-    >
-      <div class="space-y-4">
-        <p class="text-sm text-gray-500 dark:text-gray-400">
-          {{ t("admin.groups.sortOrderHint") }}
-        </p>
-        <VueDraggable
-          v-model="sortableGroups"
-          :animation="200"
-          class="space-y-2"
-        >
-          <div
-            v-for="group in sortableGroups"
-            :key="group.id"
-            class="flex cursor-grab items-center gap-3 rounded-lg border border-gray-200 bg-white p-3 transition-shadow hover:shadow-md active:cursor-grabbing dark:border-dark-600 dark:bg-dark-700"
-          >
-            <div class="text-gray-400">
-              <Icon name="menu" size="md" />
-            </div>
-            <div class="flex-1">
-              <div class="font-medium text-gray-900 dark:text-white">
-                {{ group.name }}
-              </div>
-              <div class="text-xs text-gray-500 dark:text-gray-400">
-                <span
-                  :class="[
-                    'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium',
-                    group.platform === 'anthropic'
-                      ? 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400'
-                      : group.platform === 'openai'
-                        ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
-                        : group.platform === 'antigravity'
-                          ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400'
-                          : group.platform === 'grok'
-                            ? 'bg-zinc-200 text-zinc-800 dark:bg-zinc-700 dark:text-zinc-100'
-                            : group.platform === 'kimi'
-                              ? 'bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-400'
-                              : group.platform === 'zhipu'
-                                ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400'
-                                : group.platform === 'deepseek'
-                                  ? 'bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-400'
-                                  : group.platform === 'minimax'
-                                    ? 'bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400'
-                                  : group.platform === 'opencode_go'
-                                    ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300'
-                                    : 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
-                  ]"
-                >
-                  {{ t("admin.groups.platforms." + group.platform, platformLabel(group.platform)) }}
-                </span>
-              </div>
-            </div>
-            <div class="text-sm text-gray-400">#{{ group.id }}</div>
-          </div>
-        </VueDraggable>
-      </div>
+      @close="showSortModal = false"
+      @saved="loadGroups"
+    />
 
-      <template #footer>
-        <div class="flex justify-end gap-3 pt-4">
-          <button
-            @click="closeSortModal"
-            type="button"
-            class="btn btn-secondary"
-          >
-            {{ t("common.cancel") }}
-          </button>
-          <button
-            @click="saveSortOrder"
-            :disabled="sortSubmitting"
-            class="btn btn-primary"
-          >
-            <svg
-              v-if="sortSubmitting"
-              class="-ml-1 mr-2 h-4 w-4 animate-spin"
-              fill="none"
-              viewBox="0 0 24 24"
-            >
-              <circle
-                class="opacity-25"
-                cx="12"
-                cy="12"
-                r="10"
-                stroke="currentColor"
-                stroke-width="4"
-              ></circle>
-              <path
-                class="opacity-75"
-                fill="currentColor"
-                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-              ></path>
-            </svg>
-            {{ sortSubmitting ? t("common.saving") : t("common.save") }}
-          </button>
-        </div>
-      </template>
-    </BaseDialog>
-
-    <!-- Composite Routes Modal -->
-    <BaseDialog
+    <GroupCompositeRoutesDialog
       :show="showCompositeRoutesModal"
-      :title="
-        compositeRoutesGroup
-          ? t('admin.groups.compositeRoutes.titleWithGroup', {
-              name: compositeRoutesGroup.name,
-            })
-          : t('admin.groups.compositeRoutes.title')
-      "
-      width="wide"
+      :group="compositeRoutesGroup"
       @close="closeCompositeRoutesModal"
-    >
-      <div class="grid gap-5 lg:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)]">
-        <section class="min-w-0">
-          <div class="mb-3 flex items-center justify-between gap-3">
-            <h3 class="text-sm font-semibold text-gray-900 dark:text-white">
-              {{ t("admin.groups.compositeRoutes.routes") }}
-            </h3>
-            <button
-              type="button"
-              class="btn btn-secondary btn-sm"
-              :disabled="compositeRoutesLoading"
-              @click="loadCompositeRoutes"
-            >
-              <Icon
-                name="refresh"
-                size="sm"
-                :class="compositeRoutesLoading ? 'animate-spin' : ''"
-              />
-            </button>
-          </div>
-
-          <div
-            class="overflow-hidden rounded-lg border border-gray-200 dark:border-dark-600"
-          >
-            <div
-              v-if="compositeRoutesLoading"
-              class="flex h-36 items-center justify-center text-sm text-gray-500 dark:text-gray-400"
-            >
-              {{ t("common.loading") }}
-            </div>
-            <div
-              v-else-if="compositeRoutes.length === 0"
-              class="flex h-36 items-center justify-center text-sm text-gray-500 dark:text-gray-400"
-            >
-              {{ t("admin.groups.compositeRoutes.empty") }}
-            </div>
-            <div v-else class="overflow-x-auto">
-              <table class="min-w-full divide-y divide-gray-200 text-sm dark:divide-dark-600">
-                <thead class="bg-gray-50 text-left text-xs font-medium uppercase tracking-wide text-gray-500 dark:bg-dark-800 dark:text-gray-400">
-                  <tr>
-                    <th class="px-3 py-2">
-                      {{ t("admin.groups.compositeRoutes.publicModel") }}
-                    </th>
-                    <th class="px-3 py-2">
-                      {{ t("admin.groups.compositeRoutes.target") }}
-                    </th>
-                    <th class="px-3 py-2">
-                      {{ t("admin.groups.compositeRoutes.scope") }}
-                    </th>
-                    <th class="px-3 py-2 text-right">
-                      {{ t("admin.groups.columns.actions") }}
-                    </th>
-                  </tr>
-                </thead>
-                <tbody class="divide-y divide-gray-100 bg-white dark:divide-dark-700 dark:bg-dark-900">
-                  <tr
-                    v-for="route in compositeRoutes"
-                    :key="route.id"
-                    :class="!route.enabled && 'opacity-60'"
-                  >
-                    <td class="max-w-[15rem] px-3 py-2">
-                      <div class="break-all font-medium text-gray-900 dark:text-white">
-                        {{ route.public_model }}
-                      </div>
-                      <div class="mt-1 flex flex-wrap items-center gap-1.5">
-                        <span class="badge badge-gray">{{
-                          compositeRouteMatchLabel(route.match_type)
-                        }}</span>
-                        <span
-                          v-if="!route.enabled"
-                          class="badge badge-danger"
-                        >
-                          {{ t("admin.accounts.status.inactive") }}
-                        </span>
-                      </div>
-                    </td>
-                    <td class="px-3 py-2">
-                      <div class="flex items-center gap-1.5 text-gray-900 dark:text-white">
-                        <PlatformIcon :platform="route.target_platform" size="xs" />
-                        <span>{{ formatCompositePlatform(route.target_platform) }}</span>
-                      </div>
-                      <div class="mt-1 break-all text-xs text-gray-500 dark:text-gray-400">
-                        {{ route.upstream_model || route.public_model }}
-                      </div>
-                    </td>
-                    <td class="px-3 py-2">
-                      <div class="text-gray-700 dark:text-gray-300">
-                        {{ formatCompositeEndpoint(route.endpoint) }}
-                      </div>
-                      <div class="text-xs text-gray-500 dark:text-gray-400">
-                        {{ t("admin.groups.compositeRoutes.priority") }}:
-                        {{ route.priority }}
-                      </div>
-                    </td>
-                    <td class="px-3 py-2">
-                      <div class="flex justify-end gap-1">
-                        <button
-                          type="button"
-                          class="rounded p-1.5 text-gray-500 hover:bg-gray-100 hover:text-primary-600 dark:hover:bg-dark-700 dark:hover:text-primary-400"
-                          :title="t('common.edit')"
-                          @click="editCompositeRoute(route)"
-                        >
-                          <Icon name="edit" size="sm" />
-                        </button>
-                        <button
-                          type="button"
-                          class="rounded p-1.5 text-gray-500 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 dark:hover:text-red-400"
-                          :title="t('common.delete')"
-                          @click="deleteCompositeRoute(route)"
-                        >
-                          <Icon name="trash" size="sm" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </section>
-
-        <section class="space-y-5">
-          <form class="space-y-3" @submit.prevent="saveCompositeRoute">
-            <div class="flex items-center justify-between gap-3">
-              <h3 class="text-sm font-semibold text-gray-900 dark:text-white">
-                {{
-                  compositeRouteEditingId
-                    ? t("admin.groups.compositeRoutes.editRoute")
-                    : t("admin.groups.compositeRoutes.addRoute")
-                }}
-              </h3>
-              <button
-                v-if="compositeRouteEditingId"
-                type="button"
-                class="text-xs font-medium text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
-                @click="resetCompositeRouteForm"
-              >
-                {{ t("common.cancel") }}
-              </button>
-            </div>
-
-            <div>
-              <label class="input-label">{{
-                t("admin.groups.compositeRoutes.publicModel")
-              }}</label>
-              <input
-                v-model.trim="compositeRouteForm.public_model"
-                type="text"
-                class="input"
-                required
-                placeholder="openrouter/gpt-5"
-              />
-            </div>
-
-            <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <div>
-                <label class="input-label">{{
-                  t("admin.groups.compositeRoutes.matchType")
-                }}</label>
-                <Select
-                  v-model="compositeRouteForm.match_type"
-                  :options="compositeRouteMatchOptions"
-                />
-              </div>
-              <div>
-                <label class="input-label">{{
-                  t("admin.groups.compositeRoutes.endpoint")
-                }}</label>
-                <Select
-                  v-model="compositeRouteForm.endpoint"
-                  :options="compositeRouteEndpointOptions"
-                />
-              </div>
-            </div>
-
-            <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <div>
-                <label class="input-label">{{
-                  t("admin.groups.compositeRoutes.targetPlatform")
-                }}</label>
-                <Select
-                  v-model="compositeRouteForm.target_platform"
-                  :options="compositeRoutePlatformOptions"
-                />
-              </div>
-              <div>
-                <label class="input-label">{{
-                  t("admin.groups.compositeRoutes.priority")
-                }}</label>
-                <input
-                  v-model.number="compositeRouteForm.priority"
-                  type="number"
-                  min="1"
-                  step="1"
-                  class="input"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label class="input-label">{{
-                t("admin.groups.compositeRoutes.upstreamModel")
-              }}</label>
-              <input
-                v-model.trim="compositeRouteForm.upstream_model"
-                type="text"
-                class="input"
-                placeholder="gpt-5"
-              />
-              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                {{ t("admin.groups.compositeRoutes.upstreamModelHint") }}
-              </p>
-            </div>
-
-            <div>
-              <label class="input-label">{{
-                t("admin.groups.compositeRoutes.notes")
-              }}</label>
-              <textarea
-                v-model.trim="compositeRouteForm.notes"
-                rows="2"
-                class="input"
-              ></textarea>
-            </div>
-
-            <div class="flex items-center justify-between gap-3">
-              <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
-                <input
-                  v-model="compositeRouteForm.enabled"
-                  type="checkbox"
-                  class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-600 dark:bg-dark-700"
-                />
-                {{ t("admin.groups.compositeRoutes.enabled") }}
-              </label>
-              <button
-                type="submit"
-                class="btn btn-primary"
-                :disabled="compositeRouteSaving"
-              >
-                <Icon
-                  v-if="!compositeRouteSaving"
-                  name="check"
-                  size="sm"
-                  class="mr-2"
-                />
-                {{ compositeRouteEditingId ? t("common.update") : t("common.create") }}
-              </button>
-            </div>
-          </form>
-
-          <div class="border-t border-gray-200 pt-4 dark:border-dark-600">
-            <h3 class="mb-3 text-sm font-semibold text-gray-900 dark:text-white">
-              {{ t("admin.groups.compositeRoutes.preview") }}
-            </h3>
-            <div class="space-y-3">
-              <input
-                v-model.trim="compositePreviewModel"
-                type="text"
-                class="input"
-                placeholder="openrouter/gpt-5"
-                @keyup.enter="previewCompositeRoute"
-              />
-              <div class="flex gap-2">
-                <Select
-                  v-model="compositePreviewEndpoint"
-                  :options="compositeRouteEndpointOptions"
-                  class="min-w-0 flex-1"
-                />
-                <button
-                  type="button"
-                  class="btn btn-secondary"
-                  :disabled="compositePreviewLoading || !compositePreviewModel"
-                  @click="previewCompositeRoute"
-                >
-                  <Icon name="play" size="sm" />
-                </button>
-              </div>
-
-              <div
-                v-if="compositePreviewDecision"
-                class="rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm dark:border-dark-600 dark:bg-dark-800"
-              >
-                <div class="mb-2 flex items-center gap-2">
-                  <span
-                    :class="[
-                      'badge',
-                      compositePreviewDecision.matched
-                        ? 'badge-success'
-                        : 'badge-danger',
-                    ]"
-                  >
-                    {{
-                      compositePreviewDecision.matched
-                        ? t("admin.groups.compositeRoutes.matched")
-                        : t("admin.groups.compositeRoutes.notMatched")
-                    }}
-                  </span>
-                  <span class="badge badge-gray">
-                    {{
-                      compositeRouteSourceLabel(
-                        compositePreviewDecision.source,
-                      )
-                    }}
-                  </span>
-                </div>
-                <div
-                  v-if="compositePreviewDecision.matched"
-                  class="space-y-1 text-gray-700 dark:text-gray-300"
-                >
-                  <div>
-                    {{ t("admin.groups.compositeRoutes.targetPlatform") }}:
-                    {{
-                      formatCompositePlatform(
-                        compositePreviewDecision.target_platform,
-                      )
-                    }}
-                  </div>
-                  <div class="break-all">
-                    {{ t("admin.groups.compositeRoutes.upstreamModel") }}:
-                    {{ compositePreviewDecision.upstream_model }}
-                  </div>
-                </div>
-                <div
-                  v-else
-                  class="text-gray-500 dark:text-gray-400"
-                >
-                  {{ compositePreviewDecision.reason }}
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
-      </div>
-
-      <template #footer>
-        <div class="flex justify-end pt-4">
-          <button
-            type="button"
-            class="btn btn-secondary"
-            @click="closeCompositeRoutesModal"
-          >
-            {{ t("common.close") }}
-          </button>
-        </div>
-      </template>
-    </BaseDialog>
+    />
 
     <!-- Group Rate Multipliers Modal -->
     <GroupRateMultipliersModal
@@ -4286,17 +3920,11 @@ import { adminAPI } from "@/api/admin";
 import type {
   AdminGroup,
   CodexModelsManifestConfig,
-  CompositeModelRoute,
-  CompositeModelRouteInput,
-  CompositeRouteDecision,
-  CompositeRouteEndpoint,
-  CompositeRouteMatchType,
   GroupI18n,
   GroupPlatform,
   SubscriptionType,
 } from "@/types";
 import {
-  CONCRETE_PLATFORM_OPTIONS,
   GROUP_PLATFORM_OPTIONS,
 } from "@/constants/platforms";
 import type { Column } from "@/components/common/types";
@@ -4315,6 +3943,8 @@ import Icon from "@/components/icons/Icon.vue";
 import GroupI18nField from "@/components/admin/group/GroupI18nField.vue";
 import GroupRateMultipliersModal from "@/components/admin/group/GroupRateMultipliersModal.vue";
 import GroupRPMOverridesModal from "@/components/admin/group/GroupRPMOverridesModal.vue";
+import GroupCompositeRoutesDialog from "@/components/admin/group/GroupCompositeRoutesDialog.vue";
+import GroupSortDialog from "@/components/admin/group/GroupSortDialog.vue";
 import GroupCapacityBadge from "@/components/common/GroupCapacityBadge.vue";
 import ReasoningEffortPolicyFields from "@/components/admin/group/ReasoningEffortPolicyFields.vue";
 import CodexManifestAccountsField from "@/components/admin/group/CodexManifestAccountsField.vue";
@@ -4331,7 +3961,6 @@ import {
   validateReasoningEffortMultipliers,
 } from "@/components/admin/channel/types";
 import type { ChannelModelPricing } from "@/api/admin/channels";
-import { VueDraggable } from "vue-draggable-plus";
 import { createStableObjectKeyResolver } from "@/utils/stableObjectKey";
 import { extractApiErrorMessage } from "@/utils/apiError";
 import { useKeyedDebouncedSearch } from "@/composables/useKeyedDebouncedSearch";
@@ -4637,41 +4266,6 @@ const platformFilterOptions = computed(() => [
   ...GROUP_PLATFORM_OPTIONS,
 ]);
 
-const compositeRoutePlatformOptions = computed(() => [
-  ...CONCRETE_PLATFORM_OPTIONS,
-]);
-
-const compositeRouteEndpointOptions = computed(() => [
-  { value: "any", label: t("admin.groups.compositeRoutes.endpoints.any") },
-  {
-    value: "messages",
-    label: t("admin.groups.compositeRoutes.endpoints.messages"),
-  },
-  {
-    value: "count_tokens",
-    label: t("admin.groups.compositeRoutes.endpoints.countTokens"),
-  },
-  {
-    value: "responses",
-    label: t("admin.groups.compositeRoutes.endpoints.responses"),
-  },
-  {
-    value: "chat_completions",
-    label: t("admin.groups.compositeRoutes.endpoints.chatCompletions"),
-  },
-  {
-    value: "embeddings",
-    label: t("admin.groups.compositeRoutes.endpoints.embeddings"),
-  },
-  { value: "images", label: t("admin.groups.compositeRoutes.endpoints.images") },
-  { value: "gemini", label: t("admin.groups.compositeRoutes.endpoints.gemini") },
-]);
-
-const compositeRouteMatchOptions = computed(() => [
-  { value: "exact", label: t("admin.groups.compositeRoutes.match.exact") },
-  { value: "prefix", label: t("admin.groups.compositeRoutes.match.prefix") },
-]);
-
 const editStatusOptions = computed(() => [
   { value: "active", label: t("admin.accounts.status.active") },
   { value: "inactive", label: t("admin.accounts.status.inactive") },
@@ -4849,7 +4443,6 @@ let liveCapabilityRequest: Promise<{
 }> | null = null;
 const showSortModal = ref(false);
 const submitting = ref(false);
-const sortSubmitting = ref(false);
 const editingGroup = ref<AdminGroup | null>(null);
 const deletingGroup = ref<AdminGroup | null>(null);
 const duplicatingGroupIds = reactive(new Set<number>());
@@ -4857,39 +4450,8 @@ const showRateMultipliersModal = ref(false);
 const rateMultipliersGroup = ref<AdminGroup | null>(null);
 const showRPMOverridesModal = ref(false);
 const rpmOverridesGroup = ref<AdminGroup | null>(null);
-const sortableGroups = ref<AdminGroup[]>([]);
-type ConcreteGroupPlatform = Exclude<GroupPlatform, "composite">;
-type CompositeRouteFormState = {
-  public_model: string;
-  match_type: CompositeRouteMatchType;
-  target_platform: ConcreteGroupPlatform;
-  upstream_model: string;
-  endpoint: CompositeRouteEndpoint;
-  priority: number;
-  enabled: boolean;
-  notes: string;
-};
-
 const showCompositeRoutesModal = ref(false);
 const compositeRoutesGroup = ref<AdminGroup | null>(null);
-const compositeRoutes = ref<CompositeModelRoute[]>([]);
-const compositeRoutesLoading = ref(false);
-const compositeRouteSaving = ref(false);
-const compositeRouteEditingId = ref<number | null>(null);
-const compositePreviewModel = ref("");
-const compositePreviewEndpoint = ref<CompositeRouteEndpoint>("any");
-const compositePreviewLoading = ref(false);
-const compositePreviewDecision = ref<CompositeRouteDecision | null>(null);
-const compositeRouteForm = reactive<CompositeRouteFormState>({
-  public_model: "",
-  match_type: "exact",
-  target_platform: "openai",
-  upstream_model: "",
-  endpoint: "any",
-  priority: 100,
-  enabled: true,
-  notes: "",
-});
 const createMessagesDispatchDefaults = createDefaultMessagesDispatchFormState();
 const editMessagesDispatchDefaults = createDefaultMessagesDispatchFormState();
 const createModelAllowlistState = reactive(createInitialModelAllowlistState());
@@ -4977,6 +4539,9 @@ const createForm = reactive({
   image_price_1k: null as number | null,
   image_price_2k: null as number | null,
   image_price_4k: null as number | null,
+  image_cost_price_1k: null as number | null,
+  image_cost_price_2k: null as number | null,
+  image_cost_price_4k: null as number | null,
   // 视频生成计费配置（仅 Grok 平台）
   video_rate_independent: false,
   video_rate_multiplier: 1,
@@ -5343,6 +4908,9 @@ const editForm = reactive({
   image_price_1k: null as number | null,
   image_price_2k: null as number | null,
   image_price_4k: null as number | null,
+  image_cost_price_1k: null as number | null,
+  image_cost_price_2k: null as number | null,
+  image_cost_price_4k: null as number | null,
   // 视频生成计费配置（仅 Grok 平台）
   video_rate_independent: false,
   video_rate_multiplier: 1,
@@ -5407,6 +4975,9 @@ type ImagePricingFormState = {
   image_price_1k: number | string | null;
   image_price_2k: number | string | null;
   image_price_4k: number | string | null;
+  image_cost_price_1k: number | string | null;
+  image_cost_price_2k: number | string | null;
+  image_cost_price_4k: number | string | null;
   peak_rate_enabled: boolean;
   peak_start: string;
   peak_end: string;
@@ -5424,9 +4995,9 @@ type VideoPricingFormState = {
 };
 
 const imagePricingTiers = [
-  { key: "image_price_1k", label: "1K" },
-  { key: "image_price_2k", label: "2K" },
-  { key: "image_price_4k", label: "4K" },
+  { key: "image_price_1k", costKey: "image_cost_price_1k", label: "1K" },
+  { key: "image_price_2k", costKey: "image_cost_price_2k", label: "2K" },
+  { key: "image_price_4k", costKey: "image_cost_price_4k", label: "4K" },
 ] as const;
 
 const videoPricingTiers = [
@@ -5451,16 +5022,26 @@ const parsePreviewPrice = (value: number | string | null | undefined) => {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
 };
 
-const formatImagePricePreview = (value: number | string | null | undefined) => {
+const formatImageMoneyPreview = (
+  value: number | string | null | undefined,
+  allowNegative = false,
+) => {
   if (value === null || value === undefined || value === "") {
     return t("admin.groups.imagePricing.notConfigured");
   }
   const price = Number(value);
-  if (!Number.isFinite(price) || price < 0) {
+  if (!Number.isFinite(price) || (!allowNegative && price < 0)) {
     return t("admin.groups.imagePricing.notConfigured");
   }
-  return `$${price.toFixed(6).replace(/0+$/, "").replace(/\.$/, "")}`;
+  const sign = price < 0 ? "-" : "";
+  return `${sign}$${Math.abs(price).toFixed(6).replace(/0+$/, "").replace(/\.$/, "")}`;
 };
+
+const formatImagePricePreview = (value: number | string | null | undefined) =>
+  formatImageMoneyPreview(value);
+
+const formatImageProfitPreview = (value: number | string | null | undefined) =>
+  formatImageMoneyPreview(value, true);
 
 const formatVideoPricePreview = (value: number | string | null | undefined) => {
   if (value === null || value === undefined || value === "") {
@@ -5482,11 +5063,20 @@ const buildImageFinalPricePreview = (form: ImagePricingFormState) => {
     const basePrice =
       parsePreviewPrice(form[tier.key]) ??
       getDefaultImagePreviewPrice(form.platform, tier.key);
+    const costPrice = parsePreviewPrice(form[tier.costKey]);
+    const finalPrice = basePrice !== null ? basePrice * multiplier : null;
+    const profit = finalPrice !== null && costPrice !== null
+      ? finalPrice - costPrice
+      : null;
+    const margin = profit !== null && finalPrice !== null && finalPrice > 0
+      ? (profit / finalPrice) * 100
+      : null;
     return {
       label: tier.label,
-      value: basePrice !== null
-        ? formatImagePricePreview(basePrice * multiplier)
-        : t("admin.groups.imagePricing.notConfigured"),
+      cost: formatImagePricePreview(costPrice),
+      price: formatImagePricePreview(finalPrice),
+      profit: formatImageProfitPreview(profit),
+      margin: margin !== null ? `${margin.toFixed(1)}%` : "-",
     };
   });
 };
@@ -5801,6 +5391,9 @@ const closeCreateModal = () => {
   createForm.image_price_1k = null;
   createForm.image_price_2k = null;
   createForm.image_price_4k = null;
+  createForm.image_cost_price_1k = null;
+  createForm.image_cost_price_2k = null;
+  createForm.image_cost_price_4k = null;
   createForm.video_rate_independent = false;
   createForm.video_rate_multiplier = 1;
   createForm.video_price_480p = null;
@@ -6030,6 +5623,9 @@ const handleCreateGroup = async () => {
     requestData.image_price_1k = emptyToNull(requestData.image_price_1k);
     requestData.image_price_2k = emptyToNull(requestData.image_price_2k);
     requestData.image_price_4k = emptyToNull(requestData.image_price_4k);
+    requestData.image_cost_price_1k = emptyToNull(requestData.image_cost_price_1k);
+    requestData.image_cost_price_2k = emptyToNull(requestData.image_cost_price_2k);
+    requestData.image_cost_price_4k = emptyToNull(requestData.image_cost_price_4k);
     requestData.video_price_480p = emptyToNull(requestData.video_price_480p);
     requestData.video_price_720p = emptyToNull(requestData.video_price_720p);
     requestData.video_price_1080p = emptyToNull(requestData.video_price_1080p);
@@ -6115,6 +5711,9 @@ const handleEdit = async (group: AdminGroup) => {
   editForm.image_price_1k = group.image_price_1k;
   editForm.image_price_2k = group.image_price_2k;
   editForm.image_price_4k = group.image_price_4k;
+  editForm.image_cost_price_1k = group.image_cost_price_1k ?? null;
+  editForm.image_cost_price_2k = group.image_cost_price_2k ?? null;
+  editForm.image_cost_price_4k = group.image_cost_price_4k ?? null;
   editForm.video_rate_independent = group.video_rate_independent ?? false;
   editForm.video_rate_multiplier = group.video_rate_multiplier ?? 1;
   editForm.video_price_480p = group.video_price_480p;
@@ -6389,6 +5988,9 @@ const handleUpdateGroup = async () => {
     payload.image_price_1k = emptyPriceToClear(payload.image_price_1k);
     payload.image_price_2k = emptyPriceToClear(payload.image_price_2k);
     payload.image_price_4k = emptyPriceToClear(payload.image_price_4k);
+    payload.image_cost_price_1k = emptyPriceToClear(payload.image_cost_price_1k);
+    payload.image_cost_price_2k = emptyPriceToClear(payload.image_cost_price_2k);
+    payload.image_cost_price_4k = emptyPriceToClear(payload.image_cost_price_4k);
     payload.video_price_480p = emptyPriceToClear(payload.video_price_480p);
     payload.video_price_720p = emptyPriceToClear(payload.video_price_720p);
     payload.video_price_1080p = emptyPriceToClear(payload.video_price_1080p);
@@ -6487,186 +6089,14 @@ const handleDuplicate = async (group: AdminGroup) => {
   }
 };
 
-const compositeRouteMatchLabel = (matchType: CompositeRouteMatchType) =>
-  compositeRouteMatchOptions.value.find((option) => option.value === matchType)
-    ?.label || matchType;
-
-const formatCompositeEndpoint = (endpoint: CompositeRouteEndpoint) =>
-  compositeRouteEndpointOptions.value.find((option) => option.value === endpoint)
-    ?.label || endpoint;
-
-const formatCompositePlatform = (platform: string) => {
-  if (!platform) return "—";
-  return t(`admin.groups.platforms.${platform}`, platformLabel(platform));
-};
-
-const compositeRouteSourceLabel = (source: string) => {
-  if (source === "route") return t("admin.groups.compositeRoutes.sources.route");
-  if (source === "detector") {
-    return t("admin.groups.compositeRoutes.sources.detector");
-  }
-  return source || "—";
-};
-
-const resetCompositeRouteForm = () => {
-  compositeRouteEditingId.value = null;
-  compositeRouteForm.public_model = "";
-  compositeRouteForm.match_type = "exact";
-  compositeRouteForm.target_platform = "openai";
-  compositeRouteForm.upstream_model = "";
-  compositeRouteForm.endpoint = "any";
-  compositeRouteForm.priority = 100;
-  compositeRouteForm.enabled = true;
-  compositeRouteForm.notes = "";
-};
-
-const toCompositeRouteInput = (): CompositeModelRouteInput => ({
-  public_model: compositeRouteForm.public_model.trim(),
-  match_type: compositeRouteForm.match_type,
-  target_platform: compositeRouteForm.target_platform,
-  upstream_model: compositeRouteForm.upstream_model.trim(),
-  endpoint: compositeRouteForm.endpoint,
-  priority: Number(compositeRouteForm.priority) || 100,
-  enabled: compositeRouteForm.enabled,
-  notes: compositeRouteForm.notes.trim(),
-});
-
-const loadCompositeRoutes = async () => {
-  if (!compositeRoutesGroup.value) return;
-  compositeRoutesLoading.value = true;
-  try {
-    const routes = await adminAPI.groups.listCompositeRoutes(
-      compositeRoutesGroup.value.id,
-    );
-    compositeRoutes.value = routes.sort((a, b) => {
-      if (a.priority !== b.priority) return a.priority - b.priority;
-      return a.id - b.id;
-    });
-  } catch (error: any) {
-    appStore.showError(
-      error.response?.data?.detail ||
-        error.response?.data?.message ||
-        t("admin.groups.compositeRoutes.failedToLoad"),
-    );
-    console.error("Error loading composite routes:", error);
-  } finally {
-    compositeRoutesLoading.value = false;
-  }
-};
-
-const handleCompositeRoutes = async (group: AdminGroup) => {
+const handleCompositeRoutes = (group: AdminGroup) => {
   compositeRoutesGroup.value = group;
-  compositePreviewModel.value = "";
-  compositePreviewEndpoint.value = "any";
-  compositePreviewDecision.value = null;
-  resetCompositeRouteForm();
   showCompositeRoutesModal.value = true;
-  await loadCompositeRoutes();
 };
 
 const closeCompositeRoutesModal = () => {
   showCompositeRoutesModal.value = false;
   compositeRoutesGroup.value = null;
-  compositeRoutes.value = [];
-  compositePreviewDecision.value = null;
-  resetCompositeRouteForm();
-};
-
-const editCompositeRoute = (route: CompositeModelRoute) => {
-  compositeRouteEditingId.value = route.id;
-  compositeRouteForm.public_model = route.public_model;
-  compositeRouteForm.match_type = route.match_type;
-  compositeRouteForm.target_platform = route.target_platform;
-  compositeRouteForm.upstream_model = route.upstream_model;
-  compositeRouteForm.endpoint = route.endpoint;
-  compositeRouteForm.priority = route.priority || 100;
-  compositeRouteForm.enabled = route.enabled;
-  compositeRouteForm.notes = route.notes || "";
-};
-
-const saveCompositeRoute = async () => {
-  if (!compositeRoutesGroup.value) return;
-  if (!compositeRouteForm.public_model.trim()) {
-    appStore.showError(t("admin.groups.compositeRoutes.publicModelRequired"));
-    return;
-  }
-  compositeRouteSaving.value = true;
-  try {
-    const payload = toCompositeRouteInput();
-    if (compositeRouteEditingId.value) {
-      await adminAPI.groups.updateCompositeRoute(
-        compositeRoutesGroup.value.id,
-        compositeRouteEditingId.value,
-        payload,
-      );
-      appStore.showSuccess(t("admin.groups.compositeRoutes.routeUpdated"));
-    } else {
-      await adminAPI.groups.createCompositeRoute(
-        compositeRoutesGroup.value.id,
-        payload,
-      );
-      appStore.showSuccess(t("admin.groups.compositeRoutes.routeCreated"));
-    }
-    resetCompositeRouteForm();
-    await loadCompositeRoutes();
-  } catch (error: any) {
-    appStore.showError(
-      error.response?.data?.detail ||
-        error.response?.data?.message ||
-        t("admin.groups.compositeRoutes.failedToSave"),
-    );
-    console.error("Error saving composite route:", error);
-  } finally {
-    compositeRouteSaving.value = false;
-  }
-};
-
-const deleteCompositeRoute = async (route: CompositeModelRoute) => {
-  if (!compositeRoutesGroup.value) return;
-  if (!window.confirm(t("admin.groups.compositeRoutes.deleteConfirm"))) return;
-  try {
-    await adminAPI.groups.deleteCompositeRoute(
-      compositeRoutesGroup.value.id,
-      route.id,
-    );
-    if (compositeRouteEditingId.value === route.id) {
-      resetCompositeRouteForm();
-    }
-    appStore.showSuccess(t("admin.groups.compositeRoutes.routeDeleted"));
-    await loadCompositeRoutes();
-  } catch (error: any) {
-    appStore.showError(
-      error.response?.data?.detail ||
-        error.response?.data?.message ||
-        t("admin.groups.compositeRoutes.failedToDelete"),
-    );
-    console.error("Error deleting composite route:", error);
-  }
-};
-
-const previewCompositeRoute = async () => {
-  if (!compositeRoutesGroup.value || !compositePreviewModel.value.trim()) {
-    return;
-  }
-  compositePreviewLoading.value = true;
-  try {
-    compositePreviewDecision.value = await adminAPI.groups.previewCompositeRoute(
-      compositeRoutesGroup.value.id,
-      {
-        model: compositePreviewModel.value.trim(),
-        endpoint: compositePreviewEndpoint.value,
-      },
-    );
-  } catch (error: any) {
-    appStore.showError(
-      error.response?.data?.detail ||
-        error.response?.data?.message ||
-        t("admin.groups.compositeRoutes.failedToPreview"),
-    );
-    console.error("Error previewing composite route:", error);
-  } finally {
-    compositePreviewLoading.value = false;
-  }
 };
 
 const handleDelete = (group: AdminGroup) => {
@@ -6866,48 +6296,8 @@ const handleClickOutside = (event: MouseEvent) => {
   }
 };
 
-// 打开排序弹窗
-const openSortModal = async () => {
-  try {
-    // 获取所有分组（不分页）
-    const allGroups = await adminAPI.groups.getAll();
-    // 按 sort_order 排序
-    sortableGroups.value = [...allGroups].sort(
-      (a, b) => a.sort_order - b.sort_order,
-    );
-    showSortModal.value = true;
-  } catch (error) {
-    appStore.showError(t("admin.groups.failedToLoad"));
-    console.error("Error loading groups for sorting:", error);
-  }
-};
-
-// 关闭排序弹窗
-const closeSortModal = () => {
-  showSortModal.value = false;
-  sortableGroups.value = [];
-};
-
-// 保存排序
-const saveSortOrder = async () => {
-  sortSubmitting.value = true;
-  try {
-    const updates = sortableGroups.value.map((g, index) => ({
-      id: g.id,
-      sort_order: index * 10,
-    }));
-    await adminAPI.groups.updateSortOrder(updates);
-    appStore.showSuccess(t("admin.groups.sortOrderUpdated"));
-    closeSortModal();
-    loadGroups();
-  } catch (error: any) {
-    appStore.showError(
-      error.response?.data?.detail || t("admin.groups.failedToUpdateSortOrder"),
-    );
-    console.error("Error updating sort order:", error);
-  } finally {
-    sortSubmitting.value = false;
-  }
+const openSortModal = () => {
+  showSortModal.value = true;
 };
 
 onMounted(() => {

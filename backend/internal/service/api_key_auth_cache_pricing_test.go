@@ -12,12 +12,18 @@ func TestAPIKeyAuthSnapshotGroupPricingRoundtrip(t *testing.T) {
 	groupID := int64(50)
 	inputPrice := 1e-6
 	outputPrice := 2e-6
+	imageCost1K := 0.05
+	imageCost2K := 0.08
+	imageCost4K := 0.12
 	apiKey := &APIKey{
 		ID: 82, UserID: 40, GroupID: &groupID, Key: "sk-pricing-roundtrip", Status: StatusActive,
 		User: &User{ID: 40, Status: StatusActive},
 		Group: &Group{
 			ID: groupID, Name: "pricing-roundtrip", Platform: PlatformAnthropic, Status: StatusActive,
 			LongContextPricingEnabled: true,
+			ImageCostPrice1K:          &imageCost1K,
+			ImageCostPrice2K:          &imageCost2K,
+			ImageCostPrice4K:          &imageCost4K,
 			ModelPricing: []ChannelModelPricing{{
 				Models: []string{"claude-sonnet-*"}, BillingMode: BillingModeToken,
 				InputPrice: &inputPrice, OutputPrice: &outputPrice,
@@ -37,6 +43,12 @@ func TestAPIKeyAuthSnapshotGroupPricingRoundtrip(t *testing.T) {
 	require.NotNil(t, materialized.Group)
 	require.True(t, materialized.Group.LongContextPricingEnabled)
 	require.Equal(t, apiKey.Group.ModelPricing, materialized.Group.ModelPricing)
+	require.NotNil(t, materialized.Group.ImageCostPrice1K)
+	require.NotNil(t, materialized.Group.ImageCostPrice2K)
+	require.NotNil(t, materialized.Group.ImageCostPrice4K)
+	require.InDelta(t, imageCost1K, *materialized.Group.ImageCostPrice1K, 1e-12)
+	require.InDelta(t, imageCost2K, *materialized.Group.ImageCostPrice2K, 1e-12)
+	require.InDelta(t, imageCost4K, *materialized.Group.ImageCostPrice4K, 1e-12)
 
 	billing := &BillingService{fallbackPrices: map[string]*ModelPricing{
 		"claude-sonnet-4": {InputPricePerToken: 3e-6, OutputPricePerToken: 15e-6},

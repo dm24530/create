@@ -325,6 +325,47 @@ describe('GroupsView duplicate action', () => {
     wrapper.unmount()
   })
 
+  it('persists image cost price separately and previews cost, sale price, and margin', async () => {
+    const group = {
+      ...sourceGroup,
+      allow_image_generation: true,
+      image_rate_independent: true,
+      image_rate_multiplier: 1,
+      image_price_1k: 0.1,
+      image_cost_price_1k: 0.05,
+    }
+    listGroups.mockResolvedValue({
+      items: [group],
+      total: 1,
+      page: 1,
+      page_size: 20,
+      pages: 1,
+    })
+    updateGroup.mockResolvedValue(group)
+    const wrapper = mountView()
+    await flushPromises()
+
+    await wrapper.findAll('button').find(button => button.text() === 'common.edit')!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get<HTMLInputElement>('[data-testid="edit-image-price-1k"]').element.value).toBe('0.1')
+    expect(wrapper.get<HTMLInputElement>('[data-testid="edit-image-cost-1k"]').element.value).toBe('0.05')
+    const preview = wrapper.get('[data-testid="edit-image-preview-1k"]')
+    expect(preview.text()).toContain('$0.05')
+    expect(preview.text()).toContain('$0.1')
+    expect(preview.text()).toContain('50.0%')
+
+    await wrapper.get('[data-testid="edit-image-cost-1k"]').setValue('0.03')
+    await wrapper.get('#edit-group-form').trigger('submit')
+    await flushPromises()
+
+    expect(updateGroup).toHaveBeenCalledWith(42, expect.objectContaining({
+      image_price_1k: 0.1,
+      image_cost_price_1k: 0.03,
+    }))
+    wrapper.unmount()
+  })
+
   it('loads, edits, and saves custom reasoning multipliers for group pricing', async () => {
     const group = {
       ...sourceGroup,

@@ -73,3 +73,36 @@ func TestGroupFromServiceAdminIncludesProfitControl(t *testing.T) {
 		}
 	}
 }
+
+func TestImageCostPricesAreAdminOnly(t *testing.T) {
+	cost1K := 0.05
+	cost2K := 0.08
+	cost4K := 0.12
+	group := profitControlServiceGroup()
+	group.ImageCostPrice1K = &cost1K
+	group.ImageCostPrice2K = &cost2K
+	group.ImageCostPrice4K = &cost4K
+
+	for name, got := range map[string]any{
+		"GroupFromService":        GroupFromService(group),
+		"GroupFromServiceShallow": GroupFromServiceShallow(group),
+	} {
+		fields := marshalToMap(t, got)
+		for _, field := range []string{
+			"image_cost_price_1k",
+			"image_cost_price_2k",
+			"image_cost_price_4k",
+		} {
+			if _, ok := fields[field]; ok {
+				t.Errorf("%s: user DTO must not expose %q", name, field)
+			}
+		}
+	}
+
+	admin := GroupFromServiceAdmin(group)
+	if admin.ImageCostPrice1K == nil || *admin.ImageCostPrice1K != cost1K ||
+		admin.ImageCostPrice2K == nil || *admin.ImageCostPrice2K != cost2K ||
+		admin.ImageCostPrice4K == nil || *admin.ImageCostPrice4K != cost4K {
+		t.Fatalf("admin DTO did not preserve image cost prices: %+v", admin)
+	}
+}

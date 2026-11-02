@@ -15,15 +15,17 @@ type HTMLCache struct {
 	cachedHTML      []byte
 	etag            string
 	siteName        string
+	siteSEOKeywords string
 	baseHTMLHash    string // Hash of the original index.html (immutable after build)
 	settingsVersion uint64 // Incremented when settings change
 }
 
 // CachedHTML represents the cache state
 type CachedHTML struct {
-	Content  []byte
-	ETag     string
-	SiteName string
+	Content         []byte
+	ETag            string
+	SiteName        string
+	SiteSEOKeywords string
 }
 
 // NewHTMLCache creates a new HTML cache instance
@@ -49,6 +51,7 @@ func (c *HTMLCache) Invalidate() {
 	c.cachedHTML = nil
 	c.etag = ""
 	c.siteName = ""
+	c.siteSEOKeywords = ""
 }
 
 // Get returns the cached HTML or nil if cache is stale
@@ -60,9 +63,10 @@ func (c *HTMLCache) Get() *CachedHTML {
 		return nil
 	}
 	return &CachedHTML{
-		Content:  c.cachedHTML,
-		ETag:     c.etag,
-		SiteName: c.siteName,
+		Content:         c.cachedHTML,
+		ETag:            c.etag,
+		SiteName:        c.siteName,
+		SiteSEOKeywords: c.siteSEOKeywords,
 	}
 }
 
@@ -74,6 +78,7 @@ func (c *HTMLCache) Set(html []byte, settingsJSON []byte) {
 	c.cachedHTML = html
 	c.etag = c.generateETag(settingsJSON)
 	c.siteName = siteNameFromSettingsJSON(settingsJSON)
+	c.siteSEOKeywords = siteSEOKeywordsFromSettingsJSON(settingsJSON)
 }
 
 // siteNameFromSettingsJSON 取出站点名，供按路径注入 SEO 时复用（缓存随设置失效）。
@@ -85,6 +90,16 @@ func siteNameFromSettingsJSON(settingsJSON []byte) string {
 		return ""
 	}
 	return cfg.SiteName
+}
+
+func siteSEOKeywordsFromSettingsJSON(settingsJSON []byte) string {
+	var cfg struct {
+		SiteSEOKeywords string `json:"site_seo_keywords"`
+	}
+	if err := json.Unmarshal(settingsJSON, &cfg); err != nil {
+		return ""
+	}
+	return cfg.SiteSEOKeywords
 }
 
 // generateETag creates an ETag from base HTML hash + settings hash

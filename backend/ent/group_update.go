@@ -489,6 +489,87 @@ func (_u *GroupUpdate) ClearImagePrice4k() *GroupUpdate {
 	return _u
 }
 
+// SetImageCostPrice1k sets the "image_cost_price_1k" field.
+func (_u *GroupUpdate) SetImageCostPrice1k(v float64) *GroupUpdate {
+	_u.mutation.ResetImageCostPrice1k()
+	_u.mutation.SetImageCostPrice1k(v)
+	return _u
+}
+
+// SetNillableImageCostPrice1k sets the "image_cost_price_1k" field if the given value is not nil.
+func (_u *GroupUpdate) SetNillableImageCostPrice1k(v *float64) *GroupUpdate {
+	if v != nil {
+		_u.SetImageCostPrice1k(*v)
+	}
+	return _u
+}
+
+// AddImageCostPrice1k adds value to the "image_cost_price_1k" field.
+func (_u *GroupUpdate) AddImageCostPrice1k(v float64) *GroupUpdate {
+	_u.mutation.AddImageCostPrice1k(v)
+	return _u
+}
+
+// ClearImageCostPrice1k clears the value of the "image_cost_price_1k" field.
+func (_u *GroupUpdate) ClearImageCostPrice1k() *GroupUpdate {
+	_u.mutation.ClearImageCostPrice1k()
+	return _u
+}
+
+// SetImageCostPrice2k sets the "image_cost_price_2k" field.
+func (_u *GroupUpdate) SetImageCostPrice2k(v float64) *GroupUpdate {
+	_u.mutation.ResetImageCostPrice2k()
+	_u.mutation.SetImageCostPrice2k(v)
+	return _u
+}
+
+// SetNillableImageCostPrice2k sets the "image_cost_price_2k" field if the given value is not nil.
+func (_u *GroupUpdate) SetNillableImageCostPrice2k(v *float64) *GroupUpdate {
+	if v != nil {
+		_u.SetImageCostPrice2k(*v)
+	}
+	return _u
+}
+
+// AddImageCostPrice2k adds value to the "image_cost_price_2k" field.
+func (_u *GroupUpdate) AddImageCostPrice2k(v float64) *GroupUpdate {
+	_u.mutation.AddImageCostPrice2k(v)
+	return _u
+}
+
+// ClearImageCostPrice2k clears the value of the "image_cost_price_2k" field.
+func (_u *GroupUpdate) ClearImageCostPrice2k() *GroupUpdate {
+	_u.mutation.ClearImageCostPrice2k()
+	return _u
+}
+
+// SetImageCostPrice4k sets the "image_cost_price_4k" field.
+func (_u *GroupUpdate) SetImageCostPrice4k(v float64) *GroupUpdate {
+	_u.mutation.ResetImageCostPrice4k()
+	_u.mutation.SetImageCostPrice4k(v)
+	return _u
+}
+
+// SetNillableImageCostPrice4k sets the "image_cost_price_4k" field if the given value is not nil.
+func (_u *GroupUpdate) SetNillableImageCostPrice4k(v *float64) *GroupUpdate {
+	if v != nil {
+		_u.SetImageCostPrice4k(*v)
+	}
+	return _u
+}
+
+// AddImageCostPrice4k adds value to the "image_cost_price_4k" field.
+func (_u *GroupUpdate) AddImageCostPrice4k(v float64) *GroupUpdate {
+	_u.mutation.AddImageCostPrice4k(v)
+	return _u
+}
+
+// ClearImageCostPrice4k clears the value of the "image_cost_price_4k" field.
+func (_u *GroupUpdate) ClearImageCostPrice4k() *GroupUpdate {
+	_u.mutation.ClearImageCostPrice4k()
+	return _u
+}
+
 // SetBatchImageDiscountMultiplier sets the "batch_image_discount_multiplier" field.
 func (_u *GroupUpdate) SetBatchImageDiscountMultiplier(v float64) *GroupUpdate {
 	_u.mutation.ResetBatchImageDiscountMultiplier()
@@ -1701,6 +1782,33 @@ func (_u *GroupUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	if _u.mutation.ImagePrice4kCleared() {
 		_spec.ClearField(group.FieldImagePrice4k, field.TypeFloat64)
 	}
+	if value, ok := _u.mutation.ImageCostPrice1k(); ok {
+		_spec.SetField(group.FieldImageCostPrice1k, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedImageCostPrice1k(); ok {
+		_spec.AddField(group.FieldImageCostPrice1k, field.TypeFloat64, value)
+	}
+	if _u.mutation.ImageCostPrice1kCleared() {
+		_spec.ClearField(group.FieldImageCostPrice1k, field.TypeFloat64)
+	}
+	if value, ok := _u.mutation.ImageCostPrice2k(); ok {
+		_spec.SetField(group.FieldImageCostPrice2k, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedImageCostPrice2k(); ok {
+		_spec.AddField(group.FieldImageCostPrice2k, field.TypeFloat64, value)
+	}
+	if _u.mutation.ImageCostPrice2kCleared() {
+		_spec.ClearField(group.FieldImageCostPrice2k, field.TypeFloat64)
+	}
+	if value, ok := _u.mutation.ImageCostPrice4k(); ok {
+		_spec.SetField(group.FieldImageCostPrice4k, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedImageCostPrice4k(); ok {
+		_spec.AddField(group.FieldImageCostPrice4k, field.TypeFloat64, value)
+	}
+	if _u.mutation.ImageCostPrice4kCleared() {
+		_spec.ClearField(group.FieldImageCostPrice4k, field.TypeFloat64)
+	}
 	if value, ok := _u.mutation.BatchImageDiscountMultiplier(); ok {
 		_spec.SetField(group.FieldBatchImageDiscountMultiplier, field.TypeFloat64, value)
 	}
@@ -2689,6 +2797,87 @@ func (_u *GroupUpdateOne) AddImagePrice4k(v float64) *GroupUpdateOne {
 // ClearImagePrice4k clears the value of the "image_price_4k" field.
 func (_u *GroupUpdateOne) ClearImagePrice4k() *GroupUpdateOne {
 	_u.mutation.ClearImagePrice4k()
+	return _u
+}
+
+// SetImageCostPrice1k sets the "image_cost_price_1k" field.
+func (_u *GroupUpdateOne) SetImageCostPrice1k(v float64) *GroupUpdateOne {
+	_u.mutation.ResetImageCostPrice1k()
+	_u.mutation.SetImageCostPrice1k(v)
+	return _u
+}
+
+// SetNillableImageCostPrice1k sets the "image_cost_price_1k" field if the given value is not nil.
+func (_u *GroupUpdateOne) SetNillableImageCostPrice1k(v *float64) *GroupUpdateOne {
+	if v != nil {
+		_u.SetImageCostPrice1k(*v)
+	}
+	return _u
+}
+
+// AddImageCostPrice1k adds value to the "image_cost_price_1k" field.
+func (_u *GroupUpdateOne) AddImageCostPrice1k(v float64) *GroupUpdateOne {
+	_u.mutation.AddImageCostPrice1k(v)
+	return _u
+}
+
+// ClearImageCostPrice1k clears the value of the "image_cost_price_1k" field.
+func (_u *GroupUpdateOne) ClearImageCostPrice1k() *GroupUpdateOne {
+	_u.mutation.ClearImageCostPrice1k()
+	return _u
+}
+
+// SetImageCostPrice2k sets the "image_cost_price_2k" field.
+func (_u *GroupUpdateOne) SetImageCostPrice2k(v float64) *GroupUpdateOne {
+	_u.mutation.ResetImageCostPrice2k()
+	_u.mutation.SetImageCostPrice2k(v)
+	return _u
+}
+
+// SetNillableImageCostPrice2k sets the "image_cost_price_2k" field if the given value is not nil.
+func (_u *GroupUpdateOne) SetNillableImageCostPrice2k(v *float64) *GroupUpdateOne {
+	if v != nil {
+		_u.SetImageCostPrice2k(*v)
+	}
+	return _u
+}
+
+// AddImageCostPrice2k adds value to the "image_cost_price_2k" field.
+func (_u *GroupUpdateOne) AddImageCostPrice2k(v float64) *GroupUpdateOne {
+	_u.mutation.AddImageCostPrice2k(v)
+	return _u
+}
+
+// ClearImageCostPrice2k clears the value of the "image_cost_price_2k" field.
+func (_u *GroupUpdateOne) ClearImageCostPrice2k() *GroupUpdateOne {
+	_u.mutation.ClearImageCostPrice2k()
+	return _u
+}
+
+// SetImageCostPrice4k sets the "image_cost_price_4k" field.
+func (_u *GroupUpdateOne) SetImageCostPrice4k(v float64) *GroupUpdateOne {
+	_u.mutation.ResetImageCostPrice4k()
+	_u.mutation.SetImageCostPrice4k(v)
+	return _u
+}
+
+// SetNillableImageCostPrice4k sets the "image_cost_price_4k" field if the given value is not nil.
+func (_u *GroupUpdateOne) SetNillableImageCostPrice4k(v *float64) *GroupUpdateOne {
+	if v != nil {
+		_u.SetImageCostPrice4k(*v)
+	}
+	return _u
+}
+
+// AddImageCostPrice4k adds value to the "image_cost_price_4k" field.
+func (_u *GroupUpdateOne) AddImageCostPrice4k(v float64) *GroupUpdateOne {
+	_u.mutation.AddImageCostPrice4k(v)
+	return _u
+}
+
+// ClearImageCostPrice4k clears the value of the "image_cost_price_4k" field.
+func (_u *GroupUpdateOne) ClearImageCostPrice4k() *GroupUpdateOne {
+	_u.mutation.ClearImageCostPrice4k()
 	return _u
 }
 
@@ -3933,6 +4122,33 @@ func (_u *GroupUpdateOne) sqlSave(ctx context.Context) (_node *Group, err error)
 	}
 	if _u.mutation.ImagePrice4kCleared() {
 		_spec.ClearField(group.FieldImagePrice4k, field.TypeFloat64)
+	}
+	if value, ok := _u.mutation.ImageCostPrice1k(); ok {
+		_spec.SetField(group.FieldImageCostPrice1k, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedImageCostPrice1k(); ok {
+		_spec.AddField(group.FieldImageCostPrice1k, field.TypeFloat64, value)
+	}
+	if _u.mutation.ImageCostPrice1kCleared() {
+		_spec.ClearField(group.FieldImageCostPrice1k, field.TypeFloat64)
+	}
+	if value, ok := _u.mutation.ImageCostPrice2k(); ok {
+		_spec.SetField(group.FieldImageCostPrice2k, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedImageCostPrice2k(); ok {
+		_spec.AddField(group.FieldImageCostPrice2k, field.TypeFloat64, value)
+	}
+	if _u.mutation.ImageCostPrice2kCleared() {
+		_spec.ClearField(group.FieldImageCostPrice2k, field.TypeFloat64)
+	}
+	if value, ok := _u.mutation.ImageCostPrice4k(); ok {
+		_spec.SetField(group.FieldImageCostPrice4k, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedImageCostPrice4k(); ok {
+		_spec.AddField(group.FieldImageCostPrice4k, field.TypeFloat64, value)
+	}
+	if _u.mutation.ImageCostPrice4kCleared() {
+		_spec.ClearField(group.FieldImageCostPrice4k, field.TypeFloat64)
 	}
 	if value, ok := _u.mutation.BatchImageDiscountMultiplier(); ok {
 		_spec.SetField(group.FieldBatchImageDiscountMultiplier, field.TypeFloat64, value)

@@ -984,6 +984,7 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 			cost.TotalCost, pricingAt,
 			accountStatsLongContextPricingEnabled(nil),
 		)
+		applyConfiguredImageAccountStatsCost(usageLog, apiKey.Group)
 	}
 
 	simpleModeKeyRateLimitOnly := simpleModeKeyRateLimitBillingEnabled(s.cfg, apiKey)

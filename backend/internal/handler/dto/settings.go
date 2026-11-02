@@ -155,6 +155,7 @@ type SystemSettings struct {
 	GoogleOAuthFrontendRedirectURL    string `json:"google_oauth_frontend_redirect_url"`
 
 	SiteName                    string           `json:"site_name"`
+	SiteSEOKeywords             string           `json:"site_seo_keywords"`
 	SiteLogo                    string           `json:"site_logo"`
 	SiteSubtitle                string           `json:"site_subtitle"`
 	APIBaseURL                  string           `json:"api_base_url"`
@@ -401,6 +402,7 @@ type PublicSettings struct {
 	AliyunCaptchaPrefix                 string                   `json:"aliyun_captcha_prefix"`
 	AliyunCaptchaRegion                 string                   `json:"aliyun_captcha_region"`
 	SiteName                            string                   `json:"site_name"`
+	SiteSEOKeywords                     string                   `json:"site_seo_keywords"`
 	SiteLogo                            string                   `json:"site_logo"`
 	SiteSubtitle                        string                   `json:"site_subtitle"`
 	APIBaseURL                          string                   `json:"api_base_url"`

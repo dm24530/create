@@ -48,7 +48,6 @@ export const routes: RouteRecordRaw[] = [
       title: 'Home',
       descriptionKey: 'home.seoDescription',
       seoKeywords: [
-        'Create',
         'AI 视频生成',
         'AI 图片生成',
         '视频生成',
@@ -205,7 +204,7 @@ export const routes: RouteRecordRaw[] = [
       titleKey: 'modelPlaza.title',
       descriptionKey: 'modelPlaza.seoDescription',
       seoKeywords: [
-        'Create 模型广场',
+        'AI 模型广场',
         'AI 视频模型价格',
         'AI 图片模型价格',
         '视频生成模型价格',

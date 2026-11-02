@@ -7064,6 +7064,25 @@
 	                  <Toggle v-model="form.login_agreement_enabled" />
 	                </div>
 	              </div>
+
+              <div>
+                <label
+                  class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300"
+                >
+                  {{ t("admin.settings.site.siteSeoKeywords") }}
+                </label>
+                <textarea
+                  v-model="form.site_seo_keywords"
+                  rows="2"
+                  class="input"
+                  :placeholder="
+                    t('admin.settings.site.siteSeoKeywordsPlaceholder')
+                  "
+                />
+                <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                  {{ t("admin.settings.site.siteSeoKeywordsHint") }}
+                </p>
+              </div>
 	            </div>
 
 	            <div class="space-y-6 p-6">
@@ -10040,6 +10059,7 @@ const form = reactive<SettingsForm>({
   force_email_on_third_party_signup: false,
   default_user_rpm_limit: 0,
   site_name: DEFAULT_SITE_NAME,
+  site_seo_keywords: "libTV,LibTV,libtv,CreateAI",
   site_logo: "",
   site_subtitle: "AI 视频与图片生成平台",
   api_base_url: "",
@@ -11840,6 +11860,7 @@ async function saveSettings() {
       force_email_on_third_party_signup: form.force_email_on_third_party_signup,
       default_user_rpm_limit: form.default_user_rpm_limit,
       site_name: form.site_name,
+      site_seo_keywords: form.site_seo_keywords,
       site_logo: form.site_logo,
       site_subtitle: form.site_subtitle,
       api_base_url: form.api_base_url,

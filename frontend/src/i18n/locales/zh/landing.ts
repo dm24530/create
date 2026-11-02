@@ -96,7 +96,7 @@ export default {
       publicOnly: '仅展示公开分组',
       priceHint: '价格为当前公开分组的价格，实际计费以调用时为准。'
     },
-    seoDescription: 'Create 是一个 AI 视频与图片生成平台，支持 AI 视频生成、AI 图片生成与作品管理。',
+    seoDescription: '{siteName} 是一个 AI 视频与图片生成平台，支持 AI 视频生成、AI 图片生成与作品管理。',
     viewOnGithub: '在 GitHub 上查看',
     viewDocs: '查看文档',
     docs: '文档',

@@ -295,6 +295,108 @@ func applyAccountStatsCost(
 	)
 }
 
+// applyConfiguredImageAccountStatsCost overrides generic account cost with the
+// administrator-provided image cost price when one is configured. Cost prices
+// are accounting metadata only and never affect the user-billed amount.
+func applyConfiguredImageAccountStatsCost(usageLog *UsageLog, group *Group) {
+	if usageLog == nil || group == nil || usageLog.ImageCount <= 0 {
+		return
+	}
+	if usageLog.BillingMode != nil && *usageLog.BillingMode != string(BillingModeImage) {
+		return
+	}
+	if cost := configuredImageAccountStatsCost(
+		group,
+		usageLog.ImageSize,
+		usageLog.ImageCount,
+		usageLog.ImageSizeBreakdown,
+	); cost != nil {
+		accountRateMultiplier := 1.0
+		if usageLog.AccountRateMultiplier != nil {
+			accountRateMultiplier = *usageLog.AccountRateMultiplier
+		}
+		normalized := 0.0
+		if accountRateMultiplier > 0 {
+			normalized = *cost / accountRateMultiplier
+		}
+		usageLog.AccountStatsCost = &normalized
+	}
+}
+
+func configuredImageAccountStatsCost(
+	group *Group,
+	imageSize *string,
+	imageCount int,
+	breakdown map[string]int,
+) *float64 {
+	if group == nil || imageCount <= 0 {
+		return nil
+	}
+
+	if len(breakdown) > 0 {
+		total := 0.0
+		foundTier := false
+		accountedImages := 0
+		for rawTier, count := range breakdown {
+			if count <= 0 {
+				continue
+			}
+			tier, ok := configuredImageCostTier(rawTier)
+			if !ok {
+				continue
+			}
+			price := group.GetImageCostPrice(tier)
+			if price == nil {
+				return nil
+			}
+			total += *price * float64(count)
+			foundTier = true
+			accountedImages += count
+		}
+		if foundTier {
+			if accountedImages > imageCount {
+				return nil
+			}
+			if remaining := imageCount - accountedImages; remaining > 0 {
+				tier := ImageBillingSize2K
+				if imageSize != nil {
+					tier = NormalizeImageBillingTierOrDefault(*imageSize)
+				}
+				price := group.GetImageCostPrice(tier)
+				if price == nil {
+					return nil
+				}
+				total += *price * float64(remaining)
+			}
+			return &total
+		}
+	}
+
+	tier := ImageBillingSize2K
+	if imageSize != nil {
+		tier = NormalizeImageBillingTierOrDefault(*imageSize)
+	}
+	price := group.GetImageCostPrice(tier)
+	if price == nil {
+		return nil
+	}
+	cost := *price * float64(imageCount)
+	return &cost
+}
+
+func configuredImageCostTier(raw string) (string, bool) {
+	switch strings.ToUpper(strings.TrimSpace(raw)) {
+	case ImageBillingSize1K:
+		return ImageBillingSize1K, true
+	case ImageBillingSize2K:
+		return ImageBillingSize2K, true
+	case ImageBillingSize4K:
+		return ImageBillingSize4K, true
+	default:
+		return "", false
+	}
+}
+
 // accountStatsLongContextPricingEnabled 判断账号统计成本是否计入长上下文阶梯。
 // 账号统计成本反映上游实际成本：OpenAI 账号由开关声明上游是否收取长上下文费率；
 // 其它平台没有该开关（accountGate 为 nil），按官方阶梯计。分组开关只决定客户售价，

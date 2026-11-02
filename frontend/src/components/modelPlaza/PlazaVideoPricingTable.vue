@@ -7,7 +7,25 @@
       data-video-pricing-model
     >
       <div class="flex min-w-0 flex-wrap items-center gap-1.5">
-        <span class="min-w-0 truncate font-medium text-gray-900 dark:text-white">{{ model.name }}</span>
+        <button
+          type="button"
+          data-testid="plaza-video-model-name"
+          class="group/model min-w-0 max-w-full text-left"
+          :title="isModelCopied(model) ? t('modelPlaza.table.modelCopied') : t('modelPlaza.table.modelCopy')"
+          @click="copyModelName(model)"
+        >
+          <span class="block min-w-0 truncate font-medium text-gray-900 transition-colors group-hover/model:text-primary-600 group-hover/model:underline group-hover/model:decoration-dotted group-hover/model:underline-offset-2 dark:text-white dark:group-hover/model:text-primary-400">{{ model.name }}</span>
+        </button>
+        <button
+          type="button"
+          data-testid="plaza-video-model-copy"
+          class="shrink-0 rounded p-0.5 text-gray-400 transition-colors hover:bg-gray-100 hover:text-primary-600 dark:hover:bg-dark-700 dark:hover:text-primary-400"
+          :title="isModelCopied(model) ? t('modelPlaza.table.modelCopied') : t('modelPlaza.table.modelCopy')"
+          :aria-label="isModelCopied(model) ? t('modelPlaza.table.modelCopied') : t('modelPlaza.table.modelCopy')"
+          @click="copyModelName(model)"
+        >
+          <Icon :name="isModelCopied(model) ? 'check' : 'clipboard'" size="xs" />
+        </button>
         <span
           v-if="platform && model.platform !== platform"
           :class="[
@@ -51,11 +69,40 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { formatScaled } from '@/utils/pricing'
 import { platformBadgeLightClass, platformLabel } from '@/utils/platformColors'
+import { useClipboard } from '@/composables/useClipboard'
+import Icon from '@/components/icons/Icon.vue'
 import type { PlazaModel } from '@/api/modelPlaza'
+
+const { copyToClipboard } = useClipboard()
+const copiedModelKey = ref('')
+let copiedResetTimer: ReturnType<typeof setTimeout> | null = null
+
+function plazaVideoModelKey(model: PlazaModel): string {
+  return `${model.platform}:${model.name}`
+}
+
+function isModelCopied(model: PlazaModel): boolean {
+  return copiedModelKey.value === plazaVideoModelKey(model)
+}
+
+async function copyModelName(model: PlazaModel) {
+  const copied = await copyToClipboard(model.name, t('modelPlaza.table.modelCopied'))
+  if (!copied) return
+  copiedModelKey.value = plazaVideoModelKey(model)
+  if (copiedResetTimer) clearTimeout(copiedResetTimer)
+  copiedResetTimer = setTimeout(() => {
+    copiedModelKey.value = ''
+    copiedResetTimer = null
+  }, 1600)
+}
+
+onBeforeUnmount(() => {
+  if (copiedResetTimer) clearTimeout(copiedResetTimer)
+})
 
 const props = defineProps<{
   models: PlazaModel[]

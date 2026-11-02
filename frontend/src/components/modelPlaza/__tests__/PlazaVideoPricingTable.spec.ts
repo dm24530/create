@@ -3,6 +3,14 @@ import { describe, expect, it, vi } from 'vitest'
 import PlazaVideoPricingTable from '../PlazaVideoPricingTable.vue'
 import type { PlazaModel } from '@/api/modelPlaza'
 
+const { copyToClipboard } = vi.hoisted(() => ({
+  copyToClipboard: vi.fn()
+}))
+
+vi.mock('@/composables/useClipboard', () => ({
+  useClipboard: () => ({ copyToClipboard })
+}))
+
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({ t: (key: string) => key })
 }))
@@ -49,6 +57,26 @@ function videoModel(overrides: Partial<PlazaModel> = {}): PlazaModel {
 }
 
 describe('PlazaVideoPricingTable', () => {
+  it('copies the model name by clicking the name or the copy button', async () => {
+    copyToClipboard.mockResolvedValue(true)
+    const wrapper = mount(PlazaVideoPricingTable, {
+      props: {
+        models: [videoModel()],
+        platform: 'composite',
+        rateMultiplier: 1
+      }
+    })
+
+    await wrapper.get('[data-testid="plaza-video-model-name"]').trigger('click')
+    expect(copyToClipboard).toHaveBeenLastCalledWith(
+      'grok-imagine-video-1.5',
+      'modelPlaza.table.modelCopied'
+    )
+
+    await wrapper.get('[data-testid="plaza-video-model-copy"]').trigger('click')
+    expect(copyToClipboard).toHaveBeenCalledTimes(2)
+  })
+
   it('shows model name on the left and all resolution prices on one row', () => {
     const wrapper = mount(PlazaVideoPricingTable, {
       props: {

@@ -674,7 +674,7 @@ export default {
   // Model Plaza (public group/model pricing showcase)
   modelPlaza: {
     title: '模型广场',
-    seoDescription: '在 Create 模型广场查看 AI 视频与图片生成模型的可用分组、价格和倍率。',
+    seoDescription: '在 {siteName} 模型广场查看 AI 视频与图片生成模型的可用分组、价格和倍率。',
     description: '按分组浏览可用模型与价格',
     loading: '加载中...',
     empty: '暂无可展示的分组',
@@ -699,6 +699,8 @@ export default {
     },
     table: {
       model: '模型',
+      modelCopy: '复制模型名称',
+      modelCopied: '模型名称已复制',
       input: '输入',
       output: '输出',
       cache: '缓存',

@@ -491,15 +491,21 @@ func TestAdminService_CreateGroup_WithImagePricing(t *testing.T) {
 	price1K := 0.10
 	price2K := 0.15
 	price4K := 0.30
+	costPrice1K := 0.05
+	costPrice2K := 0.08
+	costPrice4K := 0.12
 
 	input := &CreateGroupInput{
-		Name:           "test-group",
-		Description:    "Test group",
-		Platform:       PlatformAntigravity,
-		RateMultiplier: 1.0,
-		ImagePrice1K:   &price1K,
-		ImagePrice2K:   &price2K,
-		ImagePrice4K:   &price4K,
+		Name:             "test-group",
+		Description:      "Test group",
+		Platform:         PlatformAntigravity,
+		RateMultiplier:   1.0,
+		ImagePrice1K:     &price1K,
+		ImagePrice2K:     &price2K,
+		ImagePrice4K:     &price4K,
+		ImageCostPrice1K: &costPrice1K,
+		ImageCostPrice2K: &costPrice2K,
+		ImageCostPrice4K: &costPrice4K,
 	}
 
 	group, err := svc.CreateGroup(context.Background(), input)
@@ -514,6 +520,12 @@ func TestAdminService_CreateGroup_WithImagePricing(t *testing.T) {
 	require.InDelta(t, 0.10, *repo.created.ImagePrice1K, 0.0001)
 	require.InDelta(t, 0.15, *repo.created.ImagePrice2K, 0.0001)
 	require.InDelta(t, 0.30, *repo.created.ImagePrice4K, 0.0001)
+	require.NotNil(t, repo.created.ImageCostPrice1K)
+	require.NotNil(t, repo.created.ImageCostPrice2K)
+	require.NotNil(t, repo.created.ImageCostPrice4K)
+	require.InDelta(t, 0.05, *repo.created.ImageCostPrice1K, 0.0001)
+	require.InDelta(t, 0.08, *repo.created.ImageCostPrice2K, 0.0001)
+	require.InDelta(t, 0.12, *repo.created.ImageCostPrice4K, 0.0001)
 }
 
 func TestAdminService_CreateGroup_WithVideoPricing(t *testing.T) {
@@ -664,11 +676,17 @@ func TestAdminService_UpdateGroup_WithImagePricing(t *testing.T) {
 	price1K := 0.12
 	price2K := 0.18
 	price4K := 0.36
+	costPrice1K := 0.06
+	costPrice2K := 0.09
+	costPrice4K := 0.14
 
 	input := &UpdateGroupInput{
-		ImagePrice1K: &price1K,
-		ImagePrice2K: &price2K,
-		ImagePrice4K: &price4K,
+		ImagePrice1K:     &price1K,
+		ImagePrice2K:     &price2K,
+		ImagePrice4K:     &price4K,
+		ImageCostPrice1K: &costPrice1K,
+		ImageCostPrice2K: &costPrice2K,
+		ImageCostPrice4K: &costPrice4K,
 	}
 
 	group, err := svc.UpdateGroup(context.Background(), 1, input)
@@ -683,6 +701,12 @@ func TestAdminService_UpdateGroup_WithImagePricing(t *testing.T) {
 	require.InDelta(t, 0.12, *repo.updated.ImagePrice1K, 0.0001)
 	require.InDelta(t, 0.18, *repo.updated.ImagePrice2K, 0.0001)
 	require.InDelta(t, 0.36, *repo.updated.ImagePrice4K, 0.0001)
+	require.NotNil(t, repo.updated.ImageCostPrice1K)
+	require.NotNil(t, repo.updated.ImageCostPrice2K)
+	require.NotNil(t, repo.updated.ImageCostPrice4K)
+	require.InDelta(t, 0.06, *repo.updated.ImageCostPrice1K, 0.0001)
+	require.InDelta(t, 0.09, *repo.updated.ImageCostPrice2K, 0.0001)
+	require.InDelta(t, 0.14, *repo.updated.ImageCostPrice4K, 0.0001)
 }
 
 func TestAdminService_UpdateGroup_WithVideoPricing(t *testing.T) {

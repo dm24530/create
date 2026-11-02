@@ -513,6 +513,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 			tokens, cost.TotalCost, pricingAt,
 			accountStatsLongContextPricingEnabled(longContextBillingGate) && !modelLongContextExempt,
 		)
+		applyConfiguredImageAccountStatsCost(usageLog, apiKey.Group)
 	}
 
 	simpleModeKeyRateLimitOnly := simpleModeKeyRateLimitBillingEnabled(s.cfg, apiKey)
@@ -1016,6 +1017,9 @@ func groupMediaPricingLooksIncomplete(group *Group) bool {
 	if len(group.ModelPricing) > 0 || group.LongContextPricingEnabled {
 		return false
 	}
+	if group.ImageCostPrice1K != nil || group.ImageCostPrice2K != nil || group.ImageCostPrice4K != nil {
+		return false
+	}
 	if group.SearchPricePer1k != nil ||
 		group.AudioRealtimePricePerMin != nil ||
 		group.AudioTTSPricePerMillionChars != nil ||
@@ -1024,6 +1028,7 @@ func groupMediaPricingLooksIncomplete(group *Group) bool {
 		return false
 	}
 	return group.ImagePrice1K == nil && group.ImagePrice2K == nil && group.ImagePrice4K == nil &&
+		group.ImageCostPrice1K == nil && group.ImageCostPrice2K == nil && group.ImageCostPrice4K == nil &&
 		group.VideoPrice480P == nil && group.VideoPrice720P == nil && group.VideoPrice1080P == nil
 }
 

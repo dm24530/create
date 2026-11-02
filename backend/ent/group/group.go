@@ -70,6 +70,12 @@ const (
 	FieldImagePrice2k = "image_price_2k"
 	// FieldImagePrice4k holds the string denoting the image_price_4k field in the database.
 	FieldImagePrice4k = "image_price_4k"
+	// FieldImageCostPrice1k holds the string denoting the image_cost_price_1k field in the database.
+	FieldImageCostPrice1k = "image_cost_price_1k"
+	// FieldImageCostPrice2k holds the string denoting the image_cost_price_2k field in the database.
+	FieldImageCostPrice2k = "image_cost_price_2k"
+	// FieldImageCostPrice4k holds the string denoting the image_cost_price_4k field in the database.
+	FieldImageCostPrice4k = "image_cost_price_4k"
 	// FieldBatchImageDiscountMultiplier holds the string denoting the batch_image_discount_multiplier field in the database.
 	FieldBatchImageDiscountMultiplier = "batch_image_discount_multiplier"
 	// FieldBatchImageHoldMultiplier holds the string denoting the batch_image_hold_multiplier field in the database.
@@ -252,6 +258,9 @@ var Columns = []string{
 	FieldImagePrice1k,
 	FieldImagePrice2k,
 	FieldImagePrice4k,
+	FieldImageCostPrice1k,
+	FieldImageCostPrice2k,
+	FieldImageCostPrice4k,
 	FieldBatchImageDiscountMultiplier,
 	FieldBatchImageHoldMultiplier,
 	FieldVideoRateIndependent,
@@ -577,6 +586,21 @@ func ByImagePrice2k(opts ...sql.OrderTermOption) OrderOption {
 // ByImagePrice4k orders the results by the image_price_4k field.
 func ByImagePrice4k(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldImagePrice4k, opts...).ToFunc()
+}
+
+// ByImageCostPrice1k orders the results by the image_cost_price_1k field.
+func ByImageCostPrice1k(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldImageCostPrice1k, opts...).ToFunc()
+}
+
+// ByImageCostPrice2k orders the results by the image_cost_price_2k field.
+func ByImageCostPrice2k(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldImageCostPrice2k, opts...).ToFunc()
+}
+
+// ByImageCostPrice4k orders the results by the image_cost_price_4k field.
+func ByImageCostPrice4k(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldImageCostPrice4k, opts...).ToFunc()
 }
 
 // ByBatchImageDiscountMultiplier orders the results by the batch_image_discount_multiplier field.

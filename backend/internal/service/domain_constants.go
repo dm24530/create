@@ -380,6 +380,7 @@ const (
 
 	// OEM设置
 	SettingKeySiteName                    = "site_name"                     // 网站名称
+	SettingKeySiteSEOKeywords             = "site_seo_keywords"             // SEO品牌别名/关键词（逗号分隔）
 	SettingKeySiteLogo                    = "site_logo"                     // 网站Logo (base64)
 	SettingKeySiteSubtitle                = "site_subtitle"                 // 网站副标题
 	SettingKeyAPIBaseURL                  = "api_base_url"                  // API端点地址（用于客户端配置和导入）

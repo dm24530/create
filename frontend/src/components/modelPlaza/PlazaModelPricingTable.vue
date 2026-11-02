@@ -41,7 +41,25 @@
           <!-- 模型名 + 非 token 计费模式徽章;分时时段行额外标注时段 -->
           <td class="border-r border-gray-100 py-2.5 pl-5 pr-4 align-middle dark:border-dark-700/60">
             <div class="flex flex-wrap items-center gap-1.5">
-              <span class="font-medium text-gray-900 dark:text-white">{{ m.name }}</span>
+              <button
+                type="button"
+                data-testid="plaza-model-name"
+                class="group/model min-w-0 max-w-full text-left"
+                :title="isModelCopied(m) ? t('modelPlaza.table.modelCopied') : t('modelPlaza.table.modelCopy')"
+                @click="copyModelName(m)"
+              >
+                <span class="font-medium text-gray-900 transition-colors group-hover/model:text-primary-600 group-hover/model:underline group-hover/model:decoration-dotted group-hover/model:underline-offset-2 dark:text-white dark:group-hover/model:text-primary-400">{{ m.name }}</span>
+              </button>
+              <button
+                type="button"
+                data-testid="plaza-model-copy"
+                class="shrink-0 rounded p-0.5 text-gray-400 transition-colors hover:bg-gray-100 hover:text-primary-600 dark:hover:bg-dark-700 dark:hover:text-primary-400"
+                :title="isModelCopied(m) ? t('modelPlaza.table.modelCopied') : t('modelPlaza.table.modelCopy')"
+                :aria-label="isModelCopied(m) ? t('modelPlaza.table.modelCopied') : t('modelPlaza.table.modelCopy')"
+                @click="copyModelName(m)"
+              >
+                <Icon :name="isModelCopied(m) ? 'check' : 'clipboard'" size="xs" />
+              </button>
               <!-- 时段徽章紧跟模型名,其余徽章排在后面,空间不足时先换行的是它们 -->
               <span
                 v-if="period"
@@ -191,10 +209,12 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { formatScaled, resolveIntervalPrices } from '@/utils/pricing'
 import { platformAccentColor, platformBadgeLightClass, platformLabel } from '@/utils/platformColors'
+import { useClipboard } from '@/composables/useClipboard'
+import Icon from '@/components/icons/Icon.vue'
 import {
   BILLING_MODE_TOKEN,
   BILLING_MODE_IMAGE,
@@ -204,6 +224,33 @@ import {
 } from '@/constants/channel'
 import type { PlazaModel, PlazaTimePricingPeriod } from '@/api/modelPlaza'
 import type { UserPricingInterval } from '@/api/channels'
+
+const { copyToClipboard } = useClipboard()
+const copiedModelKey = ref('')
+let copiedResetTimer: ReturnType<typeof setTimeout> | null = null
+
+function plazaModelKey(model: PlazaModel): string {
+  return `${model.platform}:${model.name}`
+}
+
+function isModelCopied(model: PlazaModel): boolean {
+  return copiedModelKey.value === plazaModelKey(model)
+}
+
+async function copyModelName(model: PlazaModel) {
+  const copied = await copyToClipboard(model.name, t('modelPlaza.table.modelCopied'))
+  if (!copied) return
+  copiedModelKey.value = plazaModelKey(model)
+  if (copiedResetTimer) clearTimeout(copiedResetTimer)
+  copiedResetTimer = setTimeout(() => {
+    copiedModelKey.value = ''
+    copiedResetTimer = null
+  }, 1600)
+}
+
+onBeforeUnmount(() => {
+  if (copiedResetTimer) clearTimeout(copiedResetTimer)
+})
 
 function reasoningEffortMultipliers(model: PlazaModel): [string, number][] {
   const multipliers = model.pricing?.reasoning_effort_multipliers

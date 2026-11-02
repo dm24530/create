@@ -299,8 +299,12 @@
                 </div>
               </div>
             </div>
-            <div v-if="showAccountBilling && row.account_rate_multiplier != null" class="mt-0.5 text-[11px] text-orange-500 dark:text-orange-400">
-              A ${{ accountBilled(row).toFixed(6) }}
+            <div
+              v-if="showAccountBilling && row.account_rate_multiplier != null"
+              data-testid="usage-account-cost"
+              class="mt-0.5 text-[11px] text-orange-500 dark:text-orange-400"
+            >
+              {{ t('usage.accountCost') }} ${{ accountBilled(row).toFixed(6) }}
             </div>
           </div>
         </template>

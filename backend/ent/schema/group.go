@@ -128,6 +128,21 @@ func (Group) Fields() []ent.Field {
 			Optional().
 			Nillable().
 			SchemaType(map[string]string{dialect.Postgres: "decimal(20,8)"}),
+		field.Float("image_cost_price_1k").
+			Optional().
+			Nillable().
+			SchemaType(map[string]string{dialect.Postgres: "decimal(20,8)"}).
+			Comment("1K 图片生成成本价，仅用于管理员利润核算"),
+		field.Float("image_cost_price_2k").
+			Optional().
+			Nillable().
+			SchemaType(map[string]string{dialect.Postgres: "decimal(20,8)"}).
+			Comment("2K 图片生成成本价，仅用于管理员利润核算"),
+		field.Float("image_cost_price_4k").
+			Optional().
+			Nillable().
+			SchemaType(map[string]string{dialect.Postgres: "decimal(20,8)"}).
+			Comment("4K 图片生成成本价，仅用于管理员利润核算"),
 		field.Float("batch_image_discount_multiplier").
 			SchemaType(map[string]string{dialect.Postgres: "decimal(10,4)"}).
 			Default(0.5).

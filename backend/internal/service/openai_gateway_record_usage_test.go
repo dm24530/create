@@ -2277,6 +2277,42 @@ func TestOpenAIGatewayServiceRecordUsage_ImageUsesPerImageBillingEvenWithUsageTo
 	require.InDelta(t, 0.0, usageRepo.lastLog.ImageOutputCost, 1e-12)
 }
 
+func TestOpenAIGatewayServiceRecordUsage_ImageCostPricePopulatesAccountStatsCost(t *testing.T) {
+	imageSalePrice := 0.1
+	imageCostPrice := 0.05
+	groupID := int64(1203)
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	svc := newOpenAIRecordUsageServiceForTest(usageRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)
+
+	err := svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
+		Result: &OpenAIForwardResult{
+			RequestID:  "resp_image_cost_price",
+			Model:      "gpt-image-2",
+			ImageCount: 2,
+			ImageSize:  ImageBillingSize1K,
+		},
+		APIKey: &APIKey{
+			ID:      1009,
+			GroupID: i64p(groupID),
+			Group: &Group{
+				ID:               groupID,
+				RateMultiplier:   1,
+				ImagePrice1K:     &imageSalePrice,
+				ImageCostPrice1K: &imageCostPrice,
+			},
+		},
+		User:    &User{ID: 2009},
+		Account: &Account{ID: 3009},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, usageRepo.lastLog)
+	require.InDelta(t, 0.2, usageRepo.lastLog.TotalCost, 1e-12)
+	require.InDelta(t, 0.2, usageRepo.lastLog.ActualCost, 1e-12)
+	require.NotNil(t, usageRepo.lastLog.AccountStatsCost)
+	require.InDelta(t, 0.1, *usageRepo.lastLog.AccountStatsCost, 1e-12)
+}
+
 func TestOpenAIGatewayServiceRecordUsage_ImageSharedMultiplierPreservesExistingBehavior(t *testing.T) {
 	imagePrice := 0.2
 	groupID := int64(121)

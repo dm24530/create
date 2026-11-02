@@ -21,11 +21,14 @@ describe('resolveRouteSeo', () => {
         descriptionKey: 'home.seoDescription',
         seoKeywords: ['Create', 'GPT', 'OpenAI', 'Claude', 'DeepSeek'],
       },
-    }, 'Create - AI 视频与图片生成', 'https://superai.sbs')
+    }, 'Create - AI 视频与图片生成', 'https://superai.sbs', 'Create', 'libTV,CreateAI')
 
     expect(seo.description).toContain('Create')
     expect(seo.description).toContain('视频')
     expect(seo.keywords).toContain('GPT')
+    expect(seo.keywords).toContain('libTV')
+    expect(seo.keywords).toContain('CreateAI')
+    expect(seo.siteName).toBe('Create')
     expect(seo.canonical).toBe('https://superai.sbs/home')
     expect(seo.robots).toBe('index,follow')
   })
@@ -40,5 +43,14 @@ describe('resolveRouteSeo', () => {
     }, 'System Settings - Create', 'https://superai.sbs')
 
     expect(seo.robots).toBe('noindex,nofollow')
+  })
+
+  it('uses the home page as the canonical entry for the root route', () => {
+    const seo = resolveRouteSeo({
+      path: '/',
+      meta: { requiresAuth: false },
+    }, 'Create - AI 视频与图片生成', 'https://example.com', 'Create', 'libTV')
+
+    expect(seo.canonical).toBe('https://example.com/home')
   })
 })

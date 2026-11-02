@@ -410,6 +410,7 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 
 	// OEM设置
 	updates[SettingKeySiteName] = settings.SiteName
+	updates[SettingKeySiteSEOKeywords] = normalizeSiteSEOKeywords(settings.SiteSEOKeywords)
 	updates[SettingKeySiteLogo] = settings.SiteLogo
 	updates[SettingKeySiteSubtitle] = settings.SiteSubtitle
 	updates[SettingKeyAPIBaseURL] = settings.APIBaseURL

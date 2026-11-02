@@ -181,6 +181,7 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 		SettingKeyAliyunCaptchaRegion,
 		SettingKeyAPIKeyACLTrustForwardedIP,
 		SettingKeySiteName,
+		SettingKeySiteSEOKeywords,
 		SettingKeySiteLogo,
 		SettingKeySiteSubtitle,
 		SettingKeyAPIBaseURL,
@@ -326,6 +327,7 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 		AliyunCaptchaPrefix:                 settings[SettingKeyAliyunCaptchaPrefix],
 		AliyunCaptchaRegion:                 normalizeAliyunCaptchaRegion(settings[SettingKeyAliyunCaptchaRegion]),
 		SiteName:                            normalizeSiteName(s.getStringOrDefault(settings, SettingKeySiteName, defaultSiteName)),
+		SiteSEOKeywords:                     normalizeSiteSEOKeywords(s.getStringOrDefault(settings, SettingKeySiteSEOKeywords, defaultSiteSEOKeywords)),
 		SiteLogo:                            settings[SettingKeySiteLogo],
 		SiteSubtitle:                        s.getStringOrDefault(settings, SettingKeySiteSubtitle, "AI 视频与图片生成平台"),
 		APIBaseURL:                          settings[SettingKeyAPIBaseURL],
@@ -586,6 +588,7 @@ type PublicSettingsInjectionPayload struct {
 	AliyunCaptchaPrefix                 string                   `json:"aliyun_captcha_prefix"`
 	AliyunCaptchaRegion                 string                   `json:"aliyun_captcha_region"`
 	SiteName                            string                   `json:"site_name"`
+	SiteSEOKeywords                     string                   `json:"site_seo_keywords"`
 	SiteLogo                            string                   `json:"site_logo"`
 	SiteSubtitle                        string                   `json:"site_subtitle"`
 	APIBaseURL                          string                   `json:"api_base_url"`
@@ -681,6 +684,7 @@ func (s *SettingService) GetPublicSettingsForInjection(ctx context.Context) (any
 		AliyunCaptchaPrefix:                 settings.AliyunCaptchaPrefix,
 		AliyunCaptchaRegion:                 settings.AliyunCaptchaRegion,
 		SiteName:                            settings.SiteName,
+		SiteSEOKeywords:                     settings.SiteSEOKeywords,
 		SiteLogo:                            settings.SiteLogo,
 		SiteSubtitle:                        settings.SiteSubtitle,
 		APIBaseURL:                          settings.APIBaseURL,

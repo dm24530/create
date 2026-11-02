@@ -3,6 +3,14 @@ import { mount } from '@vue/test-utils'
 import PlazaModelPricingTable from '../PlazaModelPricingTable.vue'
 import type { PlazaModel } from '@/api/modelPlaza'
 
+const { copyToClipboard } = vi.hoisted(() => ({
+  copyToClipboard: vi.fn()
+}))
+
+vi.mock('@/composables/useClipboard', () => ({
+  useClipboard: () => ({ copyToClipboard })
+}))
+
 vi.mock('vue-i18n', async () => {
   const actual = await vi.importActual<typeof import('vue-i18n')>('vue-i18n')
   return {
@@ -58,6 +66,24 @@ function mountTable(
 }
 
 describe('PlazaModelPricingTable', () => {
+  it('copies the model name by clicking the name or the copy button', async () => {
+    copyToClipboard.mockResolvedValue(true)
+    const wrapper = mountTable([tokenModel()], 1)
+
+    await wrapper.get('[data-testid="plaza-model-name"]').trigger('click')
+    expect(copyToClipboard).toHaveBeenLastCalledWith(
+      'claude-sonnet',
+      'modelPlaza.table.modelCopied'
+    )
+
+    await wrapper.get('[data-testid="plaza-model-copy"]').trigger('click')
+    expect(copyToClipboard).toHaveBeenCalledTimes(2)
+    expect(copyToClipboard).toHaveBeenLastCalledWith(
+      'claude-sonnet',
+      'modelPlaza.table.modelCopied'
+    )
+  })
+
   it.each([
     { enabled: true, multiplier: 1, userRate: 0.05, expected: 1 },
     { enabled: true, multiplier: 0.5, userRate: null, expected: 0.5 },

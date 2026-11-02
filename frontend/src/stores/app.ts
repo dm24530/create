@@ -341,6 +341,7 @@ export const useAppStore = defineStore('app', () => {
         aliyun_captcha_prefix: '',
         aliyun_captcha_region: 'cn',
         site_name: siteName.value,
+        site_seo_keywords: '',
         site_logo: siteLogo.value,
         site_subtitle: '',
         api_base_url: apiBaseUrl.value,

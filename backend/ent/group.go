@@ -74,6 +74,12 @@ type Group struct {
 	ImagePrice2k *float64 `json:"image_price_2k,omitempty"`
 	// ImagePrice4k holds the value of the "image_price_4k" field.
 	ImagePrice4k *float64 `json:"image_price_4k,omitempty"`
+	// 1K 图片生成成本价，仅用于管理员利润核算
+	ImageCostPrice1k *float64 `json:"image_cost_price_1k,omitempty"`
+	// 2K 图片生成成本价，仅用于管理员利润核算
+	ImageCostPrice2k *float64 `json:"image_cost_price_2k,omitempty"`
+	// 4K 图片生成成本价，仅用于管理员利润核算
+	ImageCostPrice4k *float64 `json:"image_cost_price_4k,omitempty"`
 	// 批量图片生成折扣倍率，最终单价会乘以该值；0 表示免费
 	BatchImageDiscountMultiplier float64 `json:"batch_image_discount_multiplier,omitempty"`
 	// 批量图片生成冻结价格比例，按普通生图原价乘以该比例冻结，结算后释放差额
@@ -264,7 +270,7 @@ func (*Group) scanValues(columns []string) ([]any, error) {
 			values[i] = new([]byte)
 		case group.FieldPeakRateEnabled, group.FieldIsExclusive, group.FieldAllowImageGeneration, group.FieldAllowBatchImageGeneration, group.FieldImageRateIndependent, group.FieldVideoRateIndependent, group.FieldLongContextPricingEnabled, group.FieldClaudeCodeOnly, group.FieldModelRoutingEnabled, group.FieldMcpXMLInject, group.FieldAllowMessagesDispatch, group.FieldAllowLive, group.FieldForceOpenaiFast, group.FieldFreeOpenaiFast, group.FieldRequireOauthOnly, group.FieldRequirePrivacySet, group.FieldProfitControlEnabled:
 			values[i] = new(sql.NullBool)
-		case group.FieldRateMultiplier, group.FieldPeakRateMultiplier, group.FieldDailyLimitUsd, group.FieldWeeklyLimitUsd, group.FieldMonthlyLimitUsd, group.FieldImageRateMultiplier, group.FieldImagePrice1k, group.FieldImagePrice2k, group.FieldImagePrice4k, group.FieldBatchImageDiscountMultiplier, group.FieldBatchImageHoldMultiplier, group.FieldVideoRateMultiplier, group.FieldVideoPrice480p, group.FieldVideoPrice720p, group.FieldVideoPrice1080p, group.FieldWebSearchPricePerCall, group.FieldSearchPricePer1k, group.FieldAudioRealtimePricePerMin, group.FieldAudioTtsPricePerMillionChars, group.FieldAudioSttPricePerHour, group.FieldProfitMinMargin, group.FieldProfitSafetyBuffer:
+		case group.FieldRateMultiplier, group.FieldPeakRateMultiplier, group.FieldDailyLimitUsd, group.FieldWeeklyLimitUsd, group.FieldMonthlyLimitUsd, group.FieldImageRateMultiplier, group.FieldImagePrice1k, group.FieldImagePrice2k, group.FieldImagePrice4k, group.FieldImageCostPrice1k, group.FieldImageCostPrice2k, group.FieldImageCostPrice4k, group.FieldBatchImageDiscountMultiplier, group.FieldBatchImageHoldMultiplier, group.FieldVideoRateMultiplier, group.FieldVideoPrice480p, group.FieldVideoPrice720p, group.FieldVideoPrice1080p, group.FieldWebSearchPricePerCall, group.FieldSearchPricePer1k, group.FieldAudioRealtimePricePerMin, group.FieldAudioTtsPricePerMillionChars, group.FieldAudioSttPricePerHour, group.FieldProfitMinMargin, group.FieldProfitSafetyBuffer:
 			values[i] = new(sql.NullFloat64)
 		case group.FieldID, group.FieldDefaultValidityDays, group.FieldFallbackGroupID, group.FieldFallbackGroupIDOnInvalidRequest, group.FieldSortOrder, group.FieldRpmLimit:
 			values[i] = new(sql.NullInt64)
@@ -465,6 +471,27 @@ func (_m *Group) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.ImagePrice4k = new(float64)
 				*_m.ImagePrice4k = value.Float64
+			}
+		case group.FieldImageCostPrice1k:
+			if value, ok := values[i].(*sql.NullFloat64); !ok {
+				return fmt.Errorf("unexpected type %T for field image_cost_price_1k", values[i])
+			} else if value.Valid {
+				_m.ImageCostPrice1k = new(float64)
+				*_m.ImageCostPrice1k = value.Float64
+			}
+		case group.FieldImageCostPrice2k:
+			if value, ok := values[i].(*sql.NullFloat64); !ok {
+				return fmt.Errorf("unexpected type %T for field image_cost_price_2k", values[i])
+			} else if value.Valid {
+				_m.ImageCostPrice2k = new(float64)
+				*_m.ImageCostPrice2k = value.Float64
+			}
+		case group.FieldImageCostPrice4k:
+			if value, ok := values[i].(*sql.NullFloat64); !ok {
+				return fmt.Errorf("unexpected type %T for field image_cost_price_4k", values[i])
+			} else if value.Valid {
+				_m.ImageCostPrice4k = new(float64)
+				*_m.ImageCostPrice4k = value.Float64
 			}
 		case group.FieldBatchImageDiscountMultiplier:
 			if value, ok := values[i].(*sql.NullFloat64); !ok {
@@ -904,6 +931,21 @@ func (_m *Group) String() string {
 	builder.WriteString(", ")
 	if v := _m.ImagePrice4k; v != nil {
 		builder.WriteString("image_price_4k=")
+		builder.WriteString(fmt.Sprintf("%v", *v))
+	}
+	builder.WriteString(", ")
+	if v := _m.ImageCostPrice1k; v != nil {
+		builder.WriteString("image_cost_price_1k=")
+		builder.WriteString(fmt.Sprintf("%v", *v))
+	}
+	builder.WriteString(", ")
+	if v := _m.ImageCostPrice2k; v != nil {
+		builder.WriteString("image_cost_price_2k=")
+		builder.WriteString(fmt.Sprintf("%v", *v))
+	}
+	builder.WriteString(", ")
+	if v := _m.ImageCostPrice4k; v != nil {
+		builder.WriteString("image_cost_price_4k=")
 		builder.WriteString(fmt.Sprintf("%v", *v))
 	}
 	builder.WriteString(", ")

@@ -14,7 +14,7 @@ import (
 	"github.com/dgraph-io/ristretto"
 )
 
-const apiKeyAuthSnapshotVersion = 24 // v24: group model_allowlist field (renamed from models_list_config, enforcing semantics)
+const apiKeyAuthSnapshotVersion = 25 // v25: group image cost prices for admin profit accounting
 
 type apiKeyAuthCacheConfig struct {
 	l1Size        int
@@ -396,6 +396,9 @@ func (s *APIKeyService) snapshotFromAPIKey(ctx context.Context, apiKey *APIKey) 
 			ImagePrice1K:                    apiKey.Group.ImagePrice1K,
 			ImagePrice2K:                    apiKey.Group.ImagePrice2K,
 			ImagePrice4K:                    apiKey.Group.ImagePrice4K,
+			ImageCostPrice1K:                apiKey.Group.ImageCostPrice1K,
+			ImageCostPrice2K:                apiKey.Group.ImageCostPrice2K,
+			ImageCostPrice4K:                apiKey.Group.ImageCostPrice4K,
 			VideoRateIndependent:            apiKey.Group.VideoRateIndependent,
 			VideoRateMultiplier:             apiKey.Group.VideoRateMultiplier,
 			VideoPrice480P:                  apiKey.Group.VideoPrice480P,
@@ -498,6 +501,9 @@ func (s *APIKeyService) snapshotToAPIKey(key string, snapshot *APIKeyAuthSnapsho
 			ImagePrice1K:                    snapshot.Group.ImagePrice1K,
 			ImagePrice2K:                    snapshot.Group.ImagePrice2K,
 			ImagePrice4K:                    snapshot.Group.ImagePrice4K,
+			ImageCostPrice1K:                snapshot.Group.ImageCostPrice1K,
+			ImageCostPrice2K:                snapshot.Group.ImageCostPrice2K,
+			ImageCostPrice4K:                snapshot.Group.ImageCostPrice4K,
 			VideoRateIndependent:            snapshot.Group.VideoRateIndependent,
 			VideoRateMultiplier:             snapshot.Group.VideoRateMultiplier,
 			VideoPrice480P:                  snapshot.Group.VideoPrice480P,

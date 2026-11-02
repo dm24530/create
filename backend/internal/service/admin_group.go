@@ -436,6 +436,9 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 	imagePrice1K := normalizePrice(input.ImagePrice1K)
 	imagePrice2K := normalizePrice(input.ImagePrice2K)
 	imagePrice4K := normalizePrice(input.ImagePrice4K)
+	imageCostPrice1K := normalizePrice(input.ImageCostPrice1K)
+	imageCostPrice2K := normalizePrice(input.ImageCostPrice2K)
+	imageCostPrice4K := normalizePrice(input.ImageCostPrice4K)
 	videoPrice480P := normalizePrice(input.VideoPrice480P)
 	videoPrice720P := normalizePrice(input.VideoPrice720P)
 	videoPrice1080P := normalizePrice(input.VideoPrice1080P)
@@ -598,6 +601,9 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 		ImagePrice1K:                    imagePrice1K,
 		ImagePrice2K:                    imagePrice2K,
 		ImagePrice4K:                    imagePrice4K,
+		ImageCostPrice1K:                imageCostPrice1K,
+		ImageCostPrice2K:                imageCostPrice2K,
+		ImageCostPrice4K:                imageCostPrice4K,
 		VideoPrice480P:                  videoPrice480P,
 		VideoPrice720P:                  videoPrice720P,
 		VideoPrice1080P:                 videoPrice1080P,
@@ -916,6 +922,15 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 	}
 	if input.ImagePrice4K != nil {
 		group.ImagePrice4K = normalizePrice(input.ImagePrice4K)
+	}
+	if input.ImageCostPrice1K != nil {
+		group.ImageCostPrice1K = normalizePrice(input.ImageCostPrice1K)
+	}
+	if input.ImageCostPrice2K != nil {
+		group.ImageCostPrice2K = normalizePrice(input.ImageCostPrice2K)
+	}
+	if input.ImageCostPrice4K != nil {
+		group.ImageCostPrice4K = normalizePrice(input.ImageCostPrice4K)
 	}
 	if input.VideoPrice480P != nil {
 		group.VideoPrice480P = normalizePrice(input.VideoPrice480P)

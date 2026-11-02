@@ -483,6 +483,7 @@ export interface SystemSettings {
   auth_source_default_dingtalk_platform_quotas?: DefaultPlatformQuotasMap;
   // OEM settings
   site_name: string;
+  site_seo_keywords?: string;
   site_logo: string;
   site_subtitle: string;
   api_base_url: string;
@@ -844,6 +845,7 @@ export interface UpdateSettingsRequest {
   auth_source_default_google_platform_quotas?: DefaultPlatformQuotasMap;
   auth_source_default_dingtalk_platform_quotas?: DefaultPlatformQuotasMap;
   site_name?: string;
+  site_seo_keywords?: string;
   site_logo?: string;
   site_subtitle?: string;
   api_base_url?: string;

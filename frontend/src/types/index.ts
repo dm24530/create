@@ -233,6 +233,7 @@ export interface PublicSettings {
   aliyun_captcha_prefix?: string
   aliyun_captcha_region?: string
   site_name: string
+  site_seo_keywords?: string
   site_logo: string
   site_subtitle: string
   api_base_url: string
@@ -626,6 +627,9 @@ export interface Group {
   image_price_1k: number | null
   image_price_2k: number | null
   image_price_4k: number | null
+  image_cost_price_1k?: number | null
+  image_cost_price_2k?: number | null
+  image_cost_price_4k?: number | null
   video_rate_independent: boolean
   video_rate_multiplier: number
   video_price_480p: number | null
@@ -858,6 +862,9 @@ export interface CreateGroupRequest {
   image_price_1k?: number | null
   image_price_2k?: number | null
   image_price_4k?: number | null
+  image_cost_price_1k?: number | null
+  image_cost_price_2k?: number | null
+  image_cost_price_4k?: number | null
   video_rate_independent?: boolean
   video_rate_multiplier?: number
   video_price_480p?: number | null
@@ -926,6 +933,9 @@ export interface UpdateGroupRequest {
   image_price_1k?: number | null
   image_price_2k?: number | null
   image_price_4k?: number | null
+  image_cost_price_1k?: number | null
+  image_cost_price_2k?: number | null
+  image_cost_price_4k?: number | null
   video_rate_independent?: boolean
   video_rate_multiplier?: number
   video_price_480p?: number | null

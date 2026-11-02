@@ -33,7 +33,15 @@ function updateDocumentTitle() {
   const title = resolveRouteDocumentTitle(route, appStore.siteName, customMenuItems, {
     billingMode: resolveSiteBillingMode(appStore.cachedPublicSettings),
   })
-  applyDocumentSeo(resolveRouteSeo(route, title, window.location.origin))
+  applyDocumentSeo(
+    resolveRouteSeo(
+      route,
+      title,
+      window.location.origin,
+      appStore.siteName,
+      appStore.cachedPublicSettings?.site_seo_keywords,
+    ),
+  )
 }
 
 // Watch for site settings changes and update favicon/title

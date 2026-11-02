@@ -50,6 +50,9 @@ type Group struct {
 	ImagePrice1K                 *float64
 	ImagePrice2K                 *float64
 	ImagePrice4K                 *float64
+	ImageCostPrice1K             *float64
+	ImageCostPrice2K             *float64
+	ImageCostPrice4K             *float64
 	BatchImageDiscountMultiplier float64
 	BatchImageHoldMultiplier     float64
 	VideoRateIndependent         bool
@@ -188,6 +191,21 @@ func (g *Group) GetImagePrice(imageSize string) *float64 {
 	default:
 		// 未知尺寸默认按 2K 计费
 		return g.ImagePrice2K
+	}
+}
+
+// GetImageCostPrice returns the configured cost price for the requested image
+// tier. Cost prices are admin accounting metadata and never affect billing.
+func (g *Group) GetImageCostPrice(imageSize string) *float64 {
+	switch imageSize {
+	case "1K":
+		return g.ImageCostPrice1K
+	case "2K":
+		return g.ImageCostPrice2K
+	case "4K":
+		return g.ImageCostPrice4K
+	default:
+		return g.ImageCostPrice2K
 	}
 }
 

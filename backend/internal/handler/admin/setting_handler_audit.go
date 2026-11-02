@@ -320,6 +320,9 @@ func diffSettings(before *service.SystemSettings, after *service.SystemSettings,
 	if before.SiteName != after.SiteName {
 		changed = append(changed, "site_name")
 	}
+	if before.SiteSEOKeywords != after.SiteSEOKeywords {
+		changed = append(changed, "site_seo_keywords")
+	}
 	if before.SiteLogo != after.SiteLogo {
 		changed = append(changed, "site_logo")
 	}

@@ -27,15 +27,22 @@ const (
 	// seoBlockStart/seoBlockEnd 包住 index.html 里的 SEO 标签，按请求路径整体替换。
 	seoBlockStart = "<!--seo:start-->"
 	seoBlockEnd   = "<!--seo:end-->"
+	// seoBodyStart/seoBodyEnd 包住 noscript 里的可抓取正文，避免爬虫只看到空壳。
+	seoBodyStart = "<!--seo-body:start-->"
+	seoBodyEnd   = "<!--seo-body:end-->"
 )
 
-const defaultSeoKeywords = "AI 视频生成,AI 图片生成,视频生成,图片生成,AI 视频与图片生成平台,AI 创作平台"
+const (
+	defaultSeoKeywords = "AI 视频生成,AI 图片生成,视频生成,图片生成,AI 视频与图片生成平台,AI 创作平台"
+	defaultSeoAliases  = "libTV,LibTV,libtv,CreateAI"
+)
 
 type routeSeoDoc struct {
 	Title       string
 	Description string
 	Keywords    string
 	Robots      string
+	Aliases     []string
 }
 
 //go:embed all:dist
@@ -205,7 +212,7 @@ func (s *FrontendServer) serveIndexHTML(c *gin.Context) {
 
 		// Replace nonce placeholder with actual nonce before serving
 		content := replaceNoncePlaceholder(cached.Content, nonce)
-		content = applyRouteSeo(content, requestOrigin(c), c.Request.URL.Path, cached.SiteName)
+		content = applyRouteSeo(content, requestOrigin(c), c.Request.URL.Path, cached.SiteName, cached.SiteSEOKeywords)
 
 		c.Header("ETag", cached.ETag)
 		c.Header("Cache-Control", "no-cache") // Must revalidate
@@ -223,7 +230,7 @@ func (s *FrontendServer) serveIndexHTML(c *gin.Context) {
 		// Fallback: serve without settings injection, but still fill the SEO block from the
 		// real request host so no other site's domain is ever advertised.
 		c.Data(http.StatusOK, "text/html; charset=utf-8",
-			applyRouteSeo(s.baseHTML, requestOrigin(c), c.Request.URL.Path, ""))
+			applyRouteSeo(s.baseHTML, requestOrigin(c), c.Request.URL.Path, "", ""))
 		c.Abort()
 		return
 	}
@@ -233,7 +240,7 @@ func (s *FrontendServer) serveIndexHTML(c *gin.Context) {
 		// Fallback: serve without settings injection, but still fill the SEO block from the
 		// real request host so no other site's domain is ever advertised.
 		c.Data(http.StatusOK, "text/html; charset=utf-8",
-			applyRouteSeo(s.baseHTML, requestOrigin(c), c.Request.URL.Path, ""))
+			applyRouteSeo(s.baseHTML, requestOrigin(c), c.Request.URL.Path, "", ""))
 		c.Abort()
 		return
 	}
@@ -243,7 +250,13 @@ func (s *FrontendServer) serveIndexHTML(c *gin.Context) {
 
 	// Replace nonce placeholder with actual nonce before serving
 	content := replaceNoncePlaceholder(rendered, nonce)
-	content = applyRouteSeo(content, requestOrigin(c), c.Request.URL.Path, siteNameFromSettingsJSON(settingsJSON))
+	content = applyRouteSeo(
+		content,
+		requestOrigin(c),
+		c.Request.URL.Path,
+		siteNameFromSettingsJSON(settingsJSON),
+		siteSEOKeywordsFromSettingsJSON(settingsJSON),
+	)
 
 	cached = s.cache.Get()
 	if cached != nil {
@@ -370,48 +383,144 @@ func normalizeSeoPath(path string) string {
 
 // resolveRouteSeoDoc 决定每个路径服务端直接输出的 title/description/robots。
 // 只有公开页面允许收录；后台与登录后页面一律 noindex，避免被索引到空壳页。
-func resolveRouteSeoDoc(path, siteName string) routeSeoDoc {
+func resolveRouteSeoDoc(path, siteName, siteSEOKeywords string) routeSeoDoc {
 	name := strings.TrimSpace(siteName)
 	if name == "" {
 		name = "Create"
 	}
+	aliases := buildSEOAliases(name, siteSEOKeywords)
+	titleBrand := buildSEOTitleBrand(name, aliases)
+	introBrand := buildSEOBrandIntro(name, aliases)
 	normalized := normalizeSeoPath(path)
 	switch {
 	case normalized == "/" || normalized == "/home":
 		return routeSeoDoc{
-			Title:       name + " - AI 视频与图片生成",
-			Description: name + " 是一个 AI 视频与图片生成平台，支持 AI 视频生成、AI 图片生成与作品管理。",
-			Keywords:    defaultSeoKeywords,
+			Title:       titleBrand + " - AI 视频与图片生成",
+			Description: introBrand + " 是一个 AI 视频与图片生成平台，支持 AI 视频生成、AI 图片生成与作品管理。",
+			Keywords:    buildSEOKeywordString(name, aliases, defaultSeoKeywords),
 			Robots:      "index,follow",
+			Aliases:     aliases,
 		}
 	case normalized == "/model-plaza":
 		return routeSeoDoc{
-			Title:       name + " - AI 模型广场与价格对比",
-			Description: "对比各类 AI 视频与图片生成模型的实时价格、计费方式与可用分组。",
-			Keywords:    "AI 视频模型价格,AI 图片模型价格,视频生成模型价格,图片生成模型价格,AI 模型价格对比",
-			Robots:      "index,follow",
+			Title:       titleBrand + " - AI 模型广场与价格对比",
+			Description: introBrand + " 模型广场可对比各类 AI 视频与图片生成模型的实时价格、计费方式与可用分组。",
+			Keywords: buildSEOKeywordString(
+				name,
+				aliases,
+				"AI 视频模型价格,AI 图片模型价格,视频生成模型价格,图片生成模型价格,AI 模型价格对比,AI 模型广场",
+			),
+			Robots:  "index,follow",
+			Aliases: aliases,
 		}
 	case normalized == "/key-usage":
 		return routeSeoDoc{
-			Title:       name + " - API 密钥用量查询",
+			Title:       titleBrand + " - API 密钥用量查询",
 			Description: "按密钥、模型与时间范围查询 API 调用量与额度消耗明细。",
-			Keywords:    "API 密钥用量,API 额度查询,Token 用量",
+			Keywords:    buildSEOKeywordString(name, aliases, "API 密钥用量,API 额度查询,Token 用量"),
 			Robots:      "index,follow",
+			Aliases:     aliases,
 		}
 	case strings.HasPrefix(normalized, "/legal/"):
 		return routeSeoDoc{
-			Title:       name + " - 条款与政策",
-			Description: name + " 的服务条款、隐私政策与使用规范。",
-			Keywords:    defaultSeoKeywords,
+			Title:       titleBrand + " - 条款与政策",
+			Description: introBrand + " 的服务条款、隐私政策与使用规范。",
+			Keywords:    buildSEOKeywordString(name, aliases, defaultSeoKeywords),
 			Robots:      "index,follow",
+			Aliases:     aliases,
 		}
 	}
 	return routeSeoDoc{
-		Title:       name + " - AI 视频与图片生成",
-		Description: name + " 是一个 AI 视频与图片生成平台。",
-		Keywords:    defaultSeoKeywords,
+		Title:       titleBrand + " - AI 视频与图片生成",
+		Description: introBrand + " 是一个 AI 视频与图片生成平台。",
+		Keywords:    buildSEOKeywordString(name, aliases, defaultSeoKeywords),
 		Robots:      "noindex,nofollow",
+		Aliases:     aliases,
 	}
+}
+
+func buildSEOAliases(siteName, rawKeywords string) []string {
+	raw := strings.TrimSpace(rawKeywords)
+	if raw == "" {
+		raw = defaultSeoAliases
+	}
+	values := append([]string{siteName}, splitSEOValues(raw)...)
+	result := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+		key := strings.ToLower(trimmed)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, trimmed)
+	}
+	return result
+}
+
+func splitSEOValues(raw string) []string {
+	return strings.FieldsFunc(raw, func(r rune) bool {
+		switch r {
+		case ',', '，', ';', '；', '\n', '\r', '\t':
+			return true
+		default:
+			return false
+		}
+	})
+}
+
+func buildSEOTitleBrand(siteName string, aliases []string) string {
+	for _, alias := range aliases[1:] {
+		if !strings.EqualFold(alias, siteName) {
+			return siteName + " / " + alias
+		}
+	}
+	return siteName
+}
+
+func buildSEOBrandIntro(siteName string, aliases []string) string {
+	for _, alias := range aliases[1:] {
+		if !strings.EqualFold(alias, siteName) {
+			return siteName + "（又称 " + alias + "）"
+		}
+	}
+	return siteName
+}
+
+func buildSEOKeywordString(siteName string, aliases []string, base string) string {
+	terms := append([]string{siteName}, aliases...)
+	terms = append(terms, splitSEOValues(base)...)
+	for _, alias := range aliases {
+		terms = append(terms,
+			alias+" AI",
+			alias+" AI 视频生成",
+			alias+" AI 图片生成",
+			alias+" 视频生成",
+			alias+" 图片生成",
+			alias+" video generator",
+			alias+" image generator",
+		)
+	}
+
+	result := make([]string, 0, len(terms))
+	seen := make(map[string]struct{}, len(terms))
+	for _, term := range terms {
+		trimmed := strings.TrimSpace(term)
+		if trimmed == "" {
+			continue
+		}
+		key := strings.ToLower(trimmed)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, trimmed)
+	}
+	return strings.Join(result, ",")
 }
 
 // requestOrigin 依据可信反代头推导外部访问源，canonical/og:url 必须用真实域名。
@@ -467,25 +576,42 @@ func tryServeOriginAwareStatic(c *gin.Context, distFS fs.FS, cleanPath string) b
 	return true
 }
 
-// applyRouteSeo 用当前请求对应的 SEO 标签整体替换 index.html 里的标记区块。
-func applyRouteSeo(html []byte, origin, path, siteName string) []byte {
-	start := bytes.Index(html, []byte(seoBlockStart))
-	end := bytes.Index(html, []byte(seoBlockEnd))
+// applyRouteSeo 用当前请求对应的 SEO 标签与可抓取正文整体替换 index.html 里的标记区块。
+func applyRouteSeo(html []byte, origin, path, siteName, siteSEOKeywords string) []byte {
+	html = replaceMarkedBlock(
+		html,
+		seoBlockStart,
+		seoBlockEnd,
+		buildSeoBlock(origin, path, siteName, siteSEOKeywords),
+	)
+	return replaceMarkedBlock(
+		html,
+		seoBodyStart,
+		seoBodyEnd,
+		buildSeoBody(path, siteName, siteSEOKeywords),
+	)
+}
+
+func replaceMarkedBlock(html []byte, startMarker, endMarker, replacement string) []byte {
+	start := bytes.Index(html, []byte(startMarker))
+	end := bytes.Index(html, []byte(endMarker))
 	if start == -1 || end == -1 || end <= start {
 		return html
 	}
-	block := buildSeoBlock(origin, path, siteName)
 	var buf bytes.Buffer
-	buf.Grow(len(html) + len(block))
+	buf.Grow(len(html) + len(replacement))
 	buf.Write(html[:start])
-	buf.WriteString(block)
-	buf.Write(html[end+len(seoBlockEnd):])
+	buf.WriteString(replacement)
+	buf.Write(html[end+len(endMarker):])
 	return buf.Bytes()
 }
 
-func buildSeoBlock(origin, path, siteName string) string {
-	doc := resolveRouteSeoDoc(path, siteName)
+func buildSeoBlock(origin, path, siteName, siteSEOKeywords string) string {
+	doc := resolveRouteSeoDoc(path, siteName, siteSEOKeywords)
 	canonicalPath := normalizeSeoPath(path)
+	if canonicalPath == "/" {
+		canonicalPath = "/home"
+	}
 	canonical := canonicalPath
 	imageURL := "/logo.svg"
 	if origin != "" {
@@ -507,11 +633,15 @@ func buildSeoBlock(origin, path, siteName string) string {
 	writeMeta("name", "keywords", doc.Keywords)
 	writeMeta("name", "robots", doc.Robots)
 	writeMeta("name", "msvalidate.01", "B55F2646907C6E19E99891EF692EBBF8")
-	writeMeta("name", "application-name", strings.TrimSpace(siteName))
+	applicationName := strings.TrimSpace(siteName)
+	if applicationName == "" {
+		applicationName = "Create"
+	}
+	writeMeta("name", "application-name", applicationName)
 	writeMeta("name", "theme-color", "#14b8a6")
 	writeTag(`<link rel="canonical" href="` + esc(canonical) + `" />`)
 	writeMeta("property", "og:type", "website")
-	writeMeta("property", "og:site_name", strings.TrimSpace(siteName))
+	writeMeta("property", "og:site_name", applicationName)
 	writeMeta("property", "og:title", doc.Title)
 	writeMeta("property", "og:description", doc.Description)
 	writeMeta("property", "og:url", canonical)
@@ -519,25 +649,44 @@ func buildSeoBlock(origin, path, siteName string) string {
 	writeMeta("name", "twitter:card", "summary")
 	writeMeta("name", "twitter:title", doc.Title)
 	writeMeta("name", "twitter:description", doc.Description)
-	b.WriteString(buildStructuredData(origin, canonical, siteName))
+	b.WriteString(buildStructuredData(origin, canonical, applicationName, doc.Aliases))
 	return b.String()
 }
 
-func buildStructuredData(origin, canonical, siteName string) string {
+func buildSeoBody(path, siteName, siteSEOKeywords string) string {
+	doc := resolveRouteSeoDoc(path, siteName, siteSEOKeywords)
+	esc := htmlpkg.EscapeString
+	var b strings.Builder
+	b.WriteString("      <main>\n")
+	b.WriteString("        <h1>" + esc(doc.Title) + "</h1>\n")
+	b.WriteString("        <p>" + esc(doc.Description) + "</p>\n")
+	b.WriteString("        <p>支持 AI 视频生成、AI 图片生成、模型价格对比与创作作品管理。</p>\n")
+	b.WriteString("        <nav><a href=\"/home\">首页</a> · <a href=\"/model-plaza\">模型广场与价格</a></nav>\n")
+	b.WriteString("      </main>")
+	return b.String()
+}
+
+func buildStructuredData(origin, canonical, siteName string, aliases []string) string {
 	name := strings.TrimSpace(siteName)
 	if name == "" {
 		name = "Create"
 	}
 	provider := map[string]any{"@type": "Organization", "name": name}
+	website := map[string]any{"@type": "WebSite", "name": name, "url": canonical}
 	if origin != "" {
 		provider["url"] = origin + "/"
 		provider["logo"] = origin + "/logo.svg"
+	}
+	if len(aliases) > 1 {
+		alternateNames := append([]string(nil), aliases[1:]...)
+		provider["alternateName"] = alternateNames
+		website["alternateName"] = alternateNames
 	}
 	payload := map[string]any{
 		"@context": "https://schema.org",
 		"@graph": []map[string]any{
 			provider,
-			{"@type": "WebSite", "name": name, "url": canonical},
+			website,
 			{
 				"@type":       "Service",
 				"name":        name + " AI 视频与图片生成服务",

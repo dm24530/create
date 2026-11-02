@@ -61,6 +61,7 @@ const messages: Record<string, string> = {
   'usage.original': 'Original',
   'usage.userBilled': 'User billed',
   'usage.accountBilled': 'Account billed',
+  'usage.accountCost': 'Cost',
   'usage.imageUnit': ' images',
   'usage.imageCount': 'Image count',
   'usage.imageBillingSize': 'Billing size',
@@ -160,6 +161,24 @@ const baseImageRow = {
 }
 
 describe('admin UsageTable tooltip', () => {
+  it('shows account cost to admins and hides it for user usage', () => {
+    const data = [{ ...baseImageRow, account_stats_cost: 0.2, account_rate_multiplier: 1.5 }]
+    const columns = [{ key: 'cost', label: 'Cost' }]
+    const adminWrapper = mount(UsageTable, {
+      props: { data, columns, showAccountBilling: true },
+      global: { stubs: { DataTable: DataTableStub, EmptyState: true, Icon: true } },
+    })
+    expect(adminWrapper.get('[data-testid="usage-account-cost"]').text()).toContain('Cost $0.300000')
+    adminWrapper.unmount()
+
+    const userWrapper = mount(UsageTable, {
+      props: { data, columns, showAccountBilling: false },
+      global: { stubs: { DataTable: DataTableStub, EmptyState: true, Icon: true } },
+    })
+    expect(userWrapper.find('[data-testid="usage-account-cost"]').exists()).toBe(false)
+    userWrapper.unmount()
+  })
+
   it('opens the public capability URL without buffering the whole image first', async () => {
     usageAPIMocks.getImageLink.mockReset()
     const open = vi.spyOn(window, 'open').mockReturnValue(null)

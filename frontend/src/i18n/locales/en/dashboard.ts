@@ -669,7 +669,7 @@ export default {
   // Model Plaza (public group/model pricing showcase)
   modelPlaza: {
     title: 'Model Plaza',
-    seoDescription: 'Browse available AI video and image generation models, groups, rates and pricing on Create Model Plaza.',
+    seoDescription: 'Browse available AI video and image generation models, groups, rates and pricing on {siteName} Model Plaza.',
     description: 'Browse available models and pricing by group',
     loading: 'Loading...',
     empty: 'No groups to display',
@@ -694,6 +694,8 @@ export default {
     },
     table: {
       model: 'Model',
+        modelCopy: 'Copy model name',
+        modelCopied: 'Model name copied',
       input: 'Input',
       output: 'Output',
       cache: 'Cache',

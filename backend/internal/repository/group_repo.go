@@ -113,6 +113,9 @@ func createGroupRecord(ctx context.Context, client *dbent.Client, groupIn *servi
 		SetNillableImagePrice1k(groupIn.ImagePrice1K).
 		SetNillableImagePrice2k(groupIn.ImagePrice2K).
 		SetNillableImagePrice4k(groupIn.ImagePrice4K).
+		SetNillableImageCostPrice1k(groupIn.ImageCostPrice1K).
+		SetNillableImageCostPrice2k(groupIn.ImageCostPrice2K).
+		SetNillableImageCostPrice4k(groupIn.ImageCostPrice4K).
 		SetBatchImageDiscountMultiplier(groupIn.BatchImageDiscountMultiplier).
 		SetBatchImageHoldMultiplier(groupIn.BatchImageHoldMultiplier).
 		SetVideoRateIndependent(groupIn.VideoRateIndependent).
@@ -304,6 +307,9 @@ func (r *groupRepository) Update(ctx context.Context, groupIn *service.Group) er
 		SetNillableImagePrice1k(groupIn.ImagePrice1K).
 		SetNillableImagePrice2k(groupIn.ImagePrice2K).
 		SetNillableImagePrice4k(groupIn.ImagePrice4K).
+		SetNillableImageCostPrice1k(groupIn.ImageCostPrice1K).
+		SetNillableImageCostPrice2k(groupIn.ImageCostPrice2K).
+		SetNillableImageCostPrice4k(groupIn.ImageCostPrice4K).
 		SetBatchImageDiscountMultiplier(groupIn.BatchImageDiscountMultiplier).
 		SetBatchImageHoldMultiplier(groupIn.BatchImageHoldMultiplier).
 		SetVideoRateIndependent(groupIn.VideoRateIndependent).
@@ -370,6 +376,21 @@ func (r *groupRepository) Update(ctx context.Context, groupIn *service.Group) er
 		builder = builder.SetImagePrice4k(*groupIn.ImagePrice4K)
 	} else {
 		builder = builder.ClearImagePrice4k()
+	}
+	if groupIn.ImageCostPrice1K != nil {
+		builder = builder.SetImageCostPrice1k(*groupIn.ImageCostPrice1K)
+	} else {
+		builder = builder.ClearImageCostPrice1k()
+	}
+	if groupIn.ImageCostPrice2K != nil {
+		builder = builder.SetImageCostPrice2k(*groupIn.ImageCostPrice2K)
+	} else {
+		builder = builder.ClearImageCostPrice2k()
+	}
+	if groupIn.ImageCostPrice4K != nil {
+		builder = builder.SetImageCostPrice4k(*groupIn.ImageCostPrice4K)
+	} else {
+		builder = builder.ClearImageCostPrice4k()
 	}
 	if groupIn.VideoPrice480P != nil {
 		builder = builder.SetVideoPrice480p(*groupIn.VideoPrice480P)
