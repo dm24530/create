@@ -84,6 +84,9 @@ docker compose -f docker-compose.create.yml up -d
 升级、回滚、同机部署和验收步骤见
 [CREATE_DEPLOY.md](deploy/CREATE_DEPLOY.md)。
 
+需求、实现、验证和遗留问题记录见
+[PROJECT_MAINTENANCE_LOG.md](docs/PROJECT_MAINTENANCE_LOG.md)。
+
 ## 本地开发
 
 后端：

@@ -580,6 +580,7 @@ describe('ImageStudioView image model loading', () => {
     expect(reportClientError).toHaveBeenCalledWith(expect.objectContaining({
       error_type: 'client_network_error',
       stage: 'image_studio_visible_error',
+      status_code: 499,
     }))
   })
 
@@ -2335,6 +2336,9 @@ describe('ImageStudioView gallery', () => {
       expect(wrapper.get('[data-testid="image-generation-failure"]').text())
         .toContain('upstream rejected immediately')
       expect(pollCalls).toBe(1)
+      expect(reportClientError).not.toHaveBeenCalledWith(expect.objectContaining({
+        stage: 'image_generation_failure',
+      }))
     } finally {
       vi.useRealTimers()
     }
@@ -2850,7 +2854,7 @@ describe('ImageStudioView gallery', () => {
 
     await vi.waitFor(() => {
       expect(wrapper.findAll('.image-pending-card')).toHaveLength(0)
-    }, { timeout: 2000, interval: 50 })
+    }, { timeout: 4000, interval: 50 })
     await wrapper.get('img[alt="生成结果 1"]').trigger('load')
     expect(reportDisplay).toHaveBeenCalledTimes(1)
     expect(saveGalleryFromTask).toHaveBeenCalledWith(expect.objectContaining({

@@ -143,6 +143,7 @@ docs/*
 !docs/SUBSITE_DOWNSTREAM_V1_PLAN.md
 !docs/COMPOSITE_GROUPS.md
 !docs/PLUGIN_DEVELOPMENT.md
+!docs/PROJECT_MAINTENANCE_LOG.md
 !docs/channel-monitor-v2-safe-defaults.md
 !docs/codex-credits.md
 !docs/legal/

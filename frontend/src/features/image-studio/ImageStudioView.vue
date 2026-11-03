@@ -764,6 +764,7 @@ import { resolveGeminiImageModelPolicy, type GeminiImageQuality } from './gemini
 import { createReferenceImagePreview } from './referenceImagePreview'
 import { extractGeminiImageResults } from './geminiImageResults'
 import { imageDownloadURL, resolveImageAssetURL } from './imageDownload'
+import { imageTaskNextPollDelay, imageTaskRetryDelay } from './imagePolling'
 import Icon from '@/components/icons/Icon.vue'
 import { useClipboard } from '@/composables/useClipboard'
 import {
@@ -3247,7 +3248,6 @@ async function retryFailedImage(image: GeneratedImage) {
   const snapshot = generationRequestSnapshots.get(String(image.batchId || ''))
   if (image.hadReferences && !snapshot?.references.length) {
     restoreComposerForManualRetry(image)
-    reportVisibleImageStudioError('原任务使用了参考图，请重新选择参考图后再生成。')
     appStore.showWarning('原任务使用了参考图，请重新选择参考图后再生成。', 5000)
     return
   }
@@ -3494,6 +3494,9 @@ function markImageFailed(image: GeneratedImage, error: unknown) {
 }
 
 function reportImageGenerationFailure(image: GeneratedImage, error: unknown, message: string) {
+  // Durable image tasks already record gateway/provider failures. Reporting the
+  // same task from the browser duplicates the ops entry and loses its status.
+  if (error instanceof ImageGatewayTaskError) return
   const key = `${image.batchId || image.id}:${message}`
   if (reportedGenerationFailures.has(key)) return
   reportedGenerationFailures.add(key)
@@ -3513,7 +3516,8 @@ function reportImageGenerationFailure(image: GeneratedImage, error: unknown, mes
     stage: 'image_generation_failure',
     error_type: errorType,
     message,
-    status_code: nestedErrorStatus(error) || undefined,
+    status_code: nestedErrorStatus(error)
+      || (errorType === 'client_timeout' ? 504 : errorType === 'client_network_error' ? 499 : 400),
     elapsed_ms: image.startedAt ? Math.max(1, Date.now() - Number(image.startedAt)) : undefined,
     request_id: String(image.gatewayTaskId || image.taskId || ''),
     request_path: image.gatewayPollUrl || '/v1/images/generations',
@@ -3537,6 +3541,7 @@ function reportVisibleImageStudioError(message: string) {
     stage: 'image_studio_visible_error',
     error_type: errorType,
     message,
+    status_code: errorType === 'client_timeout' ? 504 : errorType === 'client_network_error' ? 499 : 400,
     request_path: '/image-studio',
   }).catch(() => {
     // Reporting must never change the user-visible error.
@@ -3577,13 +3582,26 @@ function gatewayTaskPayload(payload: any) {
   return payload?.data && !payload?.task_id && !payload?.id ? payload.data : payload
 }
 
+class ImageGatewayTaskError extends Error {
+  readonly statusCode?: number
+
+  constructor(message: string, statusCode?: number) {
+    super(message)
+    this.name = 'ImageGatewayTaskError'
+    this.statusCode = statusCode
+  }
+}
+
 function gatewayTaskError(payload: any, httpStatus?: number): Error {
   const message = payload?.error?.message
     || payload?.error
     || payload?.message
     || '图片生成任务失败'
   const status = Number(payload?.http_status || httpStatus || 0)
-  return new Error(status > 0 ? `上游 API 错误 (HTTP ${status})：${message}` : String(message))
+  return new ImageGatewayTaskError(
+    status > 0 ? `上游 API 错误 (HTTP ${status})：${message}` : String(message),
+    status > 0 ? status : undefined,
+  )
 }
 
 function resolveGatewayPollUrl(raw: string) {
@@ -3644,12 +3662,6 @@ async function fetchWithTimeout(
   } finally {
     window.clearTimeout(timer)
   }
-}
-
-function gatewayPollInterval(elapsedMs: number) {
-  if (elapsedMs < 10_000) return 500
-  if (elapsedMs < 60_000) return 1500
-  return 2000
 }
 
 function imageResultWithTaskTiming(
@@ -3736,7 +3748,7 @@ async function pollGatewayImageTask(
       if (error instanceof ImageGenerationWaitCancelled) throw error
       if (isTransientGatewayError(error)) {
         if (Date.now() < deadline) {
-          await waitForGatewayPollRetry(gatewayPollInterval(Date.now() - pollStartedAt))
+          await waitForGatewayPollRetry(imageTaskRetryDelay(Date.now() - pollStartedAt))
           continue
         }
         throw new Error(IMAGE_GENERATION_TIMEOUT_MESSAGE)
@@ -3745,7 +3757,7 @@ async function pollGatewayImageTask(
     }
     if (isTransientGatewayStatus(response.status)) {
       if (Date.now() < deadline) {
-        await waitForGatewayPollRetry(gatewayPollInterval(Date.now() - pollStartedAt))
+        await waitForGatewayPollRetry(imageTaskRetryDelay(Date.now() - pollStartedAt))
         continue
       }
       throw new Error(IMAGE_GENERATION_TIMEOUT_MESSAGE)
@@ -3754,7 +3766,9 @@ async function pollGatewayImageTask(
     const task = gatewayTaskPayload(payload)
     const settled = resolveTask(task)
     if (settled) return settled
-    await waitForGatewayPollRetry(gatewayPollInterval(Date.now() - pollStartedAt))
+    await waitForGatewayPollRetry(
+      imageTaskNextPollDelay(Date.now() - pollStartedAt, previewDelivered),
+    )
   }
 
   throw new Error(IMAGE_GENERATION_TIMEOUT_MESSAGE)

@@ -56,6 +56,7 @@ const geminiAsyncImageMaxInlineBytes = 12 << 20
 const geminiAsyncImageMaxSingleInlineBytes = 8 << 20
 
 var errGeminiImageOutputMissing = errors.New("gemini response contained no image output")
+var errImageTaskRequestBodyEmpty = errors.New("image task request body is empty")
 
 type asyncGeminiTaskEnvelope struct {
 	Model        string          `json:"model"`
@@ -562,9 +563,13 @@ func buildClientImageErrorEntry(
 	}
 	statusCode := input.StatusCode
 	if statusCode < 400 || statusCode > 599 {
-		statusCode = http.StatusInternalServerError
-		if strings.Contains(strings.ToLower(errorType), "timeout") {
+		switch {
+		case strings.Contains(strings.ToLower(errorType), "timeout"):
 			statusCode = http.StatusGatewayTimeout
+		case strings.Contains(strings.ToLower(errorType), "network"):
+			statusCode = 499
+		default:
+			statusCode = http.StatusBadRequest
 		}
 	}
 	requestID := truncateString(singleLine(input.RequestID), 128)
@@ -764,7 +769,11 @@ func (h *AsyncImageHandler) recoverPending() {
 		taskCtx, recorder, cancel, err := h.contextFromTask(task)
 		if err != nil {
 			cancel()
-			h.failTask(task.ID, http.StatusServiceUnavailable, imageTaskErrorPayload("api_error", err.Error()))
+			statusCode := http.StatusServiceUnavailable
+			if errors.Is(err, errImageTaskRequestBodyEmpty) {
+				statusCode = http.StatusBadRequest
+			}
+			h.failTask(task.ID, statusCode, imageTaskErrorPayload("api_error", err.Error()))
 			_ = h.tasks.ReleaseClaim(ctx, task.ID)
 			continue
 		}
@@ -802,6 +811,10 @@ func newImageTaskContext(
 	if err != nil {
 		cancel()
 		return nil, nil, func() {}, errors.New("image task request body is corrupted")
+	}
+	if len(body) == 0 {
+		cancel()
+		return nil, nil, func() {}, errImageTaskRequestBodyEmpty
 	}
 	path := strings.TrimSpace(task.Execution.RequestPath)
 	if path == "" {

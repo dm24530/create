@@ -1110,6 +1110,23 @@ func TestNewImageTaskContextRestoresRequestDetails(t *testing.T) {
 	}
 }
 
+func TestNewImageTaskContextRejectsEmptyRequestBody(t *testing.T) {
+	apiKey := &service.APIKey{ID: 9, UserID: 7, Key: "sk-test"}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	task := &service.ImageTaskRecord{
+		ID: "imgtask_empty_body",
+		Execution: &service.ImageTaskExecution{
+			Platform:    service.PlatformOpenAI,
+			RequestPath: "/v1/images/generations",
+			ContentType: "application/json",
+		},
+	}
+
+	_, _, _, err := newImageTaskContext(task, apiKey, ctx, cancel)
+
+	require.ErrorIs(t, err, errImageTaskRequestBodyEmpty)
+}
+
 func mustForcePlatform(c *gin.Context) string {
 	platform, _ := middleware2.GetForcePlatformFromContext(c)
 	return platform
@@ -1190,6 +1207,21 @@ func TestBuildClientImageErrorEntry(t *testing.T) {
 	require.Equal(t, "client_request", entry.ErrorSource)
 	require.Equal(t, "client", entry.ErrorOwner)
 	require.Equal(t, "/v1/images/generations", entry.RequestPath)
+}
+
+func TestBuildClientImageErrorEntryUsesBadRequestForMissingStatus(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/image-studio/client-errors", nil)
+	subject := &middleware2.AuthSubject{UserID: 42}
+	entry := buildClientImageErrorEntry(&imageStudioClientErrorRequest{
+		Stage:     "image_studio_visible_error",
+		ErrorType: "client_visible_error",
+		Message:   "原任务使用了参考图，请重新选择参考图后再生成。",
+	}, subject, c)
+
+	require.NotNil(t, entry)
+	require.Equal(t, http.StatusBadRequest, entry.StatusCode)
+	require.Equal(t, "client_request", entry.ErrorSource)
 }
 
 func TestReportClientImageErrorEnqueuesOpsLog(t *testing.T) {
