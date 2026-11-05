@@ -65,7 +65,7 @@ func legacyIsUpstreamBillingProbeIdentity(platform, accountType string) bool {
 
 func legacyIsHeaderOverrideEligible(platform, accountType string) bool {
 	switch platform {
-	case PlatformAnthropic, PlatformOpenAI, PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax, PlatformOpenCodeGo, PlatformCommandCode, PlatformCline:
+	case PlatformAnthropic, PlatformOpenAI, PlatformGemini, PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax, PlatformOpenCodeGo, PlatformCommandCode, PlatformCline:
 		return accountType == AccountTypeAPIKey
 	case PlatformGrok:
 		return accountType == AccountTypeAPIKey || accountType == AccountTypeOAuth

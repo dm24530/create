@@ -139,7 +139,12 @@ func TestGeminiForwardAsChatCompletions_StreamsOpenAIChunksFromGeminiSSE(t *test
 		Platform: PlatformGemini,
 		Type:     AccountTypeAPIKey,
 		Credentials: map[string]any{
-			"api_key": "gemini-api-key",
+			"api_key":                    "gemini-api-key",
+			credKeyHeaderOverrideEnabled: true,
+			credKeyHeaderOverrides: map[string]any{
+				"cf-access-client-id":     "access-id",
+				"cf-access-client-secret": "access-secret",
+			},
 		},
 		Concurrency: 1,
 	}
@@ -160,6 +165,8 @@ func TestGeminiForwardAsChatCompletions_StreamsOpenAIChunksFromGeminiSSE(t *test
 	require.NotNil(t, httpStub.lastReq)
 	require.Contains(t, httpStub.lastReq.URL.String(), "/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse")
 	require.Equal(t, "gemini-api-key", httpStub.lastReq.Header.Get("x-goog-api-key"))
+	require.Equal(t, "access-id", getHeaderRaw(httpStub.lastReq.Header, "cf-access-client-id"))
+	require.Equal(t, "access-secret", getHeaderRaw(httpStub.lastReq.Header, "cf-access-client-secret"))
 
 	out := rec.Body.String()
 	require.Contains(t, out, `"object":"chat.completion.chunk"`)

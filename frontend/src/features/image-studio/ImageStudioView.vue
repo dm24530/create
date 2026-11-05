@@ -1170,7 +1170,7 @@ const geminiAspectBaseOptions = [
   { value: 3840, label: '4K' },
 ]
 const gptAspectBaseOptions = [
-  { value: 1024, label: '默认' },
+  { value: 1024, label: '1K' },
   { value: 2048, label: '2K' },
   { value: 3840, label: '4K' },
 ]
@@ -1520,7 +1520,7 @@ function applyRatioPreset(base: number, ratio: string) {
   appliedSize.aspectBase = base
   appliedSize.aspectRatio = ratio
   appliedSize.useCustomRatio = false
-  if (isGeminiImageModel.value) {
+  if (isGeminiImageModel.value || isGptImageModel.value) {
     quality.value = qualityForAspectBase(base)
   }
   sizeMenuOpen.value = false
@@ -1529,10 +1529,15 @@ function applyRatioPreset(base: number, ratio: string) {
 
 function selectQuality(value: string) {
   quality.value = value
-  if (!isGeminiImageModel.value) return
-  if (value === 'high') appliedSize.aspectBase = 3840
-  else if (value === 'medium') appliedSize.aspectBase = 2048
-  else if (value === 'low') appliedSize.aspectBase = 1024
+  if (!isGeminiImageModel.value && !isGptImageModel.value) return
+  const base = aspectBaseForQuality(value)
+  if (!base) return
+  appliedSize.mode = 'ratio'
+  appliedSize.useCustomRatio = false
+  appliedSize.aspectBase = base
+  if (isGptImageModel.value && !gptBaseDimensions[appliedSize.aspectRatio]) {
+    appliedSize.aspectRatio = '1:1'
+  }
 }
 
 function resetParametersForModel(model: string) {
@@ -1553,7 +1558,7 @@ function resetParametersForModel(model: string) {
   }
 
   if (model.toLowerCase().includes('gpt-image')) {
-    appliedSize.aspectBase = 1024
+    appliedSize.aspectBase = aspectBaseForQuality(quality.value) || 1024
     if (!gptBaseDimensions[appliedSize.aspectRatio]) {
       appliedSize.aspectRatio = '1:1'
     }
@@ -1584,6 +1589,13 @@ function qualityForAspectBase(base: number) {
   if (base >= 3840) return 'high'
   if (base >= 2048) return 'medium'
   return 'low'
+}
+
+function aspectBaseForQuality(value: string) {
+  if (value === 'high') return 3840
+  if (value === 'medium') return 2048
+  if (value === 'low') return 1024
+  return 0
 }
 
 function grokResolutionForBase(base: number) {

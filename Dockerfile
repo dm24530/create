@@ -67,10 +67,6 @@ RUN pnpm run build
 # build (emulated networking here was dropping module fetches with EOF).
 FROM --platform=${BUILDPLATFORM} ${GOLANG_IMAGE} AS backend-builder
 
-# Build arguments for version info (set by CI)
-ARG VERSION=
-ARG COMMIT=docker
-ARG DATE
 ARG GOPROXY
 ARG GOSUMDB
 # Populated by buildx from the --platform target (e.g. linux/amd64).
@@ -81,7 +77,7 @@ ENV GOPROXY=${GOPROXY}
 ENV GOSUMDB=${GOSUMDB}
 
 # Install build dependencies
-RUN sed -i 's#https://dl-cdn.alpinelinux.org#https://mirror.sjtu.edu.cn#g' /etc/apk/repositories && \
+RUN sed -i 's#https://dl-cdn.alpinelinux.org#https://mirrors.aliyun.com#g' /etc/apk/repositories && \
     apk add --no-cache git ca-certificates tzdata
 
 WORKDIR /app/backend
@@ -98,6 +94,12 @@ COPY backend/ ./
 
 # Copy frontend dist from previous stage (must be after backend copy to avoid being overwritten)
 COPY --from=frontend-builder /app/backend/internal/web/dist ./internal/web/dist
+
+# Version metadata changes should only invalidate the final compile layer, not
+# dependency installation or source-copy layers.
+ARG VERSION=
+ARG COMMIT=docker
+ARG DATE
 
 # Build the binary (BuildType=release for CI builds, embed frontend)
 # Version precedence: build arg VERSION > exact git tag > cmd/server/VERSION
@@ -129,7 +131,7 @@ LABEL description="Create - AI Video & Image Generation Platform"
 LABEL org.opencontainers.image.source="https://github.com/diminglucky/create"
 
 # Install runtime dependencies
-RUN sed -i 's#https://dl-cdn.alpinelinux.org#https://mirror.sjtu.edu.cn#g' /etc/apk/repositories && \
+RUN sed -i 's#https://dl-cdn.alpinelinux.org#https://mirrors.aliyun.com#g' /etc/apk/repositories && \
     apk add --no-cache \
     ca-certificates \
     tzdata \

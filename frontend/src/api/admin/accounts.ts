@@ -647,6 +647,8 @@ export interface SyncUpstreamPreviewParams {
   base_url?: string
   api_key: string
   model_mapping?: Record<string, string>
+  header_override_enabled?: boolean
+  header_overrides?: Record<string, string>
 }
 
 /**

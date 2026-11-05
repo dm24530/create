@@ -4446,13 +4446,22 @@ const syncPreviewCredentials = computed(() => {
     allowedModels.value,
     modelMappings.value
   )
-  return {
+  const credentials = {
     platform: form.platform,
     type: form.type,
     base_url: baseUrl || undefined,
     api_key: apiKeyValue.value,
     ...(modelMapping ? { model_mapping: modelMapping } : {})
+  } as {
+    platform: string
+    type: string
+    base_url?: string
+    api_key: string
+  } & Record<string, unknown>
+  if (isHeaderOverrideCapable(form.platform, form.type) && headerOverrideEnabled.value) {
+    applyHeaderOverride(credentials, true, headerOverrideRows.value, 'create')
   }
+  return credentials
 })
 
 const editQuotaLimit = ref<number | null>(null)

@@ -202,8 +202,12 @@ describe('isHeaderOverrideCapable', () => {
     expect(isHeaderOverrideCapable('grok', 'bedrock')).toBe(false)
   })
 
+  it('gemini supports apikey accounts for third-party gateways', () => {
+    expect(isHeaderOverrideCapable('gemini', 'apikey')).toBe(true)
+    expect(isHeaderOverrideCapable('gemini', 'oauth')).toBe(false)
+  })
+
   it('other platforms are not supported', () => {
-    expect(isHeaderOverrideCapable('gemini', 'apikey')).toBe(false)
     expect(isHeaderOverrideCapable('antigravity', 'apikey')).toBe(false)
     expect(isHeaderOverrideCapable('', 'apikey')).toBe(false)
   })

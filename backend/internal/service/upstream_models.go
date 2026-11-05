@@ -1147,6 +1147,8 @@ func (s *AccountTestService) buildGeminiUpstreamModelsRequest(ctx context.Contex
 			fmt.Sprintf("Unsupported Gemini account type for upstream model sync: %s", account.Type), nil,
 		)
 	}
+	// 第三方 Gemini 网关可能需要 Cloudflare Access 等额外准入头。
+	account.ApplyHeaderOverrides(req.Header)
 
 	return req, nil
 }

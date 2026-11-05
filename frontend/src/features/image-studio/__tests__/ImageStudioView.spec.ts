@@ -692,7 +692,7 @@ describe('ImageStudioView inline image size controls', () => {
     await wrapper.get('[data-testid="image-size-trigger"]').trigger('click')
 
     const menuText = wrapper.get('[data-testid="image-size-menu"]').text()
-    expect(menuText).toContain('默认')
+    expect(menuText).toContain('1K')
     expect(menuText).toContain('2K')
     expect(menuText).toContain('4K')
     expect(menuText).toContain('1:1 1024x1024')
@@ -4664,6 +4664,44 @@ describe('ImageStudioView composer controls', () => {
       aspectRatio: '1:1',
       imageSize: '4K',
     })
+  })
+
+  it('maps GPT image quality to 4K, 2K and 1K size presets', async () => {
+    listKeys.mockResolvedValue({
+      items: [{
+        id: 1,
+        name: 'openai',
+        key: 'sk-openai',
+        status: 'active',
+        group_id: 2,
+        group: { platform: 'openai', allow_image_generation: true },
+      }],
+    })
+    getPublicSettings.mockResolvedValue({ api_base_url: '/v1' })
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/images/batches/models')) {
+        return {
+          ok: true,
+          json: async () => ({ data: [{ id: 'gpt-image-2-5-sunburst' }] }),
+        } as Response
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountImageStudio()
+    await flushPromises()
+    await flushPromises()
+
+    const qualityButtons = wrapper.get('[data-testid="quality-select"]').findAll('button')
+    await qualityButtons[1].trigger('click')
+    expect(wrapper.get('[data-testid="image-size-trigger"]').text()).toContain('1:1 2880x2880')
+
+    await qualityButtons[2].trigger('click')
+    expect(wrapper.get('[data-testid="image-size-trigger"]').text()).toContain('1:1 2048x2048')
+
+    await qualityButtons[3].trigger('click')
+    expect(wrapper.get('[data-testid="image-size-trigger"]').text()).toContain('1:1 1024x1024')
   })
 
   it('resets model-specific size and background controls when switching models', async () => {

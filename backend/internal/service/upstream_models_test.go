@@ -301,13 +301,20 @@ func TestBuildUpstreamModelsRequestsForAPIKeyAccounts(t *testing.T) {
 		Platform: PlatformGemini,
 		Type:     AccountTypeAPIKey,
 		Credentials: map[string]any{
-			"api_key":  "gemini-key",
-			"base_url": "https://generativelanguage.googleapis.com/v1beta",
+			"api_key":                    "gemini-key",
+			"base_url":                   "https://generativelanguage.googleapis.com/v1beta",
+			credKeyHeaderOverrideEnabled: true,
+			credKeyHeaderOverrides: map[string]any{
+				"cf-access-client-id":     "access-id",
+				"cf-access-client-secret": "access-secret",
+			},
 		},
 	})
 	require.NoError(t, err)
 	require.Equal(t, "https://generativelanguage.googleapis.com/v1beta/models", geminiReq.URL.String())
 	require.Equal(t, "gemini-key", geminiReq.Header.Get("x-goog-api-key"))
+	require.Equal(t, "access-id", getHeaderRaw(geminiReq.Header, "cf-access-client-id"))
+	require.Equal(t, "access-secret", getHeaderRaw(geminiReq.Header, "cf-access-client-secret"))
 
 	antigravityReq, err := svc.buildAntigravityAPIKeyModelsRequest(ctx, &Account{
 		Platform: PlatformAntigravity,

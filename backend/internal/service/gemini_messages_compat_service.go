@@ -689,6 +689,7 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 			}
 			upstreamReq.Header.Set("Content-Type", "application/json")
 			upstreamReq.Header.Set("x-goog-api-key", apiKey)
+			account.ApplyHeaderOverrides(upstreamReq.Header)
 			return upstreamReq, "x-request-id", nil
 		}
 		requestIDHeader = "x-request-id"
@@ -1236,6 +1237,7 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 			}
 			upstreamReq.Header.Set("Content-Type", "application/json")
 			upstreamReq.Header.Set("x-goog-api-key", apiKey)
+			account.ApplyHeaderOverrides(upstreamReq.Header)
 			return upstreamReq, "x-request-id", nil
 		}
 		requestIDHeader = "x-request-id"
@@ -2905,6 +2907,7 @@ func (s *GeminiMessagesCompatService) ForwardAIStudioGET(ctx context.Context, ac
 	default:
 		return nil, fmt.Errorf("unsupported account type: %s", account.Type)
 	}
+	account.ApplyHeaderOverrides(req.Header)
 
 	resp, err := s.httpUpstream.Do(req, proxyURL, account.ID, account.Concurrency)
 	if err != nil {

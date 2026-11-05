@@ -42,9 +42,13 @@ type syncUpstreamHTTPUpstream struct {
 	resp      *http.Response
 	responses []*http.Response
 	err       error
+	lastReq   *http.Request
+	requests  []*http.Request
 }
 
 func (u *syncUpstreamHTTPUpstream) Do(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error) {
+	u.lastReq = req
+	u.requests = append(u.requests, req)
 	if u.err != nil {
 		return nil, u.err
 	}
@@ -489,6 +493,47 @@ func TestAccountHandlerSyncUpstreamModelsPreviewUsesProvidedModelMapping(t *test
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
 	require.Equal(t, []string{"glm-5.3"}, resp.Data.Models)
 	require.Equal(t, []string{"low", "high"}, resp.Data.Metadata["glm-5.3"].SupportedReasoningLevels)
+}
+
+func TestAccountHandlerSyncUpstreamModelsPreviewAppliesHeaderOverrides(t *testing.T) {
+	upstream := &syncUpstreamHTTPUpstream{
+		resp: &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body: io.NopCloser(strings.NewReader(`{
+				"models": [
+					{"name": "models/gemini-3.6-flash"}
+				]
+			}`)),
+		},
+	}
+	router := setupSyncUpstreamModelsRouter(newStubAdminService(), upstream)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/admin/accounts/models/sync-upstream-preview",
+		strings.NewReader(`{
+			"platform":"gemini",
+			"type":"apikey",
+			"base_url":"https://gemini.superai.sbs",
+			"api_key":"sk-gemini-test",
+			"header_override_enabled":true,
+			"header_overrides":{
+				"cf-access-client-id":"access-id",
+				"cf-access-client-secret":"access-secret"
+			}
+		}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.NotEmpty(t, upstream.requests)
+	modelReq := upstream.requests[0]
+	require.Equal(t, "https://gemini.superai.sbs/v1beta/models", modelReq.URL.String())
+	require.Equal(t, []string{"access-id"}, modelReq.Header["cf-access-client-id"])
+	require.Equal(t, []string{"access-secret"}, modelReq.Header["cf-access-client-secret"])
 }
 
 func TestAccountHandlerSyncUpstreamModels_UpstreamErrorDoesNotExposeBody(t *testing.T) {

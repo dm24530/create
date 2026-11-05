@@ -54,6 +54,61 @@
 
 ## 变更记录
 
+### v0.2.38 - 2026-11-05
+
+标签：`[Gemini]` `[请求头覆写]` `[GPT图片]` `[图片工作台]` `[Docker]`
+
+需求：
+
+- GPT 图片模型选择高、中、低质量时，同步切换到 4K、2K、1K 尺寸档位。
+- Gemini API Key 账号需要支持第三方网关所需的 Header Override。
+- 本地 Docker 启动应显示当前发布版本，不能回退到旧 `VERSION`。
+
+实现：
+
+- GPT 图片质量与尺寸联动：
+  - 高 → 4K 档
+  - 中 → 2K 档
+  - 低 → 1K 档
+- `1:1` 高画质受上游总像素上限约束，实际为 `2880x2880`。
+- `16:9` 高画质实际为 `3840x2160`。
+- GPT 尺寸预设反向同步质量按钮。
+- Gemini API Key 账号加入 Header Override 资格。
+- Gemini Chat Completions、Messages、原生 GET 和上游模型同步都会应用自定义请求头。
+- 管理员同步模型预览支持传入 Header Override。
+- 前端 Gemini API Key 账号支持提交 Header Override。
+- Docker 构建参数 `VERSION/COMMIT/DATE` 移到最终编译步骤，避免改版本导致依赖层重建。
+- Alpine 软件源切换为阿里云镜像。
+- `backend/cmd/server/VERSION` 与发布 tag 同步。
+
+涉及文件：
+
+- `frontend/src/features/image-studio/ImageStudioView.vue`
+- `frontend/src/features/image-studio/__tests__/ImageStudioView.spec.ts`
+- `backend/internal/service/account_header_override.go`
+- `backend/internal/service/gemini_chat_completions_compat_service.go`
+- `backend/internal/service/gemini_messages_compat_service.go`
+- `backend/internal/service/upstream_models.go`
+- `backend/internal/handler/admin/account_handler.go`
+- `frontend/src/components/account/CreateAccountModal.vue`
+- `frontend/src/components/account/credentialsBuilder.ts`
+- `Dockerfile`
+- `backend/cmd/server/VERSION`
+
+验证：
+
+- 图片工作台测试 `106` 项通过。
+- Gemini Header Override 服务测试通过。
+- 管理员同步上游模型请求头测试通过。
+- 前端凭据构建测试 `72` 项通过。
+- `vue-tsc --noEmit` 通过。
+- 本地 `0.2.37` 验证完成后升级到 `0.2.38` 发布。
+
+遗留：
+
+- BotCF 视频仍需专用接口适配。
+- Dockerfile 和 VERSION 的本地修复需要随本版本发布。
+
 ### v0.2.37 - 2026-11-03
 
 标签：`[图片工作台]` `[轮询]` `[错误处理]` `[运维日志]`
