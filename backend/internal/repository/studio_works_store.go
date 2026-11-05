@@ -349,12 +349,12 @@ func (s *studioWorksDB) reconcileTemporaryExpiry(
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE studio_works
 		SET expires_at = created_at + (
-			CASE WHEN kind = 'video' THEN $2 ELSE $1 END * INTERVAL '1 second'
+			CASE WHEN kind = 'video' THEN $2::bigint ELSE $1::bigint END * INTERVAL '1 second'
 		)
 		WHERE saved = FALSE
 		  AND expires_at IS NOT NULL
 		  AND expires_at IS DISTINCT FROM created_at + (
-			CASE WHEN kind = 'video' THEN $2 ELSE $1 END * INTERVAL '1 second'
+			CASE WHEN kind = 'video' THEN $2::bigint ELSE $1::bigint END * INTERVAL '1 second'
 		  )`,
 		imageRetentionSeconds,
 		videoRetentionSeconds)

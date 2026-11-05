@@ -8,6 +8,22 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestStudioWorksReconcileTemporaryExpiryCastsRetentionSeconds(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	store := &studioWorksDB{db: db}
+
+	mock.ExpectExec(`(?s)UPDATE studio_works.*CASE WHEN kind = 'video' THEN \$2::bigint ELSE \$1::bigint END \* INTERVAL '1 second'.*WHERE saved = FALSE`).
+		WithArgs(int64(86400), int64(604800)).
+		WillReturnResult(sqlmock.NewResult(0, 2))
+
+	affected, err := store.reconcileTemporaryExpiry(context.Background(), 86400, 604800)
+	require.NoError(t, err)
+	require.Equal(t, int64(2), affected)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestStudioWorksListScansNullableDuration(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)

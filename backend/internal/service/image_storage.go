@@ -40,6 +40,8 @@ func NormalizeImageOutputFormat(value string) string {
 		return "jpeg"
 	case "png":
 		return "png"
+	case "gif":
+		return "gif"
 	default:
 		return ""
 	}
@@ -79,6 +81,9 @@ func TranscodeImageOutput(data []byte, contentType, outputFormat string) ([]byte
 	contentType = detectedImageContentType(data)
 	if contentType == "" {
 		contentType = declaredContentType
+	}
+	if targetFormat != "jpeg" && targetFormat != "png" {
+		return data, contentType, nil
 	}
 	if (targetFormat == "jpeg" && contentType == "image/jpeg") ||
 		(targetFormat == "png" && contentType == "image/png") {

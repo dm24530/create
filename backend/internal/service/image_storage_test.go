@@ -8,6 +8,7 @@ import (
 	"errors"
 	"image"
 	"image/color"
+	"image/gif"
 	"image/jpeg"
 	"image/png"
 	"net/http"
@@ -167,6 +168,26 @@ func TestTranscodeImageOutputFlattensTransparencyToWhiteForJPEG(t *testing.T) {
 	require.Greater(t, red>>8, uint32(240))
 	require.Greater(t, green>>8, uint32(240))
 	require.Greater(t, blue>>8, uint32(240))
+}
+
+func TestTranscodeImageOutputPreservesGIF(t *testing.T) {
+	source := image.NewPaletted(image.Rect(0, 0, 2, 2), color.Palette{
+		color.RGBA{R: 255, A: 255},
+		color.RGBA{G: 255, A: 255},
+	})
+	var gifData bytes.Buffer
+	require.NoError(t, gif.Encode(&gifData, source, nil))
+
+	data, contentType, err := TranscodeImageOutput(
+		gifData.Bytes(),
+		"application/octet-stream",
+		"gif",
+	)
+	require.NoError(t, err)
+	require.Equal(t, "image/gif", contentType)
+	require.Equal(t, gifData.Bytes(), data)
+	require.Equal(t, "gif", NormalizeImageOutputFormat("gif"))
+	require.Equal(t, "gif", ImageOutputFormatFromObjectKey("generated.gif"))
 }
 
 func TestImageResultUploaderUsesOpaqueUserStorageKey(t *testing.T) {

@@ -126,7 +126,7 @@
                   v-if="!isImageMediaFailed(image) && imageMediaDisplaySrc(image)"
                   :key="imageMediaRenderKey(image)"
                   :src="imageMediaDisplaySrc(image)"
-                  :srcset="image.thumbSrcSet"
+                  :srcset="isAnimatedImage(image) ? undefined : image.thumbSrcSet"
                   :ref="(element) => bindImageMediaElement(image, element)"
                   :alt="image.title"
                   :loading="image.gatewayTaskId ? 'eager' : 'lazy'"
@@ -392,7 +392,8 @@
           <div class="image-composer__field">
             <span class="image-composer__label">格式</span>
             <div
-              class="image-composer__segmented image-composer__segmented--three"
+              class="image-composer__segmented"
+              :class="formatOptions.length > 3 ? 'image-composer__segmented--four' : 'image-composer__segmented--three'"
               data-testid="image-format-control"
               role="group"
               aria-label="图片格式"
@@ -1267,11 +1268,22 @@ const qualityOptions = [
   { value: 'medium', label: '中' },
   { value: 'high', label: '高' },
 ]
-const formatOptions = [
+const baseFormatOptions = [
   { value: 'png', label: 'PNG' },
   { value: 'jpeg', label: 'JPEG' },
   { value: 'webp', label: 'WEBP' },
 ]
+const gifFormatOption = { value: 'gif', label: 'GIF' }
+const imageFormatValues = new Set([...baseFormatOptions.map((option) => option.value), gifFormatOption.value])
+const supportsGifOutput = computed(() => imageModel.value.toLowerCase().includes('gpt-image-2-6'))
+const formatOptions = computed(() => (
+  supportsGifOutput.value ? [...baseFormatOptions, gifFormatOption] : baseFormatOptions
+))
+watch(supportsGifOutput, (supported) => {
+  if (!supported && format.value === gifFormatOption.value) {
+    format.value = 'png'
+  }
+})
 const backgroundOptions = [
   { value: 'auto', label: '自动' },
   { value: 'transparent', label: '透明' },
@@ -2458,8 +2470,14 @@ function imageMediaRenderKey(image: GeneratedImage, scope = 'card') {
   return `${scope}-${imageMediaId(image)}-${imageMediaRetryNonce.value.get(imageMediaId(image)) || 0}`
 }
 
+function isAnimatedImage(image: GeneratedImage) {
+  return normalizeImageFormat(image.format) === gifFormatOption.value
+    || /^data:image\/gif(?:;|,)/i.test(image.src)
+    || /\.gif(?:[?#]|$)/i.test(image.src)
+}
+
 function imageMediaDisplaySrc(image: GeneratedImage, preferred?: string) {
-  const source = preferred || image.thumbSrc || image.src
+  const source = preferred || (isAnimatedImage(image) ? image.src : image.thumbSrc) || image.src
   const nonce = imageMediaRetryNonce.value.get(imageMediaId(image)) || 0
   if (!nonce || !/^https?:\/\//i.test(source)) return source
   try {
@@ -2472,7 +2490,7 @@ function imageMediaDisplaySrc(image: GeneratedImage, preferred?: string) {
 }
 
 function isShowingThumbnail(image: GeneratedImage) {
-  return Boolean(image.thumbSrc && image.src && image.thumbSrc !== image.src)
+  return !isAnimatedImage(image) && Boolean(image.thumbSrc && image.src && image.thumbSrc !== image.src)
 }
 
 function isPreviewShowingThumbnail(image: GeneratedImage) {
@@ -2803,18 +2821,38 @@ async function confirmRemoveGalleryImage() {
 function imageFormatFromSource(src: string, fallback: string): string {
   const match = /^data:image\/([^;,]+)/i.exec(src)
   const mime = match?.[1]?.toLowerCase().replace('jpg', 'jpeg')
-  return mime && formatOptions.some((option) => option.value === mime) ? mime : fallback
+  return mime && imageFormatValues.has(mime) ? mime : fallback
 }
 
 function imageFormatFromResult(item: any, src: string, fallback: string): string {
+  const outputFormat = normalizeImageFormat(item?.output_format)
+  if (outputFormat) return outputFormat
   const mime = String(item?.mimeType || item?.mime_type || '')
     .trim()
     .toLowerCase()
     .replace('image/jpg', 'image/jpeg')
   const format = mime.startsWith('image/') ? mime.slice('image/'.length) : ''
-  return format && formatOptions.some((option) => option.value === format)
+  return format && imageFormatValues.has(format)
     ? format
     : imageFormatFromSource(src, fallback)
+}
+
+function normalizeImageFormat(value: unknown): string {
+  const format = String(value || '').trim().toLowerCase().replace('jpg', 'jpeg')
+  return imageFormatValues.has(format) ? format : ''
+}
+
+function imageMIMETypeForFormat(value: unknown): string {
+  switch (normalizeImageFormat(value)) {
+    case 'jpeg':
+      return 'image/jpeg'
+    case 'webp':
+      return 'image/webp'
+    case 'gif':
+      return 'image/gif'
+    default:
+      return 'image/png'
+  }
 }
 
 async function loadModels() {
@@ -4279,7 +4317,8 @@ async function finishGenerationBatch(
   const needsLocalResize = imageNeedsLocalResize(requestedSize, IMAGE_MAX_EDGE)
   for (let index = 0; index < items.length; index += 1) {
     const item = items[index]
-    const mime = String(item.mimeType || item.mime_type || 'image/png')
+    const resultFormat = imageFormatFromResult(item, '', requestedFormat)
+    const mime = String(item.mimeType || item.mime_type || imageMIMETypeForFormat(resultFormat))
     const b64 = String(item.b64_json || item.data || '')
     const rawSrc = b64
       ? `data:${mime};base64,${b64}`
@@ -4312,7 +4351,7 @@ async function finishGenerationBatch(
       startedAt: firstPending?.startedAt,
     }
     generated.push(generatedImage)
-    if (needsLocalResize) {
+    if (needsLocalResize && actualFormat !== gifFormatOption.value) {
       resizeTargets.push({ image: generatedImage, source: rawSrc })
     }
   }
@@ -4648,7 +4687,7 @@ function applyPreviewSettings(image: GeneratedImage) {
   if (image.model && imageModels.value.includes(image.model)) {
     imageModel.value = image.model
   }
-  if (image.format && formatOptions.some((option) => option.value === image.format)) {
+  if (image.format && formatOptions.value.some((option) => option.value === image.format)) {
     format.value = image.format
   }
   if (image.quality && qualityOptions.some((option) => option.value === image.quality)) {
@@ -6019,6 +6058,10 @@ onBeforeUnmount(() => {
 
 .image-composer__segmented--three {
   grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.image-composer__segmented--four {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .image-composer__segmented button {

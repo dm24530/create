@@ -307,11 +307,12 @@ func buildOpenAIImagesStreamCompletedPayload(
 }
 
 func openAIImageOutputMIMEType(outputFormat string) string {
+	outputFormat = strings.TrimSpace(outputFormat)
 	if outputFormat == "" {
 		return "image/png"
 	}
 	if strings.Contains(outputFormat, "/") {
-		return outputFormat
+		return strings.ToLower(outputFormat)
 	}
 	switch strings.ToLower(strings.TrimSpace(outputFormat)) {
 	case "png":
@@ -320,6 +321,8 @@ func openAIImageOutputMIMEType(outputFormat string) string {
 		return "image/jpeg"
 	case "webp":
 		return "image/webp"
+	case "gif":
+		return "image/gif"
 	default:
 		return "image/png"
 	}

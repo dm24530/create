@@ -2247,3 +2247,8 @@ func TestOpenAIGatewayServiceForwardImages_OAuthStreamingDrainsAfterClientDiscon
 	require.Equal(t, 9, result.Usage.OutputTokens)
 	require.Equal(t, 4, result.Usage.ImageOutputTokens)
 }
+
+func TestOpenAIImageOutputMIMETypeRecognizesGIF(t *testing.T) {
+	require.Equal(t, "image/gif", openAIImageOutputMIMEType("gif"))
+	require.Equal(t, "image/gif", openAIImageOutputMIMEType(" image/GIF "))
+}

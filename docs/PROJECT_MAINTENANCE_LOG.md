@@ -54,6 +54,54 @@
 
 ## 变更记录
 
+### v0.2.39 - 2026-11-05
+
+标签：`[图片工作台]` `[GIF]` `[gpt-image-2-6]` `[数据库]` `[临时作品]`
+
+需求：
+
+- 图片工作台需要支持 `gpt-image-2-6` 的 GIF 输出，避免结果始终显示为静图。
+- PostgreSQL 临时作品过期时间清理不应出现 `text * interval` 类型错误。
+
+实现：
+
+- 仅当模型名包含 `gpt-image-2-6` 时显示 GIF 格式选项，切换其他模型时自动回退 PNG。
+- OpenAI Images 请求继续透传 `output_format: gif`。
+- 同步图片响应可从 `output_format` 识别 GIF，并用 `image/gif` 构造 Base64 数据 URL。
+- GIF 结果卡片优先展示原图，不再使用后端 JPEG 静态缩略图；GIF 跳过本地 Canvas 尺寸处理，避免动图被压成首帧。
+- 后端 OpenAI 图片 MIME 映射补充 `gif`，图片存储保留 GIF 字节与 `.gif` 对象键。
+- `studio_works` 临时过期时间 SQL 为保留时长参数显式添加 `::bigint`，修复 PostgreSQL 无法执行 `text * interval` 的问题。
+
+涉及文件：
+
+- `frontend/src/features/image-studio/ImageStudioView.vue`
+- `frontend/src/features/image-studio/__tests__/ImageStudioView.spec.ts`
+- `backend/internal/service/openai_images_responses.go`
+- `backend/internal/service/openai_images_test.go`
+- `backend/internal/service/image_storage.go`
+- `backend/internal/service/image_storage_test.go`
+- `backend/internal/repository/studio_works_store.go`
+- `backend/internal/repository/studio_works_store_test.go`
+- `backend/cmd/server/VERSION`
+
+验证：
+
+- 前端图片工作台测试 `107` 项通过。
+- `vue-tsc --noEmit` 通过。
+- 前端生产构建通过。
+- `go test ./internal/service` 全量通过。
+- `go test ./internal/handler -run Image` 通过。
+- PostgreSQL 临时作品过期时间参数类型测试通过。
+- `9897` 容器替换后健康检查、公开设置接口和管理员登录均通过。
+
+迁移：
+
+- 无数据库 schema 变更，无需历史数据回填。
+
+遗留：
+
+- 若使用第三方网关的 `gpt-image-2.6`，需要在管理员端把公开模型 `gpt-image-2-6` 映射到实际上游模型名并加入创作分组。
+
 ### v0.2.38 - 2026-11-05
 
 标签：`[Gemini]` `[请求头覆写]` `[GPT图片]` `[图片工作台]` `[Docker]`

@@ -433,6 +433,70 @@ describe('ImageStudioView image model loading', () => {
     }))
   })
 
+  it('shows GIF for gpt-image-2-6 and renders the animated source instead of the static thumbnail', async () => {
+    listKeys.mockResolvedValue({
+      items: [{ id: 1, name: 'dd', key: 'sk-local', status: 'active', group_id: 2 }],
+    })
+    getPublicSettings.mockResolvedValue({ api_base_url: '/v1' })
+    saveGallery.mockResolvedValue({
+      id: 'gallery-gif',
+      url: 'https://cdn.example.com/generated.gif',
+      thumb_url: 'https://cdn.example.com/generated-thumb.jpg',
+      prompt: '',
+      model: 'gpt-image-2-6',
+      size: '1024x1024',
+      format: 'gif',
+      saved: true,
+      created_at: 1,
+      expires_at: 0,
+    })
+    let generationBody: Record<string, any> | null = null
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = String(input)
+      if (url.endsWith('/images/batches/models')) {
+        return { ok: true, json: async () => ({ data: [{ id: 'gpt-image-2-6' }] }) } as Response
+      }
+      if (url.endsWith('/images/generations/async')) return asyncImageUnavailableResponse()
+      if (url.endsWith('/images/generations')) {
+        generationBody = JSON.parse(String(init?.body || '{}'))
+        return {
+          ok: true,
+          json: async () => ({
+            data: [{
+              b64_json: 'R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==',
+              output_format: 'gif',
+              preview_data_url: 'data:image/jpeg;base64,c3RhdGlj',
+            }],
+          }),
+        } as Response
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountImageStudio()
+    await flushPromises()
+    await flushPromises()
+
+    const formatButtons = wrapper.get('[data-testid="image-format-control"]').findAll('button')
+    expect(formatButtons.map((button) => button.text())).toEqual(['PNG', 'JPEG', 'WEBP', 'GIF'])
+
+    await formatButtons[3].trigger('click')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    await flushPromises()
+
+    expect(generationBody).toEqual(expect.objectContaining({
+      model: 'gpt-image-2-6',
+      output_format: 'gif',
+    }))
+    await vi.waitFor(() => {
+      expect(wrapper.find('img[alt^="生成结果"]').exists()).toBe(true)
+    })
+    expect(wrapper.get('img[alt^="生成结果"]').attributes('src'))
+      .toBe('https://cdn.example.com/generated.gif')
+    expect(wrapper.find('[data-testid="image-thumbnail-badge"]').exists()).toBe(false)
+  })
+
   it('reloads keys and models when the toolbar refresh button is pressed', async () => {
     listKeys.mockResolvedValue({
       items: [
