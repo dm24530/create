@@ -54,6 +54,42 @@
 
 ## 变更记录
 
+### v0.2.40 - 2026-11-05
+
+标签：`[图片工作台]` `[GIF]` `[使用记录]` `[图片链接]`
+
+需求：
+
+- 从右上角使用记录打开的图片链接必须展示原始动态 GIF，不能返回 JPEG 静态预览。
+
+实现：
+
+- 异步图片任务记录使用记录图片链接时，若原图或对象键为 GIF，则保存原始链接而不是 `preview_data_url`。
+- 使用记录图片接口在返回静态预览前，优先读取本地原始 GIF。
+- 新增按对象键查找本地图片元数据，历史记录无需重新生成即可恢复原始 GIF。
+- 非 GIF 图片仍保留原有 JPEG 预览快速打开行为。
+
+涉及文件：
+
+- `backend/internal/handler/image_task_handler.go`
+- `backend/internal/handler/image_task_handler_test.go`
+- `backend/internal/handler/usage_handler.go`
+- `backend/internal/handler/usage_handler_image_link_test.go`
+- `backend/internal/handler/wire.go`
+- `backend/internal/service/local_image_asset_store.go`
+- `backend/cmd/server/VERSION`
+
+验证：
+
+- `go test ./internal/handler -count=1` 通过。
+- `GET /api/v1/usage-images/6c45a1a00c8e4cde97ca56412d3cc030` 返回 `image/gif`。
+- 返回文件大小 `869556` 字节，文件头为 `GIF89a`，共 `9` 帧。
+
+迁移：
+
+- 无数据库 schema 变更。
+- 历史记录通过 `object_key` 回查本地原始文件，无需历史数据回填。
+
 ### v0.2.39 - 2026-11-05
 
 标签：`[图片工作台]` `[GIF]` `[gpt-image-2-6]` `[数据库]` `[临时作品]`

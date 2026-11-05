@@ -363,6 +363,32 @@ func (s *LocalImageAssetStore) DeleteByObjectKey(objectKey string) error {
 	return nil
 }
 
+func (s *LocalImageAssetStore) FindByObjectKey(objectKey string) (*LocalImageAssetMetadata, error) {
+	objectKey = strings.TrimSpace(objectKey)
+	if s == nil || objectKey == "" {
+		return nil, ErrLocalImageAssetNotFound
+	}
+	entries, err := os.ReadDir(filepath.Join(s.root, "meta"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, ErrLocalImageAssetNotFound
+		}
+		return nil, err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		id := strings.TrimSuffix(entry.Name(), ".json")
+		meta, getErr := s.Get(id)
+		if getErr != nil || meta.ObjectKey != objectKey {
+			continue
+		}
+		return meta, nil
+	}
+	return nil, ErrLocalImageAssetNotFound
+}
+
 func (s *LocalImageAssetStore) writeMetadata(meta *LocalImageAssetMetadata) error {
 	if meta == nil {
 		return ErrLocalImageAssetNotFound

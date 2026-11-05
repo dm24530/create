@@ -239,6 +239,7 @@ func ProvideHandlers(
 	_ *service.OpenAIQuotaAutoResetService,
 ) *Handlers {
 	usageHandler.SetImageLinkDeps(imageLinks, imageStorage)
+	usageHandler.SetLocalImageAssetStore(localImageAssetHandler.assets)
 	usageHandler.SetImageTaskService(imageTaskService)
 	imageStudioGalleryHandler.SetImageLinkStore(imageLinks)
 	asyncImageHandler.Configure(gatewayHandler, apiKeyService, imageLinks)

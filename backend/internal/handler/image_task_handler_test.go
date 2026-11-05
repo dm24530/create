@@ -875,6 +875,27 @@ func TestAsyncImageHandlerPrefersGeneratedPreviewForUsageImageLink(t *testing.T)
 	require.Equal(t, "data:image/jpeg;base64,cHJldmlldw==", links.link.ImageURL)
 }
 
+func TestAsyncImageHandlerKeepsAnimatedGIFForUsageImageLink(t *testing.T) {
+	store := &asyncImageMemoryStore{tasks: make(map[string]*service.ImageTaskRecord)}
+	tasks := service.NewImageTaskServiceWithUploader(store, nil, time.Hour, time.Minute)
+	created, err := tasks.Create(context.Background(), service.ImageTaskOwner{UserID: 7, APIKeyID: 9})
+	require.NoError(t, err)
+	require.NoError(t, tasks.Complete(
+		context.Background(),
+		created.ID,
+		http.StatusOK,
+		json.RawMessage(`{"data":[{"url":"/api/v1/public/image-assets/gif-asset","preview_data_url":"data:image/jpeg;base64,cHJldmlldw==","object_key":"images/users/1/result.gif"}]}`),
+	))
+	links := &asyncImageLinkStore{}
+	h := &AsyncImageHandler{tasks: tasks, imageLinks: links}
+
+	h.recordUsageImageLink(created.ID, "client:req-image-gif")
+
+	require.NotNil(t, links.link)
+	require.Equal(t, "/api/v1/public/image-assets/gif-asset", links.link.ImageURL)
+	require.Equal(t, "images/users/1/result.gif", links.link.ObjectKey)
+}
+
 func TestAsyncImageHandlerRecoveryRestoresExecutionAndCompletesTask(t *testing.T) {
 	body := []byte(`{"model":"grok-imagine-image","prompt":"cat"}`)
 	store := &asyncImageMemoryStore{tasks: map[string]*service.ImageTaskRecord{

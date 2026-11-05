@@ -239,6 +239,41 @@ func TestUsageHandlerOpenImageLinkServesStoredPreviewBeforeOriginal(t *testing.T
 	require.Equal(t, "https://storage.example.test/result.png", originalRecorder.Header().Get("Location"))
 }
 
+func TestUsageHandlerOpenImageLinkServesOriginalGIFByObjectKeyBeforeStaticPreview(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	localAssets := service.NewLocalImageAssetStore(t.TempDir())
+	meta, err := localAssets.Save(
+		context.Background(),
+		7,
+		"imgtask_gif",
+		"images/users/7/result.gif",
+		"image/gif",
+		time.Now().Add(time.Hour).Unix(),
+		[]byte("GIF89a-animated"),
+	)
+	require.NoError(t, err)
+
+	handler := NewUsageHandler(nil, nil, nil, nil)
+	handler.SetImageLinkDeps(
+		&usageImageLinkStoreStub{link: &service.UsageLogImageLink{
+			UserID:    7,
+			ObjectKey: meta.ObjectKey,
+			ImageURL:  "data:image/jpeg;base64,c3RhdGlj",
+		}},
+		nil,
+	)
+	handler.SetLocalImageAssetStore(localAssets)
+	router := gin.New()
+	router.GET("/usage-images/:token", handler.OpenImageLink)
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/usage-images/token", nil))
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Equal(t, "image/gif", recorder.Header().Get("Content-Type"))
+	require.Equal(t, []byte("GIF89a-animated"), recorder.Body.Bytes())
+}
+
 func TestUsageHandlerImageLinkAllowsAdminToOpenAnotherUsersImage(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	handler := NewUsageHandler(nil, nil, nil, nil)

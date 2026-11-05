@@ -1026,10 +1026,10 @@ func (h *AsyncImageHandler) recordUsageImageLink(taskID, usageRequestID string) 
 	if imageURL == "" {
 		return
 	}
-	if previewURL := firstImageTaskResultPreviewURL(task.Result); previewURL != "" {
+	objectKey := firstImageTaskResultObjectKey(task.Result)
+	if previewURL := firstImageTaskResultPreviewURL(task.Result); previewURL != "" && !usageImageLinkIsGIF(imageURL, objectKey) {
 		imageURL = previewURL
 	}
-	objectKey := firstImageTaskResultObjectKey(task.Result)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := h.imageLinks.Upsert(ctx, &service.UsageLogImageLink{

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"html"
 	"net/http"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -57,6 +58,7 @@ type UsageHandler struct {
 	imageLinks     service.UsageLogImageLinkStore
 	imageStorage   usageImageStorage
 	imageTasks     *service.ImageTaskService
+	localAssets    *service.LocalImageAssetStore
 }
 
 type usageImageStorage interface {
@@ -81,6 +83,13 @@ func (h *UsageHandler) SetImageLinkDeps(
 	}
 	h.imageLinks = imageLinks
 	h.imageStorage = imageStorage
+}
+
+func (h *UsageHandler) SetLocalImageAssetStore(store *service.LocalImageAssetStore) {
+	if h == nil {
+		return
+	}
+	h.localAssets = store
 }
 
 func (h *UsageHandler) ImageLink(c *gin.Context) {
@@ -244,6 +253,9 @@ func (h *UsageHandler) OpenImageLink(c *gin.Context) {
 		return
 	}
 	imageURL := strings.TrimSpace(link.ImageURL)
+	if h.serveOriginalGIF(c, link) {
+		return
+	}
 	if c.Query("full") != "1" && strings.HasPrefix(imageURL, "data:image/") {
 		writeInlineUsageDataURL(c, imageURL)
 		return
@@ -268,6 +280,50 @@ func (h *UsageHandler) OpenImageLink(c *gin.Context) {
 		return
 	}
 	writeExpiredUsageImage(c)
+}
+
+func (h *UsageHandler) serveOriginalGIF(c *gin.Context, link *service.UsageLogImageLink) bool {
+	if h == nil || h.localAssets == nil || link == nil || !usageImageLinkIsGIF(link.ImageURL, link.ObjectKey) {
+		return false
+	}
+	if h.localAssets.IsAssetURL(link.ImageURL) {
+		if data, contentType, handled, err := h.localAssets.ReadURL(c.Request.Context(), link.ImageURL); handled && err == nil && len(data) > 0 {
+			writeUsageImageBytes(c, contentType, data)
+			return true
+		}
+	}
+	if objectKey := strings.TrimSpace(link.ObjectKey); objectKey != "" {
+		if meta, err := h.localAssets.FindByObjectKey(objectKey); err == nil {
+			if _, data, readErr := h.localAssets.Read(meta.ID); readErr == nil && len(data) > 0 {
+				writeUsageImageBytes(c, meta.ContentType, data)
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func usageImageLinkIsGIF(imageURL, objectKey string) bool {
+	if strings.EqualFold(path.Ext(strings.TrimSpace(objectKey)), ".gif") {
+		return true
+	}
+	imageURL = strings.TrimSpace(imageURL)
+	if strings.HasPrefix(strings.ToLower(imageURL), "data:image/gif") {
+		return true
+	}
+	if idx := strings.IndexAny(imageURL, "?#"); idx >= 0 {
+		imageURL = imageURL[:idx]
+	}
+	return strings.EqualFold(path.Ext(imageURL), ".gif")
+}
+
+func writeUsageImageBytes(c *gin.Context, contentType string, data []byte) {
+	if !strings.HasPrefix(strings.ToLower(contentType), "image/") {
+		contentType = http.DetectContentType(data)
+	}
+	c.Header("Cache-Control", "private, max-age=300")
+	c.Header("Content-Disposition", "inline")
+	c.Data(http.StatusOK, contentType, data)
 }
 
 func writeInlineUsageDataURL(c *gin.Context, imageURL string) {
