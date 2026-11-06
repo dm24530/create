@@ -51,6 +51,7 @@ type GatewayHandler struct {
 	usageRecordWorkerPool     *service.UsageRecordWorkerPool
 	imageLinks                service.UsageLogImageLinkStore
 	imageStorage              *service.ImageStorageSettingService
+	localImageAssets          *service.LocalImageAssetStore
 	errorPassthroughService   *service.ErrorPassthroughService
 	contentModerationService  *service.ContentModerationService
 	securityAuditCoordinator  *securityaudit.Coordinator
@@ -71,6 +72,12 @@ func (h *GatewayHandler) SetImageLinkStore(store service.UsageLogImageLinkStore)
 func (h *GatewayHandler) SetImageStorage(storage *service.ImageStorageSettingService) {
 	if h != nil {
 		h.imageStorage = storage
+	}
+}
+
+func (h *GatewayHandler) SetLocalImageAssetStore(store *service.LocalImageAssetStore) {
+	if h != nil {
+		h.localImageAssets = store
 	}
 }
 

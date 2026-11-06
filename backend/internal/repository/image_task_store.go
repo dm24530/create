@@ -154,6 +154,7 @@ func (s *imageTaskStore) ensurePendingIndex(ctx context.Context) error {
 func imageTaskCompleted(task *service.ImageTaskRecord) bool {
 	return task == nil ||
 		task.CompletedAt != nil ||
+		task.Status == service.ImageTaskStatusReady ||
 		task.Status == service.ImageTaskStatusCompleted ||
 		task.Status == service.ImageTaskStatusFailed
 }

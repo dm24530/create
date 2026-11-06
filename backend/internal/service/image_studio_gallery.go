@@ -59,6 +59,10 @@ type ImageStudioGalleryEntry struct {
 	ObjectKey string `json:"-"`
 	URL       string `json:"url"`
 	ThumbURL  string `json:"thumb_url,omitempty"`
+	// LocalAssetID identifies a local original internally only.
+	LocalAssetID string `json:"-"`
+	// LocalAssetPending keeps signed object URLs hidden until the background upload finishes.
+	LocalAssetPending bool `json:"-"`
 	// ThumbObjectKey is private but lets List refresh signed thumbnail URLs.
 	ThumbObjectKey string `json:"-"`
 	Prompt         string `json:"prompt"`
@@ -386,6 +390,7 @@ func (s *ImageStudioGalleryService) saveExistingImageEntry(
 	if entry.ExpiresAt == 0 {
 		s.updateLocalAssetExpiry(ctx, entry.URL, 0)
 	}
+	s.hidePendingLocalAssetURL(entry)
 	return entry, nil
 }
 
@@ -511,6 +516,7 @@ func (s *ImageStudioGalleryService) SaveExistingObject(
 		return nil, err
 	}
 	s.updateLocalAssetExpiry(ctx, entry.URL, entry.ExpiresAt)
+	s.hidePendingLocalAssetURL(entry)
 	return entry, nil
 }
 
@@ -573,6 +579,9 @@ func (s *ImageStudioGalleryService) List(
 	if err != nil {
 		return nil, err
 	}
+	for _, entry := range entries {
+		s.hidePendingLocalAssetURL(entry)
+	}
 	visible := make([]*ImageStudioGalleryEntry, 0, len(entries))
 	for _, entry := range entries {
 		// Reference images uploaded by older video-studio clients were written
@@ -592,6 +601,9 @@ func (s *ImageStudioGalleryService) List(
 		seen := make(map[string]struct{}, len(entries)*2)
 		for _, entry := range entries {
 			if entry == nil {
+				continue
+			}
+			if entry.LocalAssetPending {
 				continue
 			}
 			if s.localAssets != nil &&
@@ -622,6 +634,9 @@ func (s *ImageStudioGalleryService) List(
 				if entry == nil {
 					continue
 				}
+				if entry.LocalAssetPending {
+					continue
+				}
 				if s.localAssets != nil &&
 					s.localAssets.IsAssetURL(entry.URL) &&
 					!s.localAssets.IsUploadedURL(entry.URL) {
@@ -644,6 +659,9 @@ func (s *ImageStudioGalleryService) List(
 	if resolver, ok := s.storage.(ImageStudioObjectURLResolver); ok {
 		for _, entry := range entries {
 			if entry == nil {
+				continue
+			}
+			if entry.LocalAssetPending {
 				continue
 			}
 			if s.localAssets != nil &&
@@ -712,6 +730,13 @@ func (s *ImageStudioGalleryService) ReadImage(ctx context.Context, userID int64,
 	if err != nil {
 		return nil, nil, "", err
 	}
+	if entry.LocalAssetPending && entry.LocalAssetID != "" && s.localAssets != nil {
+		meta, data, readErr := s.localAssets.Read(entry.LocalAssetID)
+		if readErr != nil {
+			return nil, nil, "", readErr
+		}
+		return entry, data, meta.ContentType, nil
+	}
 	data, contentType, err := s.fetchEntryImage(ctx, entry, entry.ObjectKey, entry.URL)
 	if err != nil {
 		return nil, nil, "", err
@@ -732,9 +757,10 @@ func (s *ImageStudioGalleryService) DownloadURL(
 	if err != nil {
 		return nil, "", err
 	}
-	if s.localAssets != nil &&
-		s.localAssets.IsAssetURL(entry.URL) &&
-		!s.localAssets.IsUploadedURL(entry.URL) {
+	if entry.LocalAssetPending ||
+		(s.localAssets != nil &&
+			s.localAssets.IsAssetURL(entry.URL) &&
+			!s.localAssets.IsUploadedURL(entry.URL)) {
 		return entry, "", ErrImageStudioGalleryUnavailable
 	}
 	resolver, ok := s.storage.(ImageStudioObjectDownloadURLResolver)
@@ -822,7 +848,17 @@ func (s *ImageStudioGalleryService) fetchEntryImage(
 	objectKey string,
 	rawURL string,
 ) ([]byte, string, error) {
-	if s == nil || s.storage == nil {
+	if s == nil {
+		return nil, "", ErrImageStudioGalleryUnavailable
+	}
+	if entry != nil && entry.LocalAssetPending && entry.LocalAssetID != "" && s.localAssets != nil {
+		meta, data, err := s.localAssets.Read(entry.LocalAssetID)
+		if err != nil {
+			return nil, "", err
+		}
+		return data, meta.ContentType, nil
+	}
+	if s.storage == nil {
 		return nil, "", ErrImageStudioGalleryUnavailable
 	}
 	if entry != nil &&
@@ -963,6 +999,7 @@ func (s *ImageStudioGalleryService) Unpin(
 	s.updateLocalAssetExpiry(ctx, entry.URL, expiresAt)
 	entry.Saved = false
 	entry.ExpiresAt = expiresAt
+	s.hidePendingLocalAssetURL(entry)
 	return entry, nil
 }
 
@@ -979,6 +1016,29 @@ func (s *ImageStudioGalleryService) updateLocalAssetExpiry(
 		logger.L().Warn("studio_work.local_asset_expiry_update_failed",
 			zap.String("url", rawURL), zap.Error(err))
 	}
+}
+
+func (s *ImageStudioGalleryService) hidePendingLocalAssetURL(entry *ImageStudioGalleryEntry) {
+	if s == nil || s.localAssets == nil || entry == nil {
+		return
+	}
+	assetID, ok := s.localAssets.AssetIDFromURL(entry.URL)
+	if !ok && strings.TrimSpace(entry.LocalAssetID) != "" {
+		assetID, ok = strings.TrimSpace(entry.LocalAssetID), true
+	}
+	if !ok {
+		return
+	}
+	entry.LocalAssetID = assetID
+	entry.LocalAssetPending = true
+	meta, err := s.localAssets.Get(assetID)
+	if err == nil && meta.Uploaded && strings.TrimSpace(meta.RemoteURL) != "" {
+		entry.URL = strings.TrimSpace(meta.RemoteURL)
+		entry.LocalAssetPending = false
+		return
+	}
+	entry.URL = ""
+	entry.ThumbURL = ""
 }
 
 // SweepExpired removes expired temporary works. Storage objects are deleted

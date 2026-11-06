@@ -93,7 +93,29 @@ func RegisterGatewayRoutes(
 		// Video status/content lookups below already allow Composite groups; keep
 		// task creation aligned so composite keys that route to Grok accounts can
 		// submit video generation jobs.
-		if platform := getGroupPlatform(c); platform == service.PlatformGrok || platform == service.PlatformComposite {
+		platform := getGroupPlatform(c)
+		openAIVideoCreate := strings.HasSuffix(strings.TrimRight(c.Request.URL.Path, "/"), "/videos")
+		if platform == service.PlatformMiniMax {
+			h.OpenAIGateway.OpenAIVideoGeneration(c)
+			return
+		}
+		if platform == service.PlatformComposite && openAIVideoCreate {
+			if target, ok := service.ResolvedTargetPlatformFromContext(c.Request.Context()); ok && target == service.PlatformMiniMax {
+				h.OpenAIGateway.OpenAIVideoGeneration(c)
+				return
+			}
+			h.OpenAIGateway.GrokVideoGeneration(c)
+			return
+		}
+		if platform == service.PlatformComposite {
+			h.OpenAIGateway.GrokVideoGeneration(c)
+			return
+		}
+		if platform == service.PlatformOpenAI && openAIVideoCreate {
+			h.OpenAIGateway.OpenAIVideoGeneration(c)
+			return
+		}
+		if platform == service.PlatformGrok {
 			h.OpenAIGateway.GrokVideoGeneration(c)
 			return
 		}
@@ -122,11 +144,18 @@ func RegisterGatewayRoutes(
 		// Video status requests do not carry a model, so composite groups cannot
 		// be resolved by compositeTargetPlatformMiddleware. Route them through
 		// the Grok handler and let scheduler/account selection enforce capacity.
-		if getGroupPlatform(c) == service.PlatformOpenAI && isSeedanceVideoLookupPath(c.Request.URL.Path) {
+		groupPlatform := getGroupPlatform(c)
+		if groupPlatform == service.PlatformMiniMax ||
+			(groupPlatform == service.PlatformOpenAI && c.Query("model") != "") ||
+			(groupPlatform == service.PlatformComposite && c.Query("model") != "") {
+			h.OpenAIGateway.OpenAIVideoStatus(c)
+			return
+		}
+		if groupPlatform == service.PlatformOpenAI && isSeedanceVideoLookupPath(c.Request.URL.Path) {
 			h.OpenAIGateway.SeedanceVideoStatus(c)
 			return
 		}
-		if getGroupPlatform(c) == service.PlatformGrok || getGroupPlatform(c) == service.PlatformComposite {
+		if groupPlatform == service.PlatformGrok || groupPlatform == service.PlatformComposite {
 			h.OpenAIGateway.GrokVideoStatus(c)
 			return
 		}
@@ -142,11 +171,18 @@ func RegisterGatewayRoutes(
 		// Video content requests do not carry a model, so composite groups cannot
 		// be resolved by compositeTargetPlatformMiddleware. Route them through
 		// the Grok handler just like video status lookups.
-		if getGroupPlatform(c) == service.PlatformOpenAI && isSeedanceVideoLookupPath(c.Request.URL.Path) {
+		groupPlatform := getGroupPlatform(c)
+		if groupPlatform == service.PlatformMiniMax ||
+			(groupPlatform == service.PlatformOpenAI && c.Query("model") != "") ||
+			(groupPlatform == service.PlatformComposite && c.Query("model") != "") {
+			h.OpenAIGateway.OpenAIVideoContent(c)
+			return
+		}
+		if groupPlatform == service.PlatformOpenAI && isSeedanceVideoLookupPath(c.Request.URL.Path) {
 			h.OpenAIGateway.SeedanceVideoContent(c)
 			return
 		}
-		if getGroupPlatform(c) == service.PlatformGrok || getGroupPlatform(c) == service.PlatformComposite {
+		if groupPlatform == service.PlatformGrok || groupPlatform == service.PlatformComposite {
 			h.OpenAIGateway.GrokVideoContent(c)
 			return
 		}
@@ -276,6 +312,7 @@ func RegisterGatewayRoutes(
 		gateway.POST("/images/generations/async", h.AsyncImage.Submit)
 		gateway.POST("/images/edits/async", h.AsyncImage.Submit)
 		gateway.GET("/images/tasks/by-idempotency/:key", h.AsyncImage.GetByIdempotency)
+		gateway.GET("/images/tasks/:task_id/content", h.AsyncImage.Content)
 		gateway.GET("/images/tasks/:task_id", h.AsyncImage.Get)
 		gateway.POST("/images/batches", h.BatchImage.Submit)
 		gateway.GET("/images/batches", h.BatchImage.List)
@@ -440,6 +477,7 @@ func RegisterGatewayRoutes(
 	rootRoute(http.MethodPost, "/images/generations/async", bodyLimit, h.AsyncImage.Submit)
 	rootRoute(http.MethodPost, "/images/edits/async", bodyLimit, h.AsyncImage.Submit)
 	rootRoute(http.MethodGet, "/images/tasks/by-idempotency/:key", bodyLimit, h.AsyncImage.GetByIdempotency)
+	rootRoute(http.MethodGet, "/images/tasks/:task_id/content", bodyLimit, h.AsyncImage.Content)
 	rootRoute(http.MethodGet, "/images/tasks/:task_id", bodyLimit, h.AsyncImage.Get)
 	rootRoute(http.MethodPost, "/videos", bodyLimit, videoGenerationHandler)
 	rootRoute(http.MethodPost, "/videos/generations", bodyLimit, videoGenerationHandler)

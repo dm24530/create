@@ -4,20 +4,25 @@ package web
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"embed"
 	"encoding/json"
 	htmlpkg "html"
 	"io"
 	"io/fs"
+	"mime"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
+	"github.com/andybalholm/brotli"
 	"github.com/gin-gonic/gin"
 )
 
@@ -36,6 +41,8 @@ const (
 	defaultSeoKeywords = "AI 视频生成,AI 图片生成,视频生成,图片生成,AI 视频与图片生成平台,AI 创作平台"
 	defaultSeoAliases  = "libTV,LibTV,libtv,CreateAI"
 )
+
+const landingHeroPreload = `<link rel="preload" as="image" type="image/webp" href="/landing/hero-stars-1280.webp" imagesrcset="/landing/hero-stars-640.webp 640w, /landing/hero-stars-960.webp 960w, /landing/hero-stars-1280.webp 1280w, /landing/hero-stars-1920.webp 1920w, /landing/hero-stars-2560.webp 2560w" imagesizes="100vw" fetchpriority="high" data-landing-hero-preload />`
 
 type routeSeoDoc struct {
 	Title       string
@@ -62,6 +69,13 @@ type FrontendServer struct {
 	settings    PublicSettingsProvider
 	overrideDir string // local file override directory
 }
+
+type compressedEmbeddedAsset struct {
+	body        []byte
+	contentType string
+}
+
+var compressedStaticCache sync.Map
 
 // NewFrontendServer creates a new frontend server with settings injection
 func NewFrontendServer(settingsProvider PublicSettingsProvider) (*FrontendServer, error) {
@@ -127,6 +141,9 @@ func (s *FrontendServer) Middleware() gin.HandlerFunc {
 				return
 			}
 			applyStaticAssetCacheHeaders(c.Writer.Header(), cleanPath)
+			if s.tryServeCompressedStatic(c, cleanPath) {
+				return
+			}
 			s.fileServer.ServeHTTP(c.Writer, c.Request)
 			c.Abort()
 			return
@@ -150,6 +167,9 @@ func (s *FrontendServer) Middleware() gin.HandlerFunc {
 
 		// Serve static files normally (hashed assets get long-lived cache headers)
 		applyStaticAssetCacheHeaders(c.Writer.Header(), cleanPath)
+		if s.tryServeCompressedStatic(c, cleanPath) {
+			return
+		}
 		s.fileServer.ServeHTTP(c.Writer, c.Request)
 		c.Abort()
 	}
@@ -178,6 +198,125 @@ func (s *FrontendServer) fileExists(path string) bool {
 	}
 	_ = file.Close()
 	return true
+}
+
+func (s *FrontendServer) tryServeCompressedStatic(c *gin.Context, cleanPath string) bool {
+	if c.Request.Method != http.MethodGet && c.Request.Method != http.MethodHead {
+		return false
+	}
+	if c.Request.Header.Get("Range") != "" || !isCompressibleEmbeddedAssetPath(cleanPath) {
+		return false
+	}
+	encoding := acceptedStaticEncoding(c.Request.Header.Get("Accept-Encoding"))
+	if encoding == "" {
+		return false
+	}
+
+	cacheKey := encoding + ":" + cleanPath
+	if cached, ok := compressedStaticCache.Load(cacheKey); ok {
+		writeCompressedStatic(c, encoding, cached.(*compressedEmbeddedAsset))
+		return true
+	}
+
+	raw, err := fs.ReadFile(s.distFS, cleanPath)
+	if err != nil || len(raw) < 1024 {
+		return false
+	}
+	body, err := compressEmbeddedAsset(raw, encoding)
+	if err != nil {
+		return false
+	}
+	contentType := mime.TypeByExtension(filepath.Ext(cleanPath))
+	if contentType == "" {
+		contentType = http.DetectContentType(raw)
+	}
+	cached := &compressedEmbeddedAsset{body: body, contentType: contentType}
+	actual, _ := compressedStaticCache.LoadOrStore(cacheKey, cached)
+	writeCompressedStatic(c, encoding, actual.(*compressedEmbeddedAsset))
+	return true
+}
+
+func writeCompressedStatic(c *gin.Context, encoding string, cached *compressedEmbeddedAsset) {
+	c.Header("Content-Encoding", encoding)
+	c.Header("Vary", "Accept-Encoding")
+	c.Header("Content-Type", cached.contentType)
+	c.Header("Content-Length", strconv.Itoa(len(cached.body)))
+	c.Status(http.StatusOK)
+	if c.Request.Method == http.MethodGet {
+		_, _ = c.Writer.Write(cached.body)
+	}
+	c.Abort()
+}
+
+func acceptedStaticEncoding(header string) string {
+	hasBrotli := false
+	for _, part := range strings.Split(strings.ToLower(header), ",") {
+		fields := strings.Split(part, ";")
+		encoding := strings.TrimSpace(fields[0])
+		quality := 1.0
+		for _, parameter := range fields[1:] {
+			keyValue := strings.SplitN(strings.TrimSpace(parameter), "=", 2)
+			if len(keyValue) != 2 || keyValue[0] != "q" {
+				continue
+			}
+			if parsed, err := strconv.ParseFloat(strings.TrimSpace(keyValue[1]), 64); err == nil {
+				quality = parsed
+			}
+		}
+		if quality <= 0 {
+			continue
+		}
+		if encoding == "gzip" {
+			// Cloudflare Quick Tunnel can decode Brotli but currently strips it
+			// from the client response. Prefer gzip so the compressed body
+			// reaches the browser intact.
+			return "gzip"
+		}
+		if encoding == "br" {
+			hasBrotli = true
+		}
+	}
+	if hasBrotli {
+		return "br"
+	}
+	return ""
+}
+
+func isCompressibleEmbeddedAssetPath(cleanPath string) bool {
+	switch strings.ToLower(filepath.Ext(cleanPath)) {
+	case ".css", ".js", ".json", ".svg", ".xml":
+		return true
+	default:
+		return false
+	}
+}
+
+func compressEmbeddedAsset(raw []byte, encoding string) ([]byte, error) {
+	var buf bytes.Buffer
+	switch encoding {
+	case "br":
+		writer := brotli.NewWriterLevel(&buf, 4)
+		if _, err := writer.Write(raw); err != nil {
+			return nil, err
+		}
+		if err := writer.Close(); err != nil {
+			return nil, err
+		}
+	case "gzip":
+		writer, err := gzip.NewWriterLevel(&buf, gzip.BestSpeed)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := writer.Write(raw); err != nil {
+			return nil, err
+		}
+		if err := writer.Close(); err != nil {
+			return nil, err
+		}
+	default:
+		return nil, fs.ErrInvalid
+	}
+	return buf.Bytes(), nil
 }
 
 // tryServeOverride checks if a local override file exists and serves it.
@@ -213,6 +352,7 @@ func (s *FrontendServer) serveIndexHTML(c *gin.Context) {
 		// Replace nonce placeholder with actual nonce before serving
 		content := replaceNoncePlaceholder(cached.Content, nonce)
 		content = applyRouteSeo(content, requestOrigin(c), c.Request.URL.Path, cached.SiteName, cached.SiteSEOKeywords)
+		content = applyLandingHeroPreload(content, c.Request.URL.Path)
 
 		c.Header("ETag", cached.ETag)
 		c.Header("Cache-Control", "no-cache") // Must revalidate
@@ -257,6 +397,7 @@ func (s *FrontendServer) serveIndexHTML(c *gin.Context) {
 		siteNameFromSettingsJSON(settingsJSON),
 		siteSEOKeywordsFromSettingsJSON(settingsJSON),
 	)
+	content = applyLandingHeroPreload(content, c.Request.URL.Path)
 
 	cached = s.cache.Get()
 	if cached != nil {
@@ -265,6 +406,17 @@ func (s *FrontendServer) serveIndexHTML(c *gin.Context) {
 	c.Header("Cache-Control", "no-cache")
 	c.Data(http.StatusOK, "text/html; charset=utf-8", content)
 	c.Abort()
+}
+
+func applyLandingHeroPreload(content []byte, requestPath string) []byte {
+	if requestPath != "/" && requestPath != "/home" {
+		return content
+	}
+	if bytes.Contains(content, []byte("data-landing-hero-preload")) {
+		return content
+	}
+	replacement := append([]byte(landingHeroPreload), []byte("\n</head>")...)
+	return bytes.Replace(content, []byte("</head>"), replacement, 1)
 }
 
 func (s *FrontendServer) injectSettings(settingsJSON []byte) []byte {

@@ -23,7 +23,7 @@ func (h *GatewayHandler) recordUsageImageLink(
 	if h == nil || result == nil {
 		return
 	}
-	recordUsageImageOutputs(ctx, apiKey, result.RequestID, result.ImageOutputs, h.imageLinks, h.imageStorage)
+	recordUsageImageOutputs(ctx, apiKey, result.RequestID, result.ImageOutputs, h.imageLinks, h.imageStorage, h.localImageAssets)
 }
 
 func (h *OpenAIGatewayHandler) recordUsageImageLink(
@@ -35,7 +35,7 @@ func (h *OpenAIGatewayHandler) recordUsageImageLink(
 	if h == nil {
 		return
 	}
-	recordUsageImageOutputs(ctx, apiKey, requestIDHint, outputs, h.imageLinks, h.imageStorage)
+	recordUsageImageOutputs(ctx, apiKey, requestIDHint, outputs, h.imageLinks, h.imageStorage, h.localImageAssets)
 }
 
 func recordUsageImageOutputs(
@@ -45,6 +45,7 @@ func recordUsageImageOutputs(
 	outputs []service.GeminiImageOutput,
 	imageLinks service.UsageLogImageLinkStore,
 	imageStorage *service.ImageStorageSettingService,
+	localAssets *service.LocalImageAssetStore,
 ) {
 	if imageLinks == nil || apiKey == nil || len(outputs) == 0 {
 		return
@@ -84,10 +85,10 @@ func recordUsageImageOutputs(
 	linkCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)
 	defer cancel()
 	persistentLink := strings.HasPrefix(imageURL, "http://") || strings.HasPrefix(imageURL, "https://")
-	if imageStorage != nil {
-		data, contentType, ok := usageImageBytes(linkCtx, imageStorage, outputs, imageURL)
-		if ok {
-			contentType = normalizedUsageImageContentType(data, contentType)
+	data, contentType, hasImageBytes := usageImageBytes(linkCtx, imageStorage, outputs, imageURL)
+	if hasImageBytes {
+		contentType = normalizedUsageImageContentType(data, contentType)
+		if imageStorage != nil {
 			storageKey, storageErr := imageStorage.StorageKeyForUser(linkCtx, userID)
 			if storageErr != nil {
 				logger.L().Warn("usage_image_link.storage_key_failed",
@@ -108,10 +109,31 @@ func recordUsageImageOutputs(
 				}
 			}
 		}
+		if !persistentLink && localAssets != nil {
+			meta, err := localAssets.Save(
+				linkCtx,
+				userID,
+				requestID,
+				"",
+				contentType,
+				time.Now().UTC().Add(service.UsageLogImageLinkTTL).Unix(),
+				data,
+			)
+			if err == nil {
+				imageURL = localAssets.URL(meta.ID)
+				objectKey = ""
+				persistentLink = true
+			} else {
+				logger.L().Warn("usage_image_link.local_fallback_failed",
+					zap.Int64("user_id", userID),
+					zap.String("request_id", requestID),
+					zap.Error(err))
+			}
+		}
 	}
-	// Inline image bodies may be many megabytes. If object storage cannot take
-	// them, leave the usage row without an image link instead of copying the
-	// whole data URL into PostgreSQL for 90 days.
+	// Inline image bodies may be many megabytes. Keep them on object storage or
+	// the local asset store; never copy the whole data URL into PostgreSQL for
+	// the full usage-link retention period.
 	if !persistentLink {
 		return
 	}

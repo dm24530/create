@@ -61,6 +61,28 @@ func TestOpenAIGatewayHandlerRecordsSyncUsageImageLink(t *testing.T) {
 	require.Equal(t, "https://img.example.test/openai-generated.png", store.link.ImageURL)
 }
 
+func TestRecordUsageImageOutputsFallsBackToLocalAsset(t *testing.T) {
+	store := &asyncImageLinkStore{}
+	localAssets := service.NewLocalImageAssetStore(t.TempDir())
+	ctx := context.WithValue(context.Background(), ctxkey.ClientRequestID, "sync-local-fallback")
+
+	recordUsageImageOutputs(ctx, &service.APIKey{ID: 11, UserID: 7}, "upstream-request",
+		[]service.GeminiImageOutput{{
+			Base64:   "YWJj",
+			MIMEType: "image/png",
+		}}, store, nil, localAssets)
+
+	require.NotNil(t, store.link)
+	require.Equal(t, "client:sync-local-fallback", store.link.RequestID)
+	require.True(t, strings.HasPrefix(store.link.ImageURL, service.LocalImageAssetURLPrefix))
+
+	assetID, ok := localAssets.AssetIDFromURL(store.link.ImageURL)
+	require.True(t, ok)
+	_, data, err := localAssets.Read(assetID)
+	require.NoError(t, err)
+	require.Equal(t, []byte("abc"), data)
+}
+
 func TestUsageImageObjectKeyUsesOpaqueUserNamespace(t *testing.T) {
 	first := usageImageObjectKey("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "client:req-1", "image/png")
 	second := usageImageObjectKey("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "client:req-1", "image/png")

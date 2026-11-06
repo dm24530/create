@@ -63,12 +63,27 @@ func (h *OpenAIGatewayHandler) SeedanceVideoContent(c *gin.Context) {
 	h.handleGrokMedia(c, service.SeedanceVideoEndpointContent, c.Param("request_id"))
 }
 
+func (h *OpenAIGatewayHandler) OpenAIVideoGeneration(c *gin.Context) {
+	h.handleGrokMedia(c, service.OpenAIVideoEndpointCreate, "")
+}
+
+func (h *OpenAIGatewayHandler) OpenAIVideoStatus(c *gin.Context) {
+	h.handleGrokMedia(c, service.OpenAIVideoEndpointStatus, c.Param("request_id"))
+}
+
+func (h *OpenAIGatewayHandler) OpenAIVideoContent(c *gin.Context) {
+	h.handleGrokMedia(c, service.OpenAIVideoEndpointContent, c.Param("request_id"))
+}
+
 func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.GrokMediaEndpoint, requestID string) {
 	platform := service.PlatformGrok
 	noAccountCode, noAccountMessage := "grok_media_no_eligible_account", "No eligible Grok media accounts"
 	if endpoint.IsSeedance() || endpoint.IsSeedanceVideo() {
 		platform = service.PlatformOpenAI
 		noAccountCode, noAccountMessage = "seedance_no_eligible_account", "No eligible Seedance accounts"
+	} else if endpoint.IsOpenAIVideo() {
+		platform = service.PlatformMiniMax
+		noAccountCode, noAccountMessage = "video_no_eligible_account", "No eligible video accounts"
 	}
 	streamStarted := false
 	defer h.recoverResponsesPanic(c, &streamStarted)
@@ -83,6 +98,10 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 	if !ok {
 		h.errorResponse(c, http.StatusInternalServerError, "api_error", "User context not found")
 		return
+	}
+	if endpoint.IsOpenAIVideo() && apiKey.Group != nil &&
+		(apiKey.Group.Platform == service.PlatformMiniMax || apiKey.Group.Platform == service.PlatformOpenAI) {
+		platform = apiKey.Group.Platform
 	}
 
 	reqLog := requestLogger(
@@ -350,7 +369,7 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 		)
 
 		account := selection.Account
-		if endpoint.IsGenerationRequest() && !endpoint.IsSeedance() && !endpoint.IsSeedanceVideo() {
+		if endpoint.IsGenerationRequest() && !endpoint.IsSeedance() && !endpoint.IsSeedanceVideo() && !endpoint.IsOpenAIVideo() {
 			eligible, eligibilityReason, eligibilityErr := h.ensureGrokMediaAccountEligibility(requestCtx, account)
 			if !eligible {
 				releaseAccount()
@@ -403,6 +422,9 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 			defer releaseAccount()
 			if endpoint.IsSeedance() {
 				return h.gatewayService.ForwardSeedance(requestCtx, c, account, endpoint, requestID, body)
+			}
+			if endpoint.IsOpenAIVideo() {
+				return h.gatewayService.ForwardOpenAIVideo(requestCtx, c, account, endpoint, requestID, body)
 			}
 			return h.gatewayService.ForwardGrokMedia(requestCtx, c, account, endpoint, requestID, body, contentType)
 		}()
@@ -545,7 +567,9 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 		} else if endpoint == service.GrokMediaEndpointVideoStatus ||
 			endpoint == service.GrokMediaEndpointVideoContent ||
 			endpoint == service.SeedanceVideoEndpointStatus ||
-			endpoint == service.SeedanceVideoEndpointContent {
+			endpoint == service.SeedanceVideoEndpointContent ||
+			endpoint == service.OpenAIVideoEndpointStatus ||
+			endpoint == service.OpenAIVideoEndpointContent {
 			taskID := strings.TrimSpace(requestID)
 			if billResult := prepareGrokVideoCompletionBilling(requestCtx, h, reqLog, apiKey, subject, taskID, result); billResult != nil {
 				recordGrokMediaUsage(c, h, reqLog, apiKey, subject, subscription, account, billResult, billResult.Model, body, taskID)
@@ -576,6 +600,9 @@ func (h *OpenAIGatewayHandler) ensureGrokMediaAccountEligibility(ctx context.Con
 }
 
 func grokMediaRequiredCapability(endpoint service.GrokMediaEndpoint) service.OpenAIEndpointCapability {
+	if endpoint.IsOpenAIVideo() {
+		return ""
+	}
 	if endpoint.IsSeedance() || endpoint.IsSeedanceVideo() {
 		return service.OpenAIEndpointCapabilitySeedance
 	}
@@ -600,7 +627,8 @@ func isGrokVideoCreateEndpoint(endpoint service.GrokMediaEndpoint) bool {
 	case service.SeedanceEndpointCreate, service.GrokMediaEndpointVideosGenerations,
 		service.GrokMediaEndpointVideosEdits,
 		service.GrokMediaEndpointVideosExtensions,
-		service.SeedanceVideoEndpointCreate:
+		service.SeedanceVideoEndpointCreate,
+		service.OpenAIVideoEndpointCreate:
 		return true
 	default:
 		return false

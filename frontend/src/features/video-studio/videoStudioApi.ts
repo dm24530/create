@@ -13,7 +13,7 @@ import {
   type VideoReferenceAssetUploadResult,
 } from './videoArchiveApi'
 
-export type VideoProvider = 'seedance' | 'seedance_video' | 'grok'
+export type VideoProvider = 'seedance' | 'seedance_video' | 'video_tasks' | 'grok'
 
 export type VideoTaskStatus = 'queued' | 'running' | 'succeeded' | 'failed'
 
@@ -117,6 +117,7 @@ export interface VideoModelProfile {
 
 const DOUBAO_ASPECT_RATIOS = ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'] as const
 const WAN_ASPECT_RATIOS = ['16:9', '9:16', '1:1'] as const
+const MINIMAX_H3_MODEL_PATTERN = /^minimax[\s_-]*h3(?:$|[^0-9])/
 const DEFAULT_PROFILE: VideoModelProfile = {
   provider: 'seedance',
   minDuration: 1,
@@ -126,6 +127,19 @@ const DEFAULT_PROFILE: VideoModelProfile = {
   aspectRatios: VIDEO_ASPECT_RATIOS.map((item) => item.value),
   maxImages: 3,
   maxVideos: 1,
+  supportsAudio: true,
+  modes: ['text-to-video', 'image-to-video', 'first-last-frame', 'reference-images', 'reference-video'],
+}
+
+const MINIMAX_H3_PROFILE: VideoModelProfile = {
+  provider: 'video_tasks',
+  minDuration: 1,
+  maxDuration: 15,
+  defaultDuration: 5,
+  resolutions: ['768P'],
+  aspectRatios: ['21:9', '16:9', '4:3', '1:1', '3:4', '9:16'],
+  maxImages: 9,
+  maxVideos: 3,
   supportsAudio: true,
   modes: ['text-to-video', 'image-to-video', 'first-last-frame', 'reference-images', 'reference-video'],
 }
@@ -237,6 +251,10 @@ function isKnownSeedanceModel(model: string): boolean {
   return normalizedModelName(model) in SEEDANCE_MODEL_PROFILES
 }
 
+function isMinimaxH3VideoModel(model: string): boolean {
+  return MINIMAX_H3_MODEL_PATTERN.test(normalizedModelName(model))
+}
+
 export function resolveVideoProvider(
   model: string,
   hint: Partial<Pick<VideoGatewayContext, 'baseUrl' | 'platform'>> = {},
@@ -244,6 +262,7 @@ export function resolveVideoProvider(
   const value = normalizedModelName(model)
   const platform = hint.platform?.trim().toLowerCase()
   if (platform === 'grok') return 'grok'
+  if (isMinimaxH3VideoModel(value)) return 'video_tasks'
   if (isKnownSeedanceModel(value) && (platform === 'openai' || platform === 'composite')) {
     return 'seedance_video'
   }
@@ -268,6 +287,7 @@ export function resolveVideoProvider(
 
 export function getVideoModelProfile(model: string, provider?: VideoProvider): VideoModelProfile {
   const value = normalizedModelName(model)
+  if (isMinimaxH3VideoModel(value)) return MINIMAX_H3_PROFILE
   const seedanceProfile = SEEDANCE_MODEL_PROFILES[value]
   if (seedanceProfile && provider !== 'grok') {
     return seedanceProfile
@@ -302,7 +322,8 @@ export function getVideoModelProfile(model: string, provider?: VideoProvider): V
 export function isVideoModel(name: string): boolean {
   const value = normalizedModelName(name)
   // Avoid broad matches such as "wan": Wanx image models start with "wanx".
-  return isKnownSeedanceModel(value) ||
+  return isMinimaxH3VideoModel(value) ||
+    isKnownSeedanceModel(value) ||
     value.includes('video') ||
     value.includes('seedance')
 }
@@ -363,6 +384,38 @@ export function buildVideoRequest(
   provider: VideoProvider,
   params: VideoGenerationParams,
 ): { path: string; body: Record<string, unknown> } {
+  if (provider === 'video_tasks') {
+    const body: Record<string, unknown> = {
+      model: params.model.trim(),
+      prompt: params.prompt.trim(),
+      seconds: String(params.durationSeconds),
+      resolution: '768P',
+      ratio: params.aspectRatio,
+    }
+    const frameImages = params.images.filter((asset) => asset.role === 'first_frame' || asset.role === 'last_frame')
+    const referenceImages = params.images.filter((asset) => asset.role === 'reference_image')
+    if (frameImages.length && !referenceImages.length && params.images.length <= 2) {
+      body.images = params.images.map((asset) => asset.url)
+    } else if (params.images.length || params.videos.length || params.audios.length) {
+      const content: Array<Record<string, unknown>> = [{ type: 'text', text: params.prompt.trim() }]
+      for (const asset of params.images) {
+        content.push({
+          type: 'image_url',
+          image_url: { url: asset.url },
+          role: asset.role === 'first_frame' || asset.role === 'last_frame' ? asset.role : 'reference_image',
+        })
+      }
+      for (const asset of params.videos) {
+        content.push({ type: 'video_url', video_url: { url: asset.url }, role: 'reference_video' })
+      }
+      for (const asset of params.audios) {
+        content.push({ type: 'audio_url', audio_url: { url: asset.url }, role: 'reference_audio' })
+      }
+      body.metadata = { content }
+    }
+    return { path: '/videos', body }
+  }
+
   if (provider === 'seedance_video') {
     const firstFrame = params.images.find((asset) => asset.role === 'first_frame')
     const lastFrame = params.images.find((asset) => asset.role === 'last_frame')
@@ -491,7 +544,7 @@ export async function createVideoTask(
 
 function normalizeStatus(provider: VideoProvider, raw: string): VideoTaskStatus {
   const value = raw.trim().toLowerCase()
-  if (provider === 'grok' || provider === 'seedance_video') {
+  if (provider === 'grok' || provider === 'seedance_video' || provider === 'video_tasks') {
     if (value === 'done' || value === 'succeeded' || value === 'completed') return 'succeeded'
     if (value === 'failed' || value === 'expired' || value === 'cancelled' || value === 'canceled') return 'failed'
     return value === 'running' || value === 'processing' || value === 'in_progress' ? 'running' : 'queued'
@@ -513,7 +566,7 @@ export function parseVideoTaskSnapshot(provider: VideoProvider, payload: any): V
         '',
       )
     : String(payload?.content?.video_url ?? payload?.data?.content?.video_url ?? '')
-  const duration = provider === 'grok' || provider === 'seedance_video'
+  const duration = provider === 'grok' || provider === 'seedance_video' || provider === 'video_tasks'
     ? Number(
         payload?.video?.duration ??
         payload?.duration ??
@@ -539,9 +592,19 @@ export function parseVideoTaskSnapshot(provider: VideoProvider, payload: any): V
 
 export function videoTaskPath(provider: VideoProvider, requestId: string): string {
   const id = encodeURIComponent(requestId)
+  if (provider === 'video_tasks') {
+    return `/videos/${id}?model=MiniMax-H3`
+  }
   return provider === 'grok' || provider === 'seedance_video'
     ? `/videos/${id}`
     : `/contents/generations/tasks/${id}`
+}
+
+function videoContentPath(provider: VideoProvider, requestId: string): string {
+  if (provider === 'video_tasks') {
+    return `/videos/${encodeURIComponent(requestId)}/content?model=MiniMax-H3`
+  }
+  return `${videoTaskPath(provider, requestId)}/content`
 }
 
 export async function fetchVideoTask(
@@ -578,7 +641,7 @@ export async function fetchVideoPlayableUrl(
     return { url: videoUrl, revoke: false }
   }
   const response = await fetch(
-    joinUrl(context.baseUrl, `${videoTaskPath(provider, requestId)}/content`),
+    joinUrl(context.baseUrl, videoContentPath(provider, requestId)),
     { headers: authHeaders(context.apiKey) },
   )
   if (!response.ok) throw new Error(await readError(response) || '下载视频内容失败')
@@ -591,7 +654,7 @@ export async function cancelVideoTask(
   provider: VideoProvider,
   requestId: string,
 ): Promise<void> {
-  if (provider === 'grok' || provider === 'seedance_video') return
+  if (provider === 'grok' || provider === 'seedance_video' || provider === 'video_tasks') return
   await fetch(joinUrl(context.baseUrl, videoTaskPath(provider, requestId)), {
     method: 'DELETE',
     headers: authHeaders(context.apiKey),

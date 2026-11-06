@@ -274,6 +274,74 @@ func TestUsageHandlerOpenImageLinkServesOriginalGIFByObjectKeyBeforeStaticPrevie
 	require.Equal(t, []byte("GIF89a-animated"), recorder.Body.Bytes())
 }
 
+func TestUsageHandlerOpenImageLinkServesLocalFallback(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	localAssets := service.NewLocalImageAssetStore(t.TempDir())
+	meta, err := localAssets.Save(
+		context.Background(),
+		7,
+		"sync-local-fallback",
+		"images/usage/result.png",
+		"image/png",
+		time.Now().Add(time.Hour).Unix(),
+		[]byte("local-image"),
+	)
+	require.NoError(t, err)
+
+	handler := NewUsageHandler(nil, nil, nil, nil)
+	handler.SetImageLinkDeps(&usageImageLinkStoreStub{link: &service.UsageLogImageLink{
+		UserID:    7,
+		ImageURL:  localAssets.URL(meta.ID),
+		ObjectKey: meta.ObjectKey,
+	}}, nil)
+	handler.SetLocalImageAssetStore(localAssets)
+	router := gin.New()
+	router.GET("/usage-images/:token", handler.OpenImageLink)
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/usage-images/token", nil))
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Equal(t, "image/png", recorder.Header().Get("Content-Type"))
+	require.Equal(t, "local-image", recorder.Body.String())
+}
+
+func TestUsageHandlerImageLinkServesLocalFallback(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	localAssets := service.NewLocalImageAssetStore(t.TempDir())
+	meta, err := localAssets.Save(
+		context.Background(),
+		7,
+		"sync-local-fallback",
+		"images/usage/result.png",
+		"image/png",
+		time.Now().Add(time.Hour).Unix(),
+		[]byte("local-image"),
+	)
+	require.NoError(t, err)
+
+	handler := NewUsageHandler(nil, nil, nil, nil)
+	handler.SetImageLinkDeps(&usageImageLinkStoreStub{link: &service.UsageLogImageLink{
+		UserID:    7,
+		ImageURL:  localAssets.URL(meta.ID),
+		ObjectKey: meta.ObjectKey,
+	}}, nil)
+	handler.SetLocalImageAssetStore(localAssets)
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set(string(middleware2.ContextKeyUser), middleware2.AuthSubject{UserID: 7})
+		c.Next()
+	})
+	router.GET("/usage/image-links/:token", handler.ImageLink)
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/usage/image-links/token", nil))
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Equal(t, "image/png", recorder.Header().Get("Content-Type"))
+	require.Equal(t, "local-image", recorder.Body.String())
+}
+
 func TestUsageHandlerImageLinkAllowsAdminToOpenAnotherUsersImage(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	handler := NewUsageHandler(nil, nil, nil, nil)

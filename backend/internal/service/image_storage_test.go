@@ -11,10 +11,12 @@ import (
 	"image/gif"
 	"image/jpeg"
 	"image/png"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -130,6 +132,53 @@ func TestImageResultUploaderTranscodesOutputFormatBeforeUpload(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(out, &parsed))
 	require.Equal(t, "image/jpeg", parsed.Data[0].MIMEType)
+}
+
+func TestBuildImagePreviewKeepsAnimatedGIF(t *testing.T) {
+	palette := color.Palette{color.Black, color.White}
+	first := image.NewPaletted(image.Rect(0, 0, 2, 2), palette)
+	second := image.NewPaletted(image.Rect(0, 0, 2, 2), palette)
+	for y := 0; y < 2; y++ {
+		for x := 0; x < 2; x++ {
+			first.SetColorIndex(x, y, uint8((x+y)%2))
+			second.SetColorIndex(x, y, uint8((x+y+1)%2))
+		}
+	}
+	var source bytes.Buffer
+	require.NoError(t, gif.EncodeAll(&source, &gif.GIF{
+		Image:     []*image.Paletted{first, second},
+		Delay:     []int{10, 10},
+		LoopCount: 0,
+	}))
+
+	preview, contentType, err := buildImagePreview(source.Bytes(), 1)
+	require.NoError(t, err)
+	require.Equal(t, "image/gif", contentType)
+	decoded, err := gif.DecodeAll(bytes.NewReader(preview))
+	require.NoError(t, err)
+	require.Len(t, decoded.Image, 2)
+	require.Equal(t, 1, decoded.Image[0].Bounds().Dx())
+	require.Equal(t, 1, decoded.Image[0].Bounds().Dy())
+	require.Equal(t, []int{10, 10}, decoded.Delay)
+}
+
+func TestBuildImagePreviewPreservesTransparency(t *testing.T) {
+	source := image.NewNRGBA(image.Rect(0, 0, 2, 2))
+	for y := 0; y < 2; y++ {
+		for x := 0; x < 2; x++ {
+			source.SetNRGBA(x, y, color.NRGBA{R: 255, A: 128})
+		}
+	}
+	var encoded bytes.Buffer
+	require.NoError(t, png.Encode(&encoded, source))
+
+	preview, contentType, err := buildImagePreview(encoded.Bytes(), 1)
+	require.NoError(t, err)
+	require.Equal(t, "image/png", contentType)
+	decoded, err := png.Decode(bytes.NewReader(preview))
+	require.NoError(t, err)
+	_, _, _, alpha := decoded.At(0, 0).RGBA()
+	require.Less(t, alpha, uint32(0xffff))
 }
 
 func TestTranscodeImageOutputUsesActualBytesInsteadOfDeclaredContentType(t *testing.T) {
@@ -279,6 +328,7 @@ func TestImageResultUploaderStagesOriginalLocallyBeforeRemoteUpload(t *testing.T
 	require.Equal(t, LocalImageAssetURLPrefix+parsed.Data[0].LocalAssetID, parsed.Data[0].URL)
 	require.Equal(t, "images/users/42/imgtask_local-0.png", parsed.Data[0].ObjectKey)
 	require.Equal(t, "image/png", parsed.Data[0].MIMEType)
+	require.Contains(t, string(out), `"preview_data_url":"data:image/jpeg;base64,`)
 
 	meta, data, err := local.Read(parsed.Data[0].LocalAssetID)
 	require.NoError(t, err)
@@ -564,17 +614,99 @@ func TestImageTaskServiceCompletesWithLocalOriginalBeforeRemoteUpload(t *testing
 	owner := ImageTaskOwner{UserID: 1, APIKeyID: 2}
 	created, err := svc.Create(context.Background(), owner)
 	require.NoError(t, err)
+	validPNG, err := base64.StdEncoding.DecodeString(
+		"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+	)
+	require.NoError(t, err)
 	result := json.RawMessage(`{"data":[{"b64_json":"` +
-		base64.StdEncoding.EncodeToString(pngBytes) + `","mime_type":"image/png"}]}`)
+		base64.StdEncoding.EncodeToString(validPNG) + `","mime_type":"image/png"}]}`)
 
 	require.NoError(t, svc.Complete(context.Background(), created.ID, http.StatusOK, result))
 	require.Empty(t, remote.saved, "the generated task must not wait for the R2 upload")
 
 	got, err := svc.Get(context.Background(), owner, created.ID)
 	require.NoError(t, err)
-	require.Equal(t, ImageTaskStatusCompleted, got.Status)
-	require.True(t, strings.HasPrefix(got.ImageURL, LocalImageAssetURLPrefix))
+	require.Equal(t, ImageTaskStatusReady, got.Status)
+	require.Empty(t, got.ImageURL)
+	require.Contains(t, string(got.Result), `"original_ready":true`)
+	require.Contains(t, string(got.Result), `"preview_data_url":"data:image/jpeg;base64,`)
 	require.NotContains(t, string(got.Result), "b64_json")
+	require.NotContains(t, string(got.Result), `"local_asset_id"`)
+}
+
+func TestImageTaskServiceHidesPublicURLUntilLocalAssetUploaded(t *testing.T) {
+	store := &imageTaskMemoryStore{}
+	remote := &fakeImageStorage{}
+	local := NewLocalImageAssetStore(t.TempDir())
+	uploader := NewImageResultUploader(remote, "images/", 0, nil)
+	uploader.SetLocalAssets(local)
+	svc := NewImageTaskServiceWithUploader(store, uploader, time.Hour, time.Minute)
+
+	owner := ImageTaskOwner{UserID: 1, APIKeyID: 2}
+	created, err := svc.Create(context.Background(), owner)
+	require.NoError(t, err)
+	validPNG, err := base64.StdEncoding.DecodeString(
+		"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+	)
+	require.NoError(t, err)
+	result := json.RawMessage(`{"data":[{"b64_json":"` +
+		base64.StdEncoding.EncodeToString(validPNG) + `","mime_type":"image/png"}]}`)
+	require.NoError(t, svc.Complete(context.Background(), created.ID, http.StatusOK, result))
+
+	pending, err := svc.Get(context.Background(), owner, created.ID)
+	require.NoError(t, err)
+	require.Equal(t, ImageTaskStatusReady, pending.Status)
+	var pendingResult struct {
+		Data []map[string]json.RawMessage `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(pending.Result, &pendingResult))
+	require.Len(t, pendingResult.Data, 1)
+	_, hasURL := pendingResult.Data[0]["url"]
+	require.False(t, hasURL, "the public R2 URL must stay hidden while upload is pending")
+	_, hasDisplayURL := pendingResult.Data[0]["display_url"]
+	require.False(t, hasDisplayURL, "local display addresses must not be returned to API clients")
+	_, hasLocalAssetID := pendingResult.Data[0]["local_asset_id"]
+	require.False(t, hasLocalAssetID, "local asset identifiers must not be exposed")
+	require.JSONEq(t, `"pending"`, string(pendingResult.Data[0]["upload_status"]))
+	require.JSONEq(t, `true`, string(pendingResult.Data[0]["original_ready"]))
+	require.Contains(t, string(pendingResult.Data[0]["preview_data_url"]), `data:image/jpeg;base64,`)
+	require.Empty(t, pending.ImageURL)
+
+	pendingAssets, err := local.ListPending(10)
+	require.NoError(t, err)
+	require.Len(t, pendingAssets, 1)
+	assetID := pendingAssets[0].ID
+	meta, original, err := svc.OpenLocalAssetContent(context.Background(), owner, created.ID, 0)
+	require.NoError(t, err)
+	require.Equal(t, assetID, meta.ID)
+	data, err := io.ReadAll(original)
+	require.NoError(t, err)
+	require.NoError(t, original.Close())
+	require.Equal(t, validPNG, data)
+
+	_, _, err = svc.OpenLocalAssetContent(context.Background(), ImageTaskOwner{UserID: 999, APIKeyID: 2}, created.ID, 0)
+	require.ErrorIs(t, err, ErrImageTaskNotFound)
+
+	remoteURL := "https://cdn.test/images/users/1/" + created.ID + "-0.png"
+	require.NoError(t, local.MarkUploaded(assetID, remoteURL))
+	resolvedRemoteURL, err := svc.OriginalRemoteURL(context.Background(), owner, created.ID, 0)
+	require.NoError(t, err)
+	require.Equal(t, remoteURL, resolvedRemoteURL)
+	require.NoError(t, os.Remove(local.assetPath(meta)))
+	_, _, err = svc.OpenLocalAssetContent(context.Background(), owner, created.ID, 0)
+	require.ErrorIs(t, err, ErrImageTaskContentNotFound)
+
+	uploaded, err := svc.Get(context.Background(), owner, created.ID)
+	require.NoError(t, err)
+	require.Equal(t, ImageTaskStatusCompleted, uploaded.Status)
+	var uploadedResult struct {
+		Data []map[string]json.RawMessage `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(uploaded.Result, &uploadedResult))
+	require.Len(t, uploadedResult.Data, 1)
+	require.JSONEq(t, strconv.Quote(remoteURL), string(uploadedResult.Data[0]["url"]))
+	require.JSONEq(t, `"uploaded"`, string(uploadedResult.Data[0]["upload_status"]))
+	require.Equal(t, remoteURL, uploaded.ImageURL)
 }
 
 func TestImageTaskServiceCompleteOffloadFailureMarksFailed(t *testing.T) {
@@ -623,8 +755,9 @@ func TestImageStorageSettingServiceUploadLocalAssetMarksRemoteReady(t *testing.T
 	require.NoError(t, err)
 	require.True(t, got.Uploaded)
 	require.Equal(t, storage.url, got.RemoteURL)
-	_, _, err = local.Read(meta.ID)
-	require.ErrorIs(t, err, ErrLocalImageAssetNotFound)
+	_, data, err := local.Read(meta.ID)
+	require.NoError(t, err)
+	require.Equal(t, pngBytes, data)
 }
 
 func TestImageStorageSettingServiceRetriesLocalAssetAfterRemoteFailure(t *testing.T) {
@@ -657,4 +790,47 @@ func TestImageStorageSettingServiceRetriesLocalAssetAfterRemoteFailure(t *testin
 	require.NoError(t, err)
 	require.True(t, uploaded.Uploaded)
 	require.Equal(t, storage.url, uploaded.RemoteURL)
+}
+
+func TestImageStorageSettingServicePausesLocalAssetRetriesAfterAuthFailure(t *testing.T) {
+	local := NewLocalImageAssetStore(t.TempDir())
+	meta, err := local.Save(
+		context.Background(),
+		42,
+		"imgtask_auth_failed",
+		"images/users/42/imgtask_auth_failed-0.png",
+		"image/png",
+		time.Now().Add(time.Hour).Unix(),
+		pngBytes,
+	)
+	require.NoError(t, err)
+	storage := &fakeImageStorage{err: errors.New("S3 PutObject: https response error StatusCode: 401, api error Unauthorized")}
+	uploader := NewImageResultUploader(storage, "images/", 0, nil)
+	svc := &ImageStorageSettingService{localAssets: local}
+
+	require.Error(t, svc.uploadLocalAsset(context.Background(), meta, uploader))
+	ready, wait := svc.localAssetRetryReady(meta.ID, time.Now())
+	require.False(t, ready)
+	require.GreaterOrEqual(t, wait, localAssetAuthFailurePause-time.Second)
+
+	storage.err = nil
+	storage.url = "https://cdn.test/images/users/42/imgtask_auth_failed-0.png"
+	svc.Invalidate()
+	ready, wait = svc.localAssetRetryReady(meta.ID, time.Now())
+	require.True(t, ready, "saving new storage settings must release the retry pause")
+	require.Zero(t, wait)
+}
+
+func TestImageStorageSettingServiceLocalAssetRetryBackoff(t *testing.T) {
+	svc := &ImageStorageSettingService{}
+	now := time.Now()
+
+	first := svc.recordLocalAssetFailure("asset-1", errors.New("temporary network failure"), now)
+	second := svc.recordLocalAssetFailure("asset-1", errors.New("temporary network failure"), now.Add(first))
+	require.Greater(t, second, first, "retry delay must grow after repeated failures")
+
+	svc.recordLocalAssetSuccess("asset-1")
+	ready, wait := svc.localAssetRetryReady("asset-1", now)
+	require.True(t, ready)
+	require.Zero(t, wait)
 }

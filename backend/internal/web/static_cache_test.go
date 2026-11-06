@@ -27,6 +27,7 @@ func TestIsFingerprintedEmbeddedAssetPath(t *testing.T) {
 		{name: "logo", path: "logo.png", want: false},
 		{name: "favicon", path: "favicon.ico", want: false},
 		{name: "fingerprint_outside_assets", path: "downloads/index-AbCd1234.js", want: false},
+		{name: "landing_image", path: "landing/hero-stars-1280.webp", want: false},
 		{name: "index_html", path: "index.html", want: false},
 		{name: "spa_route", path: "dashboard", want: false},
 		{name: "assets_prefix_only", path: "assets", want: false},
@@ -67,5 +68,19 @@ func TestApplyStaticAssetCacheHeaders(t *testing.T) {
 		assert.NotPanics(t, func() {
 			applyStaticAssetCacheHeaders(nil, "assets/index-AbCd1234.js")
 		})
+	})
+
+	t.Run("sets_weekly_cache_for_landing_media", func(t *testing.T) {
+		t.Parallel()
+		header := make(http.Header)
+		applyStaticAssetCacheHeaders(header, "/landing/hero-stars-1280.webp")
+		assert.Equal(t, landingAssetsCacheControl, header.Get("Cache-Control"))
+	})
+
+	t.Run("skips_non_media_landing_file", func(t *testing.T) {
+		t.Parallel()
+		header := make(http.Header)
+		applyStaticAssetCacheHeaders(header, "landing/README.md")
+		assert.Empty(t, header.Get("Cache-Control"))
 	})
 }

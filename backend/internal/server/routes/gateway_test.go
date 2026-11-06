@@ -135,10 +135,12 @@ func TestGatewayRoutesAsyncImagesPathsAreRegistered(t *testing.T) {
 		"POST /v1/images/generations/async",
 		"POST /v1/images/edits/async",
 		"GET /v1/images/tasks/by-idempotency/:key",
+		"GET /v1/images/tasks/:task_id/content",
 		"GET /v1/images/tasks/:task_id",
 		"POST /images/generations/async",
 		"POST /images/edits/async",
 		"GET /images/tasks/by-idempotency/:key",
+		"GET /images/tasks/:task_id/content",
 		"GET /images/tasks/:task_id",
 	} {
 		require.True(t, registered[route], "%s should be registered", route)
@@ -313,8 +315,6 @@ func TestGatewayRoutesNonGrokVideosAreRejectedAtPlatformGate(t *testing.T) {
 		body   string
 	}{
 		{http.MethodPost, "/v1/videos/generations", `{"model":"grok-imagine-video-1.5","prompt":"waves"}`},
-		{http.MethodPost, "/v1/videos", `{"model":"grok-imagine-video-1.5","prompt":"waves"}`},
-		{http.MethodPost, "/videos", `{"model":"grok-imagine-video-1.5","prompt":"waves"}`},
 		{http.MethodPost, "/videos/generations", `{"model":"grok-imagine-video-1.5","prompt":"waves"}`},
 		{http.MethodPost, "/v1/videos/edits", `{"model":"grok-imagine-video","prompt":"waves","video":{"url":"https://example.com/in.mp4"}}`},
 		{http.MethodPost, "/videos/edits", `{"model":"grok-imagine-video","prompt":"waves","video":{"url":"https://example.com/in.mp4"}}`},
@@ -340,6 +340,22 @@ func TestGatewayRoutesNonGrokVideosAreRejectedAtPlatformGate(t *testing.T) {
 		router.ServeHTTP(w, req)
 		require.Equal(t, http.StatusNotFound, w.Code, "method=%s path=%s", tc.method, tc.path)
 		require.Contains(t, w.Body.String(), "Videos API is not supported for this platform")
+	}
+}
+
+func TestGatewayRoutesOpenAIVideoCreateIsAllowedForOpenAI(t *testing.T) {
+	router := newGatewayRoutesTestRouter(service.PlatformOpenAI)
+	for _, path := range []string{"/v1/videos", "/videos"} {
+		req := httptest.NewRequest(
+			http.MethodPost,
+			path,
+			strings.NewReader(`{"model":"MiniMax-H3","prompt":"waves","seconds":"5","resolution":"768P","ratio":"16:9"}`),
+		)
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		require.NotEqual(t, http.StatusNotFound, w.Code, "path=%s", path)
+		require.NotContains(t, w.Body.String(), "Videos API is not supported")
 	}
 }
 

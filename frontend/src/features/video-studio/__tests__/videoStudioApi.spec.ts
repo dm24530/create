@@ -31,6 +31,15 @@ describe('video model classification', () => {
     expect(isVideoModel('wan3.0-yuanlian')).toBe(true)
   })
 
+  it('recognizes the whole minimax H3 model family as video models', () => {
+    expect(isVideoModel('minimax H3')).toBe(true)
+    expect(isVideoModel('MiniMax-H3')).toBe(true)
+    expect(isVideoModel('MiniMax_H3')).toBe(true)
+    expect(isVideoModel('minimax H3-self')).toBe(true)
+    expect(isVideoModel('minimax H3-pro')).toBe(true)
+    expect(isVideoModel('minimax image')).toBe(false)
+  })
+
   it('uses the Seedance video protocol for documented models on OpenAI groups', () => {
     expect(resolveVideoProvider('seedance-2.5', { platform: 'openai' })).toBe('seedance_video')
     expect(resolveVideoProvider('wan3.0-video', { platform: 'openai' })).toBe('seedance_video')
@@ -38,6 +47,14 @@ describe('video model classification', () => {
     expect(resolveVideoProvider('grok-imagine-video', { platform: 'grok' })).toBe('grok')
     expect(resolveVideoProvider('grok-imagine-video', { platform: 'openai' })).toBe('seedance_video')
     expect(resolveVideoProvider('seedance-2-720p', { baseUrl: '/v1', platform: 'openai' })).toBe('seedance')
+  })
+
+  it('maps every minimax H3 variant to the unified video generation protocol', () => {
+    expect(resolveVideoProvider('minimax H3', { platform: 'openai' })).toBe('video_tasks')
+    expect(resolveVideoProvider('MiniMax-H3', { platform: 'openai' })).toBe('video_tasks')
+    expect(resolveVideoProvider('MiniMax_H3')).toBe('video_tasks')
+    expect(resolveVideoProvider('minimax H3-self')).toBe('video_tasks')
+    expect(resolveVideoProvider('minimax H3-pro', { platform: 'composite' })).toBe('video_tasks')
   })
 
   it('applies model-specific duration, resolution and reference limits', () => {
@@ -55,6 +72,18 @@ describe('video model classification', () => {
     const grokOfficial = getVideoModelProfile('grok-imagine-video', 'grok')
     expect(grokOfficial.maxDuration).toBe(10)
     expect(grokOfficial.resolutions).not.toContain('1080p')
+
+    const minimaxH3 = getVideoModelProfile('minimax H3-self', 'video_tasks')
+    expect(minimaxH3.provider).toBe('video_tasks')
+    expect(minimaxH3.minDuration).toBe(1)
+    expect(minimaxH3.maxDuration).toBe(15)
+    expect(minimaxH3.defaultDuration).toBe(5)
+    expect(minimaxH3.resolutions).toEqual(['768P'])
+    expect(minimaxH3.aspectRatios).toEqual(['21:9', '16:9', '4:3', '1:1', '3:4', '9:16'])
+    expect(minimaxH3.maxImages).toBe(9)
+    expect(minimaxH3.maxVideos).toBe(3)
+    expect(minimaxH3.supportsAudio).toBe(true)
+    expect(minimaxH3.modes).toEqual(['text-to-video', 'image-to-video', 'first-last-frame', 'reference-images', 'reference-video'])
   })
 })
 
@@ -189,6 +218,30 @@ describe('Seedance video request mapping', () => {
       reference_video_urls: ['https://cdn.example.com/ref.mp4'],
       reference_image_urls: ['https://cdn.example.com/ref.png'],
     })
+  })
+
+  it('submits minimax H3 through the unified video endpoint', () => {
+    const model = 'minimax H3-self'
+    const provider = resolveVideoProvider(model, { platform: 'openai' })
+    const request = buildVideoRequest(provider, {
+      ...base,
+      model,
+      durationSeconds: 5,
+      resolution: '768p',
+      aspectRatio: '9:16',
+    })
+
+    expect(provider).toBe('video_tasks')
+    expect(request.path).toBe('/videos')
+    expect(request.body).toMatchObject({
+      model,
+      seconds: '5',
+      resolution: '768P',
+      ratio: '9:16',
+    })
+    expect(request.body).not.toHaveProperty('mode')
+    expect(request.body).not.toHaveProperty('duration')
+    expect(request.body).not.toHaveProperty('generate_audio')
   })
 
   it('keeps first/last frames, reference images, videos and audio together', () => {

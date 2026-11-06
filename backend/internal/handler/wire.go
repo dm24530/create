@@ -242,6 +242,8 @@ func ProvideHandlers(
 	usageHandler.SetLocalImageAssetStore(localImageAssetHandler.assets)
 	usageHandler.SetImageTaskService(imageTaskService)
 	imageStudioGalleryHandler.SetImageLinkStore(imageLinks)
+	gatewayHandler.SetLocalImageAssetStore(localImageAssetHandler.assets)
+	openaiGatewayHandler.SetLocalImageAssetStore(localImageAssetHandler.assets)
 	asyncImageHandler.Configure(gatewayHandler, apiKeyService, imageLinks)
 	return &Handlers{
 		Auth:               authHandler,

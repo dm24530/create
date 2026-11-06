@@ -54,6 +54,58 @@
 
 ## 变更记录
 
+### v0.2.41 - 2026-11-06
+
+标签：`[图片工作台]` `[本地预览]` `[原图下载]` `[R2]` `[视频工作台]` `[MiniMax H3]` `[静态资源]`
+
+需求：
+
+- 图片生成后需要立即显示，前端普通展示只使用轻量预览图，下载时才读取原图。
+- 原图上传 R2 成功前不能向公开任务结果暴露本地地址或未发布链接。
+- R2 鉴权失败不能造成后台重试风暴，GIF 预览必须继续保留动画。
+- 视频工作台需要支持 MiniMax H3 的 OpenAI 兼容异步视频任务。
+- 首页和静态资源需要减少传输体积和首屏等待时间。
+
+实现：
+
+- 异步图片任务先保存本地原图并返回 `preview_data_url`；任务状态区分本地可用的 `ready` 和 R2 已发布的 `completed`。
+- 新增需要用户或 API Key 鉴权的原图接口；本地原图过期后可按任务元数据回源 R2。
+- 公开任务结果隐藏 `local_asset_id`、`display_url` 和 R2 发布前的 `url`，避免泄露本地地址。
+- 原图上传 R2 后保留十分钟本地宽限；R2 401/403 暂停十分钟，普通失败使用指数退避。
+- GIF 预览改为缩放后的多帧动画 GIF，保留帧延迟和循环次数；普通透明图片输出 PNG，其余输出 JPEG。
+- Gallery 待上传作品优先读取本地原图，避免 R2 未完成时缩略图不可用。
+- 增加 MiniMax H3 视频任务创建、状态和内容接口，并在视频工作台接入参考图、参考视频、参考音频和时长参数。
+- 对嵌入式 JS、CSS、JSON、SVG、XML 增加 Brotli/Gzip 缓存响应，为首页 Hero 图片增加预加载和稳定资源缓存策略。
+
+涉及文件：
+
+- `backend/internal/handler`
+- `backend/internal/service`
+- `backend/internal/repository`
+- `backend/internal/server/routes`
+- `backend/internal/web`
+- `frontend/src/features/image-studio`
+- `frontend/src/features/video-studio`
+- `frontend/src/utils/imageGenerationWorker.ts`
+- `backend/cmd/server/VERSION`
+
+验证：
+
+- `go test ./internal/service ./internal/handler ./internal/repository ./internal/web` 通过。
+- `go test ./internal/handler -run 'Image|Usage'` 通过。
+- `go test ./internal/repository -run ImageTask` 通过。
+- 前端类型检查、图片工作台与视频工作台共 `113` 项测试通过。
+- 前端生产构建通过。
+
+迁移：
+
+- 无数据库 schema 变更，无需历史数据回填。
+- 已发布版本的旧任务继续按原有 R2 链接读取；新任务使用本地原图加预览流程。
+
+遗留：
+
+- 需要更新无效的 R2 凭证；仅剩 R2 地址且凭证无效的历史图片仍会返回 401。
+
 ### v0.2.40 - 2026-11-05
 
 标签：`[图片工作台]` `[GIF]` `[使用记录]` `[图片链接]`

@@ -46,11 +46,13 @@ func (e GrokMediaEndpoint) IsVideoLookupRequest() bool {
 		e == SeedanceEndpointStatus ||
 		e == SeedanceEndpointDelete ||
 		e == SeedanceVideoEndpointStatus ||
-		e == SeedanceVideoEndpointContent
+		e == SeedanceVideoEndpointContent ||
+		e == OpenAIVideoEndpointStatus ||
+		e == OpenAIVideoEndpointContent
 }
 
 func (e GrokMediaEndpoint) IsGenerationRequest() bool {
-	if e == SeedanceEndpointCreate || e == SeedanceVideoEndpointCreate {
+	if e == SeedanceEndpointCreate || e == SeedanceVideoEndpointCreate || e == OpenAIVideoEndpointCreate {
 		return true
 	}
 	switch e {

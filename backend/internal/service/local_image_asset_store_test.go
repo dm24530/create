@@ -52,7 +52,7 @@ func TestLocalImageAssetStorePersistsOriginalByOwner(t *testing.T) {
 	require.Equal(t, pngBytes, data)
 }
 
-func TestLocalImageAssetStoreMarkUploadedRemovesLocalOriginal(t *testing.T) {
+func TestLocalImageAssetStoreMarkUploadedKeepsLocalOriginalForGracePeriod(t *testing.T) {
 	store := NewLocalImageAssetStore(t.TempDir())
 	meta, err := store.Save(
 		context.Background(),
@@ -74,9 +74,11 @@ func TestLocalImageAssetStoreMarkUploadedRemovesLocalOriginal(t *testing.T) {
 	require.Equal(t, "https://cdn.example.com/image.png", got.RemoteURL)
 	require.True(t, store.IsUploadedURL(store.URL(meta.ID)))
 	_, err = os.Stat(path)
-	require.True(t, os.IsNotExist(err))
-	_, _, err = store.Read(meta.ID)
-	require.ErrorIs(t, err, ErrLocalImageAssetNotFound)
+	require.NoError(t, err)
+	require.LessOrEqual(t, got.ExpiresAt, time.Now().Add(LocalImageAssetUploadedGrace+time.Second).Unix())
+	_, data, err := store.Read(meta.ID)
+	require.NoError(t, err)
+	require.Equal(t, pngBytes, data)
 }
 
 func TestLocalImageAssetStoreListPendingSkipsUploadedAssets(t *testing.T) {

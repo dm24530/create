@@ -1,0 +1,98 @@
+name: create-v038
+
+services:
+  create:
+    image: ${V038_IMAGE:-create:20261105-v0.2.38}
+    container_name: create-v038
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      - "127.0.0.1:${V038_PORT:-9908}:9898"
+    volumes:
+      - ./create-v038-data:/app/data:Z
+    environment:
+      - AUTO_SETUP=true
+      - SERVER_HOST=0.0.0.0
+      - SERVER_PORT=9898
+      - SERVER_MODE=release
+      - DOWNSTREAM_BASE_DOMAIN=${DOWNSTREAM_BASE_DOMAIN:-}
+      - TZ=${TZ:-Asia/Shanghai}
+      - DATABASE_HOST=create-v038-postgres
+      - DATABASE_PORT=5432
+      - DATABASE_USER=${POSTGRES_USER:-create}
+      - DATABASE_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      - DATABASE_DBNAME=${POSTGRES_DB:-create}
+      - DATABASE_SSLMODE=disable
+      - REDIS_HOST=create-v038-redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_DB=${REDIS_DB:-0}
+      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET is required}
+      - TOTP_ENCRYPTION_KEY=${TOTP_ENCRYPTION_KEY:?TOTP_ENCRYPTION_KEY is required}
+      - ADMIN_EMAIL=${ADMIN_EMAIL:-}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
+    depends_on:
+      create-v038-postgres:
+        condition: service_healthy
+      create-v038-redis:
+        condition: service_healthy
+    networks:
+      - create-v038-network
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-T", "5", "-O", "/dev/null", "http://localhost:9898/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  create-v038-postgres:
+    image: postgres:18-alpine
+    container_name: create-v038-postgres
+    restart: unless-stopped
+    volumes:
+      - ./create-v038-postgres-data:/var/lib/postgresql/data:Z
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-create}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      - POSTGRES_DB=${POSTGRES_DB:-create}
+      - PGDATA=/var/lib/postgresql/data
+      - TZ=${TZ:-Asia/Shanghai}
+    networks:
+      - create-v038-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-create} -d ${POSTGRES_DB:-create}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  create-v038-redis:
+    image: redis:8-alpine
+    container_name: create-v038-redis
+    restart: unless-stopped
+    volumes:
+      - ./create-v038-redis-data:/data:Z
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+      - --requirepass
+      - ${REDIS_PASSWORD:-}
+    environment:
+      - TZ=${TZ:-Asia/Shanghai}
+      - REDISCLI_AUTH=${REDIS_PASSWORD:-}
+    networks:
+      - create-v038-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+networks:
+  create-v038-network:
+    driver: bridge

@@ -12,6 +12,7 @@ import (
 	"mime"
 	"mime/multipart"
 	"net/http"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -25,6 +26,7 @@ import (
 const (
 	ImageTaskStatusProcessing   = "processing"
 	ImageTaskStatusPreviewReady = "preview_ready"
+	ImageTaskStatusReady        = "ready"
 	ImageTaskStatusCompleted    = "completed"
 	ImageTaskStatusFailed       = "failed"
 
@@ -33,10 +35,11 @@ const (
 )
 
 var (
-	ErrImageTaskNotFound    = infraerrors.New(http.StatusNotFound, "IMAGE_TASK_NOT_FOUND", "image task not found")
-	ErrImageTaskForbidden   = infraerrors.New(http.StatusForbidden, "IMAGE_TASK_FORBIDDEN", "image task does not belong to this API key")
-	ErrImageTaskUnavailable = infraerrors.New(http.StatusServiceUnavailable, "IMAGE_TASK_UNAVAILABLE", "image task storage is unavailable")
-	ErrImageTaskConflict    = infraerrors.New(http.StatusConflict, "IMAGE_TASK_IDEMPOTENCY_CONFLICT", "idempotency key reused with a different image request")
+	ErrImageTaskNotFound        = infraerrors.New(http.StatusNotFound, "IMAGE_TASK_NOT_FOUND", "image task not found")
+	ErrImageTaskForbidden       = infraerrors.New(http.StatusForbidden, "IMAGE_TASK_FORBIDDEN", "image task does not belong to this API key")
+	ErrImageTaskUnavailable     = infraerrors.New(http.StatusServiceUnavailable, "IMAGE_TASK_UNAVAILABLE", "image task storage is unavailable")
+	ErrImageTaskConflict        = infraerrors.New(http.StatusConflict, "IMAGE_TASK_IDEMPOTENCY_CONFLICT", "idempotency key reused with a different image request")
+	ErrImageTaskContentNotFound = infraerrors.New(http.StatusNotFound, "IMAGE_TASK_CONTENT_NOT_FOUND", "image task original content is unavailable")
 )
 
 // ImageTaskRecord is the private Redis representation of an asynchronous image
@@ -223,7 +226,7 @@ func (s *ImageTaskService) CreateWithExecution(
 	if err := s.store.Save(ctx, task, s.ttl); err != nil {
 		return nil, ErrImageTaskUnavailable.WithCause(err)
 	}
-	return imageTaskToPublic(task), nil
+	return s.imageTaskToPublic(task), nil
 }
 
 func (s *ImageTaskService) CreateWithExecutionIdempotent(
@@ -271,7 +274,7 @@ func (s *ImageTaskService) CreateWithExecutionIdempotent(
 				if existing.RequestHash != requestHash {
 					return nil, false, ErrImageTaskConflict
 				}
-				return imageTaskToPublic(existing), true, nil
+				return s.imageTaskToPublic(existing), true, nil
 			}
 			time.Sleep(25 * time.Millisecond)
 		}
@@ -301,7 +304,7 @@ func (s *ImageTaskService) CreateWithExecutionIdempotent(
 		_ = s.store.ReleaseIdempotencyKey(ctx, owner.APIKeyID, keyHash, taskID)
 		return nil, false, ErrImageTaskUnavailable.WithCause(err)
 	}
-	return imageTaskToPublic(task), false, nil
+	return s.imageTaskToPublic(task), false, nil
 }
 
 func ImageTaskRequestHash(platform, requestPath, geminiModel, contentType string, body []byte) string {
@@ -509,7 +512,100 @@ func (s *ImageTaskService) Get(ctx context.Context, owner ImageTaskOwner, id str
 		// Do not reveal whether a random task ID exists for another caller.
 		return nil, ErrImageTaskNotFound
 	}
-	return imageTaskToPublic(task), nil
+	return s.imageTaskToPublic(task), nil
+}
+
+func (s *ImageTaskService) OpenLocalAssetContent(
+	ctx context.Context,
+	owner ImageTaskOwner,
+	id string,
+	index int,
+) (*LocalImageAssetMetadata, *os.File, error) {
+	if s == nil || s.store == nil {
+		return nil, nil, ErrImageTaskUnavailable
+	}
+	task, err := s.store.Get(ctx, strings.TrimSpace(id))
+	if err != nil {
+		if errors.Is(err, ErrImageTaskNotFound) {
+			return nil, nil, ErrImageTaskNotFound
+		}
+		return nil, nil, ErrImageTaskUnavailable.WithCause(err)
+	}
+	if task.UserID != owner.UserID || task.APIKeyID != owner.APIKeyID {
+		return nil, nil, ErrImageTaskNotFound
+	}
+	uploader, _ := s.current()
+	if uploader == nil || uploader.localAssets == nil {
+		return nil, nil, ErrImageTaskContentNotFound
+	}
+	assetID, err := imageTaskLocalAssetID(task.Result, index)
+	if err != nil {
+		return nil, nil, ErrImageTaskContentNotFound.WithCause(err)
+	}
+	meta, file, err := uploader.localAssets.Open(assetID)
+	if err != nil {
+		if errors.Is(err, ErrLocalImageAssetNotFound) {
+			return nil, nil, ErrImageTaskContentNotFound
+		}
+		return nil, nil, ErrImageTaskContentNotFound.WithCause(err)
+	}
+	return meta, file, nil
+}
+
+func (s *ImageTaskService) OriginalRemoteURL(
+	ctx context.Context,
+	owner ImageTaskOwner,
+	id string,
+	index int,
+) (string, error) {
+	if s == nil || s.store == nil {
+		return "", ErrImageTaskUnavailable
+	}
+	task, err := s.store.Get(ctx, strings.TrimSpace(id))
+	if err != nil {
+		if errors.Is(err, ErrImageTaskNotFound) {
+			return "", ErrImageTaskNotFound
+		}
+		return "", ErrImageTaskUnavailable.WithCause(err)
+	}
+	if task.UserID != owner.UserID || task.APIKeyID != owner.APIKeyID {
+		return "", ErrImageTaskNotFound
+	}
+	uploader, _ := s.current()
+	if uploader == nil || uploader.localAssets == nil {
+		return "", ErrImageTaskContentNotFound
+	}
+	assetID, err := imageTaskLocalAssetID(task.Result, index)
+	if err != nil {
+		return "", ErrImageTaskContentNotFound.WithCause(err)
+	}
+	meta, err := uploader.localAssets.Get(assetID)
+	if err != nil || !meta.Uploaded || strings.TrimSpace(meta.RemoteURL) == "" {
+		return "", ErrImageTaskContentNotFound
+	}
+	return strings.TrimSpace(meta.RemoteURL), nil
+}
+
+func imageTaskLocalAssetID(result json.RawMessage, index int) (string, error) {
+	if index < 0 {
+		index = 0
+	}
+	var payload struct {
+		Data []struct {
+			LocalAssetID string `json:"local_asset_id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(result, &payload); err != nil {
+		return "", err
+	}
+	if index >= len(payload.Data) {
+		return "", errors.New("image task content index is out of range")
+	}
+	assetID := strings.TrimSpace(payload.Data[index].LocalAssetID)
+	if assetID == "" {
+		return "", errors.New("image task has no local original")
+	}
+	return assetID, nil
 }
 
 // GetByIdempotencyKey lets a client recover a task whose submit response was
@@ -581,7 +677,11 @@ func (s *ImageTaskService) Complete(ctx context.Context, id string, statusCode i
 		}
 		result = rewritten
 	}
-	return s.finish(ctx, id, ImageTaskStatusCompleted, statusCode, result, nil)
+	status := ImageTaskStatusCompleted
+	if imageResultHasLocalAsset(result) {
+		status = ImageTaskStatusReady
+	}
+	return s.finish(ctx, id, status, statusCode, result, nil)
 }
 
 // FinalizePreview completes a task from its already-published preview without
@@ -656,6 +756,119 @@ func (s *ImageTaskService) saveState(
 		return ErrImageTaskUnavailable.WithCause(err)
 	}
 	return nil
+}
+
+func (s *ImageTaskService) imageTaskToPublic(task *ImageTaskRecord) *ImageTask {
+	public := imageTaskToPublic(task)
+	if public == nil || len(public.Result) == 0 {
+		return public
+	}
+	uploader, _ := s.current()
+	var localAssets *LocalImageAssetStore
+	if uploader != nil {
+		localAssets = uploader.localAssets
+	}
+	published := imageResultLocalAssetsPublished(public.Result, localAssets)
+	result, err := publicImageTaskResult(public.Result, localAssets)
+	if err != nil {
+		logger.L().Warn("image_task.public_result_projection_failed",
+			zap.String("task_id", task.ID),
+			zap.Error(err))
+		return public
+	}
+	public.Result = result
+	public.ImageURL = firstImageTaskURL(result)
+	if task.Status == ImageTaskStatusReady && published {
+		public.Status = ImageTaskStatusCompleted
+	}
+	return public
+}
+
+func imageResultHasLocalAsset(result json.RawMessage) bool {
+	var payload struct {
+		Data []struct {
+			LocalAssetID string `json:"local_asset_id"`
+		} `json:"data"`
+	}
+	if json.Unmarshal(result, &payload) != nil {
+		return false
+	}
+	for _, item := range payload.Data {
+		if strings.TrimSpace(item.LocalAssetID) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func imageResultLocalAssetsPublished(result json.RawMessage, localAssets *LocalImageAssetStore) bool {
+	var payload struct {
+		Data []struct {
+			LocalAssetID string `json:"local_asset_id"`
+		} `json:"data"`
+	}
+	if json.Unmarshal(result, &payload) != nil {
+		return false
+	}
+	found := false
+	for _, item := range payload.Data {
+		assetID := strings.TrimSpace(item.LocalAssetID)
+		if assetID == "" {
+			continue
+		}
+		found = true
+		if localAssets == nil {
+			return false
+		}
+		meta, err := localAssets.Get(assetID)
+		if err != nil || !meta.Uploaded || strings.TrimSpace(meta.RemoteURL) == "" {
+			return false
+		}
+	}
+	return found
+}
+
+func publicImageTaskResult(result json.RawMessage, localAssets *LocalImageAssetStore) (json.RawMessage, error) {
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(result, &top); err != nil {
+		return nil, err
+	}
+	rawData, ok := top["data"]
+	if !ok {
+		return result, nil
+	}
+	var items []map[string]json.RawMessage
+	if err := json.Unmarshal(rawData, &items); err != nil {
+		return nil, err
+	}
+	for _, item := range items {
+		rawAssetID, ok := item["local_asset_id"]
+		if !ok {
+			continue
+		}
+		var assetID string
+		if err := json.Unmarshal(rawAssetID, &assetID); err != nil {
+			continue
+		}
+		assetID = strings.TrimSpace(assetID)
+		if assetID == "" {
+			continue
+		}
+		delete(item, "url")
+		delete(item, "display_url")
+		delete(item, "local_asset_id")
+		item["original_ready"] = encodedJSON(true)
+		item["upload_status"] = encodedJSON("pending")
+		if localAssets == nil {
+			continue
+		}
+		meta, err := localAssets.Get(assetID)
+		if err == nil && meta.Uploaded && strings.TrimSpace(meta.RemoteURL) != "" {
+			item["url"] = encodedJSON(strings.TrimSpace(meta.RemoteURL))
+			item["upload_status"] = encodedJSON("uploaded")
+		}
+	}
+	return imageResultWithItems(top, items)
 }
 
 func imageTaskToPublic(task *ImageTaskRecord) *ImageTask {

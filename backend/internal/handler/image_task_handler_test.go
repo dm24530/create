@@ -231,6 +231,80 @@ func TestAsyncImageHandlerSubmitAndPoll(t *testing.T) {
 	require.Contains(t, pollWriter.Body.String(), "https://example.test/image.png")
 }
 
+func TestAsyncImageHandlerServesOwnedLocalOriginal(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store := &asyncImageMemoryStore{tasks: make(map[string]*service.ImageTaskRecord)}
+	local := service.NewLocalImageAssetStore(t.TempDir())
+	original := []byte("local-original-bytes")
+	meta, err := local.Save(
+		context.Background(),
+		7,
+		"imgtask_original",
+		"images/users/7/imgtask_original-0.png",
+		"image/png",
+		time.Now().Add(time.Hour).Unix(),
+		original,
+	)
+	require.NoError(t, err)
+	result, err := json.Marshal(map[string]any{
+		"data": []map[string]any{{
+			"local_asset_id": meta.ID,
+			"object_key":     meta.ObjectKey,
+			"mime_type":      "image/png",
+			"upload_status":  "pending",
+		}},
+	})
+	require.NoError(t, err)
+	require.NoError(t, store.Save(context.Background(), &service.ImageTaskRecord{
+		ID:         "imgtask_original",
+		UserID:     7,
+		APIKeyID:   9,
+		Status:     service.ImageTaskStatusCompleted,
+		HTTPStatus: http.StatusOK,
+		Result:     result,
+	}, time.Hour))
+	uploader := service.NewImageResultUploader(nil, "images/", 0, nil)
+	uploader.SetLocalAssets(local)
+	tasks := service.NewImageTaskServiceWithUploader(store, uploader, time.Hour, time.Minute)
+	h := &AsyncImageHandler{tasks: tasks}
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{ID: 9, UserID: 7})
+		c.Next()
+	})
+	router.GET("/v1/images/tasks/:task_id/content", h.Content)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/images/tasks/imgtask_original/content?index=0", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, "private, no-store", w.Header().Get("Cache-Control"))
+	require.Equal(t, original, w.Body.Bytes())
+
+	// The opaque asset ID is not an authorization boundary.
+	otherStore := &asyncImageMemoryStore{tasks: map[string]*service.ImageTaskRecord{
+		"imgtask_original": {
+			ID:       "imgtask_original",
+			UserID:   8,
+			APIKeyID: 10,
+			Status:   service.ImageTaskStatusCompleted,
+			Result:   result,
+		},
+	}}
+	otherTasks := service.NewImageTaskServiceWithUploader(otherStore, uploader, time.Hour, time.Minute)
+	otherHandler := &AsyncImageHandler{tasks: otherTasks}
+	otherRouter := gin.New()
+	otherRouter.Use(func(c *gin.Context) {
+		c.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{ID: 9, UserID: 7})
+		c.Next()
+	})
+	otherRouter.GET("/v1/images/tasks/:task_id/content", otherHandler.Content)
+	other := httptest.NewRecorder()
+	otherRouter.ServeHTTP(other, req)
+	require.Equal(t, http.StatusNotFound, other.Code)
+}
+
 func TestAsyncImageHandlerResolvesCompositeOpenAIModel(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	store := &asyncImageMemoryStore{tasks: make(map[string]*service.ImageTaskRecord)}

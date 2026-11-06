@@ -43,7 +43,7 @@ interface StoredImageGenerationResponse {
 
 interface ImageGenerationTaskRecord {
   id: string
-  status: 'queued' | 'processing' | 'completed' | 'failed'
+  status: 'queued' | 'processing' | 'ready' | 'completed' | 'failed'
   createdAt: number
   updatedAt: number
   attempts?: number
@@ -359,7 +359,7 @@ export async function waitForPersistentImageGeneration(
     for (const id of ids) {
       if (responses.has(id)) continue
       const record = await getTaskRecord(id)
-      if (record?.status === 'completed' || record?.status === 'failed') {
+      if (record?.status === 'ready' || record?.status === 'completed' || record?.status === 'failed') {
         const response = await taskRecordToResponse(record)
         responses.set(id, response)
         await options.onResponse?.(id, response)

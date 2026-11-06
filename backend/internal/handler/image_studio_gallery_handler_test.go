@@ -193,7 +193,7 @@ func TestImageStudioGallerySaveFromTaskUsesPersistedObject(t *testing.T) {
 			ID:         "imgtask_owned",
 			UserID:     7,
 			APIKeyID:   9,
-			Status:     service.ImageTaskStatusCompleted,
+			Status:     service.ImageTaskStatusReady,
 			HTTPStatus: http.StatusOK,
 			Result: json.RawMessage(
 				`{"data":[{"object_key":"images/users/7/task-owned.png","url":"https://gen.example.com/images/users/7/task-owned.png","mime_type":"image/png"}]}`,

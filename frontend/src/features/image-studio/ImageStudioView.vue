@@ -2357,6 +2357,7 @@ async function persistGeneratedImages(
       const storedURL = resolveImageAssetURL(String(result.value.entry.url || ''))
       if (storedURL && storedURL !== result.value.item.src) {
         result.value.item.src = storedURL
+        result.value.item.originalSrc = storedURL
         resetImageMediaState(result.value.item)
       }
       const storedThumbURL = String(result.value.entry.thumb_url || '')
@@ -3738,6 +3739,7 @@ function applyGatewayPreview(image: GeneratedImage, items: any[]) {
     preview.preview_data_url
     || preview.preview_url
     || (b64 ? `data:${mime};base64,${b64}` : '')
+    || preview.display_url
     || preview.url
     || '',
   )
@@ -3764,7 +3766,7 @@ async function pollGatewayImageTask(
   const url = resolveGatewayPollUrl(pollUrl)
   let previewDelivered = false
   const resolveTask = (task: any): any[] | null => {
-    if (task?.status === 'completed') {
+    if (task?.status === 'ready' || task?.status === 'completed') {
       const result = task.result
       const normalized = typeof result === 'string' ? JSON.parse(result) : result
       return extractImages(normalized)
@@ -3822,6 +3824,30 @@ async function pollGatewayImageTask(
   }
 
   throw new Error(IMAGE_GENERATION_TIMEOUT_MESSAGE)
+}
+
+async function fetchGatewayTaskOriginalBlob(
+  image: GeneratedImage,
+  imageIndex: number,
+): Promise<Blob> {
+  const taskID = String(image.gatewayTaskId || '').trim()
+  if (!taskID) throw new Error('图片任务不存在')
+  const apiKey = image.apiKeyId
+    ? imageCapableKeys.value.find((key) => Number(key.id) === Number(image.apiKeyId))
+    : selectedKey.value
+  if (!apiKey?.key) throw new Error('API Key 已不可用，无法读取本地原图')
+  const url = `${apiBaseUrl.value.replace(/\/+$/, '')}/images/tasks/${encodeURIComponent(taskID)}/content?index=${imageIndex}`
+  const response = await fetchWithTimeout(
+    url,
+    { headers: { Authorization: `Bearer ${apiKey.key}` } },
+    2 * 60 * 1000,
+  )
+  if (!response.ok) {
+    throw new Error(`读取原图失败（${response.status}）`)
+  }
+  const blob = await response.blob()
+  if (!blob.size) throw new Error('本地原图为空')
+  return blob
 }
 
 async function tryExecuteGatewayAsyncRequests(
@@ -4320,9 +4346,11 @@ async function finishGenerationBatch(
     const resultFormat = imageFormatFromResult(item, '', requestedFormat)
     const mime = String(item.mimeType || item.mime_type || imageMIMETypeForFormat(resultFormat))
     const b64 = String(item.b64_json || item.data || '')
-    const rawSrc = b64
+    const previewDataURL = String(item.preview_data_url || '')
+    const remoteSrc = resolveImageAssetURL(String(item.display_url || item.url || ''))
+    const rawSrc = previewDataURL || (b64
       ? `data:${mime};base64,${b64}`
-      : resolveImageAssetURL(String(item.url || ''))
+      : remoteSrc)
     if (!rawSrc) continue
     const previewSrc = String(item.preview_data_url || '')
     const actualFormat = imageFormatFromResult(item, rawSrc, requestedFormat)
@@ -4479,7 +4507,16 @@ function extractImages(payload: any): any[] {
   if (geminiResults.length) return geminiResults
   if (Array.isArray(payload.response?.output)) return payload.response.output
   if (Array.isArray(payload.output)) return payload.output
-  if (payload.b64_json || payload.url || payload.result) return [payload]
+  if (
+    payload.b64_json
+    || payload.preview_data_url
+    || payload.preview_url
+    || payload.display_url
+    || payload.url
+    || payload.result
+  ) {
+    return [payload]
+  }
   return []
 }
 
@@ -4606,8 +4643,17 @@ async function downloadImage(image: GeneratedImage) {
         console.warn('Signed image download URL failed; falling back to direct fetch', error)
       }
     }
+    if (String(image.gatewayTaskId || '').trim()) {
+      try {
+        const blob = await fetchGatewayTaskOriginalBlob(image, 0)
+        saveBlob(blob, filename)
+        return
+      } catch (error) {
+        console.warn('Gateway task original download failed; falling back to gallery stream', error)
+      }
+    }
     const source = resolveImageAssetURL(image.originalSrc || image.src)
-    try {
+    if (!image.gatewayTaskId) try {
       const response = await fetch(source, {
         credentials: 'omit',
         cache: 'force-cache',
@@ -4629,6 +4675,9 @@ async function downloadImage(image: GeneratedImage) {
       } catch (error) {
         console.warn('Backend image download failed', error)
       }
+    }
+    if (image.gatewayTaskId) {
+      throw new Error('原图下载失败，请稍后重试')
     }
     const link = document.createElement('a')
     link.href = imageDownloadURL(image.originalSrc || image.src)
@@ -4669,12 +4718,12 @@ function isImageDownloading(image: GeneratedImage) {
 }
 
 function saveBlob(blob: Blob, filename: string) {
-  const objectUrl = URL.createObjectURL(blob)
+  const objectUrl = window.URL.createObjectURL(blob)
   const link = document.createElement('a')
   link.href = objectUrl
   link.download = filename
   link.click()
-  window.setTimeout(() => URL.revokeObjectURL?.(objectUrl), 1000)
+  window.setTimeout(() => window.URL.revokeObjectURL?.(objectUrl), 1000)
 }
 
 function copyPreviewPrompt() {

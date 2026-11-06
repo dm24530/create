@@ -48,6 +48,7 @@ type OpenAIGatewayHandler struct {
 	opsService                 *service.OpsService
 	imageLinks                 service.UsageLogImageLinkStore
 	imageStorage               *service.ImageStorageSettingService
+	localImageAssets           *service.LocalImageAssetStore
 	concurrencyHelper          *ConcurrencyHelper
 	imageLimiter               *imageConcurrencyLimiter
 	maxAccountSwitches         int
@@ -63,6 +64,13 @@ func (h *OpenAIGatewayHandler) SetImageLinkDeps(
 	}
 	h.imageLinks = imageLinks
 	h.imageStorage = imageStorage
+}
+
+func (h *OpenAIGatewayHandler) SetLocalImageAssetStore(store *service.LocalImageAssetStore) {
+	if h == nil {
+		return
+	}
+	h.localImageAssets = store
 }
 
 // SetDownstreamPricing wires optional sub-site price resolution and usage-based

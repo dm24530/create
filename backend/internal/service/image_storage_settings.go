@@ -14,12 +14,20 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/aws/smithy-go"
 	"go.uber.org/zap"
 )
 
 const settingKeyImageStorageConfig = "image_storage_config"
 const imageStorageSettingsCacheTTL = 5 * time.Second
 const imageStorageUploadPresignTTL = 15 * time.Minute
+const localAssetAuthFailurePause = 10 * time.Minute
+const localAssetRetryScanInterval = 2 * time.Second
+
+type localAssetRetryState struct {
+	failures    int
+	nextAttempt time.Time
+}
 
 // ErrImageStorageIncomplete 表示开关已打开但凭证不全，无法启用异步生图。
 //
@@ -99,6 +107,9 @@ type ImageStorageSettingService struct {
 	localAssets *LocalImageAssetStore
 	localOnce   sync.Once
 	uploading   sync.Map
+	retryMu     sync.Mutex
+	retryStates map[string]localAssetRetryState
+	retryPause  time.Time
 
 	// mirrorCache 记住"远端地址 → 已转存地址"，避免每次请求都重新下载。
 	mirrorMu    sync.Mutex
@@ -166,10 +177,10 @@ func (s *ImageStorageSettingService) StorageKeyForUser(ctx context.Context, user
 func (s *ImageStorageSettingService) localAssetUploadLoop() {
 	const (
 		workerLimit = 4
-		pollDelay   = 2 * time.Second
 	)
 	slots := make(chan struct{}, workerLimit)
 	for {
+		now := time.Now()
 		pending, err := s.localAssets.ListPending(100)
 		if err != nil {
 			logger.L().Warn("image_storage.local_asset_scan_failed", zap.Error(err))
@@ -179,6 +190,10 @@ func (s *ImageStorageSettingService) localAssetUploadLoop() {
 				continue
 			}
 			if _, loaded := s.uploading.LoadOrStore(meta.ID, struct{}{}); loaded {
+				continue
+			}
+			if ready, _ := s.localAssetRetryReady(meta.ID, now); !ready {
+				s.uploading.Delete(meta.ID)
 				continue
 			}
 			slots <- struct{}{}
@@ -196,7 +211,7 @@ func (s *ImageStorageSettingService) localAssetUploadLoop() {
 				s.uploadLocalAsset(ctx, item, uploader)
 			}(meta)
 		}
-		time.Sleep(pollDelay)
+		time.Sleep(localAssetRetryScanInterval)
 	}
 }
 
@@ -204,9 +219,9 @@ func (s *ImageStorageSettingService) uploadLocalAsset(
 	ctx context.Context,
 	item *LocalImageAssetMetadata,
 	uploader *ImageResultUploader,
-) {
+) error {
 	if s == nil || s.localAssets == nil || item == nil || uploader == nil || uploader.storage == nil {
-		return
+		return nil
 	}
 	_, data, readErr := s.localAssets.Read(item.ID)
 	if readErr != nil {
@@ -214,20 +229,128 @@ func (s *ImageStorageSettingService) uploadLocalAsset(
 			logger.L().Warn("image_storage.local_asset_read_failed",
 				zap.String("asset_id", item.ID), zap.Error(readErr))
 		}
-		return
+		return readErr
 	}
 	remoteURL, saveErr := uploader.storage.Save(ctx, item.ObjectKey, item.ContentType, data)
 	if saveErr != nil {
+		retryIn := s.recordLocalAssetFailure(item.ID, saveErr, time.Now())
 		logger.L().Warn("image_storage.local_asset_upload_failed",
 			zap.String("asset_id", item.ID),
 			zap.String("object_key", item.ObjectKey),
+			zap.Duration("retry_in", retryIn),
 			zap.Error(saveErr))
-		return
+		return saveErr
 	}
 	if markErr := s.localAssets.MarkUploaded(item.ID, remoteURL); markErr != nil {
 		logger.L().Warn("image_storage.local_asset_mark_uploaded_failed",
 			zap.String("asset_id", item.ID), zap.Error(markErr))
+		return markErr
 	}
+	s.recordLocalAssetSuccess(item.ID)
+	return nil
+}
+
+func (s *ImageStorageSettingService) localAssetRetryReady(assetID string, now time.Time) (bool, time.Duration) {
+	if s == nil {
+		return false, 0
+	}
+	s.retryMu.Lock()
+	defer s.retryMu.Unlock()
+	if now.Before(s.retryPause) {
+		return false, s.retryPause.Sub(now)
+	}
+	state, ok := s.retryStates[assetID]
+	if !ok || !now.Before(state.nextAttempt) {
+		return true, 0
+	}
+	return false, state.nextAttempt.Sub(now)
+}
+
+func (s *ImageStorageSettingService) recordLocalAssetFailure(
+	assetID string,
+	err error,
+	now time.Time,
+) time.Duration {
+	if s == nil {
+		return 0
+	}
+	permanent := isImageStoragePermanentFailure(err)
+	s.retryMu.Lock()
+	defer s.retryMu.Unlock()
+	if s.retryStates == nil {
+		s.retryStates = make(map[string]localAssetRetryState)
+	}
+	state := s.retryStates[assetID]
+	state.failures++
+	delay := localAssetRetryDelay(state.failures, permanent)
+	state.nextAttempt = now.Add(delay)
+	s.retryStates[assetID] = state
+	if permanent {
+		pauseUntil := now.Add(localAssetAuthFailurePause)
+		if pauseUntil.After(s.retryPause) {
+			s.retryPause = pauseUntil
+		}
+	}
+	return delay
+}
+
+func (s *ImageStorageSettingService) recordLocalAssetSuccess(assetID string) {
+	if s == nil {
+		return
+	}
+	s.retryMu.Lock()
+	delete(s.retryStates, assetID)
+	s.retryMu.Unlock()
+}
+
+func localAssetRetryDelay(failures int, permanent bool) time.Duration {
+	if permanent {
+		return localAssetAuthFailurePause
+	}
+	switch failures {
+	case 0, 1:
+		return 5 * time.Second
+	case 2:
+		return 15 * time.Second
+	case 3:
+		return time.Minute
+	case 4:
+		return 5 * time.Minute
+	case 5:
+		return 15 * time.Minute
+	default:
+		return 30 * time.Minute
+	}
+}
+
+func isImageStoragePermanentFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+	var apiErr smithy.APIError
+	if errors.As(err, &apiErr) {
+		switch strings.ToLower(strings.TrimSpace(apiErr.ErrorCode())) {
+		case "unauthorized", "accessdenied", "accessdeniedexception",
+			"invalidaccesskeyid", "signaturedoesnotmatch", "expiredtoken", "invalidtoken":
+			return true
+		}
+	}
+	message := strings.ToLower(err.Error())
+	for _, marker := range []string{
+		"statuscode: 401",
+		"statuscode: 403",
+		"unauthorized",
+		"access denied",
+		"accessdenied",
+		"invalidaccesskey",
+		"signaturedoesnotmatch",
+		"expiredtoken",
+	} {
+		if strings.Contains(message, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func NewImageStorageSettingService(
@@ -748,6 +871,10 @@ func (s *ImageStorageSettingService) Invalidate() {
 	s.imageURLExpiry = 24 * time.Hour
 	s.studioQuota = StudioWorksQuotaPerUser
 	s.mu.Unlock()
+	s.retryMu.Lock()
+	clear(s.retryStates)
+	s.retryPause = time.Time{}
+	s.retryMu.Unlock()
 }
 
 // Get 返回后台设置（SecretAccessKey 已脱敏）。从未保存过时返回 config.yaml 的等价值。

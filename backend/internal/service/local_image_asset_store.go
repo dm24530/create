@@ -16,6 +16,7 @@ import (
 )
 
 const LocalImageAssetURLPrefix = "/api/v1/public/image-assets/"
+const LocalImageAssetUploadedGrace = 10 * time.Minute
 
 var localImageAssetIDPattern = regexp.MustCompile(`^[a-f0-9]{32}$`)
 
@@ -208,14 +209,15 @@ func (s *LocalImageAssetStore) MarkUploaded(assetID, remoteURL string) error {
 	}
 	meta.Uploaded = true
 	meta.RemoteURL = strings.TrimSpace(remoteURL)
+	graceExpiry := time.Now().UTC().Add(LocalImageAssetUploadedGrace).Unix()
+	if meta.ExpiresAt <= 0 || graceExpiry < meta.ExpiresAt {
+		meta.ExpiresAt = graceExpiry
+	}
 	if err := s.writeMetadata(meta); err != nil {
 		return err
 	}
-	// The public asset endpoint redirects to RemoteURL after this point, so the
-	// large local copy is no longer needed.
-	if err := os.Remove(s.assetPath(meta)); err != nil && !os.IsNotExist(err) {
-		return err
-	}
+	// Keep the original briefly after the remote upload. Readers that started
+	// just before publication must not lose the local file mid-request.
 	return nil
 }
 

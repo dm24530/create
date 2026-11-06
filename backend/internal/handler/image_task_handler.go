@@ -11,6 +11,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -478,6 +479,63 @@ func (h *AsyncImageHandler) Get(c *gin.Context) {
 		c.Header("Retry-After", "3")
 	}
 	c.JSON(http.StatusOK, task)
+}
+
+func (h *AsyncImageHandler) Content(c *gin.Context) {
+	if !h.pollable() {
+		imageTaskJSONError(c, http.StatusNotFound, "not_found_error", "async image tasks are not enabled")
+		return
+	}
+	apiKey, ok := middleware2.GetAPIKeyFromContext(c)
+	if !ok || apiKey == nil || apiKey.UserID <= 0 || apiKey.ID <= 0 {
+		imageTaskError(c, service.ErrImageTaskForbidden)
+		return
+	}
+	index := 0
+	if raw := strings.TrimSpace(c.Query("index")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 0 {
+			imageTaskJSONError(c, http.StatusBadRequest, "invalid_request_error", "image index is invalid")
+			return
+		}
+		index = parsed
+	}
+	meta, file, err := h.tasks.OpenLocalAssetContent(
+		c.Request.Context(),
+		service.ImageTaskOwner{UserID: apiKey.UserID, APIKeyID: apiKey.ID},
+		c.Param("task_id"),
+		index,
+	)
+	if err != nil {
+		if errors.Is(err, service.ErrImageTaskContentNotFound) &&
+			h.gateway != nil &&
+			h.gateway.imageStorage != nil {
+			remoteURL, remoteErr := h.tasks.OriginalRemoteURL(
+				c.Request.Context(),
+				service.ImageTaskOwner{UserID: apiKey.UserID, APIKeyID: apiKey.ID},
+				c.Param("task_id"),
+				index,
+			)
+			if remoteErr == nil && remoteURL != "" {
+				data, contentType, fetchErr := h.gateway.imageStorage.FetchImageURL(c.Request.Context(), remoteURL)
+				if fetchErr == nil && len(data) > 0 {
+					if !strings.HasPrefix(strings.ToLower(contentType), "image/") {
+						contentType = http.DetectContentType(data)
+					}
+					c.Header("Cache-Control", "private, no-store")
+					c.Header("Content-Disposition", "inline")
+					c.Data(http.StatusOK, contentType, data)
+					return
+				}
+			}
+		}
+		imageTaskError(c, err)
+		return
+	}
+	defer func() { _ = file.Close() }()
+	c.Header("Cache-Control", "private, no-store")
+	c.Header("Content-Disposition", "inline")
+	http.ServeContent(c.Writer, c.Request, meta.FileName, time.Unix(meta.CreatedAt, 0), file)
 }
 
 // GetByIdempotency recovers a task whose submit response was lost.
@@ -1048,23 +1106,25 @@ func (h *AsyncImageHandler) recordUsageImageLink(taskID, usageRequestID string) 
 
 func firstImageTaskResultURL(result json.RawMessage) string {
 	var payload struct {
-		URL      string `json:"url"`
-		ImageURL string `json:"image_url"`
-		Data     []struct {
-			URL      string `json:"url"`
-			ImageURL string `json:"image_url"`
+		URL        string `json:"url"`
+		ImageURL   string `json:"image_url"`
+		DisplayURL string `json:"display_url"`
+		Data       []struct {
+			URL        string `json:"url"`
+			ImageURL   string `json:"image_url"`
+			DisplayURL string `json:"display_url"`
 		} `json:"data"`
 	}
 	if len(result) == 0 || json.Unmarshal(result, &payload) != nil {
 		return ""
 	}
-	for _, candidate := range []string{payload.URL, payload.ImageURL} {
+	for _, candidate := range []string{payload.URL, payload.ImageURL, payload.DisplayURL} {
 		if value := strings.TrimSpace(candidate); value != "" {
 			return value
 		}
 	}
 	for _, item := range payload.Data {
-		for _, candidate := range []string{item.URL, item.ImageURL} {
+		for _, candidate := range []string{item.URL, item.ImageURL, item.DisplayURL} {
 			if value := strings.TrimSpace(candidate); value != "" {
 				return value
 			}

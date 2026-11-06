@@ -2056,7 +2056,7 @@ describe('ImageStudioView gallery', () => {
           ok: true,
           json: async () => ({
             task_id: 'imgtask_after_503',
-            status: 'completed',
+            status: 'ready',
             result: { data: [{ b64_json: 'aGVsbG8=', mime_type: 'image/png' }] },
           }),
         } as Response
@@ -2924,6 +2924,108 @@ describe('ImageStudioView gallery', () => {
     expect(saveGalleryFromTask).toHaveBeenCalledWith(expect.objectContaining({
       task_id: 'imgtask_preview_ready',
     }))
+  })
+
+  it('shows the preview while the original is only used on demand', async () => {
+    listKeys.mockResolvedValue({
+      items: [{ id: 1, name: 'dd', key: 'sk-local', status: 'active', group_id: 2 }],
+    })
+    getPublicSettings.mockResolvedValue({ api_base_url: '/v1' })
+    saveGalleryFromTask.mockResolvedValueOnce({
+      id: 'gallery-task-local',
+      url: '',
+      prompt: '',
+      model: '',
+      size: '',
+      format: 'png',
+      created_at: 0,
+      expires_at: 0,
+    })
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/images/batches/models')) {
+        return { ok: true, json: async () => ({ data: [] }) } as Response
+      }
+      if (url.endsWith('/models')) {
+        return { ok: true, json: async () => ({ data: [{ id: 'gpt-image-1' }] }) } as Response
+      }
+      if (url.endsWith('/images/generations/async')) {
+        return {
+          ok: true,
+          status: 202,
+          json: async () => ({
+            task_id: 'imgtask_local_original',
+            status: 'processing',
+            poll_url: '/v1/images/tasks/imgtask_local_original',
+          }),
+        } as Response
+      }
+      if (url.endsWith('/images/tasks/imgtask_local_original')) {
+        return {
+          ok: true,
+          json: async () => ({
+            task_id: 'imgtask_local_original',
+            status: 'completed',
+            result: {
+              data: [{
+                object_key: 'images/users/1/imgtask_local_original-0.png',
+                mime_type: 'image/png',
+                upload_status: 'pending',
+                original_ready: true,
+                preview_data_url: 'data:image/jpeg;base64,cHJldmlldw==',
+              }],
+            },
+          }),
+        } as Response
+      }
+      if (url.endsWith('/images/tasks/imgtask_local_original/content?index=0')) {
+        return {
+          ok: true,
+          blob: async () => new Blob(['original'], { type: 'image/png' }),
+        } as Response
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountImageStudio()
+    await flushPromises()
+    await flushPromises()
+    await wrapper.get('form').trigger('submit')
+
+    await vi.waitFor(() => {
+      const image = wrapper.get('img[alt="生成结果 1"]')
+      expect(image.attributes('src')).toBe('data:image/jpeg;base64,cHJldmlldw==')
+    }, { timeout: 3000, interval: 50 })
+    expect(wrapper.find('.image-pending-card').exists()).toBe(false)
+    expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input).includes('/content?index=0'))).toBe(false)
+
+    downloadURLGallery.mockRejectedValueOnce(new Error('pending upload has no signed URL'))
+    const originalCreateObjectURL = URL.createObjectURL
+    const originalWindowCreateObjectURL = window.URL.createObjectURL
+    const createObjectURL = vi.fn(() => 'blob:downloaded-original')
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      value: createObjectURL,
+    })
+    Object.defineProperty(window.URL, 'createObjectURL', {
+      configurable: true,
+      value: createObjectURL,
+    })
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+    await wrapper.get('[data-testid="gallery-image-download"]').trigger('click')
+    await vi.waitFor(() => {
+      expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input).includes('/content?index=0'))).toBe(true)
+    })
+    click.mockRestore()
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      value: originalCreateObjectURL,
+    })
+    Object.defineProperty(window.URL, 'createObjectURL', {
+      configurable: true,
+      value: originalWindowCreateObjectURL,
+    })
+    wrapper.unmount()
   })
 
   it('does not process a persistent image result twice', async () => {

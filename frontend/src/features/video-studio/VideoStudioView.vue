@@ -938,7 +938,7 @@ const MAX_DURATION = computed(() => videoModelProfile.value.maxDuration)
 const maxImages = computed(() => videoModelProfile.value.maxImages)
 const maxVideos = computed(() => videoModelProfile.value.maxVideos)
 const maxAudios = computed(() =>
-  (effectiveProvider.value === 'seedance' || effectiveProvider.value === 'seedance_video') &&
+  (effectiveProvider.value === 'seedance' || effectiveProvider.value === 'seedance_video' || effectiveProvider.value === 'video_tasks') &&
     videoModelProfile.value.supportsAudio
     ? 1
     : 0,

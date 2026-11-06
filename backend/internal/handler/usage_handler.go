@@ -116,6 +116,9 @@ func (h *UsageHandler) ImageLink(c *gin.Context) {
 		writeExpiredUsageImage(c)
 		return
 	}
+	if h.serveLocalUsageImage(c, link) {
+		return
+	}
 	if h.imageStorage != nil && strings.TrimSpace(link.ObjectKey) != "" {
 		url, urlErr := h.imageStorage.PresignImageObject(c.Request.Context(), link.ObjectKey)
 		if urlErr != nil {
@@ -253,7 +256,7 @@ func (h *UsageHandler) OpenImageLink(c *gin.Context) {
 		return
 	}
 	imageURL := strings.TrimSpace(link.ImageURL)
-	if h.serveOriginalGIF(c, link) {
+	if h.serveLocalUsageImage(c, link) {
 		return
 	}
 	if c.Query("full") != "1" && strings.HasPrefix(imageURL, "data:image/") {
@@ -282,8 +285,8 @@ func (h *UsageHandler) OpenImageLink(c *gin.Context) {
 	writeExpiredUsageImage(c)
 }
 
-func (h *UsageHandler) serveOriginalGIF(c *gin.Context, link *service.UsageLogImageLink) bool {
-	if h == nil || h.localAssets == nil || link == nil || !usageImageLinkIsGIF(link.ImageURL, link.ObjectKey) {
+func (h *UsageHandler) serveLocalUsageImage(c *gin.Context, link *service.UsageLogImageLink) bool {
+	if h == nil || h.localAssets == nil || link == nil {
 		return false
 	}
 	if h.localAssets.IsAssetURL(link.ImageURL) {

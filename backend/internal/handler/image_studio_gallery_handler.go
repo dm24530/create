@@ -150,16 +150,17 @@ func (h *ImageStudioGalleryHandler) SaveFromTask(c *gin.Context) {
 		response.NotFound(c, "Image task not found")
 		return
 	}
-	if record.Status != service.ImageTaskStatusCompleted {
+	if record.Status != service.ImageTaskStatusReady && record.Status != service.ImageTaskStatusCompleted {
 		response.Error(c, http.StatusConflict, "Image task is not ready to save")
 		return
 	}
 	h.markImageGenerationDuration(c.Request.Context(), record, request.DurationMs)
 	var payload struct {
 		Data []struct {
-			ObjectKey string `json:"object_key"`
-			URL       string `json:"url"`
-			MIMEType  string `json:"mime_type"`
+			ObjectKey  string `json:"object_key"`
+			URL        string `json:"url"`
+			DisplayURL string `json:"display_url"`
+			MIMEType   string `json:"mime_type"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(record.Result, &payload); err != nil || len(payload.Data) == 0 {
@@ -181,11 +182,15 @@ func (h *ImageStudioGalleryHandler) SaveFromTask(c *gin.Context) {
 	}
 	saved := request.Saved == nil || *request.Saved
 	sourceID := "image-task:" + record.ID + ":" + strconv.Itoa(index)
+	imageURL := strings.TrimSpace(item.URL)
+	if imageURL == "" {
+		imageURL = strings.TrimSpace(item.DisplayURL)
+	}
 	entry, err := h.gallery.SaveExistingObject(
 		c.Request.Context(),
 		subject.UserID,
 		item.ObjectKey,
-		item.URL,
+		imageURL,
 		request.Prompt,
 		request.Model,
 		request.Size,

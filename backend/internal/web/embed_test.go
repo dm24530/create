@@ -116,6 +116,68 @@ func TestInjectSiteTitle(t *testing.T) {
 	})
 }
 
+func TestApplyLandingHeroPreload(t *testing.T) {
+	t.Parallel()
+
+	t.Run("injects_on_landing_routes", func(t *testing.T) {
+		t.Parallel()
+		html := []byte(`<html><head></head><body></body></html>`)
+		for _, path := range []string{"/", "/home"} {
+			result := applyLandingHeroPreload(html, path)
+			assert.Contains(t, string(result), landingHeroPreload)
+			assert.Equal(t, 1, bytes.Count(result, []byte("data-landing-hero-preload")))
+		}
+	})
+
+	t.Run("does_not_inject_on_app_routes", func(t *testing.T) {
+		t.Parallel()
+		html := []byte(`<html><head></head><body></body></html>`)
+		assert.Equal(t, html, applyLandingHeroPreload(html, "/image-studio"))
+	})
+
+	t.Run("does_not_duplicate_existing_preload", func(t *testing.T) {
+		t.Parallel()
+		html := []byte(`<html><head>` + landingHeroPreload + `</head><body></body></html>`)
+		result := applyLandingHeroPreload(html, "/home")
+		assert.Equal(t, html, result)
+	})
+}
+
+func TestCompressedEmbeddedAssets(t *testing.T) {
+	t.Parallel()
+
+	t.Run("prefers_gzip_and_supports_brotli", func(t *testing.T) {
+		t.Parallel()
+		assert.Equal(t, "gzip", acceptedStaticEncoding("gzip, br"))
+		assert.Equal(t, "gzip", acceptedStaticEncoding("gzip"))
+		assert.Equal(t, "gzip", acceptedStaticEncoding("gzip;q=1, br;q=0.5"))
+		assert.Equal(t, "br", acceptedStaticEncoding("br"))
+		assert.Empty(t, acceptedStaticEncoding("br;q=0, gzip;q=0"))
+		assert.Empty(t, acceptedStaticEncoding("identity"))
+	})
+
+	t.Run("selects_only_text_assets", func(t *testing.T) {
+		t.Parallel()
+		for _, path := range []string{"assets/app.js", "assets/app.css", "logo.svg", "data.json"} {
+			assert.True(t, isCompressibleEmbeddedAssetPath(path), path)
+		}
+		for _, path := range []string{"landing/hero.webp", "landing/hero.jpg", "font.woff2"} {
+			assert.False(t, isCompressibleEmbeddedAssetPath(path), path)
+		}
+	})
+
+	t.Run("compresses_repetitive_content", func(t *testing.T) {
+		t.Parallel()
+		raw := []byte(strings.Repeat(`export const value = "compressible";`+"\n", 200))
+		for _, encoding := range []string{"br", "gzip"} {
+			body, err := compressEmbeddedAsset(raw, encoding)
+			require.NoError(t, err)
+			assert.NotEmpty(t, body)
+			assert.Less(t, len(body), len(raw))
+		}
+	})
+}
+
 func TestInjectSiteFavicon(t *testing.T) {
 	t.Run("replaces_favicon_with_site_logo", func(t *testing.T) {
 		html := []byte(`<html><head><link rel="icon" type="image/png" href="/logo.png" /></head></html>`)

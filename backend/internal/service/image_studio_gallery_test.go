@@ -122,6 +122,50 @@ func (s *galleryStoreStub) ReconcileTemporaryExpiry(context.Context, int64, int6
 	return 0, nil
 }
 
+func TestImageStudioGalleryHidesPendingLocalAssetURL(t *testing.T) {
+	local := NewLocalImageAssetStore(t.TempDir())
+	meta, err := local.Save(
+		context.Background(),
+		42,
+		"imgtask_pending_local",
+		"images/users/42/imgtask_pending_local-0.png",
+		"image/png",
+		time.Now().Add(time.Hour).Unix(),
+		smallPNG(t),
+	)
+	require.NoError(t, err)
+	store := &galleryStoreStub{entries: []*ImageStudioGalleryEntry{{
+		ID:        "gallery-local",
+		UserID:    42,
+		ObjectKey: meta.ObjectKey,
+		URL:       local.URL(meta.ID),
+		Prompt:    "cat",
+		Model:     "gpt-image-1",
+		Size:      "1024x1024",
+		Format:    "png",
+		ExpiresAt: time.Now().Add(time.Hour).Unix(),
+	}}}
+	svc := NewImageStudioGalleryService(store, &gallerySaverStub{
+		resolvedURLs: map[string]string{meta.ObjectKey: "https://cdn.example.com/original.png"},
+	})
+	svc.SetLocalAssetStore(local)
+
+	entries, err := svc.List(context.Background(), 42, 20, nil)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	require.Empty(t, entries[0].URL)
+	require.Empty(t, entries[0].ThumbURL)
+	require.Equal(t, meta.ID, entries[0].LocalAssetID)
+	thumb, err := svc.Thumbnail(context.Background(), 42, "gallery-local", 512)
+	require.NoError(t, err)
+	require.NotEmpty(t, thumb)
+
+	require.NoError(t, local.MarkUploaded(meta.ID, "https://cdn.example.com/original.png"))
+	entries, err = svc.List(context.Background(), 42, 20, nil)
+	require.NoError(t, err)
+	require.Equal(t, "https://cdn.example.com/original.png", entries[0].URL)
+}
+
 type gallerySaverStub struct {
 	key           string
 	thumbKey      string
@@ -280,7 +324,7 @@ func TestImageStudioGalleryListHidesLegacyVideoReferenceImages(t *testing.T) {
 	require.Equal(t, "generated-image", entries[0].ID)
 }
 
-func TestImageStudioGalleryListKeepsPendingLocalAssetURL(t *testing.T) {
+func TestImageStudioGalleryListHidesPendingLocalAssetURL(t *testing.T) {
 	local := NewLocalImageAssetStore(t.TempDir())
 	meta, err := local.Save(
 		context.Background(),
@@ -306,7 +350,8 @@ func TestImageStudioGalleryListKeepsPendingLocalAssetURL(t *testing.T) {
 	entries, err := svc.List(context.Background(), 7, 20, nil)
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
-	require.Equal(t, local.URL(meta.ID), entries[0].URL)
+	require.Empty(t, entries[0].URL)
+	require.Equal(t, meta.ID, entries[0].LocalAssetID)
 	require.Zero(t, saver.batchCalls, "pending local assets must not be replaced by not-yet-uploaded R2 URLs")
 
 	require.NoError(t, local.MarkUploaded(meta.ID, "https://cdn.example.com/image.png"))

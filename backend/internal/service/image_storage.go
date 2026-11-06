@@ -9,7 +9,9 @@ import (
 	"fmt"
 	"image"
 	"image/color"
-	_ "image/gif"
+	"image/color/palette"
+	"image/draw"
+	"image/gif"
 	"image/jpeg"
 	"image/png"
 	"io"
@@ -452,12 +454,11 @@ func (u *ImageResultUploader) RewriteWithPreview(
 		}
 	}
 
-	// Publish the lightweight preview from the raw upstream bytes before the
-	// full-size transcode and object-storage work. The durable image task keeps
-	// running on the server after the browser disconnects.
+	// Keep one small preview in the task result. The browser uses this for all
+	// normal rendering; the original is fetched only for explicit downloads.
 	previewItems := make([]map[string]json.RawMessage, 0, len(prepared))
 	for i := range prepared {
-		previewData, thumbErr := buildFastImagePreview(prepared[i].data, 1024)
+		previewData, previewContentType, thumbErr := buildImagePreview(prepared[i].data, 1024)
 		if thumbErr != nil {
 			continue
 		}
@@ -465,7 +466,7 @@ func (u *ImageResultUploader) RewriteWithPreview(
 		if encodeErr != nil {
 			continue
 		}
-		previewURL := "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(previewData)
+		previewURL := "data:" + previewContentType + ";base64," + base64.StdEncoding.EncodeToString(previewData)
 		previewItem["url"] = encodedJSON(previewURL)
 		previewItem["preview_url"] = encodedJSON(previewURL)
 		delete(previewItem, "b64_json")
@@ -473,14 +474,16 @@ func (u *ImageResultUploader) RewriteWithPreview(
 		previewItems = append(previewItems, previewItem)
 	}
 
-	if onPreview != nil && len(previewItems) > 0 {
-		previewTop := make(map[string]json.RawMessage, 2)
-		if created, ok := top["created"]; ok {
-			previewTop["created"] = created
-		}
-		previewTop["data"] = encodedJSON(previewItems)
-		if err := onPreview(encodedJSON(previewTop)); err != nil {
-			return nil, fmt.Errorf("publish image preview: %w", err)
+	if u.localAssets == nil {
+		if onPreview != nil && len(previewItems) > 0 {
+			previewTop := make(map[string]json.RawMessage, 2)
+			if created, ok := top["created"]; ok {
+				previewTop["created"] = created
+			}
+			previewTop["data"] = encodedJSON(previewItems)
+			if err := onPreview(encodedJSON(previewTop)); err != nil {
+				return nil, fmt.Errorf("publish image preview: %w", err)
+			}
 		}
 	}
 
@@ -523,9 +526,11 @@ func (u *ImageResultUploader) RewriteWithPreview(
 				break
 			}
 			item["url"] = encodedJSON(u.localAssets.URL(meta.ID))
+			item["display_url"] = encodedJSON(u.localAssets.URL(meta.ID))
 			item["local_asset_id"] = encodedJSON(meta.ID)
 			item["object_key"] = encodedJSON(prepared[i].key)
 			item["mime_type"] = encodedJSON(prepared[i].contentType)
+			item["upload_status"] = encodedJSON("pending")
 			delete(item, "b64_json")
 			items[i] = item
 		}
@@ -624,6 +629,131 @@ func encodedJSON(value any) json.RawMessage {
 		panic(err)
 	}
 	return data
+}
+
+func buildImagePreview(data []byte, maxEdge int) ([]byte, string, error) {
+	if detectedImageContentType(data) == "image/gif" {
+		preview, err := buildAnimatedGIFPreview(data, maxEdge)
+		return preview, "image/gif", err
+	}
+	return buildStaticImagePreview(data, maxEdge)
+}
+
+func buildStaticImagePreview(data []byte, maxEdge int) ([]byte, string, error) {
+	source, _, err := image.Decode(bytes.NewReader(data))
+	if err != nil {
+		return nil, "", err
+	}
+	dst := resizeImageRGBA(source, maxEdge)
+	var out bytes.Buffer
+	if imageHasTransparency(source) {
+		if err := png.Encode(&out, dst); err != nil {
+			return nil, "", err
+		}
+		return out.Bytes(), "image/png", nil
+	}
+	if err := jpeg.Encode(&out, dst, &jpeg.Options{Quality: 78}); err != nil {
+		return nil, "", err
+	}
+	return out.Bytes(), "image/jpeg", nil
+}
+
+func resizeImageRGBA(source image.Image, maxEdge int) *image.RGBA {
+	bounds := source.Bounds()
+	width, height := bounds.Dx(), bounds.Dy()
+	if width <= 0 || height <= 0 {
+		return image.NewRGBA(image.Rect(0, 0, 1, 1))
+	}
+	if maxEdge <= 0 {
+		maxEdge = 1024
+	}
+	scale := float64(maxEdge) / float64(max(width, height))
+	if scale > 1 {
+		scale = 1
+	}
+	dstWidth := max(1, int(float64(width)*scale))
+	dstHeight := max(1, int(float64(height)*scale))
+	dst := image.NewRGBA(image.Rect(0, 0, dstWidth, dstHeight))
+	xdraw.ApproxBiLinear.Scale(dst, dst.Bounds(), source, bounds, xdraw.Over, nil)
+	return dst
+}
+
+func imageHasTransparency(source image.Image) bool {
+	if opaque, ok := source.(interface{ Opaque() bool }); ok {
+		return !opaque.Opaque()
+	}
+	return true
+}
+
+func buildAnimatedGIFPreview(data []byte, maxEdge int) ([]byte, error) {
+	source, err := gif.DecodeAll(bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	if len(source.Image) == 0 {
+		return nil, errors.New("GIF has no frames")
+	}
+	if maxEdge <= 0 {
+		maxEdge = 512
+	}
+	if maxEdge > 512 {
+		maxEdge = 512
+	}
+	width, height := source.Config.Width, source.Config.Height
+	if width <= 0 || height <= 0 {
+		bounds := source.Image[0].Bounds()
+		width, height = bounds.Dx(), bounds.Dy()
+	}
+	scale := float64(maxEdge) / float64(max(width, height))
+	if scale > 1 {
+		scale = 1
+	}
+	dstWidth := max(1, int(float64(width)*scale))
+	dstHeight := max(1, int(float64(height)*scale))
+
+	canvas := image.NewRGBA(image.Rect(0, 0, width, height))
+	frames := make([]*image.Paletted, 0, len(source.Image))
+	gifPalette := append(append(color.Palette(nil), palette.Plan9[:255]...), color.Transparent)
+	for _, frame := range source.Image {
+		if frame == nil {
+			continue
+		}
+		draw.Draw(canvas, frame.Bounds(), frame, frame.Bounds().Min, draw.Over)
+		snapshot := image.NewRGBA(canvas.Bounds())
+		draw.Draw(snapshot, snapshot.Bounds(), canvas, image.Point{}, draw.Src)
+		dst := image.NewPaletted(image.Rect(0, 0, dstWidth, dstHeight), gifPalette)
+		xdraw.ApproxBiLinear.Scale(dst, dst.Bounds(), snapshot, snapshot.Bounds(), xdraw.Over, nil)
+		frames = append(frames, dst)
+	}
+	if len(frames) == 0 {
+		return nil, errors.New("GIF has no decodable frames")
+	}
+	delays := append([]int(nil), source.Delay...)
+	if len(delays) > len(frames) {
+		delays = delays[:len(frames)]
+	}
+	for len(delays) < len(frames) {
+		delays = append(delays, 10)
+	}
+	disposal := make([]byte, len(frames))
+	for i := range disposal {
+		disposal[i] = gif.DisposalNone
+	}
+	var out bytes.Buffer
+	if err := gif.EncodeAll(&out, &gif.GIF{
+		Image:     frames,
+		Delay:     delays,
+		LoopCount: source.LoopCount,
+		Disposal:  disposal,
+		Config: image.Config{
+			ColorModel: frames[0].Palette,
+			Width:      dstWidth,
+			Height:     dstHeight,
+		},
+	}); err != nil {
+		return nil, err
+	}
+	return out.Bytes(), nil
 }
 
 func buildFastImagePreview(data []byte, maxEdge int) ([]byte, error) {

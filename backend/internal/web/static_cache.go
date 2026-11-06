@@ -12,6 +12,10 @@ import (
 // immutable caching without relying on a reverse proxy to classify paths.
 const staticAssetsCacheControl = "public, max-age=31536000, immutable"
 
+// Landing media keeps stable filenames across builds, so it can still benefit
+// from a long browser/CDN cache without the immutable one-year guarantee.
+const landingAssetsCacheControl = "public, max-age=604800, stale-while-revalidate=86400"
+
 // isFingerprintedEmbeddedAssetPath reports whether a cleaned URL path refers to
 // a Vite asset whose filename contains the default eight-character build hash.
 func isFingerprintedEmbeddedAssetPath(cleanPath string) bool {
@@ -43,11 +47,29 @@ func isFingerprintedEmbeddedAssetPath(cleanPath string) bool {
 	return true
 }
 
+func isLandingAssetPath(cleanPath string) bool {
+	cleanPath = strings.TrimPrefix(cleanPath, "/")
+	if !strings.HasPrefix(cleanPath, "landing/") {
+		return false
+	}
+	switch strings.ToLower(path.Ext(cleanPath)) {
+	case ".webp", ".jpg", ".jpeg", ".png", ".svg":
+		return true
+	default:
+		return false
+	}
+}
+
 // applyStaticAssetCacheHeaders sets Cache-Control for long-cacheable static paths.
 // index.html / SPA routes must keep no-cache and are not handled here.
 func applyStaticAssetCacheHeaders(header http.Header, cleanPath string) {
-	if header == nil || !isFingerprintedEmbeddedAssetPath(cleanPath) {
+	if header == nil {
 		return
 	}
-	header.Set("Cache-Control", staticAssetsCacheControl)
+	switch {
+	case isFingerprintedEmbeddedAssetPath(cleanPath):
+		header.Set("Cache-Control", staticAssetsCacheControl)
+	case isLandingAssetPath(cleanPath):
+		header.Set("Cache-Control", landingAssetsCacheControl)
+	}
 }
