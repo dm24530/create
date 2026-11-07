@@ -1,25 +1,19 @@
 const MIN_POLL_DELAY_MS = 750
 
 /**
- * Image generation is usually slow at the start and finishes later. Poll
- * sparsely while the upstream is still starting, then increase frequency as
- * the task approaches the common completion window.
+ * Image generation already takes tens of seconds upstream. A sparse first poll
+ * only adds dead time after the task is ready, so use the steady local polling
+ * cadence from the beginning.
  */
-export function imageTaskPollInterval(elapsedMs: number): number {
-  const elapsed = Number.isFinite(elapsedMs) ? Math.max(0, elapsedMs) : 0
-  if (elapsed < 5_000) return 5_000
-  if (elapsed < 15_000) return 2_500
-  if (elapsed < 30_000) return 1_500
-  if (elapsed < 60_000) return 1_000
+export function imageTaskPollInterval(_elapsedMs: number): number {
   return MIN_POLL_DELAY_MS
 }
 
 /**
- * Transient failures need a prompt retry even during the initial low-frequency
- * window, but should never create a tight retry loop.
+ * Transient failures should retry promptly without creating a tight loop.
  */
-export function imageTaskRetryDelay(elapsedMs: number): number {
-  return Math.min(2_000, imageTaskPollInterval(elapsedMs))
+export function imageTaskRetryDelay(_elapsedMs: number): number {
+  return 1_000
 }
 
 /**

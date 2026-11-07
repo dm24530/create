@@ -336,6 +336,39 @@ func TestImageResultUploaderStagesOriginalLocallyBeforeRemoteUpload(t *testing.T
 	require.Equal(t, validPNG, data)
 }
 
+func TestImageResultUploaderPublishesSafePreviewWithLocalOriginal(t *testing.T) {
+	validPNG, err := base64.StdEncoding.DecodeString(
+		"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+	)
+	require.NoError(t, err)
+	storage := &fakeImageStorage{}
+	local := NewLocalImageAssetStore(t.TempDir())
+	uploader := NewImageResultUploader(storage, "images/", 0, nil)
+	uploader.SetLocalAssets(local)
+	result := json.RawMessage(`{"data":[{"b64_json":"` +
+		base64.StdEncoding.EncodeToString(validPNG) +
+		`","mime_type":"image/png","display_url":"http://127.0.0.1/private"}]}`)
+
+	var preview json.RawMessage
+	_, err = uploader.RewriteWithPreview(
+		context.Background(),
+		42,
+		"imgtask_local_preview",
+		result,
+		func(value json.RawMessage) error {
+			preview = append(json.RawMessage(nil), value...)
+			return nil
+		},
+	)
+	require.NoError(t, err)
+	require.NotEmpty(t, preview)
+	require.Contains(t, string(preview), "data:image/jpeg;base64,")
+	require.NotContains(t, string(preview), "127.0.0.1")
+	require.NotContains(t, string(preview), "local_asset_id")
+	require.NotContains(t, string(preview), "object_key")
+	require.NotContains(t, string(preview), "b64_json")
+}
+
 func TestImageResultUploaderFallsBackToRemoteWhenLocalStageFails(t *testing.T) {
 	rootAsFile := filepath.Join(t.TempDir(), "not-a-directory")
 	require.NoError(t, os.WriteFile(rootAsFile, []byte("file"), 0o600))

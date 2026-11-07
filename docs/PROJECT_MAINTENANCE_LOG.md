@@ -54,6 +54,46 @@
 
 ## 变更记录
 
+### v0.2.42 - 2026-11-07
+
+标签：`[图片工作台]` `[本地预览]` `[任务轮询]` `[首屏显示]`
+
+需求：
+
+- 上游图片已经返回后，用户不应继续等待原图转码、本地落盘或 R2 上传完成。
+- 图片任务完成后应尽快显示预览，而不是继续停留在“正在生成”状态。
+- 减少异步图片任务轮询造成的固定额外等待时间。
+
+实现：
+
+- 收到上游图片字节并生成轻量预览后，立即发布 `preview_ready`，前端可直接显示预览图。
+- 原图转码、本地保存和后续 R2 上传继续在后台进行，不再阻塞首张预览显示。
+- 预览任务结果主动移除 `display_url`、`local_asset_id`、`object_key` 和原始 `b64_json`，避免泄露本地地址或携带大体积原始数据。
+- 异步图片轮询从 5 秒渐进加速改为固定 750 毫秒；瞬时错误重试使用 1 秒间隔。
+
+涉及文件：
+
+- `backend/internal/service/image_storage.go`
+- `backend/internal/service/image_storage_test.go`
+- `frontend/src/features/image-studio/imagePolling.ts`
+- `frontend/src/features/image-studio/__tests__/imagePolling.spec.ts`
+- `backend/cmd/server/VERSION`
+
+验证：
+
+- `go test ./internal/service -run Image -count=1` 通过。
+- 前端图片工作台测试 `136` 项通过。
+- `vue-tsc --noEmit` 通过。
+- 本地 `create-dev` 重新构建并由健康检查确认可用。
+
+迁移：
+
+- 无数据库 schema 变更，无需历史数据回填。
+
+遗留：
+
+- R2 凭证仍返回 `401 Unauthorized`；即时预览不受影响，但云端持久化和本地文件过期后的原图回源仍需更新凭证。
+
 ### v0.2.41 - 2026-11-06
 
 标签：`[图片工作台]` `[本地预览]` `[原图下载]` `[R2]` `[视频工作台]` `[MiniMax H3]` `[静态资源]`

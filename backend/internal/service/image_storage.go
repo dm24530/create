@@ -469,19 +469,27 @@ func (u *ImageResultUploader) RewriteWithPreview(
 		previewURL := "data:" + previewContentType + ";base64," + base64.StdEncoding.EncodeToString(previewData)
 		previewItem["url"] = encodedJSON(previewURL)
 		previewItem["preview_url"] = encodedJSON(previewURL)
+		previewItem["preview_data_url"] = encodedJSON(previewURL)
 		delete(previewItem, "b64_json")
+		delete(previewItem, "display_url")
+		delete(previewItem, "local_asset_id")
+		delete(previewItem, "object_key")
 		prepared[i].item["preview_data_url"] = encodedJSON(previewURL)
 		previewItems = append(previewItems, previewItem)
 	}
 
-	if u.localAssets == nil {
-		if onPreview != nil && len(previewItems) > 0 {
-			previewTop := make(map[string]json.RawMessage, 2)
-			if created, ok := top["created"]; ok {
-				previewTop["created"] = created
-			}
-			previewTop["data"] = encodedJSON(previewItems)
-			if err := onPreview(encodedJSON(previewTop)); err != nil {
+	if onPreview != nil && len(previewItems) > 0 {
+		previewTop := make(map[string]json.RawMessage, 2)
+		if created, ok := top["created"]; ok {
+			previewTop["created"] = created
+		}
+		previewTop["data"] = encodedJSON(previewItems)
+		if err := onPreview(encodedJSON(previewTop)); err != nil {
+			logger.L().Warn("image_storage.preview_publish_failed",
+				zap.String("task_id", taskID),
+				zap.Int64("user_id", userID),
+				zap.Error(err))
+			if u.localAssets == nil {
 				return nil, fmt.Errorf("publish image preview: %w", err)
 			}
 		}
