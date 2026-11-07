@@ -54,6 +54,49 @@
 
 ## 变更记录
 
+### v0.2.43 - 2026-11-07
+
+标签：`[图片工作台]` `[画布]` `[即时预览]` `[上游图片]`
+
+需求：
+
+- 上游已经返回图片后，用户不应继续等待后端下载完整原图、转码或本地保存。
+- 画布不应在主线程下载并重新编码远程原图后才显示结果。
+- 预览 URL 后续应能被稳定的本地预览替换，不能停留在一次性上游地址。
+
+实现：
+
+- 异步图片任务收到上游图片 JSON 后，若其中存在安全的外网图片 URL，立即发布为 `preview_ready`。
+- 前端先显示上游预览，后端继续下载、校验、转码、保存本地原图并上传对象存储。
+- 允许图片任务最多发布两次预览更新：第一次为上游临时 URL，第二次为生成的本地轻量预览。
+- 外网预览仅允许 `http/https`，拒绝本地、私网、云元数据和包含凭据的地址，并移除对象键等内部字段。
+- 画布检测到已有 `preview_data_url` 时直接渲染，不再先下载完整原图并重新编码；远程原图也不再阻塞节点显示。
+
+涉及文件：
+
+- `backend/internal/service/image_storage.go`
+- `backend/internal/service/image_storage_test.go`
+- `backend/internal/service/image_task.go`
+- `canvas-app/src/services/api/image.ts`
+- `canvas-app/src/lib/image-normalization-policy.ts`
+- `frontend/src/features/infinite-canvas/__tests__/imageNormalization.spec.ts`
+- `backend/cmd/server/VERSION`
+
+验证：
+
+- 图片服务与 Handler 相关 Go 测试通过。
+- 画布图片规范化单元测试通过。
+- 画布 `tsc --noEmit` 和生产构建通过。
+- 图片工作台 `vue-tsc --noEmit` 通过。
+
+迁移：
+
+- 无数据库 schema 变更，无需历史数据回填。
+
+遗留：
+
+- 已部署环境需要重新构建并发布 `v0.2.43` 才会生效。
+
 ### v0.2.42 - 2026-11-07
 
 标签：`[图片工作台]` `[本地预览]` `[任务轮询]` `[首屏显示]`

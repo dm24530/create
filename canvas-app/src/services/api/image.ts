@@ -10,6 +10,7 @@ import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
 import { imageToDataUrl, prepareImageRequestDataUrls, type PreparedImageRequest } from "@/services/image-storage";
 import { imageSizePresets, inferMediaScale } from "@/lib/media-size";
 import { isGeminiImageModel } from "@/lib/image-model";
+import { shouldSkipClientImageNormalization } from "@/lib/image-normalization-policy";
 import { imageOutputMimeType, normalizeImageBackground, normalizeImageOutputFormat } from "@/lib/image-output-format";
 import type { ReferenceImage } from "@/types/image";
 
@@ -278,6 +279,8 @@ async function normalizeGeneratedImages(images: GeneratedImageResult[], outputFo
 }
 
 async function normalizeGeneratedImage(image: GeneratedImageResult, targetFormat: "png" | "jpeg"): Promise<GeneratedImageResult> {
+    // Never block the canvas on downloading or re-encoding a displayable image.
+    if (shouldSkipClientImageNormalization(image)) return image;
     const source = image.dataUrl;
     const targetMime = imageOutputMimeType(targetFormat);
     const dataURLMime = source.startsWith("data:image/")
@@ -286,7 +289,6 @@ async function normalizeGeneratedImage(image: GeneratedImageResult, targetFormat
     if (dataURLMime === targetMime) return image;
     const isRemote = /^https?:\/\//i.test(source);
     if (!source.startsWith("data:image/") && !isRemote) return image;
-    if (isRemote && imageMimeFromURL(source) === targetMime) return image;
     if (typeof document === "undefined") return image;
 
     let bitmap: ImageBitmap | null = null;

@@ -16,6 +16,7 @@ import (
 	"image/png"
 	"io"
 	"mime"
+	"net"
 	"net/http"
 	"net/url"
 	"path"
@@ -421,6 +422,17 @@ func (u *ImageResultUploader) RewriteWithPreview(
 	if len(items) == 0 {
 		return result, nil
 	}
+	if onPreview != nil {
+		earlyPreviewItems := upstreamPreviewItems(items)
+		if len(earlyPreviewItems) > 0 {
+			if err := onPreview(imagePreviewPayload(top, earlyPreviewItems)); err != nil {
+				logger.L().Warn("image_storage.upstream_preview_publish_failed",
+					zap.String("task_id", taskID),
+					zap.Int64("user_id", userID),
+					zap.Error(err))
+			}
+		}
+	}
 	storageKey := "users/" + strconv.FormatInt(userID, 10)
 	if u.identities != nil {
 		resolved, err := u.identities.StorageKey(ctx, userID)
@@ -479,12 +491,7 @@ func (u *ImageResultUploader) RewriteWithPreview(
 	}
 
 	if onPreview != nil && len(previewItems) > 0 {
-		previewTop := make(map[string]json.RawMessage, 2)
-		if created, ok := top["created"]; ok {
-			previewTop["created"] = created
-		}
-		previewTop["data"] = encodedJSON(previewItems)
-		if err := onPreview(encodedJSON(previewTop)); err != nil {
+		if err := onPreview(imagePreviewPayload(top, previewItems)); err != nil {
 			logger.L().Warn("image_storage.preview_publish_failed",
 				zap.String("task_id", taskID),
 				zap.Int64("user_id", userID),
@@ -629,6 +636,68 @@ func cloneImageItem(item map[string]json.RawMessage) (map[string]json.RawMessage
 		return nil, err
 	}
 	return cloned, nil
+}
+
+func imagePreviewPayload(
+	top map[string]json.RawMessage,
+	items []map[string]json.RawMessage,
+) json.RawMessage {
+	previewTop := make(map[string]json.RawMessage, 2)
+	if created, ok := top["created"]; ok {
+		previewTop["created"] = created
+	}
+	previewTop["data"] = encodedJSON(items)
+	return encodedJSON(previewTop)
+}
+
+func upstreamPreviewItems(items []map[string]json.RawMessage) []map[string]json.RawMessage {
+	previews := make([]map[string]json.RawMessage, 0, len(items))
+	for _, item := range items {
+		raw, ok := item["url"]
+		if !ok {
+			continue
+		}
+		var rawURL string
+		if json.Unmarshal(raw, &rawURL) != nil {
+			continue
+		}
+		previewURL := safeBrowserPreviewURL(rawURL)
+		if previewURL == "" {
+			continue
+		}
+		preview, err := cloneImageItem(item)
+		if err != nil {
+			continue
+		}
+		preview["url"] = encodedJSON(previewURL)
+		preview["preview_url"] = encodedJSON(previewURL)
+		preview["preview_data_url"] = encodedJSON(previewURL)
+		delete(preview, "b64_json")
+		delete(preview, "display_url")
+		delete(preview, "local_asset_id")
+		delete(preview, "object_key")
+		previews = append(previews, preview)
+	}
+	return previews
+}
+
+func safeBrowserPreviewURL(raw string) string {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.User != nil {
+		return ""
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return ""
+	}
+	host := strings.TrimSpace(parsed.Hostname())
+	if host == "" || isBlockedHostname(host) {
+		return ""
+	}
+	if ip := net.ParseIP(host); ip != nil && isPrivateIP(ip) {
+		return ""
+	}
+	return parsed.String()
 }
 
 func encodedJSON(value any) json.RawMessage {

@@ -369,6 +369,69 @@ func TestImageResultUploaderPublishesSafePreviewWithLocalOriginal(t *testing.T) 
 	require.NotContains(t, string(preview), "b64_json")
 }
 
+func TestUpstreamPreviewItemsUsesOnlySafePublicURLs(t *testing.T) {
+	items := []map[string]json.RawMessage{
+		{
+			"url":         encodedJSON("https://cdn.example.test/image.png"),
+			"object_key":  encodedJSON("private/object.png"),
+			"display_url": encodedJSON("http://127.0.0.1/private.png"),
+		},
+		{
+			"url": encodedJSON("http://127.0.0.1/private.png"),
+		},
+		{
+			"url": encodedJSON("data:image/png;base64,cG5n"),
+		},
+	}
+
+	previews := upstreamPreviewItems(items)
+
+	require.Len(t, previews, 1)
+	require.JSONEq(t, `"https://cdn.example.test/image.png"`, string(previews[0]["url"]))
+	require.JSONEq(t, `"https://cdn.example.test/image.png"`, string(previews[0]["preview_data_url"]))
+	_, hasObjectKey := previews[0]["object_key"]
+	require.False(t, hasObjectKey)
+	_, hasDisplayURL := previews[0]["display_url"]
+	require.False(t, hasDisplayURL)
+}
+
+func TestImageResultUploaderPublishesUpstreamURLBeforeDownloadCompletes(t *testing.T) {
+	validPNG, err := base64.StdEncoding.DecodeString(
+		"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+	)
+	require.NoError(t, err)
+	storage := &fakeImageStorage{}
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		require.Equal(t, "cdn.example.test", req.URL.Hostname())
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"image/png"}},
+			Body:       io.NopCloser(bytes.NewReader(validPNG)),
+			Request:    req,
+		}, nil
+	})}
+	uploader := NewImageResultUploader(storage, "images/", 0, client)
+	result := json.RawMessage(`{"data":[{"url":"https://cdn.example.test/image.png"}]}`)
+
+	var previews []json.RawMessage
+	_, err = uploader.RewriteWithPreview(
+		context.Background(),
+		42,
+		"imgtask_upstream_preview",
+		result,
+		func(value json.RawMessage) error {
+			previews = append(previews, append(json.RawMessage(nil), value...))
+			return nil
+		},
+	)
+	require.NoError(t, err)
+	require.Len(t, previews, 2)
+	require.Contains(t, string(previews[0]), `"url":"https://cdn.example.test/image.png"`)
+	require.NotContains(t, string(previews[0]), "b64_json")
+	require.Contains(t, string(previews[1]), "data:image/jpeg;base64,")
+	require.Len(t, storage.saved, 1)
+}
+
 func TestImageResultUploaderFallsBackToRemoteWhenLocalStageFails(t *testing.T) {
 	rootAsFile := filepath.Join(t.TempDir(), "not-a-directory")
 	require.NoError(t, os.WriteFile(rootAsFile, []byte("file"), 0o600))

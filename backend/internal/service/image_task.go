@@ -655,13 +655,16 @@ func (s *ImageTaskService) Complete(ctx context.Context, id string, statusCode i
 		if task.Execution != nil {
 			outputFormat = task.Execution.OutputFormat
 		}
-		previewPublished := false
+		previewUpdates := 0
 		rewritten, err := uploader.RewriteWithPreview(ctx, task.UserID, id, result, func(preview json.RawMessage) error {
-			if previewPublished {
+			if previewUpdates >= 2 {
 				return nil
 			}
-			previewPublished = true
-			return s.saveState(ctx, id, ImageTaskStatusPreviewReady, statusCode, preview, nil, false)
+			if err := s.saveState(ctx, id, ImageTaskStatusPreviewReady, statusCode, preview, nil, false); err != nil {
+				return err
+			}
+			previewUpdates++
+			return nil
 		}, ImageRewriteOptions{OutputFormat: outputFormat})
 		if err != nil {
 			logger.L().Error("image_task.offload_failed", zap.String("task_id", id), zap.Error(err))
