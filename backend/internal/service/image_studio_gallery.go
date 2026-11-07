@@ -1032,6 +1032,15 @@ func (s *ImageStudioGalleryService) hidePendingLocalAssetURL(entry *ImageStudioG
 	entry.LocalAssetID = assetID
 	entry.LocalAssetPending = true
 	meta, err := s.localAssets.Get(assetID)
+	if errors.Is(err, ErrLocalImageAssetNotFound) {
+		// The local cache is deliberately removed after an upload has been
+		// confirmed. Fall back to the persisted object key instead of treating
+		// the work as permanently pending.
+		entry.LocalAssetPending = false
+		entry.URL = ""
+		entry.ThumbURL = ""
+		return
+	}
 	if err == nil && meta.Uploaded && strings.TrimSpace(meta.RemoteURL) != "" {
 		entry.URL = strings.TrimSpace(meta.RemoteURL)
 		entry.LocalAssetPending = false

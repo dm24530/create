@@ -2,7 +2,9 @@ let accessToken = "";
 const listeners = new Set<() => void>();
 
 export function configureCanvasAuth(token?: string) {
-    accessToken = token?.trim() || "";
+    const nextAccessToken = token?.trim() || "";
+    if (nextAccessToken === accessToken) return;
+    accessToken = nextAccessToken;
     listeners.forEach((listener) => listener());
 }
 

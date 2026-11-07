@@ -1178,6 +1178,9 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 	if filteredBody, err := filterEmptyPartsFromGeminiRequest(body); err == nil {
 		body = filteredBody
 	}
+	if inlinedBody, changed, err := inlineGeminiRemoteFileData(ctx, body); err == nil && changed {
+		body = inlinedBody
+	}
 
 	switch action {
 	case "generateContent", "streamGenerateContent", "countTokens":

@@ -326,7 +326,6 @@
           </div>
           <p class="image-composer__helper" data-testid="image-reference-limit-hint">
             可拖拽或粘贴参考图，当前模型最多 {{ effectiveReferenceLimit }} 张。点击图片编号可把「图片1」等引用插入提示词。
-            Gemini 请求会自动等比压缩，每张不超过 1 MB，合计小于 10 MB。
           </p>
           <p
             v-if="referenceLimitIssue"
@@ -748,7 +747,10 @@ import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Toggle from '@/components/common/Toggle.vue'
 import ImageStudioSelect from './ImageStudioSelect.vue'
 import { IMAGE_STUDIO_DEFAULT_PROMPT, imageStudioDraft, resetImageStudioDraft } from './imageStudioDraft'
-import { normalizeStudioDisplayOrder } from '@/features/studioDisplayOrder'
+import {
+  normalizeStudioDisplayOrder,
+  sortStudioItemsByDisplayOrder,
+} from '@/features/studioDisplayOrder'
 import {
   IMAGE_STUDIO_GALLERY_CHANGED_EVENT,
 } from './galleryEvents'
@@ -783,6 +785,7 @@ import type { ApiKey } from '@/types'
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 import { resolvePlaygroundApiEndpoint } from '@/utils/apiEndpoint'
+import { notifyCreatorKeyChanged } from '@/utils/creatorKeyEvents'
 
 const IMAGE_GENERATION_TIMEOUT_MS = 3 * 60 * 1000
 const IMAGE_ASYNC_SUBMIT_TIMEOUT_MS = 2 * 60 * 1000
@@ -1001,12 +1004,7 @@ function mergeImagesByDisplayOrder(
     seen.add(key)
     return true
   })
-  const originalIndex = new Map(merged.map((image, index) => [image, index]))
-  merged.sort((left, right) => (
-    imageDisplayOrder(right) - imageDisplayOrder(left)
-    || Number(originalIndex.get(left)) - Number(originalIndex.get(right))
-  ))
-  return merged
+  return sortStudioItemsByDisplayOrder(merged)
 }
 
 function pendingImageStorageKey(userId: number | string) {
@@ -1088,16 +1086,20 @@ function restoreStudioSnapshot(userId?: number | string) {
   selectedKeyId.value = snapshot.selectedKeyId
   imageModels.value = snapshot.imageModels
   imageModel.value = snapshot.imageModel
-  images.value = snapshot.images.map((image) => ({
+  images.value = sortStudioItemsByDisplayOrder(snapshot.images.map((image) => ({
     ...image,
     restoredFromSnapshot: true,
-  }))
+  })))
   const numericIds = images.value
     .map((image) => Number(image.id))
     .filter((id) => Number.isFinite(id) && id > 0)
   if (numericIds.length) {
     nextImageId = Math.max(nextImageId, ...numericIds.map((id) => id + 1))
   }
+  imageDisplayOrderCursor = Math.max(
+    imageDisplayOrderCursor,
+    ...images.value.map((image) => imageDisplayOrder(image)),
+  )
 }
 
 function writeStudioSnapshot(userId: number | string | null | undefined = authStore.user?.id) {
@@ -1928,7 +1930,9 @@ async function loadGallery(epoch = studioUserEpoch, ownerId = studioStateOwnerId
       const key = String(item.id || item.src)
       return all.findIndex((candidate) => String(candidate.id || candidate.src) === key) === index
     })
-    images.value = merged
+    // Every gallery merge has one ordering contract. Keep the immutable
+    // generation slot even when save status or the server response changes.
+    images.value = sortStudioItemsByDisplayOrder(merged)
     pruneExpiredImages()
     for (const entry of entries) {
       const localImage = images.value.find((item) => (
@@ -2368,6 +2372,7 @@ async function persistGeneratedImages(
       }
     }
   }
+  images.value = sortStudioItemsByDisplayOrder(images.value)
   if (succeeded > 0 && options.refresh !== false) {
     await loadGallery(options.owner?.epoch, options.owner?.userId)
     await loadStudioQuota(options.owner?.epoch, options.owner?.userId)
@@ -4798,7 +4803,9 @@ watch(errorMessage, (message) => {
 })
 
 watch(selectedKeyId, (keyId) => {
-  if (keyId) writeStudioPreferences({ keyId })
+  if (!keyId) return
+  writeStudioPreferences({ keyId })
+  notifyCreatorKeyChanged('image', keyId)
 })
 
 watch([selectedKeyId, apiBaseUrl, () => selectedKey.value?.key], () => {

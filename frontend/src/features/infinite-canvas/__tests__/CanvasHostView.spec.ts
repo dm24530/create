@@ -6,6 +6,7 @@ import { ref } from 'vue'
 
 import CanvasHostView from '../CanvasHostView.vue'
 import { useAuthStore } from '@/stores/auth'
+import { notifyCreatorKeyChanged } from '@/utils/creatorKeyEvents'
 
 const { getPublicSettings, listKeys } = vi.hoisted(() => ({
   getPublicSettings: vi.fn(),
@@ -151,6 +152,41 @@ describe('CanvasHostView account switching', () => {
     const src = wrapper.get('iframe').attributes('src') || ''
     expect(src).toContain('/canvas-app/canvas?embed=1')
     expect(src).not.toContain('localhost:3001')
+  })
+
+  it('reloads canvas credentials when the image studio changes its API key', async () => {
+    const wrapper = mountHost()
+    await flushPromises()
+    await flushPromises()
+    await wrapper.get('iframe').trigger('load')
+    await vi.advanceTimersByTimeAsync(0)
+    postMessage.mockClear()
+
+    listKeys.mockResolvedValue({
+      items: [
+        ...keys,
+        {
+          id: 4,
+          name: 'New image key',
+          key: 'sk-user-104',
+          status: 'active',
+          group: { allow_image_generation: true },
+        },
+      ],
+    })
+    localStorage.setItem('sub2api:image-studio:preferences:101', JSON.stringify({ keyId: '4' }))
+    notifyCreatorKeyChanged('image', '4')
+    await flushPromises()
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        apiKey: 'sk-user-104',
+        channelName: 'New image key',
+      }),
+      expect.any(String),
+    )
   })
 
   it('opens the canvas library for an admin without a generation key', async () => {

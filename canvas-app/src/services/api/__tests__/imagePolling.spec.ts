@@ -1,0 +1,130 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import axios from "axios";
+import { configureCanvasAuth } from "@/services/canvas-auth";
+import { waitForPersistentImageTask } from "../image";
+import type { AiConfig } from "@/types/image";
+
+vi.mock("axios", () => ({
+    default: {
+        get: vi.fn(),
+    },
+    isCancel: vi.fn(() => false),
+    isAxiosError: vi.fn(() => false),
+}));
+
+const config = {
+    baseUrl: "http://localhost:9896/v1",
+    apiKey: "sk-test",
+    model: "gemini-3-pro-image",
+    outputFormat: "png",
+} as AiConfig;
+
+describe("waitForPersistentImageTask", () => {
+    beforeEach(() => {
+        configureCanvasAuth("canvas-access-token");
+        vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+            ok: true,
+            json: vi.fn().mockResolvedValue({ data: { tracked: true } }),
+        }));
+    });
+
+    afterEach(() => {
+        vi.clearAllMocks();
+        vi.useRealTimers();
+        vi.unstubAllGlobals();
+        configureCanvasAuth("");
+    });
+
+    it("accepts ready tasks as completed results", async () => {
+        vi.mocked(axios.get).mockResolvedValueOnce({
+            data: {
+                status: "ready",
+                result: {
+                    data: [{
+                        b64_json: "aW1hZ2U=",
+                        mime_type: "image/png",
+                    }],
+                },
+            },
+        });
+
+        const result = await waitForPersistentImageTask(config, {
+            taskId: "imgtask_ready",
+            pollUrl: "/v1/images/tasks/imgtask_ready",
+            provider: "openai",
+        });
+
+        expect(result).toHaveLength(1);
+        expect(result[0]?.dataUrl).toBe("data:image/png;base64,aW1hZ2U=");
+    });
+
+    it("accepts ready tasks that only expose the inline preview before original upload", async () => {
+        vi.mocked(axios.get).mockResolvedValueOnce({
+            data: {
+                status: "ready",
+                result: {
+                    created: 1,
+                    data: [{
+                        preview_data_url: "data:image/jpeg;base64,cHJldmlldw==",
+                        upload_status: "pending",
+                    }],
+                },
+            },
+        });
+
+        const result = await waitForPersistentImageTask(config, {
+            taskId: "imgtask_preview_only",
+            pollUrl: "/v1/images/tasks/imgtask_preview_only",
+            provider: "openai",
+        });
+
+        expect(result).toHaveLength(1);
+        expect(result[0]?.dataUrl).toBe("data:image/jpeg;base64,cHJldmlldw==");
+        expect(result[0]?.previewDataUrl).toBe("data:image/jpeg;base64,cHJldmlldw==");
+    });
+
+    it("reports the end-to-end canvas display duration for the image task", async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date("2026-11-07T14:20:28.680Z"));
+        const fetchMock = vi.fn().mockResolvedValue({
+            ok: true,
+            json: vi.fn().mockResolvedValue({ data: { tracked: true } }),
+        });
+        vi.stubGlobal("fetch", fetchMock);
+        vi.mocked(axios.get).mockResolvedValueOnce({
+            data: {
+                status: "ready",
+                result: {
+                    data: [{
+                        b64_json: "aW1hZ2U=",
+                        mime_type: "image/png",
+                    }],
+                },
+            },
+        });
+
+        await waitForPersistentImageTask(config, {
+            taskId: "imgtask_canvas_timing",
+            pollUrl: "/v1/images/tasks/imgtask_canvas_timing",
+            provider: "openai",
+        }, {
+            startedAt: Date.now() - 28_680,
+        });
+
+        expect(fetchMock).toHaveBeenCalledWith(
+            "/api/v1/usage/image-display",
+            expect.objectContaining({
+                method: "POST",
+                headers: expect.objectContaining({
+                    Authorization: "Bearer canvas-access-token",
+                    "Content-Type": "application/json",
+                }),
+                body: JSON.stringify({
+                    task_id: "imgtask_canvas_timing",
+                    duration_ms: 28_680,
+                }),
+            }),
+        );
+    });
+});

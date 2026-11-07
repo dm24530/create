@@ -179,7 +179,13 @@ export function buildNodeResponseMessages(context: NodeGenerationContext): AiTex
 
 export async function hydrateNodeGenerationContext(context: NodeGenerationContext) {
     const { imageToDataUrl } = await import("@/services/image-storage");
-    return { ...context, referenceImages: await Promise.all(context.referenceImages.map(async (image) => ({ ...image, dataUrl: await imageToDataUrl(image) }))) };
+    return {
+        ...context,
+        referenceImages: await Promise.all(context.referenceImages.map(async (image) => ({
+            ...image,
+            dataUrl: /^https?:\/\//i.test(image.url || "") ? image.url! : await imageToDataUrl(image),
+        }))),
+    };
 }
 
 function readNodeTextInput(node: CanvasNodeData) {
@@ -205,7 +211,12 @@ function readReferenceImage(node: CanvasNodeData): ReferenceImage | null {
         name: `${node.title || node.id}.png`,
         type: node.metadata.mimeType || "image/png",
         dataUrl: node.metadata.content,
+        url: node.metadata.cloudURL || node.metadata.content,
         storageKey: node.metadata.storageKey,
+        sourceObjectKey: node.metadata.cloudSourceObjectKey,
+        width: node.metadata.naturalWidth,
+        height: node.metadata.naturalHeight,
+        bytes: node.metadata.bytes,
     };
 }
 

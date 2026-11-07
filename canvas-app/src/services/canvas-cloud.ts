@@ -21,6 +21,8 @@ export type CloudCanvasProjectSummary = {
   version: number;
   created_at: string;
   updated_at: string;
+  node_count?: number;
+  connection_count?: number;
 };
 
 export type CloudCanvasAsset = {
@@ -81,7 +83,15 @@ async function cloudRequest<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export async function listCloudCanvasProjects() {
-  return cloudRequest<CloudCanvasProjectSummary[]>("/projects");
+  const limit = 100;
+  const projects: CloudCanvasProjectSummary[] = [];
+  for (let offset = 0; ; offset += limit) {
+    const page = await cloudRequest<CloudCanvasProjectSummary[]>(
+      `/projects?limit=${limit}&offset=${offset}`,
+    );
+    projects.push(...page);
+    if (page.length < limit) return projects;
+  }
 }
 
 export async function listCloudCanvasProjectsFull() {
@@ -162,6 +172,13 @@ class CanvasDirectUploadError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "CanvasDirectUploadError";
+  }
+}
+
+class CanvasObjectUploadError extends CanvasDirectUploadError {
+  constructor(message: string) {
+    super(message);
+    this.name = "CanvasObjectUploadError";
   }
 }
 
@@ -296,15 +313,15 @@ async function putCanvasObject(url: string, headers: Record<string, string> | un
       credentials: "omit",
     });
   } catch (error) {
-    throw new CanvasDirectUploadError(error instanceof Error ? error.message : "Canvas direct upload failed");
+    throw new CanvasObjectUploadError(error instanceof Error ? error.message : "Canvas direct upload failed");
   }
   if (!response.ok) {
-    throw new CanvasDirectUploadError(`Canvas direct upload failed: ${response.status}`);
+    throw new CanvasObjectUploadError(`Canvas direct upload failed: ${response.status}`);
   }
 }
 
 function shouldFallbackCanvasDirectUpload(error: unknown) {
-  if (error instanceof CanvasPromotionError) return true;
+  if (error instanceof CanvasPromotionError || error instanceof CanvasObjectUploadError) return true;
   if (error instanceof CanvasDirectUploadError) return false;
   const status = (error as { status?: number } | null)?.status;
   return status === 404 || status === 405 || status === 501;
@@ -534,6 +551,8 @@ function hydrateCloudProjectState(record: CloudCanvasProject): CanvasProject {
     backgroundMode: graph.backgroundMode || "lines",
     showImageInfo: Boolean(graph.showImageInfo),
     viewport: graph.viewport || { x: 0, y: 0, k: 1 },
+    nodeCount: nodes.length,
+    connectionCount: (graph.connections || []).length,
     cloudVersion: record.version,
   };
 }

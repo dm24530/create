@@ -361,6 +361,28 @@ func TestImageStudioGalleryListHidesPendingLocalAssetURL(t *testing.T) {
 	require.Equal(t, 1, saver.batchCalls)
 }
 
+func TestImageStudioGalleryListFallsBackToObjectStorageAfterLocalAssetCleanup(t *testing.T) {
+	local := NewLocalImageAssetStore(t.TempDir())
+	store := &galleryStoreStub{entries: []*ImageStudioGalleryEntry{{
+		ID:        "work-cleaned",
+		ObjectKey: "images/users/7/task-cleaned-0.png",
+		URL:       local.URL("25908bce95ce416eb8b11c0fcede8682"),
+	}}}
+	saver := &gallerySaverStub{resolvedURLs: map[string]string{
+		"images/users/7/task-cleaned-0.png": "https://gen.example.com/images/users/7/task-cleaned-0.png",
+	}}
+	svc := NewImageStudioGalleryService(store, saver)
+	svc.SetLocalAssetStore(local)
+
+	entries, err := svc.List(context.Background(), 7, 20, nil)
+
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	require.Equal(t, "https://gen.example.com/images/users/7/task-cleaned-0.png", entries[0].URL)
+	require.False(t, entries[0].LocalAssetPending)
+	require.Equal(t, 1, saver.batchCalls)
+}
+
 // 作品记录是永久的：不再写过期时间，但要记下 object_key，删除时才知道删哪个文件。
 func TestImageStudioGallerySaveKeepsWorkPermanently(t *testing.T) {
 	store := &galleryStoreStub{}

@@ -13,14 +13,13 @@ import type { CanvasExportFile } from "@/types/canvas-export";
 import { flushCanvasStorePersistence, useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { useCanvasUiStore } from "@/stores/canvas/use-canvas-ui-store";
 import { exportCanvasProjects } from "@/lib/canvas/canvas-export";
-import { mergeCloudCanvasProjects } from "@/lib/canvas/merge-canvas-projects";
+import { mergeCloudCanvasProjectSummaries } from "@/lib/canvas/merge-canvas-projects";
 import { hasAgentUrlBootstrap } from "@/lib/agent/agent-url-bootstrap";
 import {
     canvasProjectCloudFingerprint,
     deleteCloudCanvasProject,
-    hydrateCloudProject,
     isCanvasCloudReady,
-    listCloudCanvasProjectsFull,
+    listCloudCanvasProjects,
     putCloudCanvasProject,
     subscribeCanvasCloud,
 } from "@/services/canvas-cloud";
@@ -87,11 +86,10 @@ export default function CanvasPage() {
             if (!isCanvasCloudReady() || syncing) return;
             syncing = true;
             try {
-                const records = await listCloudCanvasProjectsFull();
-                const cloudProjects = records.map(hydrateCloudProject);
+                const cloudProjects = await listCloudCanvasProjects();
                 if (cancelled) return;
                 const currentState = useCanvasStore.getState();
-                const merged = mergeCloudCanvasProjects({
+                const merged = mergeCloudCanvasProjectSummaries({
                     localProjects: currentState.projects,
                     deletedProjects: currentState.deletedProjects,
                     cloudProjects,

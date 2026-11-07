@@ -1,5 +1,5 @@
 export const CANVAS_IMAGE_PREVIEW_MAX_EDGE = 768;
-export const CANVAS_IMAGE_REQUEST_BUDGET_BYTES = 6 * 1024 * 1024;
+export const CANVAS_IMAGE_REQUEST_BUDGET_BYTES = 1250 * 1024;
 export const CANVAS_IMAGE_REQUEST_POLICY_VERSION = "v2";
 
 export type ImageRequestPolicy = {
@@ -9,10 +9,10 @@ export type ImageRequestPolicy = {
 };
 
 export const CANVAS_IMAGE_REQUEST_POLICIES: readonly ImageRequestPolicy[] = [
-    { maxEdge: 3072, quality: 0.92, targetBytes: 3 * 1024 * 1024 },
-    { maxEdge: 2560, quality: 0.9, targetBytes: 2.5 * 1024 * 1024 },
-    { maxEdge: 2048, quality: 0.88, targetBytes: 2 * 1024 * 1024 },
-    { maxEdge: 1536, quality: 0.82, targetBytes: 1.5 * 1024 * 1024 },
+    { maxEdge: 1536, quality: 0.84, targetBytes: 720 * 1024 },
+    { maxEdge: 1280, quality: 0.82, targetBytes: 560 * 1024 },
+    { maxEdge: 1024, quality: 0.8, targetBytes: 420 * 1024 },
+    { maxEdge: 768, quality: 0.76, targetBytes: 280 * 1024 },
 ];
 
 type ImageSourceChoice = {

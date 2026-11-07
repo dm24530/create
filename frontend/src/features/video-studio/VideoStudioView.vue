@@ -699,6 +699,7 @@ import { videoStudioDraft } from './videoStudioDraft'
 import { findVideoInspiration } from './videoInspiration'
 import { formatVideoElapsedSeconds } from './videoElapsed'
 import { normalizeStudioDisplayOrder } from '@/features/studioDisplayOrder'
+import { notifyCreatorKeyChanged } from '@/utils/creatorKeyEvents'
 
 interface StudioTask {
   localId: string
@@ -2204,6 +2205,7 @@ watch(videoModelProfile, applyVideoModelConstraints, { immediate: true })
 
 watch(selectedKeyId, (keyId) => {
   writePreferredKeyId(keyId)
+  notifyCreatorKeyChanged('video', keyId)
 })
 
 watch(

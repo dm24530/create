@@ -12,7 +12,7 @@
       <div v-if="error" class="canvas-host__error canvas-host__error--overlay">
         <h1>画布加载失败</h1>
         <p>{{ error }}</p>
-        <button type="button" @click="loadContext">重试</button>
+        <button type="button" @click="loadContext()">重试</button>
       </div>
       <div
         v-else-if="!frameURL || !frameReady"
@@ -32,6 +32,7 @@ import { authAPI, keysAPI } from '@/api'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import { useTheme } from '@/composables/useTheme'
 import { resolvePlaygroundApiEndpoint } from '@/utils/apiEndpoint'
+import { onCreatorKeyChanged } from '@/utils/creatorKeyEvents'
 import { useAuthStore } from '@/stores/auth'
 import {
   canvasChannelName,
@@ -58,6 +59,7 @@ const bootstrapPayload = ref<{
 const bootstrapTimers: number[] = []
 let frameReadyFallbackTimer: number | undefined
 let canvasContextRequestID = 0
+let unsubscribeCreatorKeyChanged: (() => void) | undefined
 const { isDark } = useTheme()
 const { locale } = useI18n()
 const authStore = useAuthStore()
@@ -122,7 +124,7 @@ async function resolveFrameURL() {
     : '/canvas-app/canvas?embed=1'
 }
 
-async function loadContext() {
+async function loadContext(options: { preserveFrame?: boolean } = {}) {
   const requestID = ++canvasContextRequestID
   const ownerID = String(authStore.user?.id || '')
   const isCurrentRequest = () => (
@@ -131,8 +133,10 @@ async function loadContext() {
   )
   loading.value = true
   error.value = ''
-  frameLoaded.value = false
-  frameReady.value = false
+  if (!options.preserveFrame) {
+    frameLoaded.value = false
+    frameReady.value = false
+  }
   bootstrapPayload.value = null
   try {
     const [settings, keyResponse] = await loadCanvasContextWithRetry()
@@ -251,10 +255,14 @@ function handleFrameMessage(event: MessageEvent<{ type?: string }>) {
 
 onMounted(() => {
   window.addEventListener('message', handleFrameMessage)
+  unsubscribeCreatorKeyChanged = onCreatorKeyChanged(() => {
+    void loadContext({ preserveFrame: true })
+  })
   void Promise.all([resolveFrameURL(), loadContext()])
 })
 onUnmounted(() => {
   window.removeEventListener('message', handleFrameMessage)
+  unsubscribeCreatorKeyChanged?.()
   if (frameReadyFallbackTimer) window.clearTimeout(frameReadyFallbackTimer)
   clearBootstrapTimers()
 })

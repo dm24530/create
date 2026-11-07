@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  mergeCloudCanvasProjectSummaries,
   mergeCloudCanvasProjects,
   type CanvasProjectMergeInput,
 } from '../../../../../canvas-app/src/lib/canvas/merge-canvas-projects'
@@ -32,6 +33,41 @@ function input(overrides: Partial<CanvasProjectMergeInput> = {}): CanvasProjectM
 }
 
 describe('mergeCloudCanvasProjects', () => {
+  it('merges project summaries without pulling full graph content', () => {
+    const local = project('shared', '2026-10-26T07:00:00.000Z', 3, 4)
+
+    const result = mergeCloudCanvasProjectSummaries({
+      localProjects: [local],
+      deletedProjects: [],
+      cloudProjects: [
+        {
+          id: 'shared',
+          title: 'Shared',
+          version: 7,
+          created_at: '2026-10-26T07:00:00.000Z',
+          updated_at: '2026-10-26T09:00:00.000Z',
+          node_count: 8,
+          connection_count: 6,
+        },
+        {
+          id: 'cloud-only',
+          title: 'Cloud only',
+          version: 2,
+          created_at: '2026-10-26T08:00:00.000Z',
+          updated_at: '2026-10-26T10:00:00.000Z',
+          node_count: 12,
+          connection_count: 9,
+        },
+      ],
+    })
+
+    expect(result.projects.map((item) => item.id)).toEqual(['cloud-only', 'shared'])
+    expect(result.projects.find((item) => item.id === 'shared')?.nodes).toHaveLength(3)
+    expect(result.projects.find((item) => item.id === 'cloud-only')?.nodes).toHaveLength(0)
+    expect(result.projects.find((item) => item.id === 'cloud-only')?.nodeCount).toBe(12)
+    expect(result.projects.find((item) => item.id === 'cloud-only')?.connectionCount).toBe(9)
+  })
+
   it('treats a successful full cloud snapshot as authoritative for previously synced projects', () => {
     const local = project('local-only', '2026-10-26T08:00:00.000Z', 9, 12)
 

@@ -20,6 +20,8 @@ export type CanvasProject = {
     backgroundMode: CanvasBackgroundMode;
     showImageInfo: boolean;
     viewport: ViewportTransform;
+    nodeCount?: number;
+    connectionCount?: number;
     cloudVersion?: number;
     cloudSyncedAt?: string;
     cloudVersionUncertain?: boolean;

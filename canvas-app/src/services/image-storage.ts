@@ -307,7 +307,22 @@ export async function imageToDataUrl(image: { url?: string; dataUrl?: string; st
 
 export async function prepareImageRequestDataUrls(images: readonly ImageReferenceSource[], options?: ImageReadOptions): Promise<PreparedImageRequest[]> {
     if (images.length === 0) return [];
-    const blobs = await mapWithConcurrency(images, 2, async (image) => {
+    const remotePrepared = new Map<number, PreparedImageRequest>();
+    const blobs = await mapWithConcurrency(images, 2, async (image, index) => {
+        const remoteURL = remoteImageReferenceURL(image);
+        if (remoteURL) {
+            remotePrepared.set(index, {
+                dataUrl: remoteURL,
+                mimeType: "image/png",
+                bytes: 0,
+                sourceBytes: 0,
+                width: 0,
+                height: 0,
+                reencoded: false,
+                policy: 0,
+            });
+            return null;
+        }
         const dataUrl = await imageToDataUrl(image, options);
         if (!dataUrl) throw new Error(i18n.t("apiErrors.referenceImageReadFailed"));
         return fetchImageBlob(dataUrl, options);
@@ -316,7 +331,13 @@ export async function prepareImageRequestDataUrls(images: readonly ImageReferenc
     let smallestTotal = Number.POSITIVE_INFINITY;
     for (let policyIndex = 0; policyIndex < CANVAS_IMAGE_REQUEST_POLICIES.length; policyIndex += 1) {
         const policy = CANVAS_IMAGE_REQUEST_POLICIES[policyIndex];
-        const prepared = await mapWithConcurrency(images, 2, (image, index) => prepareImageRequest(blobs[index], image, policy, policyIndex));
+        const prepared = await mapWithConcurrency(images, 2, (image, index) => {
+            const remote = remotePrepared.get(index);
+            if (remote) return Promise.resolve(remote);
+            const blob = blobs[index];
+            if (!blob) throw new Error(i18n.t("apiErrors.referenceImageReadFailed"));
+            return prepareImageRequest(blob, image, policy, policyIndex);
+        });
         const total = prepared.reduce((sum, image) => sum + image.dataUrl.length, 0);
         smallestTotal = Math.min(smallestTotal, total);
         if (total <= CANVAS_IMAGE_REQUEST_BUDGET_BYTES) return prepared;
@@ -327,6 +348,11 @@ export async function prepareImageRequestDataUrls(images: readonly ImageReferenc
     throw new Error(i18n.language.toLowerCase().startsWith("zh")
         ? `参考图片总量为 ${actual}，超过 ${limit} 的安全上限，请减少参考图数量或使用更小的图片`
         : `Reference images total ${actual}, above the ${limit} safety limit. Use fewer or smaller images.`);
+}
+
+function remoteImageReferenceURL(image: ImageReferenceSource) {
+    const url = image.url || "";
+    return /^https?:\/\//i.test(url) ? url : "";
 }
 
 export async function deleteStoredImages(keys: Iterable<string>) {

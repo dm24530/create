@@ -131,6 +131,15 @@ code-reviews/
 AGENTS.md
 backend/cmd/server/server
 deploy/docker-compose.override.yml
+deploy/create-test.env
+deploy/test-data/
+deploy/test-postgres-data/
+deploy/test-postgres-data-v2/
+deploy/test-redis-data/
+deploy/restore/
+deploy/tools/
+deploy/chrome-test-profile*/
+deploy/test-login-current.png
 .gocache/
 vite.config.js
 docs/*

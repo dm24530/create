@@ -13,6 +13,7 @@ import { isGeminiImageModel } from "@/lib/image-model";
 import { shouldSkipClientImageNormalization } from "@/lib/image-normalization-policy";
 import { imageOutputMimeType, normalizeImageBackground, normalizeImageOutputFormat } from "@/lib/image-output-format";
 import type { ReferenceImage } from "@/types/image";
+import { reportCanvasImageDisplay } from "@/services/image-display";
 
 const apiText = (key: string, options?: Record<string, unknown>) => i18n.t(`apiErrors.${key}`, options);
 
@@ -103,6 +104,7 @@ export type GeneratedImageResult = { id: string; dataUrl: string; previewDataUrl
 type RequestOptions = {
     signal?: AbortSignal;
     onPreview?: (images: GeneratedImageResult[]) => void;
+    startedAt?: number;
 };
 
 const IMAGE_QUALITY_VALUES = ["low", "medium", "high", "xhigh", "max"];
@@ -114,6 +116,11 @@ const IMAGE_MAX_EDGE = 3840;
 const IMAGE_MAX_RATIO = 3;
 // 与 image-storage 的下载超时保持一致，避免接口挂起时节点一直停在生成中。
 const IMAGE_REQUEST_TIMEOUT_MS = 4 * 60_000;
+// Async submission must upload the full request body before the server can
+// return a task. Reference images may legitimately take longer than 30 seconds
+// on mobile or tunneled connections; timing out here looked like a server-side
+// body parsing failure because the browser closed the upload mid-request.
+const IMAGE_TASK_SUBMIT_TIMEOUT_MS = 3 * 60_000;
 const GEMINI_IMAGE_REQUEST_CONCURRENCY = 3;
 
 const GEMINI_SUPPORTED_RATIOS = ["1:1", "1:4", "1:8", "2:3", "3:2", "3:4", "4:1", "4:3", "4:5", "5:4", "8:1", "9:16", "16:9", "21:9"];
@@ -224,9 +231,13 @@ function resolveImageSource(item: Record<string, unknown>, fallbackOutputFormat:
         const mimeType = declaredMime || imageOutputMimeType(typeof itemFormat === "string" ? itemFormat : fallbackOutputFormat);
         return `data:${mimeType};base64,${item.b64_json}`;
     }
-    if (typeof item.url === "string" && item.url) {
-        return item.url;
+    for (const key of ["url", "display_url", "image_url"]) {
+        if (typeof item[key] === "string" && item[key]) {
+            return item[key] as string;
+        }
     }
+    const preview = resolveImagePreviewSource(item);
+    if (preview) return preview;
     return null;
 }
 
@@ -892,7 +903,7 @@ export async function waitForPersistentImageTask(
     task: PersistentImageTask,
     options?: RequestOptions,
 ) {
-    return pollImageTask(config, task.pollUrl, options);
+    return pollImageTask(config, task.pollUrl, options, task.taskId);
 }
 
 async function submitAsyncImageTask(
@@ -914,7 +925,7 @@ async function submitAsyncImageTask(
                     "Idempotency-Key": nanoid(),
                 },
                 signal: options?.signal,
-                timeout: 30_000,
+                timeout: IMAGE_TASK_SUBMIT_TIMEOUT_MS,
                 validateStatus: () => true,
             },
         );
@@ -957,7 +968,7 @@ async function requestGeminiImagesAsync(
                     "Idempotency-Key": nanoid(),
                 },
                 signal: options?.signal,
-                timeout: 30_000,
+                timeout: IMAGE_TASK_SUBMIT_TIMEOUT_MS,
                 validateStatus: () => true,
             },
         )
@@ -976,7 +987,7 @@ async function requestGeminiImagesAsync(
     }
     const task = submit.data
     if (!task?.poll_url) throw new Error(apiText("requestFailed"))
-    return pollImageTask(config, resolvePollURL(config, task.poll_url), options)
+    return pollImageTask(config, resolvePollURL(config, task.poll_url), options, String(task.id || ""))
 }
 
 function resolvePollURL(config: AiConfig, pollURL: string) {
@@ -990,9 +1001,9 @@ async function pollImageTask(
     config: AiConfig,
     url: string,
     options?: RequestOptions,
+    taskId?: string,
 ) {
     const deadline = Date.now() + 5 * 60_000
-    const startedAt = Date.now()
     let previewDelivered = false
     while (Date.now() < deadline) {
         if (options?.signal?.aborted) throw new Error(apiText("requestCanceled"))
@@ -1002,10 +1013,12 @@ async function pollImageTask(
             timeout: Math.min(30_000, Math.max(1, deadline - Date.now())),
         })
         const task = response.data
-        if (task.status === "completed") {
+        if (task.status === "ready" || task.status === "completed") {
             const result = typeof task.result === "string" ? JSON.parse(task.result) : task.result
             if (!result) throw new Error(apiText("noImageReturned"))
-            return parseImagePayload(result as ImageApiResponse, config.outputFormat)
+            const images = parseImagePayload(result as ImageApiResponse, config.outputFormat)
+            reportCanvasImageDisplay(taskId, options?.startedAt)
+            return images
         }
         if (task.status === "preview_ready" && !previewDelivered) {
             try {
@@ -1013,6 +1026,7 @@ async function pollImageTask(
                 const images = result ? parseImagePayload(result as ImageApiResponse, config.outputFormat) : []
                 if (images.length) {
                     previewDelivered = true
+                    reportCanvasImageDisplay(taskId, options?.startedAt)
                     options?.onPreview?.(images)
                 }
             } catch {
@@ -1022,8 +1036,7 @@ async function pollImageTask(
         if (task.status === "failed") {
             throw new Error(readApiErrorMessage(task.error) || task.message || apiText("requestFailed"))
         }
-        const elapsed = Date.now() - startedAt
-        await waitForAsyncImagePoll(elapsed < 10_000 ? 250 : elapsed < 60_000 ? 750 : 1000, options?.signal)
+        await waitForAsyncImagePoll(250, options?.signal)
     }
     throw new Error(apiText("imageTimeout"))
 }

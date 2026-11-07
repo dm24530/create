@@ -1,4 +1,4 @@
-const MIN_POLL_DELAY_MS = 750
+const MIN_POLL_DELAY_MS = 250
 
 /**
  * Image generation already takes tens of seconds upstream. A sparse first poll
@@ -13,7 +13,7 @@ export function imageTaskPollInterval(_elapsedMs: number): number {
  * Transient failures should retry promptly without creating a tight loop.
  */
 export function imageTaskRetryDelay(_elapsedMs: number): number {
-  return 1_000
+  return 500
 }
 
 /**

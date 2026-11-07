@@ -1593,6 +1593,7 @@ describe('ImageStudioView gallery', () => {
         size: '1024x1024',
         format: 'png',
         created_at: index + 1,
+        sort_order: 1_800_000_000_000_000 + (4 - index),
         expires_at: 9999999999,
       })),
     )
@@ -1606,6 +1607,113 @@ describe('ImageStudioView gallery', () => {
       '历史图片 2',
       '历史图片 3',
       '历史图片 4',
+    ])
+  })
+
+  it('keeps a saved image in its original slot after a gallery refresh', async () => {
+    const entries = [
+      {
+        id: 'newest',
+        url: 'https://cdn.example.com/newest.png',
+        prompt: 'newest',
+        model: 'gpt-image-1',
+        size: '1024x1024',
+        format: 'png',
+        saved: false,
+        created_at: 3,
+        sort_order: 1_900_000_000_000_003,
+        expires_at: 9999999999,
+      },
+      {
+        id: 'saved-middle',
+        url: 'https://cdn.example.com/saved-middle.png',
+        prompt: 'saved middle',
+        model: 'gpt-image-1',
+        size: '1024x1024',
+        format: 'png',
+        saved: true,
+        created_at: 2,
+        sort_order: 1_900_000_000_000_002,
+        expires_at: 0,
+      },
+      {
+        id: 'oldest',
+        url: 'https://cdn.example.com/oldest.png',
+        prompt: 'oldest',
+        model: 'gpt-image-1',
+        size: '1024x1024',
+        format: 'png',
+        saved: false,
+        created_at: 1,
+        sort_order: 1_900_000_000_000_001,
+        expires_at: 9999999999,
+      },
+    ]
+    listGallery.mockResolvedValue(entries)
+
+    const wrapper = mountImageStudio()
+    await flushPromises()
+
+    const imageSources = () => wrapper
+      .get('[data-testid="image-results-grid"]')
+      .findAll('article img')
+      .map((image) => image.attributes('src'))
+    const before = imageSources()
+    expect(before).toEqual([
+      'https://cdn.example.com/newest.png',
+      'https://cdn.example.com/saved-middle.png',
+      'https://cdn.example.com/oldest.png',
+    ])
+
+    listGallery.mockResolvedValue([
+      { ...entries[0], saved: true, expires_at: 0 },
+      entries[1],
+      { ...entries[2], saved: true, expires_at: 0 },
+    ])
+    window.dispatchEvent(new CustomEvent('image-studio-gallery-changed'))
+    await flushPromises()
+
+    expect(imageSources()).toEqual(before)
+  })
+
+  it('normalizes the cached snapshot order when refreshing the page', async () => {
+    sessionStorage.setItem('sub2api:image-studio:snapshot-v1:2', JSON.stringify({
+      keys: [],
+      selectedKeyId: '',
+      imageModels: ['gpt-image-1'],
+      imageModel: 'gpt-image-1',
+      images: [
+        {
+          id: 'saved-old',
+          title: 'saved old',
+          src: 'https://cdn.example.com/saved-old.png',
+          saved: true,
+          createdAt: 1,
+          displayOrder: 1_700_000_000_000,
+        },
+        {
+          id: 'newest',
+          title: 'newest',
+          src: 'https://cdn.example.com/newest.png',
+          saved: false,
+          createdAt: 3,
+          displayOrder: 1_900_000_000_000_000,
+        },
+      ],
+    }))
+    listGallery.mockResolvedValue([])
+
+    const wrapper = mountImageStudio()
+    await flushPromises()
+
+    expect(
+      wrapper
+        .get('[data-testid="image-results-grid"]')
+        .findAll('article img')
+        .map((image) => image.attributes('src')),
+    ).toEqual([
+      'https://cdn.example.com/newest.png',
+      'https://cdn.example.com/saved-old.png',
     ])
   })
 

@@ -806,6 +806,43 @@ func TestCanvasPageClampsPagination(t *testing.T) {
 	require.Zero(t, offset)
 }
 
+func TestCanvasListProjectsIncludesGraphCounts(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	handler := &CanvasHandler{db: db, storage: &canvasStorageStub{}}
+	const userID int64 = 101
+	now := time.Now().UTC()
+
+	mock.ExpectQuery(regexp.QuoteMeta(`
+		SELECT id, title, version, created_at, updated_at,
+		       COALESCE(jsonb_array_length(graph->'nodes'), 0),
+		       COALESCE(jsonb_array_length(graph->'connections'), 0)
+		FROM canvas_projects
+		WHERE user_id = $1
+		ORDER BY updated_at DESC
+		LIMIT $2 OFFSET $3
+	`)).
+		WithArgs(userID, canvasProjectPageSize, 0).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "title", "version", "created_at", "updated_at", "node_count", "connection_count",
+		}).AddRow("project-a", "画布", 3, now, now, 20, 26))
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/canvas/projects", nil)
+	c.Set(string(middleware2.ContextKeyUser), middleware2.AuthSubject{UserID: userID})
+
+	handler.ListProjects(c)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Contains(t, w.Body.String(), `"node_count":20`)
+	require.Contains(t, w.Body.String(), `"connection_count":26`)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestCanvasListProjectsFullQueriesAssetsOnlyForReturnedPage(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db, mock, err := sqlmock.New()

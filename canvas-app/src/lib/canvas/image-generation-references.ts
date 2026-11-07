@@ -16,7 +16,12 @@ export function buildImageGenerationReferences(
                   name: `${sourceNode.title || sourceNode.id}.png`,
                   type: sourceNode.metadata.mimeType || "image/png",
                   dataUrl: sourceNode.metadata.content,
+                  url: sourceNode.metadata.cloudURL || sourceNode.metadata.content,
                   storageKey: sourceNode.metadata.storageKey,
+                  sourceObjectKey: sourceNode.metadata.cloudSourceObjectKey,
+                  width: sourceNode.metadata.naturalWidth,
+                  height: sourceNode.metadata.naturalHeight,
+                  bytes: sourceNode.metadata.bytes,
               }]
             : [];
     return [...new Map([...sourceReference, ...upstreamReferences].map((image) => [image.id, image])).values()];

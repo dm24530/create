@@ -1,14 +1,18 @@
 import { defaultConfig, resolveModelForCapability, type AiConfig } from "@/stores/use-config-store";
 import i18n from "@/i18n";
-import { claimLegacyStoredImage, ensureImagePreview, resolveImageUrl, uploadImage } from "@/services/image-storage";
+import { claimLegacyStoredImage, ensureImagePreview, getImageBlob, resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { resolveMediaUrl } from "@/services/file-storage";
 import { imageMetadata, referenceUrl } from "@/lib/canvas/canvas-node-factory";
 import { normalizeImageBackground, normalizeImageOutputFormat } from "@/lib/image-output-format";
+import { isCanvasCloudReady, uploadCloudCanvasAsset } from "@/services/canvas-cloud";
+import { mapWithConcurrency } from "@/lib/concurrency";
 import type { NodeGenerationInput } from "@/components/canvas/canvas-node-generation";
 import type { CanvasNodeGenerationMode } from "@/components/canvas/canvas-node-prompt-panel";
 import type { CanvasImageAngleParams } from "@/components/canvas/canvas-node-angle-dialog";
 import type { ReferenceImage } from "@/types/image";
 import { CanvasNodeType, type CanvasAssistantSession, type CanvasConnection, type CanvasNodeData, type CanvasNodeMetadata } from "@/types/canvas";
+
+const CLOUD_REFERENCE_UPLOAD_TIMEOUT_MS = 12_000;
 
 export function imageExtension(dataUrl: string) {
     const mimeSubtype = dataUrl.match(/^data:image[/]([^;]+)/)?.[1] || dataUrl.match(/image[/]([^;]+)/)?.[1] || "png";
@@ -42,10 +46,54 @@ export async function resolveMetadataReferences(metadata: CanvasNodeMetadata) {
         metadata.references.map(async (url, index) => {
             if (url.startsWith("image:")) await claimLegacyStoredImage(url);
             const dataUrl = url.startsWith("image:") ? await resolveImageUrl(url, "") : url;
-            return dataUrl ? { id: `${index}`, name: `reference-${index}.png`, type: "image/png", dataUrl, storageKey: url.startsWith("image:") ? url : undefined } : null;
+            return dataUrl ? {
+                id: `${index}`,
+                name: `reference-${index}.png`,
+                type: "image/png",
+                dataUrl,
+                url: /^https?:\/\//i.test(dataUrl) ? dataUrl : undefined,
+                storageKey: url.startsWith("image:") ? url : undefined,
+            } : null;
         }),
     );
     return references.every(Boolean) ? (references as ReferenceImage[]) : null;
+}
+
+export async function prepareCanvasReferenceImagesForRequest(projectId: string, references: ReferenceImage[]) {
+    if (!references.length || !isCanvasCloudReady()) return references;
+    return mapWithConcurrency(references, 2, async (image) => {
+        const remoteURL = /^https?:\/\//i.test(image.url || "") ? image.url! : "";
+        if (remoteURL) {
+            return { ...image, dataUrl: remoteURL, url: remoteURL, storageKey: undefined };
+        }
+        if (!image.storageKey) return image;
+        try {
+            const file = image.sourceObjectKey ? undefined : (await getImageBlob(image.storageKey)) || undefined;
+            if (!image.sourceObjectKey && !file) return image;
+            const asset = await withUploadTimeout(uploadCloudCanvasAsset({
+                projectId,
+                nodeId: image.id,
+                kind: "image",
+                file,
+                filename: image.name || `${image.id}.png`,
+                width: image.width || 0,
+                height: image.height || 0,
+                sourceObjectKey: image.sourceObjectKey,
+            }));
+            if (!asset.url) return image;
+            return { ...image, dataUrl: asset.url, url: asset.url, storageKey: undefined };
+        } catch (error) {
+            console.warn("Failed to prepare a cloud reference image; using inline upload.", error);
+            return image;
+        }
+    });
+}
+
+function withUploadTimeout<T>(task: Promise<T>) {
+    return new Promise<T>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error("cloud reference upload timed out")), CLOUD_REFERENCE_UPLOAD_TIMEOUT_MS);
+        task.then(resolve, reject).finally(() => clearTimeout(timer));
+    });
 }
 
 export async function hydrateCanvasImages(nodes: CanvasNodeData[]) {
@@ -225,7 +273,12 @@ export function sourceNodeReferenceImages(node: CanvasNodeData | null) {
             name: `${node.title || node.id}.png`,
             type: node.metadata.mimeType || "image/png",
             dataUrl: node.metadata.content,
+            url: node.metadata.cloudURL || node.metadata.content,
             storageKey: node.metadata.storageKey,
+            sourceObjectKey: node.metadata.cloudSourceObjectKey,
+            width: node.metadata.naturalWidth,
+            height: node.metadata.naturalHeight,
+            bytes: node.metadata.bytes,
         },
     ];
 }

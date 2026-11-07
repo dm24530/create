@@ -37,7 +37,7 @@ const (
 	canvasProjectQuota      = 100
 	canvasAssetCountQuota   = 5000
 	canvasAssetBytesQuota   = int64(2 << 30)
-	canvasUploadIntentLimit = 5
+	canvasUploadIntentLimit = 32
 	canvasUploadIntentTTL   = 20 * time.Minute
 )
 
@@ -70,11 +70,13 @@ type CanvasHandler struct {
 }
 
 type CanvasProjectSummary struct {
-	ID        string    `json:"id"`
-	Title     string    `json:"title"`
-	Version   int       `json:"version"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID              string    `json:"id"`
+	Title           string    `json:"title"`
+	Version         int       `json:"version"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
+	NodeCount       int       `json:"node_count,omitempty"`
+	ConnectionCount int       `json:"connection_count,omitempty"`
 }
 
 type CanvasProjectRecord struct {
@@ -212,7 +214,9 @@ func (h *CanvasHandler) ListProjects(c *gin.Context) {
 	}
 	limit, offset := canvasPage(c, canvasProjectPageSize, canvasProjectMaxPage)
 	rows, err := h.db.QueryContext(c.Request.Context(), `
-		SELECT id, title, version, created_at, updated_at
+		SELECT id, title, version, created_at, updated_at,
+		       COALESCE(jsonb_array_length(graph->'nodes'), 0),
+		       COALESCE(jsonb_array_length(graph->'connections'), 0)
 		FROM canvas_projects
 		WHERE user_id = $1
 		ORDER BY updated_at DESC
@@ -226,7 +230,15 @@ func (h *CanvasHandler) ListProjects(c *gin.Context) {
 	items := make([]CanvasProjectSummary, 0)
 	for rows.Next() {
 		var item CanvasProjectSummary
-		if err := rows.Scan(&item.ID, &item.Title, &item.Version, &item.CreatedAt, &item.UpdatedAt); err != nil {
+		if err := rows.Scan(
+			&item.ID,
+			&item.Title,
+			&item.Version,
+			&item.CreatedAt,
+			&item.UpdatedAt,
+			&item.NodeCount,
+			&item.ConnectionCount,
+		); err != nil {
 			response.InternalError(c, "读取画布项目失败")
 			return
 		}
