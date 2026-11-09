@@ -800,8 +800,6 @@ import {
 } from './imageTaskTransport'
 import {
   ImageGatewayTaskError,
-  fetchWithTimeout,
-  gatewayTaskError,
   lookupGatewayTaskByIdempotency,
   pollGatewayImageTask as pollGatewayImageTaskFromClient,
 } from './imageTaskClient'
@@ -822,6 +820,7 @@ import {
   workerResponseToSettledResult,
 } from './imageGatewayTaskContent'
 import { executeGatewayAsyncRequests } from './imageGatewayExecution'
+import { createImageGenerationFinalizer } from './imageGenerationFinalize'
 import {
   PENDING_PROMPT_STORAGE_KEY,
   PENDING_STORAGE_KEY,
@@ -1372,6 +1371,37 @@ const {
   fetchGatewayTaskOriginalBlob,
   reportError: reportVisibleImageStudioError,
   showError: (message, timeout) => appStore.showError(message, timeout),
+})
+const {
+  executeGenerationRequests,
+  finishGenerationBatch,
+} = createImageGenerationFinalizer({
+  images,
+  prompt,
+  imageModel,
+  format,
+  size,
+  quality,
+  background,
+  gifFormat: gifFormatOption.value,
+  errorMessage,
+  timeoutMs: IMAGE_GENERATION_TIMEOUT_MS,
+  isDisposed: () => componentDisposed,
+  isOwnerCurrent: isStudioOwnerCurrent,
+  formatError: errorMessageFrom,
+  resolveImageAssetURL,
+  imageNeedsLocalResize,
+  imageFormatFromResult,
+  imageMIMETypeForFormat,
+  allocateNextId: () => nextImageId++,
+  persistPending: persistPendingImages,
+  reportError: reportVisibleImageStudioError,
+  showWarning: (message, timeout) => appStore.showWarning(message, timeout),
+  queueImageDisplayProcessing,
+  persistGeneratedImages,
+  tryExecuteGatewayAsyncRequests,
+  tryStartPersistentImageGeneration,
+  waitForPersistentImageGeneration,
 })
 
 function clearStudioUserState() {
@@ -3527,194 +3557,6 @@ async function resumeAmbiguousGatewaySubmissions(pendingImages: GeneratedImage[]
       if (image.taskId) resumingAmbiguousTaskIDs.delete(image.taskId)
     }
   }
-}
-
-async function executeGenerationRequests(
-  pendingImages: GeneratedImage[],
-  url: string,
-  headers: Record<string, string>,
-  body: string | FormData,
-  geminiModel: boolean,
-  onResult?: GenerationResultHandler,
-): Promise<PromiseSettledResult<any[]>[]> {
-  let gatewayResults: PromiseSettledResult<any[]>[] | null = null
-  gatewayResults = await tryExecuteGatewayAsyncRequests(
-    pendingImages,
-    url,
-    headers,
-    body,
-    geminiModel,
-    onResult,
-  )
-  if (gatewayResults) return gatewayResults
-
-  const taskRequests = pendingImages
-    .filter((image): image is GeneratedImage & { taskId: string } => Boolean(image.taskId))
-    .map((image) => ({
-      id: image.taskId,
-      url,
-      init: {
-        method: 'POST' as const,
-        headers,
-        body,
-      },
-      createdAt: image.startedAt || Date.now(),
-    }))
-
-  if (taskRequests.length === pendingImages.length) {
-    const started = await tryStartPersistentImageGeneration(taskRequests)
-    if (started) {
-      const imagesByTaskId = new Map(
-        pendingImages.map((image) => [String(image.taskId), image]),
-      )
-      const responses = await waitForPersistentImageGeneration(
-        taskRequests.map((request) => request.id),
-        {
-          isCancelled: () => componentDisposed,
-          onResponse: async (id, response) => {
-            const image = imagesByTaskId.get(id)
-            if (!image) return
-            await onResult?.(image, workerResponseToSettledResult(response))
-          },
-        },
-      )
-      return responses.map(workerResponseToSettledResult)
-    }
-  }
-
-  return Promise.allSettled(pendingImages.map(async (image) => {
-    const response = await fetchWithTimeout(
-      url,
-      { method: 'POST', headers, body },
-      IMAGE_GENERATION_TIMEOUT_MS,
-    )
-    const payload = await response.json().catch(() => null)
-    if (!response.ok) {
-      throw gatewayTaskError(payload, response.status)
-    }
-    const result = {
-      status: 'fulfilled' as const,
-      value: imageResultWithTaskTiming(extractImages(payload), Date.now(), image.startedAt),
-    }
-    await onResult?.(image, result)
-    return result.value
-  }))
-}
-
-async function finishGenerationBatch(
-  pendingImages: GeneratedImage[],
-  results: PromiseSettledResult<any[]>[],
-  titleStart = 1,
-  persist = true,
-  owner?: StudioOwnerSnapshot,
-) {
-  if (owner && !isStudioOwnerCurrent(owner)) return []
-  const items: any[] = []
-  let firstError: unknown = null
-  for (const result of results) {
-    if (result.status === 'fulfilled') {
-      items.push(...result.value)
-    } else if (!firstError) {
-      firstError = result.reason
-    }
-  }
-  if (!items.length) {
-    throw firstError || new Error('上游没有返回图片')
-  }
-  if (firstError) {
-    errorMessage.value = errorMessageFrom(firstError, '部分图片生成失败')
-  }
-
-  const firstPending = pendingImages[0]
-  const currentPrompt = firstPending?.prompt || prompt.value.trim()
-  const currentModel = firstPending?.model || imageModel.value
-  const requestedFormat = firstPending?.format || format.value
-  const requestedSize = firstPending?.size || size.value
-  const completedAtMs = Date.now()
-  const fallbackDurationMs = Number(firstPending?.startedAt || 0) > 0
-    ? Math.max(1, completedAtMs - Number(firstPending.startedAt))
-    : undefined
-  const generated: GeneratedImage[] = []
-  const resizeTargets: Array<{ image: GeneratedImage; source: string }> = []
-  const needsLocalResize = Boolean(firstPending?.customSizeRequested)
-    && imageNeedsLocalResize(requestedSize, IMAGE_CONSTRAINTS.maxEdge)
-  for (let index = 0; index < items.length; index += 1) {
-    const item = items[index]
-    const resultFormat = imageFormatFromResult(item, '', requestedFormat)
-    const mime = String(item.mimeType || item.mime_type || imageMIMETypeForFormat(resultFormat))
-    const b64 = String(item.b64_json || item.data || '')
-    const previewDataURL = String(item.preview_data_url || '')
-    const remoteSrc = resolveImageAssetURL(String(item.display_url || item.url || ''))
-    const rawSrc = previewDataURL || (b64
-      ? `data:${mime};base64,${b64}`
-      : remoteSrc)
-    if (!rawSrc) continue
-    const previewSrc = String(item.preview_data_url || '')
-    const actualFormat = imageFormatFromResult(item, rawSrc, requestedFormat)
-    const itemCompletedAt = Number(item.__imageTaskCompletedAt || 0)
-    const itemDurationMs = Number(item.__imageTaskDurationMs || 0)
-    const generatedImage: GeneratedImage = {
-      id: nextImageId++,
-      title: `生成结果 ${titleStart + index}`,
-      src: rawSrc,
-      originalSrc: rawSrc,
-      thumbSrc: previewSrc || undefined,
-      prompt: currentPrompt,
-      model: currentModel,
-      size: requestedSize,
-      format: actualFormat,
-      quality: firstPending?.quality || quality.value,
-      background: firstPending?.background || background.value,
-      customSizeRequested: firstPending?.customSizeRequested,
-      meta: `${actualFormat.toUpperCase()} · ${requestedSize} · ${currentModel}`,
-      createdAt: Math.floor((itemCompletedAt > 0 ? itemCompletedAt : completedAtMs) / 1000),
-      durationMs: itemDurationMs > 0 ? itemDurationMs : fallbackDurationMs,
-      taskId: firstPending?.taskId,
-      gatewayTaskId: firstPending?.gatewayTaskId,
-      gatewayPollUrl: firstPending?.gatewayPollUrl,
-      apiKeyId: firstPending?.apiKeyId,
-      displayOrder: firstPending?.displayOrder,
-      startedAt: firstPending?.startedAt,
-    }
-    generated.push(generatedImage)
-    if (needsLocalResize && actualFormat !== gifFormatOption.value) {
-      resizeTargets.push({ image: generatedImage, source: rawSrc })
-    }
-  }
-
-  const pendingIds = new Set(pendingImages.map((item) => item.id))
-  if (owner && !isStudioOwnerCurrent(owner)) return []
-  const pendingIndex = images.value.findIndex((item) => pendingIds.has(item.id))
-  images.value = images.value.filter((item) => !pendingIds.has(item.id))
-  if (pendingIndex >= 0) {
-    images.value.splice(Math.min(pendingIndex, images.value.length), 0, ...generated)
-  }
-  persistPendingImages()
-
-  let localProcessError = ''
-  const reportLocalProcessError = (error: string) => {
-    if (localProcessError) return
-    localProcessError = error
-    const message = '本地尺寸处理失败，已保留并显示上游原图。'
-    reportVisibleImageStudioError(message)
-    appStore.showWarning(message, 6000)
-  }
-  const processingTasks = resizeTargets.map((target) => {
-    return queueImageDisplayProcessing(
-      target.image,
-      target.source,
-      requestedSize,
-      requestedFormat,
-      owner,
-      reportLocalProcessError,
-    )
-  })
-
-  if (persist) {
-    await Promise.all(processingTasks)
-    await persistGeneratedImages(generated, currentPrompt, currentModel, { owner })
-  }
-  return generated
 }
 
 async function uploadPreparedImageReferences(

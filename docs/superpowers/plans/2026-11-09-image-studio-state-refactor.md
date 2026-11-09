@@ -675,3 +675,24 @@ Expected: PASS with 120 tests.
 
 Run: `pnpm run typecheck`
 Expected: exit 0.
+
+### Task 23: Extract Generation Execution And Finalization
+
+**Files:**
+- Create: `frontend/src/features/image-studio/imageGenerationFinalize.ts`
+- Modify: `frontend/src/features/image-studio/ImageStudioView.vue`
+
+**Interfaces:**
+- Produces: `executeGenerationRequests` and `finishGenerationBatch` from injected page dependencies.
+
+- [x] **Step 1: Extract both functions into a finalizer factory**
+
+- [x] **Step 2: Verify page integration**
+
+Run: `pnpm exec vitest run src/features/image-studio/__tests__/ImageStudioView.spec.ts`
+Expected: PASS with 117 tests.
+
+- [x] **Step 3: Run type checking**
+
+Run: `pnpm run typecheck`
+Expected: exit 0.
