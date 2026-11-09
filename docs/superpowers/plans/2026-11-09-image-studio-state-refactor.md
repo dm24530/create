@@ -377,3 +377,60 @@ Expected: PASS with 123 tests.
 
 Run: `pnpm run typecheck`
 Expected: exit 0.
+
+### Task 12: Extract Error Mapping
+
+**Files:**
+- Create: `frontend/src/features/image-studio/imageStudioErrors.ts`
+- Create: `frontend/src/features/image-studio/__tests__/imageStudioErrors.spec.ts`
+- Modify: `frontend/src/features/image-studio/ImageStudioView.vue`
+
+**Interfaces:**
+- Consumes: nested API errors, HTTP status, business reasons, admin visibility.
+- Produces: normalized user-facing messages and reusable nested error inspection.
+
+- [x] **Step 1: Write failing error-mapping tests**
+
+Run: `pnpm exec vitest run src/features/image-studio/__tests__/imageStudioErrors.spec.ts`
+Expected: FAIL because `imageStudioErrors.ts` does not exist.
+
+- [x] **Step 2: Implement and verify error mapping**
+
+Run: `pnpm exec vitest run src/features/image-studio/__tests__/imageStudioErrors.spec.ts`
+Expected: PASS with 6 tests.
+
+- [x] **Step 3: Replace duplicate error helpers in the page**
+
+Run: `pnpm exec vitest run src/features/image-studio/__tests__/imageStudioErrors.spec.ts src/features/image-studio/__tests__/ImageStudioView.spec.ts`
+Expected: PASS with 123 tests.
+
+### Task 13: Extract Size Constraints
+
+**Files:**
+- Create: `frontend/src/features/image-studio/imageSizeConstraints.ts`
+- Create: `frontend/src/features/image-studio/__tests__/imageSizeConstraints.spec.ts`
+- Modify: `frontend/src/features/image-studio/ImageStudioView.vue`
+
+**Interfaces:**
+- Consumes: raw dimensions and optional local maximum edge.
+- Produces: upstream pixel-window fitting, validation, 16-pixel normalization, clamping, and parsing.
+
+- [x] **Step 1: Write failing size-constraint tests**
+
+Run: `pnpm exec vitest run src/features/image-studio/__tests__/imageSizeConstraints.spec.ts`
+Expected: FAIL because `imageSizeConstraints.ts` does not exist.
+
+- [x] **Step 2: Implement and verify size constraints**
+
+Run: `pnpm exec vitest run src/features/image-studio/__tests__/imageSizeConstraints.spec.ts`
+Expected: PASS with 6 tests.
+
+- [x] **Step 3: Replace duplicate size rules in the page**
+
+Run: `pnpm exec vitest run src/features/image-studio/__tests__/imageSizeConstraints.spec.ts src/features/image-studio/__tests__/ImageStudioView.spec.ts`
+Expected: PASS with 123 tests.
+
+- [x] **Step 4: Run type checking**
+
+Run: `pnpm run typecheck`
+Expected: exit 0.

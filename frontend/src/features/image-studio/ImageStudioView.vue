@@ -768,6 +768,19 @@ import {
   greatestCommonDivisor,
 } from './imageRequestBuilder'
 import {
+  formatImageStudioErrorMessage,
+  isImageStorageConfigError,
+  nestedErrorStatus,
+} from './imageStudioErrors'
+import {
+  IMAGE_CONSTRAINTS,
+  clampImageDimension,
+  fitImageSizeToWindow,
+  normalizeImageDimension,
+  parseImageSizeValue,
+  validateImageSize,
+} from './imageSizeConstraints'
+import {
   isImageTaskActive,
   isImageTaskDisplayReady,
 } from './imageTaskState'
@@ -1036,7 +1049,7 @@ const sizeIssue = computed(() => (
     isGrokImageModelName(imageModel.value)
   )
     ? ''
-    : validateSize(size.value)
+    : validateImageSize(size.value)
 ))
 const sizeDisplayLabel = computed(() => {
   if (appliedSize.mode === 'auto') return '自动（由模型决定）'
@@ -1044,7 +1057,7 @@ const sizeDisplayLabel = computed(() => {
     return `${grokResolutionForBase(appliedSize.aspectBase)} · ${appliedSize.aspectRatio}`
   }
   if (appliedSize.mode === 'ratio') return `${appliedSize.aspectRatio} ${size.value}`
-  const dimensions = parseSize(size.value)
+  const dimensions = parseImageSizeValue(size.value)
   if (!dimensions) return size.value
   const divisor = greatestCommonDivisor(dimensions.width, dimensions.height)
   return `${dimensions.width / divisor}:${dimensions.height / divisor} ${size.value}`
@@ -1054,12 +1067,12 @@ const snapTo16Enabled = computed({
   set: (value: boolean) => {
     snapTo16.value = value
     if (!value) return
-    appliedSize.width = normalizeDimension(appliedSize.width)
-    appliedSize.height = normalizeDimension(appliedSize.height)
+    appliedSize.width = normalizeImageDimension(appliedSize.width, maxImageEdge.value)
+    appliedSize.height = normalizeImageDimension(appliedSize.height, maxImageEdge.value)
   },
 })
 const customSizeSummary = computed(() => {
-  const dimensions = parseSize(size.value)
+  const dimensions = parseImageSizeValue(size.value)
   if (!dimensions) return size.value
   const { width, height } = dimensions
   return `${width}×${height}，${width * height} 像素，比例 ${(width / height).toFixed(2)}:1。`
@@ -1230,7 +1243,7 @@ const canGenerate = computed(() => Boolean(apiBaseUrl.value && selectedKey.value
 const isGptImageModel = computed(() => imageModel.value.toLowerCase().includes('gpt-image'))
 const isGrokImageModel = computed(() => isGrokImageModelName(imageModel.value))
 const maxImageEdge = computed(() => (
-  isGeminiImageModel.value ? LOCAL_IMAGE_MAX_EDGE : IMAGE_MAX_EDGE
+  isGeminiImageModel.value ? LOCAL_IMAGE_MAX_EDGE : IMAGE_CONSTRAINTS.maxEdge
 ))
 const modelSupportsTransparentBackground = computed(() => (
   !isGeminiImageModel.value && !isGrokImageModel.value
@@ -1419,7 +1432,7 @@ function toggleCustomSize() {
   customSizeOpen.value = !customSizeOpen.value
   sizeMenuOpen.value = false
   if (!customSizeOpen.value) return
-  const dimensions = parseSize(size.value)
+  const dimensions = parseImageSizeValue(size.value)
   appliedSize.mode = 'custom'
   appliedSize.width = dimensions?.width ?? appliedSize.aspectBase
   appliedSize.height = dimensions?.height ?? appliedSize.aspectBase
@@ -1538,7 +1551,7 @@ function gptDimensions(ratio: string, base: number): [number, number] | undefine
   const dimensions = gptBaseDimensions[ratio]
   if (!dimensions) return undefined
   const scale = base >= 3840 ? 4 : base >= 2048 ? 2 : 1
-  const fitted = fitSizeToWindow(dimensions[0] * scale, dimensions[1] * scale)
+  const fitted = fitImageSizeToWindow(dimensions[0] * scale, dimensions[1] * scale)
   return [fitted.width, fitted.height]
 }
 
@@ -1584,14 +1597,6 @@ function normalizeCount() {
   count.value = Math.min(4, Math.max(1, Math.round(Number(count.value) || 1)))
 }
 
-// 上游（gpt-image 系列）对 size 的约束：边长 16 的倍数、最长边 256~3840、
-// 长短边比 ≤ 3:1、总像素 655360 ~ 8294400（上限正好是 3840x2160）。
-// 只按"最长边 ≤ 3840"约束的话，4K 的方形/3:2/4:3 都能选出来，但会被上游拒绝。
-const IMAGE_MIN_EDGE = 256
-const IMAGE_MAX_EDGE = 3840
-const IMAGE_MIN_PIXELS = 655_360
-const IMAGE_MAX_PIXELS = 8_294_400
-
 function formatSize(settings: SizeSettings) {
   if (settings.mode === 'auto') return 'auto'
   if (isGeminiImageModel.value && settings.mode === 'ratio') {
@@ -1610,7 +1615,9 @@ function formatSize(settings: SizeSettings) {
     return ratioSize(settings.aspectRatio, settings.aspectBase)
   }
   if (settings.mode === 'custom') {
-    const formatDimension = snapTo16.value ? normalizeDimension : clampDimension
+    const formatDimension = snapTo16.value
+      ? (value: number) => normalizeImageDimension(value, maxImageEdge.value)
+      : (value: number) => clampImageDimension(value, maxImageEdge.value)
     return `${formatDimension(settings.width)}x${formatDimension(settings.height)}`
   }
   if (settings.useCustomRatio) {
@@ -1624,82 +1631,12 @@ function ratioSize(ratio: string, base: number) {
   if (!rawWidth || !rawHeight) return formatDimensions(base, base)
   const width = rawWidth >= rawHeight ? base : base * rawWidth / rawHeight
   const height = rawWidth >= rawHeight ? base * rawHeight / rawWidth : base
-  const fitted = fitSizeToWindow(width, height)
+  const fitted = fitImageSizeToWindow(width, height)
   return `${fitted.width}x${fitted.height}`
 }
 
-/**
- * 把一组宽高收敛到上游允许的窗口内：保持比例，超上限按比例缩小，
- * 低于下限按比例放大（不越最长边）。预设尺寸走这里，于是 4K+1:1 会
- * 得到 2880x2880，而不是会被拒绝的 3840x3840。
- */
-function fitSizeToWindow(rawWidth: number, rawHeight: number) {
-  const safeWidth = Math.max(IMAGE_MIN_EDGE, Number(rawWidth) || IMAGE_MIN_EDGE)
-  const safeHeight = Math.max(IMAGE_MIN_EDGE, Number(rawHeight) || IMAGE_MIN_EDGE)
-  const edgeFactor = Math.min(1, IMAGE_MAX_EDGE / Math.max(safeWidth, safeHeight))
-  let width = normalizeDimension(safeWidth * edgeFactor)
-  let height = normalizeDimension(safeHeight * edgeFactor)
-
-  for (let guard = 0; guard < 128 && width * height > IMAGE_MAX_PIXELS; guard += 1) {
-    const factor = Math.sqrt(IMAGE_MAX_PIXELS / (width * height))
-    const nextWidth = Math.max(IMAGE_MIN_EDGE, Math.floor(width * factor / 16) * 16)
-    const nextHeight = Math.max(IMAGE_MIN_EDGE, Math.floor(height * factor / 16) * 16)
-    if (nextWidth === width && nextHeight === height) break
-    width = nextWidth
-    height = nextHeight
-  }
-
-  for (let guard = 0; guard < 128 && width * height < IMAGE_MIN_PIXELS; guard += 1) {
-    const edgeRoom = Math.max(1, IMAGE_MAX_EDGE / Math.max(width, height))
-    const factor = Math.min(Math.sqrt(IMAGE_MIN_PIXELS / (width * height)), edgeRoom)
-    const nextWidth = Math.min(IMAGE_MAX_EDGE, Math.ceil(width * factor / 16) * 16)
-    const nextHeight = Math.min(IMAGE_MAX_EDGE, Math.ceil(height * factor / 16) * 16)
-    if (nextWidth === width && nextHeight === height) break
-    width = nextWidth
-    height = nextHeight
-  }
-
-  return { width, height }
-}
-
 function formatDimensions(width: number, height: number) {
-  return `${normalizeDimension(width)}x${normalizeDimension(height)}`
-}
-
-/** 校验最终 size 是否满足上游约束：通过返回空串，否则返回给用户看的原因。 */
-function validateSize(value: string) {
-  if (!value || value === 'auto') return ''
-  const parsed = parseSize(value)
-  if (!parsed) return '尺寸格式无法识别'
-  const { width, height } = parsed
-  const longest = Math.max(width, height)
-  const shortest = Math.min(width, height)
-  if (shortest < IMAGE_MIN_EDGE || longest > IMAGE_MAX_EDGE) {
-    return `边长需在 ${IMAGE_MIN_EDGE}~${IMAGE_MAX_EDGE} 之间`
-  }
-  if (width % 16 !== 0 || height % 16 !== 0) return '边长必须是 16 的倍数'
-  if (longest / shortest > 3) return '长短边比不能超过 3:1'
-  const pixels = width * height
-  if (pixels < IMAGE_MIN_PIXELS) return `总像素 ${pixels} 低于下限 ${IMAGE_MIN_PIXELS}`
-  if (pixels > IMAGE_MAX_PIXELS) {
-    return `总像素 ${pixels} 超过上限 ${IMAGE_MAX_PIXELS}（3840x2160）`
-  }
-  return ''
-}
-
-function normalizeDimension(value: number) {
-  return Math.round(clampDimension(value) / 16) * 16
-}
-
-function clampDimension(value: number) {
-  const numeric = Number.isFinite(Number(value)) ? Number(value) : 1024
-  return Math.round(Math.min(maxImageEdge.value, Math.max(IMAGE_MIN_EDGE, numeric)))
-}
-
-function parseSize(value: string) {
-  const match = /^(\d+)x(\d+)$/i.exec(value.trim())
-  if (!match) return null
-  return { width: Number(match[1]), height: Number(match[2]) }
+  return `${normalizeImageDimension(width, maxImageEdge.value)}x${normalizeImageDimension(height, maxImageEdge.value)}`
 }
 
 async function loadKeysAndSettings(epoch = studioUserEpoch, ownerId = studioStateOwnerId.value) {
@@ -2996,111 +2933,10 @@ async function fetchModelNames(endpoint: string, apiKey: string, filterImages = 
 
 function errorMessageFrom(error: unknown, fallback = '加载图片模型失败') {
   if (isCreationServiceUnavailable(error)) return ''
-  // 后端对"没开启"和"凭证不全"给了可区分的业务码，直接给出可执行的下一步，
-  // 而不是让用户对着笼统的失败提示猜。
-  const reason = nestedErrorField(error, 'reason')
-  if (reason === 'IMAGE_STORAGE_DISABLED' || reason === 'IMAGE_STORAGE_INCOMPLETE') {
-    if (!authStore.isAdmin) return ''
-    return reason === 'IMAGE_STORAGE_DISABLED'
-      ? '图片存储未启用：请到后台「设置 → 数据备份」打开「异步生图对象存储」。'
-      : '图片存储凭证不完整：请到后台「设置 → 数据备份」补齐存储桶与密钥。'
-  }
-  const message = nestedErrorMessage(error)
-  const status = nestedErrorStatus(error)
-  const normalized = message.trim().toLowerCase()
-  if (!normalized) return status ? `请求失败 (HTTP ${status})` : fallback
-  if (
-    normalized === 'failed to fetch' ||
-    normalized.includes('networkerror') ||
-    normalized.includes('network error')
-  ) {
-    return '无法连接到 API 服务，请检查网络或 API 地址。'
-  }
-  if (
-    normalized.includes('insufficient account balance') ||
-    normalized.includes('insufficient_balance') ||
-    normalized.includes('insufficient balance') ||
-    normalized.includes('余额不足')
-  ) {
-    return '账户余额不足，请先充值或换一个有余额的 API Key。'
-  }
-  if (
-    normalized.includes('service temporarily unavailable') ||
-    normalized.includes('upstream service temporarily unavailable')
-  ) {
-    return '当前模型暂时不可用，请稍后重试或换一个模型。'
-  }
-  if (
-    normalized.includes('api key is required') ||
-    normalized.includes('authorization header')
-  ) {
-    return '当前 API Key 未正确传给服务，请刷新页面或重新选择可用密钥。'
-  }
-  const finalMessage = message || fallback
-  return status && !/HTTP\s+\d+/i.test(finalMessage)
-    ? `请求失败 (HTTP ${status})：${finalMessage}`
-    : finalMessage
-}
-
-function nestedErrorMessage(error: unknown, depth = 0): string {
-  if (depth > 4 || error == null) return ''
-  if (typeof error === 'string') {
-    const trimmed = error.trim()
-    if (!trimmed) return ''
-    if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
-      try {
-        return nestedErrorMessage(JSON.parse(trimmed), depth + 1) || trimmed
-      } catch {
-        return trimmed
-      }
-    }
-    return trimmed
-  }
-  if (typeof error !== 'object') return ''
-
-  const record = error as Record<string, unknown>
-  const response = isPlainRecord(record.response) ? record.response : null
-  const responseMessage = nestedErrorMessage(response?.data, depth + 1)
-  if (responseMessage) return responseMessage
-  for (const key of ['message', 'msg', 'detail', 'reason']) {
-    const value = nestedErrorMessage(record[key], depth + 1)
-    if (value) return value
-  }
-  const nestedError = nestedErrorMessage(record.error, depth + 1)
-  if (nestedError) return nestedError
-  return error instanceof Error ? error.message.trim() : ''
-}
-
-function nestedErrorStatus(error: unknown, depth = 0): number | undefined {
-  if (depth > 3 || !isPlainRecord(error)) return undefined
-  for (const key of ['status', 'statusCode', 'http_status']) {
-    const status = Number(error[key])
-    if (Number.isInteger(status) && status >= 100 && status <= 599) return status
-  }
-  return nestedErrorStatus(error.response, depth + 1) || nestedErrorStatus(error.error, depth + 1)
-}
-
-function nestedErrorField(error: unknown, field: string, depth = 0): string {
-  if (depth > 3 || !isPlainRecord(error)) return ''
-  const value = error[field]
-  if (typeof value === 'string' && value.trim()) return value.trim()
-  if (isPlainRecord(value)) {
-    const nested = nestedErrorField(value, field, depth + 1)
-    if (nested) return nested
-  }
-  const response = isPlainRecord(error.response) ? error.response : null
-  return nestedErrorField(response?.data, field, depth + 1)
-    || nestedErrorField(response, field, depth + 1)
-    || nestedErrorField(error.error, field, depth + 1)
-}
-
-function isPlainRecord(value: unknown): value is Record<string, any> {
-  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
-}
-
-function isImageStorageConfigError(error: unknown): boolean {
-  const reason = nestedErrorField(error, 'reason')
-  return reason === 'IMAGE_STORAGE_DISABLED' || reason === 'IMAGE_STORAGE_INCOMPLETE'
+  return formatImageStudioErrorMessage(error, {
+    fallback,
+    isAdmin: authStore.isAdmin,
+  })
 }
 
 function isImageModel(name: string) {
@@ -3348,7 +3184,7 @@ function setFailedImageRetrying(image: GeneratedImage, retrying: boolean) {
 function restoreComposerForManualRetry(image: GeneratedImage) {
   prompt.value = image.prompt || prompt.value
   if (image.model) imageModel.value = image.model
-  const dimensions = image.size ? parseSize(image.size) : null
+  const dimensions = image.size ? parseImageSizeValue(image.size) : null
   if (dimensions) {
     appliedSize.mode = 'custom'
     appliedSize.width = dimensions.width
@@ -4230,7 +4066,7 @@ async function finishGenerationBatch(
   const generated: GeneratedImage[] = []
   const resizeTargets: Array<{ image: GeneratedImage; source: string }> = []
   const needsLocalResize = Boolean(firstPending?.customSizeRequested)
-    && imageNeedsLocalResize(requestedSize, IMAGE_MAX_EDGE)
+    && imageNeedsLocalResize(requestedSize, IMAGE_CONSTRAINTS.maxEdge)
   for (let index = 0; index < items.length; index += 1) {
     const item = items[index]
     const resultFormat = imageFormatFromResult(item, '', requestedFormat)
@@ -4566,7 +4402,7 @@ function applyPreviewSettings(image: GeneratedImage) {
     appliedSize.mode = 'auto'
     return
   }
-  const dimensions = image.size ? parseSize(image.size) : null
+  const dimensions = image.size ? parseImageSizeValue(image.size) : null
   if (dimensions) {
     appliedSize.mode = 'custom'
     appliedSize.width = dimensions.width
