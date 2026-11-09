@@ -966,7 +966,7 @@ describe('ImageStudioView gallery', () => {
     expect(wrapper.get('article').text()).not.toContain('a cat')
   })
 
-  it('replaces expired signed gallery URLs with the latest server URLs', async () => {
+  it('keeps rendered gallery URLs stable when only the signed query changes', async () => {
     sessionStorage.setItem('sub2api:image-studio:snapshot-v1:2', JSON.stringify({
       keys: [],
       selectedKeyId: '',
@@ -1022,9 +1022,9 @@ describe('ImageStudioView gallery', () => {
     await flushPromises()
 
     expect(wrapper.get('img[alt="旧签名缩略图"]').attributes('src'))
-      .toBe('https://cdn.example.com/work-thumb.jpg?X-Amz-Date=new&X-Amz-Signature=fresh')
+      .toBe('https://cdn.example.com/work-thumb.jpg?X-Amz-Date=old&X-Amz-Signature=expired')
     expect(wrapper.get('img[alt="旧签名原图"]').attributes('src'))
-      .toBe('https://cdn.example.com/original.png?X-Amz-Date=new&X-Amz-Signature=fresh')
+      .toBe('https://cdn.example.com/original.png?X-Amz-Date=old&X-Amz-Signature=expired')
   })
 
   it('refreshes gallery URLs when the page becomes visible again', async () => {
@@ -5014,6 +5014,63 @@ describe('ImageStudioView composer controls', () => {
     const geminiParts = generationBody?.contents?.[0]?.parts || []
     expect(geminiParts.filter((part: any) => part.fileData?.mimeType === 'image/webp')).toHaveLength(14)
     expect(uploadReferenceAssetBlob).toHaveBeenCalledTimes(14)
+  })
+
+  it('allows another generation while reference uploads are still in flight', async () => {
+    listKeys.mockResolvedValue({
+      items: [{
+        id: 1,
+        name: 'openai',
+        key: 'sk-openai',
+        status: 'active',
+        group_id: 2,
+        group: { platform: 'openai', allow_image_generation: true },
+      }],
+    })
+    getPublicSettings.mockResolvedValue({ api_base_url: '/v1' })
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/images/batches/models')) {
+        return {
+          ok: true,
+          json: async () => ({ data: [{ id: 'gpt-image-2.6' }] }),
+        } as Response
+      }
+      if (url.endsWith('/images/edits/async')) return asyncImageUnavailableResponse()
+      throw new Error(`Unexpected request: ${url}`)
+    })
+    uploadReferenceAssetBlob.mockImplementation(() => new Promise<string>(() => {}))
+
+    const wrapper = mountImageStudio()
+    await flushPromises()
+    await vi.waitFor(() => {
+      expect(wrapper.get('[data-testid="image-model-select"]').text()).toContain('gpt-image-2.6')
+    })
+
+    const fileInput = wrapper.get('input[type="file"]')
+    Object.defineProperty(fileInput.element, 'files', {
+      configurable: true,
+      value: [new File(['reference'], 'reference.png', { type: 'image/png' })],
+    })
+    await fileInput.trigger('change')
+    await vi.waitFor(() => {
+      expect(wrapper.find('[data-testid="image-reference-1"]').exists()).toBe(true)
+    })
+
+    await wrapper.get('form').trigger('submit')
+    await vi.waitFor(() => {
+      expect(uploadReferenceAssetBlob).toHaveBeenCalledTimes(1)
+    })
+
+    const submitButton = wrapper.get('.image-composer__generate')
+    expect(submitButton.attributes('disabled')).toBeUndefined()
+    expect(submitButton.text()).toContain('继续生成')
+
+    await wrapper.get('form').trigger('submit')
+    await vi.waitFor(() => {
+      expect(uploadReferenceAssetBlob).toHaveBeenCalledTimes(2)
+    })
+    expect(wrapper.get('[data-testid="image-active-generations"]').text()).toContain('2 个任务进行中')
   })
 
   it('uploads all 14 compressed references before sending a URL-based image edit request', async () => {

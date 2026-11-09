@@ -550,7 +550,7 @@
         <div class="image-composer__footer">
           <button type="submit" class="image-composer__generate" :disabled="!canGenerate">
             <Icon name="sparkles" size="sm" />
-            {{ optimizingReferences ? '正在生成' : generating ? '继续生成' : '开始生成' }}
+            {{ hasActiveImageGeneration ? '继续生成' : '开始生成' }}
           </button>
         </div>
       </form>
@@ -918,7 +918,6 @@ const generationClockNow = ref(Date.now())
 const activeImageTaskCount = computed(() => images.value.filter((image) => image.pending).length)
 const keyCredentialsReady = ref(false)
 const references = ref<ReferenceItem[]>([])
-const optimizingReferences = ref(false)
 const generationRequestSnapshots = new Map<string, GenerationRequestSnapshot>()
 const retryingFailureIds = ref<Set<string>>(new Set())
 const previewImage = ref<GeneratedImage | null>(null)
@@ -1315,9 +1314,13 @@ const modelQualityIssue = computed(() => (
     ? geminiModelPolicy.value.notice
     : ''
 ))
+const hasActiveImageGeneration = computed(() => (
+  generating.value
+  || activeGenerations.value > 0
+  || images.value.some((image) => image.pending)
+))
 const canGenerate = computed(() => Boolean(apiBaseUrl.value && selectedKey.value?.key && imageModel.value.trim() && prompt.value.trim())
   && !sizeIssue.value
-  && !optimizingReferences.value
   && !referenceLimitIssue.value
   && !modelQualityIssue.value)
 const isGptImageModel = computed(() => imageModel.value.toLowerCase().includes('gpt-image'))
@@ -1359,11 +1362,8 @@ const ratioOptions = computed(() => {
 const canRegeneratePreview = computed(() => Boolean(
   previewImage.value &&
   previewPromptDraft.value.trim() &&
-  selectedKey.value?.key &&
-  !generating.value,
+  selectedKey.value?.key,
 ))
-const hasReferences = computed(() => references.value.length > 0)
-
 // 本会话里已保存进图库的条目 id：这些图本地已有可显示的副本，
 // 图库列表里再渲染一次就会出现"生成一张却显示两张"的重复卡片。
 const locallySavedGalleryIds = new Set<string>()
@@ -1449,7 +1449,6 @@ function clearStudioUserState() {
   resetImageStudioDraft()
   prompt.value = IMAGE_STUDIO_DEFAULT_PROMPT
   references.value = []
-  optimizingReferences.value = false
   generationRequestSnapshots.clear()
   retryingFailureIds.value.clear()
   nextImageId = 1
@@ -1853,6 +1852,10 @@ async function loadData(epoch = studioUserEpoch, ownerId = studioStateOwnerId.va
 
 function refreshGalleryAfterExternalChange() {
   if (componentDisposed) return
+  if (hasActiveImageGeneration.value) {
+    galleryRefreshDeferred = true
+    return
+  }
   void Promise.allSettled([loadGallery(), loadStudioQuota()])
 }
 
@@ -1891,7 +1894,7 @@ async function loadGallery(epoch = studioUserEpoch, ownerId = studioStateOwnerId
       // Object identity stays stable while the signed query string rotates.
       // Always adopt the latest server-issued display URL so expired snapshots
       // do not keep rendering an old signature after gallery refresh.
-      if (storedURL && image.src !== storedURL) {
+      if (storedURL && !sameStoredObject(image.src, storedURL)) {
         image.src = storedURL
         resetImageMediaState(image)
       }
@@ -1899,7 +1902,7 @@ async function loadGallery(epoch = studioUserEpoch, ownerId = studioStateOwnerId
       if (
         storedThumbURL
         && !isInlineImageSource(image.thumbSrc)
-        && image.thumbSrc !== storedThumbURL
+        && !sameStoredObject(image.thumbSrc, storedThumbURL)
       ) {
         image.thumbSrc = storedThumbURL
         image.thumbSrcSet = ''
@@ -1934,7 +1937,10 @@ async function loadGallery(epoch = studioUserEpoch, ownerId = studioStateOwnerId
     })
     // Every gallery merge has one ordering contract. Keep the immutable
     // generation slot even when save status or the server response changes.
-    images.value = sortStudioItemsByDisplayOrder(merged)
+    const ordered = sortStudioItemsByDisplayOrder(merged)
+    if (!sameImageIdentityOrder(images.value, ordered)) {
+      images.value = ordered
+    }
     pruneExpiredImages()
     for (const entry of entries) {
       const localImage = images.value.find((item) => (
@@ -1943,6 +1949,7 @@ async function loadGallery(epoch = studioUserEpoch, ownerId = studioStateOwnerId
       ))
       if (
         !isInlineImageSource(localImage?.thumbSrc)
+        && !(localImage && isImageMediaLoaded(localImage))
       ) {
         void scheduleGalleryThumbnail(entry.id)
       }
@@ -1950,6 +1957,14 @@ async function loadGallery(epoch = studioUserEpoch, ownerId = studioStateOwnerId
   } catch {
     // Gallery storage is optional; generation remains available without it.
   }
+}
+
+function sameImageIdentityOrder(
+  current: GeneratedImage[],
+  next: GeneratedImage[],
+) {
+  return current.length === next.length
+    && current.every((image, index) => String(image.id) === String(next[index]?.id))
 }
 
 function sameStoredObject(current: string | undefined, next: string | undefined) {
@@ -2708,6 +2723,7 @@ function retryImageMedia(image: GeneratedImage) {
 
 let previewLoadToken = 0
 let galleryURLRefreshTimer: ReturnType<typeof setInterval> | null = null
+let galleryRefreshDeferred = false
 
 async function loadPreviewDisplay(image: GeneratedImage) {
   const token = ++previewLoadToken
@@ -3222,6 +3238,13 @@ async function generate() {
   generating.value = true
   activeGenerations.value += 1
   const currentPrompt = prompt.value.trim()
+  const currentKey = selectedKey.value
+  const currentModel = imageModel.value.trim()
+  const currentQuality = quality.value
+  const currentFormat = format.value
+  const currentBackground = background.value
+  const currentAppliedSize = { ...appliedSize }
+  const currentSize = formatSize(currentAppliedSize)
   const requestCount = Math.min(Math.max(Number(count.value) || 1, 1), 4)
   const batchId = createImageGenerationTaskId()
   const startedAt = Date.now()
@@ -3229,65 +3252,64 @@ async function generate() {
   const requestReferences = references.value.map((item) => ({ ...item }))
   generationRequestSnapshots.set(batchId, {
     prompt: currentPrompt,
-    model: imageModel.value,
-    size: size.value,
-    quality: quality.value,
-    format: format.value,
-    background: background.value,
-    apiKeyId: selectedKey.value?.id,
-    appliedSize: { ...appliedSize },
+    model: currentModel,
+    size: currentSize,
+    quality: currentQuality,
+    format: currentFormat,
+    background: currentBackground,
+    apiKeyId: currentKey.id,
+    appliedSize: currentAppliedSize,
     references: requestReferences,
   })
   const pendingImages = Array.from({ length: requestCount }, (_, index): GeneratedImage => ({
     id: nextImageId++,
     title: `正在生成 ${index + 1}`,
     src: '',
-    meta: `${format.value.toUpperCase()} · ${size.value} · ${imageModel.value}`,
+    meta: `${currentFormat.toUpperCase()} · ${currentSize} · ${currentModel}`,
     pending: true,
     taskId: createImageGenerationTaskId(),
     batchId,
-    apiKeyId: selectedKey.value?.id,
+    apiKeyId: currentKey.id,
     startedAt,
     displayOrder: displayOrderBase - index,
     prompt: currentPrompt,
-    model: imageModel.value,
-    size: size.value,
-    format: format.value,
-    quality: quality.value,
-    background: background.value,
-    customSizeRequested: appliedSize.mode === 'custom',
+    model: currentModel,
+    size: currentSize,
+    format: currentFormat,
+    quality: currentQuality,
+    background: currentBackground,
+    customSizeRequested: currentAppliedSize.mode === 'custom',
     hadReferences: requestReferences.length > 0,
   }))
   images.value.unshift(...pendingImages)
   persistPendingImages()
   errorMessage.value = ''
-  const geminiModel = isGeminiModel(imageModel.value)
-  const grokModel = isGrokImageModel.value
+  const geminiModel = isGeminiModel(currentModel)
+  const grokModel = isGrokImageModelName(currentModel)
   const progress = createGenerationProgress(owner)
   let clearGenerationTimeoutTimer: (() => void) | undefined
   try {
-    const headers: Record<string, string> = { Authorization: `Bearer ${selectedKey.value.key}` }
-    let url = `${apiBaseUrl.value}${hasReferences.value ? '/images/edits' : '/images/generations'}`
+    const headers: Record<string, string> = { Authorization: `Bearer ${currentKey.key}` }
+    let url = `${apiBaseUrl.value}${requestReferences.length ? '/images/edits' : '/images/generations'}`
     let body: string | FormData
     let preparedReferences: PreparedImageReference[] = []
     let remoteReferenceURLs: string[] = []
     if (requestReferences.length) {
-      optimizingReferences.value = true
-      try {
-        preparedReferences = await prepareImageReferenceImages(
-          requestReferences.map((item) => ({ name: item.name, blob: item.file })),
-        )
-        remoteReferenceURLs = await uploadPreparedImageReferences(preparedReferences)
-        if (!isStudioOwnerCurrent(owner)) return
-      } finally {
-        optimizingReferences.value = false
-      }
+      preparedReferences = await prepareImageReferenceImages(
+        requestReferences.map((item) => ({ name: item.name, blob: item.file })),
+      )
+      remoteReferenceURLs = await uploadPreparedImageReferences(preparedReferences)
+      if (!isStudioOwnerCurrent(owner)) return
     }
     if (geminiModel) {
       headers['Content-Type'] = 'application/json'
-      body = JSON.stringify(buildGeminiPayload(currentPrompt, preparedReferences))
-      url = buildGeminiURL(imageModel.value)
-    } else if (hasReferences.value) {
+      body = JSON.stringify(buildGeminiPayload(currentPrompt, preparedReferences, {
+        size: currentSize,
+        quality: currentQuality,
+        appliedSize: currentAppliedSize,
+      }))
+      url = buildGeminiURL(currentModel, currentKey.group?.platform)
+    } else if (requestReferences.length) {
       if (remoteReferenceURLs.length === preparedReferences.length) {
         headers['Content-Type'] = 'application/json'
         body = JSON.stringify(buildEditURLPayload(currentPrompt, remoteReferenceURLs))
@@ -3297,18 +3319,18 @@ async function generate() {
     } else {
       headers['Content-Type'] = 'application/json'
       body = JSON.stringify({
-        model: imageModel.value.trim(),
+        model: currentModel,
         prompt: currentPrompt,
-        size: size.value,
-        quality: quality.value,
-        output_format: format.value,
-        background: background.value,
+        size: currentSize,
+        quality: currentQuality,
+        output_format: currentFormat,
+        background: currentBackground,
         n: 1,
         response_format: 'b64_json',
-        ...(grokModel && appliedSize.mode === 'ratio'
+        ...(grokModel && currentAppliedSize.mode === 'ratio'
           ? {
-              resolution: grokResolutionForBase(appliedSize.aspectBase).toLowerCase(),
-              aspect_ratio: appliedSize.aspectRatio,
+              resolution: grokResolutionForBase(currentAppliedSize.aspectBase).toLowerCase(),
+              aspect_ratio: currentAppliedSize.aspectRatio,
             }
           : {}),
       })
@@ -4536,13 +4558,21 @@ async function finishGenerationBatch(
   return generated
 }
 
-function buildGeminiURL(model: string) {
+function buildGeminiURL(model: string, platform = selectedKey.value?.group?.platform) {
   const root = apiBaseUrl.value.replace(/\/+$/, '').replace(/\/v1$/, '')
-  const prefix = selectedKey.value?.group?.platform === 'antigravity' ? '/antigravity/v1beta' : '/v1beta'
+  const prefix = platform === 'antigravity' ? '/antigravity/v1beta' : '/v1beta'
   return `${root}${prefix}/models/${encodeURIComponent(model)}:generateContent`
 }
 
-function buildGeminiPayload(text: string, preparedReferences: readonly PreparedImageReference[] = []) {
+function buildGeminiPayload(
+  text: string,
+  preparedReferences: readonly PreparedImageReference[] = [],
+  options: { size: string; quality: string; appliedSize: SizeSettings } = {
+    size: size.value,
+    quality: quality.value,
+    appliedSize,
+  },
+) {
   const parts: any[] = []
   preparedReferences.forEach((item, index) => {
     parts.push({ text: `图片${index + 1}` })
@@ -4562,9 +4592,9 @@ function buildGeminiPayload(text: string, preparedReferences: readonly PreparedI
   })
   parts.push({ text })
   const imageConfig: Record<string, string> = {
-    aspectRatio: geminiAspectRatio(size.value),
+    aspectRatio: geminiAspectRatio(options.size, options.appliedSize),
   }
-  const imageSize = geminiImageSizeForQuality(quality.value)
+  const imageSize = geminiImageSizeForQuality(options.quality)
   if (imageSize) imageConfig.imageSize = imageSize
   return {
     contents: [{ role: 'user', parts }],
@@ -4582,11 +4612,11 @@ function geminiImageSizeForQuality(value: string) {
   return undefined
 }
 
-function geminiAspectRatio(value: string) {
-  if (appliedSize.mode === 'ratio') {
-    return appliedSize.useCustomRatio
-      ? `${appliedSize.customRatioWidth}:${appliedSize.customRatioHeight}`
-      : appliedSize.aspectRatio
+function geminiAspectRatio(value: string, settings: SizeSettings = appliedSize) {
+  if (settings.mode === 'ratio') {
+    return settings.useCustomRatio
+      ? `${settings.customRatioWidth}:${settings.customRatioHeight}`
+      : settings.aspectRatio
   }
   if (value === 'auto') return '1:1'
   const dimensions = parseSize(value)
@@ -5010,10 +5040,14 @@ watch(
 )
 
 watch(
-  () => activeGenerations.value > 0 || images.value.some((image) => image.pending),
+  hasActiveImageGeneration,
   (hasActiveGeneration) => {
     if (hasActiveGeneration) startGenerationClock()
     else stopGenerationClock()
+    if (!hasActiveGeneration && galleryRefreshDeferred) {
+      galleryRefreshDeferred = false
+      void Promise.allSettled([loadGallery(), loadStudioQuota()])
+    }
   },
   { immediate: true },
 )
