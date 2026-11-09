@@ -434,3 +434,60 @@ Expected: PASS with 123 tests.
 
 Run: `pnpm run typecheck`
 Expected: exit 0.
+
+### Task 14: Extract Media Source Rules
+
+**Files:**
+- Create: `frontend/src/features/image-studio/imageMediaState.ts`
+- Create: `frontend/src/features/image-studio/__tests__/imageMediaState.spec.ts`
+- Modify: `frontend/src/features/image-studio/ImageStudioView.vue`
+
+**Interfaces:**
+- Consumes: image format, source, thumbnail, retry nonce, and origin.
+- Produces: animated-image detection and stable retry-aware media source resolution.
+
+- [x] **Step 1: Write failing media source tests**
+
+Run: `pnpm exec vitest run src/features/image-studio/__tests__/imageMediaState.spec.ts`
+Expected: FAIL because `imageMediaState.ts` does not exist.
+
+- [x] **Step 2: Implement and verify media rules**
+
+Run: `pnpm exec vitest run src/features/image-studio/__tests__/imageMediaState.spec.ts`
+Expected: PASS with 3 tests.
+
+- [x] **Step 3: Replace duplicate media source rules**
+
+Run: `pnpm exec vitest run src/features/image-studio/__tests__/imageMediaState.spec.ts src/features/image-studio/__tests__/ImageStudioView.spec.ts`
+Expected: PASS with 120 tests.
+
+### Task 15: Extract Model Policy
+
+**Files:**
+- Create: `frontend/src/features/image-studio/imageModelPolicy.ts`
+- Create: `frontend/src/features/image-studio/__tests__/imageModelPolicy.spec.ts`
+- Modify: `frontend/src/features/image-studio/ImageStudioView.vue`
+
+**Interfaces:**
+- Consumes: raw model names from settings and batch-model discovery.
+- Produces: image model detection, Gemini detection, Grok image detection, and deterministic deduplication.
+
+- [x] **Step 1: Write failing model-policy tests**
+
+Run: `pnpm exec vitest run src/features/image-studio/__tests__/imageModelPolicy.spec.ts`
+Expected: FAIL because `imageModelPolicy.ts` does not exist.
+
+- [x] **Step 2: Implement and verify model policy**
+
+Run: `pnpm exec vitest run src/features/image-studio/__tests__/imageModelPolicy.spec.ts`
+Expected: PASS with 4 tests.
+
+- [x] **Step 3: Replace duplicate model rules**
+
+Run: `pnpm exec vitest run src/features/image-studio/__tests__/imageModelPolicy.spec.ts src/features/image-studio/__tests__/ImageStudioView.spec.ts`
+Expected: PASS with 121 tests.
+
+- [x] **Step 4: Run type checking**
+
+Run: `pnpm run typecheck`
+Expected: exit 0.

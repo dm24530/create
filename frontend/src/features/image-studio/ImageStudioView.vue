@@ -781,6 +781,17 @@ import {
   validateImageSize,
 } from './imageSizeConstraints'
 import {
+  isAnimatedImageSource,
+  resolveExplicitImageMediaSource,
+  resolveImageMediaSource,
+} from './imageMediaState'
+import {
+  deduplicateImageModelNames as deduplicateModelNames,
+  isGeminiImageModelName as isGeminiModel,
+  isGrokImageModelName,
+  isImageModelName as isImageModel,
+} from './imageModelPolicy'
+import {
   isImageTaskActive,
   isImageTaskDisplayReady,
 } from './imageTaskState'
@@ -2337,22 +2348,14 @@ function imageMediaRenderKey(image: GeneratedImage, scope = 'card') {
 }
 
 function isAnimatedImage(image: GeneratedImage) {
-  return normalizeImageFormat(image.format) === gifFormatOption.value
-    || /^data:image\/gif(?:;|,)/i.test(image.src)
-    || /\.gif(?:[?#]|$)/i.test(image.src)
+  return isAnimatedImageSource(image, gifFormatOption.value)
 }
 
 function imageMediaDisplaySrc(image: GeneratedImage, preferred?: string) {
-  const source = preferred || (isAnimatedImage(image) ? image.src : image.thumbSrc) || image.src
   const nonce = imageMediaRetryNonce.value.get(imageMediaId(image)) || 0
-  if (!nonce || !/^https?:\/\//i.test(source)) return source
-  try {
-    const url = new URL(source, window.location.origin)
-    url.searchParams.set('_retry', String(nonce))
-    return url.toString()
-  } catch {
-    return source
-  }
+  return preferred
+    ? resolveExplicitImageMediaSource(preferred, nonce)
+    : resolveImageMediaSource(image, nonce, gifFormatOption.value)
 }
 
 function isShowingThumbnail(image: GeneratedImage) {
@@ -2937,41 +2940,6 @@ function errorMessageFrom(error: unknown, fallback = '加载图片模型失败')
     fallback,
     isAdmin: authStore.isAdmin,
   })
-}
-
-function isImageModel(name: string) {
-  const value = name.trim().toLowerCase()
-  return value.startsWith('gpt-image-') ||
-    value.includes('dall-e') ||
-    value.includes('image') ||
-    value.includes('nano-banana') ||
-    value.includes('banana') ||
-    value.includes('imagen') ||
-    value.includes('flux') ||
-    value.includes('sdxl')
-}
-
-function isGrokImageModelName(name: string) {
-  const value = name.trim().toLowerCase()
-  return value.includes('grok-imagine') && !value.includes('video')
-}
-
-function deduplicateModelNames(names: string[]): string[] {
-  const unique = new Map<string, string>()
-  for (const rawName of names) {
-    const name = rawName.replace(/\s+/g, ' ').trim()
-    if (!name) continue
-    const key = name.toLowerCase()
-    if (!unique.has(key)) unique.set(key, name)
-  }
-  return Array.from(unique.values()).sort((a, b) =>
-    a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }),
-  )
-}
-
-function isGeminiModel(name: string) {
-  const value = name.toLowerCase()
-  return value.includes('banana') || (value.includes('gemini') && isImageModel(name))
 }
 
 async function generate() {
