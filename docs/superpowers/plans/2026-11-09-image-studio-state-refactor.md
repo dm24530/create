@@ -554,3 +554,48 @@ Expected: PASS with 117 tests.
 
 Run: `pnpm run typecheck`
 Expected: exit 0.
+
+### Task 18: Extract Gallery Actions
+
+**Files:**
+- Create: `frontend/src/features/image-studio/imageGalleryActions.ts`
+- Create: `frontend/src/features/image-studio/__tests__/imageGalleryActions.spec.ts`
+- Modify: `frontend/src/features/image-studio/ImageStudioView.vue`
+
+**Interfaces:**
+- Produces: gallery identity, save/pin, delete confirmation, quota refresh, and download identity resolution.
+
+- [x] **Step 1: Write failing gallery-action tests**
+
+Run: `pnpm exec vitest run src/features/image-studio/__tests__/imageGalleryActions.spec.ts`
+Expected: PASS after implementation with 2 tests.
+
+- [x] **Step 2: Replace local gallery actions**
+
+Run: `pnpm exec vitest run src/features/image-studio/__tests__/imageGalleryActions.spec.ts src/features/image-studio/__tests__/ImageStudioView.spec.ts`
+Expected: PASS with 119 tests.
+
+### Task 19: Extract Download Flow
+
+**Files:**
+- Create: `frontend/src/features/image-studio/imageStudioDownloads.ts`
+- Create: `frontend/src/features/image-studio/__tests__/imageStudioDownloads.spec.ts`
+- Modify: `frontend/src/features/image-studio/ImageStudioView.vue`
+
+**Interfaces:**
+- Produces: filename selection, menu positioning, signed-download fallback chain, task/source/backend download fallback, and per-image downloading state.
+
+- [x] **Step 1: Write failing download tests**
+
+Run: `pnpm exec vitest run src/features/image-studio/__tests__/imageStudioDownloads.spec.ts`
+Expected: PASS after implementation with 2 tests.
+
+- [x] **Step 2: Replace local download flow**
+
+Run: `pnpm exec vitest run src/features/image-studio/__tests__/imageStudioDownloads.spec.ts src/features/image-studio/__tests__/ImageStudioView.spec.ts`
+Expected: PASS with 119 tests.
+
+- [x] **Step 3: Run type checking**
+
+Run: `pnpm run typecheck`
+Expected: exit 0.

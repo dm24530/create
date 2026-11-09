@@ -758,7 +758,7 @@ import {
 } from '@/utils/imageReferenceCompression'
 import { resolveGeminiImageModelPolicy, type GeminiImageQuality } from './geminiImageModelPolicy'
 import { createReferenceImagePreview } from './referenceImagePreview'
-import { imageDownloadURL, resolveImageAssetURL } from './imageDownload'
+import { resolveImageAssetURL } from './imageDownload'
 import {
   buildEditForm,
   buildEditURLPayload,
@@ -818,6 +818,8 @@ import {
   mergeImageGallery,
   type GalleryMergeEntry,
 } from './imageGalleryMerge'
+import { createImageGalleryActions } from './imageGalleryActions'
+import { createImageStudioDownloads } from './imageStudioDownloads'
 import {
   PENDING_PROMPT_STORAGE_KEY,
   PENDING_STORAGE_KEY,
@@ -1333,6 +1335,50 @@ const studioQuota = ref<{ used: number; limit: number } | null>(null)
 const resumedGenerationBatches = new Set<string>()
 const resumedGatewayBatches = new Set<string>()
 const resumingAmbiguousTaskIDs = new Set<string>()
+const {
+  galleryIdFor,
+  imageGallerySourceID,
+  galleryIdForDownload,
+  pinImage,
+  savePreviewToGallery,
+  removeGalleryImage,
+  confirmRemoveGalleryImage,
+} = createImageGalleryActions({
+  images,
+  previewImage,
+  pendingDeleteImage,
+  deletingImage,
+  savingPreviewImage,
+  errorMessage,
+  galleryBackedIds,
+  localToGalleryId,
+  pendingGalleryImageIds,
+  locallySavedGalleryIds,
+  studioQuota,
+  imageModel,
+  previewPromptDraft,
+  isQuotaError,
+  formatError: errorMessageFrom,
+  resolveImageAssetURL,
+  saveImageToGallery,
+  loadGallery: () => loadGallery(),
+  loadStudioQuota: () => loadStudioQuota(),
+})
+const {
+  downloadImage,
+  openImageDownloadMenu,
+  closeImageDownloadMenu,
+  downloadOriginalFromMenu,
+  isImageDownloading,
+} = createImageStudioDownloads({
+  downloadingImageIds,
+  galleryBackedIds,
+  imageDownloadMenu,
+  galleryIdForDownload,
+  fetchGatewayTaskOriginalBlob,
+  reportError: reportVisibleImageStudioError,
+  showError: (message, timeout) => appStore.showError(message, timeout),
+})
 
 function clearStudioUserState() {
   studioUserEpoch += 1
@@ -2624,65 +2670,6 @@ function stopGenerationClock() {
 }
 
 // 把临时内容存进「我的作品」：之后永久保留，并开始计入配额。
-async function pinImage(image: GeneratedImage) {
-  const id = galleryIdFor(image)
-  if (!id || !galleryBackedIds.value.has(id)) return
-  errorMessage.value = ''
-  try {
-    await imageStudioGalleryAPI.pin(id)
-    image.saved = true
-    image.expiresAt = 0
-    await loadStudioQuota()
-  } catch (error) {
-    errorMessage.value = isQuotaError(error)
-      ? `我的作品已满（${studioQuota.value?.limit || 100} 个），先删除一些再保存。`
-      : errorMessageFrom(error, '保存到我的作品失败')
-  }
-}
-
-async function savePreviewToGallery() {
-  const image = previewImage.value
-  if (!image || image.saved || savingPreviewImage.value) return
-  savingPreviewImage.value = true
-  errorMessage.value = ''
-  try {
-    const id = galleryIdFor(image)
-    if (id && galleryBackedIds.value.has(id)) {
-      await imageStudioGalleryAPI.pin(id)
-      image.saved = true
-      image.expiresAt = 0
-      await loadStudioQuota()
-      return
-    }
-
-    const promptText = previewPromptDraft.value.trim() || image.prompt || ''
-    const entry = await saveImageToGallery(
-      image,
-      promptText,
-      image.model || imageModel.value,
-      true,
-    )
-    locallySavedGalleryIds.add(String(entry.id))
-    galleryBackedIds.value.add(String(entry.id))
-    localToGalleryId.value.set(String(image.id), String(entry.id))
-    image.galleryId = String(entry.id)
-    image.gallerySourceId = entry.source_id || imageGallerySourceID(image)
-    image.saved = entry.saved !== false
-    image.expiresAt = entry.expires_at || 0
-    image.prompt = promptText
-    if (entry.url) image.src = resolveImageAssetURL(entry.url)
-    image.thumbSrc = entry.thumb_url || ''
-    await loadGallery()
-    await loadStudioQuota()
-  } catch (error) {
-    errorMessage.value = isQuotaError(error)
-      ? `我的作品已满（${studioQuota.value?.limit || 100} 个），先删除一些再保存。`
-      : errorMessageFrom(error, '保存到我的作品失败')
-  } finally {
-    savingPreviewImage.value = false
-  }
-}
-
 async function loadStudioQuota(epoch = studioUserEpoch, ownerId = studioStateOwnerId.value) {
   try {
     const quota = await imageStudioGalleryAPI.quota()
@@ -2690,59 +2677,6 @@ async function loadStudioQuota(epoch = studioUserEpoch, ownerId = studioStateOwn
     studioQuota.value = quota
   } catch {
     // 配额展示是锦上添花，读不到就不显示。
-  }
-}
-
-// 删除作品：后端先删对象存储里的文件、再删记录，成功后本地也把它移掉。
-// 刚保存进图库的图片卡片上还是本地 id，所以要先用映射换成服务端的作品 id。
-function galleryIdFor(image: GeneratedImage): string {
-  const local = String(image.id)
-  return String(image.galleryId || '') || localToGalleryId.value.get(local) || local
-}
-
-function imageGallerySourceID(image: GeneratedImage): string {
-  const taskId = String(image.gatewayTaskId || image.taskId || '').trim()
-  return taskId
-    ? `image-task:${taskId}:0`
-    : String(image.gallerySourceId || '')
-}
-
-async function galleryIdForDownload(image: GeneratedImage): Promise<string> {
-  const id = galleryIdFor(image)
-  if (id && galleryBackedIds.value.has(id)) return id
-  const pendingId = pendingGalleryImageIds.get(String(image.id))
-  if (!pendingId) return id
-  try {
-    return await pendingId
-  } catch {
-    return id
-  }
-}
-
-function removeGalleryImage(image: GeneratedImage) {
-  const id = galleryIdFor(image)
-  if (!id || !galleryBackedIds.value.has(id)) return
-  pendingDeleteImage.value = image
-}
-
-async function confirmRemoveGalleryImage() {
-  const image = pendingDeleteImage.value
-  pendingDeleteImage.value = null
-  if (!image || deletingImage.value) return
-  deletingImage.value = true
-  errorMessage.value = ''
-  try {
-    const id = galleryIdFor(image)
-    await imageStudioGalleryAPI.delete(id)
-    galleryBackedIds.value.delete(id)
-    locallySavedGalleryIds.delete(id)
-    localToGalleryId.value.delete(String(image.id))
-    images.value = images.value.filter((item) => String(item.id) !== String(image.id))
-    await loadStudioQuota()
-  } catch (error) {
-    errorMessage.value = errorMessageFrom(error, '删除失败')
-  } finally {
-    deletingImage.value = false
   }
 }
 
@@ -4190,110 +4124,6 @@ function insertReferenceToken(index: number) {
     textarea.focus()
     textarea.setSelectionRange(cursor, cursor)
   })
-}
-
-async function downloadImage(image: GeneratedImage) {
-  const mediaId = imageMediaId(image)
-  if (downloadingImageIds.value.has(mediaId)) return
-  downloadingImageIds.value.add(mediaId)
-  const filename = `${image.title}.${image.format || 'png'}`
-  try {
-    const id = await galleryIdForDownload(image)
-    if (id && galleryBackedIds.value.has(id)) {
-      try {
-        const direct = await imageStudioGalleryAPI.downloadURL(id)
-        const link = document.createElement('a')
-        link.href = direct.url
-        link.download = direct.filename || filename
-        document.body.appendChild(link)
-        link.click()
-        link.remove()
-        return
-      } catch (error) {
-        console.warn('Signed image download URL failed; falling back to direct fetch', error)
-      }
-    }
-    if (String(image.gatewayTaskId || '').trim()) {
-      try {
-        const blob = await fetchGatewayTaskOriginalBlob(image, 0)
-        saveBlob(blob, filename)
-        return
-      } catch (error) {
-        console.warn('Gateway task original download failed; falling back to gallery stream', error)
-      }
-    }
-    const source = resolveImageAssetURL(image.originalSrc || image.src)
-    if (!image.gatewayTaskId) try {
-      const response = await fetch(source, {
-        credentials: 'omit',
-        cache: 'force-cache',
-        signal: AbortSignal.timeout(2 * 60 * 1000),
-      })
-      if (!response.ok) throw new Error(`download failed: ${response.status}`)
-      saveBlob(await response.blob(), filename)
-      return
-    } catch (error) {
-      // Cross-origin or private object stores fall back to the authenticated
-      // backend stream.
-      console.warn('Direct image download failed; falling back to backend stream', error)
-    }
-    if (id && galleryBackedIds.value.has(id)) {
-      try {
-        const blob = await imageStudioGalleryAPI.download(id)
-        saveBlob(blob, filename)
-        return
-      } catch (error) {
-        console.warn('Backend image download failed', error)
-      }
-    }
-    if (image.gatewayTaskId) {
-      throw new Error('原图下载失败，请稍后重试')
-    }
-    const link = document.createElement('a')
-    link.href = imageDownloadURL(image.originalSrc || image.src)
-    link.download = filename
-    link.click()
-  } catch (error) {
-    const message = error instanceof Error ? error.message : '下载图片失败'
-    reportVisibleImageStudioError(message)
-    appStore.showError(message, 5000)
-  } finally {
-    downloadingImageIds.value.delete(mediaId)
-  }
-}
-
-function openImageDownloadMenu(event: MouseEvent, image: GeneratedImage) {
-  if (image.pending || image.failed) return
-  const width = 208
-  const height = 78
-  imageDownloadMenu.value = {
-    x: Math.max(8, Math.min(event.clientX, window.innerWidth - width - 8)),
-    y: Math.max(8, Math.min(event.clientY, window.innerHeight - height - 8)),
-    image,
-  }
-}
-
-function closeImageDownloadMenu() {
-  imageDownloadMenu.value = null
-}
-
-function downloadOriginalFromMenu() {
-  const image = imageDownloadMenu.value?.image
-  closeImageDownloadMenu()
-  if (image) void downloadImage(image)
-}
-
-function isImageDownloading(image: GeneratedImage) {
-  return downloadingImageIds.value.has(imageMediaId(image))
-}
-
-function saveBlob(blob: Blob, filename: string) {
-  const objectUrl = window.URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  link.href = objectUrl
-  link.download = filename
-  link.click()
-  window.setTimeout(() => window.URL.revokeObjectURL?.(objectUrl), 1000)
 }
 
 function copyPreviewPrompt() {
