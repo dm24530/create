@@ -797,15 +797,11 @@ import {
 } from './imageTaskState'
 import {
   gatewayPollUrlForTask,
-  gatewayTaskPayload,
 } from './imageTaskTransport'
 import {
   ImageGatewayTaskError,
   fetchWithTimeout,
-  gatewayAsyncSubmitUrl,
   gatewayTaskError,
-  isTransientGatewayError,
-  isTransientGatewayStatus,
   lookupGatewayTaskByIdempotency,
   pollGatewayImageTask as pollGatewayImageTaskFromClient,
 } from './imageTaskClient'
@@ -825,6 +821,7 @@ import {
   imageResultWithTaskTiming,
   workerResponseToSettledResult,
 } from './imageGatewayTaskContent'
+import { executeGatewayAsyncRequests } from './imageGatewayExecution'
 import {
   PENDING_PROMPT_STORAGE_KEY,
   PENDING_STORAGE_KEY,
@@ -3346,174 +3343,29 @@ async function tryExecuteGatewayAsyncRequests(
   geminiModel: boolean,
   onResult?: GenerationResultHandler,
 ): Promise<PromiseSettledResult<any[]>[] | null> {
-  const submitUrl = gatewayAsyncSubmitUrl(apiBaseUrl.value, syncUrl, geminiModel)
-  const submitted: Array<{ image: GeneratedImage; pollUrl: string }> = []
-  const results: Array<PromiseSettledResult<any[]> | null> = new Array(pendingImages.length).fill(null)
-  let ambiguousSubmission = false
-
-  for (const [imageIndex, image] of pendingImages.entries()) {
-    let requestBody: string | FormData = body
-    if (geminiModel) {
-      if (typeof body !== 'string') throw new Error('Gemini 图片请求格式无效')
-      requestBody = JSON.stringify({
-        model: image.model || imageModel.value,
-        request: JSON.parse(body),
-      })
-    }
-    const idempotencyKey = image.taskId || createImageGenerationTaskId()
-    image.taskId = idempotencyKey
-    const requestHeaders = {
-      ...headers,
-      'Idempotency-Key': idempotencyKey,
-    }
-    const generationDeadline = Number(image.startedAt || 0) > 0
-      ? Number(image.startedAt) + IMAGE_GENERATION_TIMEOUT_MS
-      : Date.now() + IMAGE_GENERATION_TIMEOUT_MS
-    if (Date.now() >= generationDeadline) {
-      const error = new Error(IMAGE_GENERATION_TIMEOUT_MESSAGE)
-      image.gatewaySubmitPending = false
-      if (!submitted.length) throw error
-      results[imageIndex] = { status: 'rejected', reason: error }
-      persistPendingImages()
-      continue
-    }
-    image.gatewaySubmitPending = true
-    persistPendingImages()
-    let response: Response | null = null
-    let payload: any = null
-    let requestError: unknown = null
-    let transientSubmitFailure = false
-    for (let attempt = 0; attempt < 3 && !response; attempt += 1) {
-      try {
-        response = await fetchWithTimeout(
-          submitUrl,
-          {
-            method: 'POST',
-            headers: requestHeaders,
-            body: requestBody,
-          },
-          Math.min(IMAGE_ASYNC_SUBMIT_TIMEOUT_MS, Math.max(1, generationDeadline - Date.now())),
-        )
-        payload = await response.json().catch(() => null)
-      } catch (error) {
-        requestError = error
-      }
-      if (response && isTransientGatewayStatus(response.status)) {
-        requestError = gatewayTaskError(payload, response.status)
-        response = null
-      }
-      if (!response && isTransientGatewayError(requestError)) {
-        transientSubmitFailure = true
-        ambiguousSubmission = true
-        if (attempt === 2) break
-        await waitForGatewayPollRetry(500 * (attempt + 1))
-        continue
-      }
-      break
-    }
-    if (!response && transientSubmitFailure) {
-      try {
-        const recovered = await lookupGatewayTaskByIdempotency(
-          apiBaseUrl.value,
-          idempotencyKey,
-          headers,
-        )
-        if (recovered && gatewayPollUrlForTask(recovered, apiBaseUrl.value)) {
-          response = {
-            ok: true,
-            json: async () => recovered,
-          } as Response
-          payload = recovered
-          requestError = null
-        }
-      } catch {
-        // Preserve the original submission error if recovery also fails.
-      }
-    }
-    if (!response) {
-      const reason = requestError instanceof Error
-        ? requestError
-        : new Error('提交图片任务失败')
-      if (transientSubmitFailure) {
-        results[imageIndex] = {
-          status: 'rejected',
-          reason: new ImageSubmissionUnconfirmed(),
-        }
-        continue
-      }
-      if (!submitted.length) throw reason
-      results[imageIndex] = { status: 'rejected', reason }
-      continue
-    }
-    if (response.status === 404) {
-      if (!submitted.length && !ambiguousSubmission) {
-        for (const pendingImage of pendingImages) {
-          pendingImage.gatewaySubmitPending = false
-        }
-        persistPendingImages()
-        return null
-      }
-      results[imageIndex] = {
-        status: 'rejected',
-        reason: ambiguousSubmission
-          ? new ImageSubmissionUnconfirmed()
-          : gatewayTaskError(payload, response.status),
-      }
-      continue
-    }
-    if (!response.ok) {
-      const error = gatewayTaskError(payload, response.status)
-      if (!submitted.length) throw error
-      results[imageIndex] = { status: 'rejected', reason: error }
-      continue
-    }
-    const task = gatewayTaskPayload(payload)
-    const taskPollUrl = gatewayPollUrlForTask(task, apiBaseUrl.value)
-    if (!taskPollUrl) {
-      const error = new Error('服务端没有返回图片任务地址')
-      if (!submitted.length) throw error
-      results[imageIndex] = { status: 'rejected', reason: error }
-      continue
-    }
-    image.gatewayTaskId = String(task.task_id || task.id || '')
-    image.gatewayPollUrl = taskPollUrl
-    image.taskId = image.gatewayTaskId || image.taskId
-    image.gatewaySubmitPending = false
-    submitted.push({ image, pollUrl: taskPollUrl })
-    persistPendingImages()
-  }
-
-  const polled = await Promise.allSettled(
-    submitted.map(async (task) => {
-      const items = await pollGatewayImageTask(task.pollUrl, headers, {
-        isCancelled: () => componentDisposed,
-        onPreview: (previewItems) => applyGatewayPreview(task.image, previewItems),
-        deadline: Number(task.image.startedAt || 0) > 0
-          ? Number(task.image.startedAt) + IMAGE_GENERATION_TIMEOUT_MS
-          : undefined,
-      })
-      const result = {
-        status: 'fulfilled' as const,
-        value: imageResultWithTaskTiming(items, Date.now(), task.image.startedAt),
-      }
-      await onResult?.(task.image, result)
-      return result.value
-    }),
+  return executeGatewayAsyncRequests(
+    pendingImages,
+    syncUrl,
+    headers,
+    body,
+    geminiModel,
+    onResult,
+    {
+      apiBaseUrl: apiBaseUrl.value,
+      defaultModel: imageModel.value,
+      imageCapableKeys: imageCapableKeys.value,
+      selectedKey: selectedKey.value,
+      timeoutMs: IMAGE_GENERATION_TIMEOUT_MS,
+      asyncSubmitTimeoutMs: IMAGE_ASYNC_SUBMIT_TIMEOUT_MS,
+      timeoutMessage: IMAGE_GENERATION_TIMEOUT_MESSAGE,
+      isDisposed: () => componentDisposed,
+      persistPending: persistPendingImages,
+      waitRetry: waitForGatewayPollRetry,
+      createTaskId: createImageGenerationTaskId,
+      pollTask: pollGatewayImageTask,
+      applyPreview: applyGatewayPreview,
+    },
   )
-  pendingImages.forEach((image, index) => {
-    const unconfirmed = results[index]?.status === 'rejected'
-      && results[index].reason instanceof ImageSubmissionUnconfirmed
-    if (!image.gatewayPollUrl && !unconfirmed) image.gatewaySubmitPending = false
-  })
-  persistPendingImages()
-  submitted.forEach((task, index) => {
-    const imageIndex = pendingImages.indexOf(task.image)
-    if (imageIndex >= 0) results[imageIndex] = polled[index]
-  })
-  return results.map((result) => result || {
-    status: 'rejected',
-    reason: new Error('图片任务没有返回结果'),
-  })
 }
 
 async function resumeGatewayGeneration(pendingImages: GeneratedImage[]) {

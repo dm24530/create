@@ -650,3 +650,28 @@ Expected: PASS with 120 tests.
 
 Run: `pnpm run typecheck`
 Expected: exit 0.
+
+### Task 22: Extract Gateway Async Execution
+
+**Files:**
+- Create: `frontend/src/features/image-studio/imageGatewayExecution.ts`
+- Create: `frontend/src/features/image-studio/__tests__/imageGatewayExecution.spec.ts`
+- Modify: `frontend/src/features/image-studio/ImageStudioView.vue`
+
+**Interfaces:**
+- Produces: Gemini request wrapping, idempotency headers, submit retries, ambiguity recovery, polling, and settled-result mapping.
+
+- [x] **Step 1: Write failing execution tests**
+
+Run: `pnpm exec vitest run src/features/image-studio/__tests__/imageGatewayExecution.spec.ts`
+Expected: PASS after implementation with 3 tests.
+
+- [x] **Step 2: Replace the inline async executor**
+
+Run: `pnpm exec vitest run src/features/image-studio/__tests__/imageGatewayExecution.spec.ts src/features/image-studio/__tests__/ImageStudioView.spec.ts`
+Expected: PASS with 120 tests.
+
+- [x] **Step 3: Run type checking**
+
+Run: `pnpm run typecheck`
+Expected: exit 0.
