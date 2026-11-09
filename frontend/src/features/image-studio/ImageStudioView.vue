@@ -761,7 +761,6 @@ import { createReferenceImagePreview } from './referenceImagePreview'
 import { resolveImageAssetURL } from './imageDownload'
 import {
   buildEditForm,
-  buildEditURLPayload,
   buildGeminiPayload,
   buildGeminiURL,
   extractImages,
@@ -857,13 +856,13 @@ import {
   createImageGenerationTaskId,
   ImageGenerationStillRunning,
   ImageGenerationWaitCancelled,
+  prewarmPersistentImageGeneration,
   tryStartPersistentImageGeneration,
   waitForPersistentImageGeneration,
 } from '@/utils/imageGenerationWorker'
 import { usePromptResize } from '@/composables/usePromptResize'
 import { ensureCreatorKey, isCreationServiceUnavailable } from '@/composables/useCreatorKey'
 import { authAPI, imageStudioGalleryAPI } from '@/api'
-import { referenceAssetsAPI } from '@/api/referenceAssets'
 import type { ApiKey } from '@/types'
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
@@ -2347,7 +2346,7 @@ function remainingDays(image: GeneratedImage): number {
 function pendingElapsedSeconds(image: GeneratedImage): number {
   const startedAt = Number(image.startedAt || 0)
   if (!startedAt) return 0
-  return Math.max(0, Math.floor((generationClockNow.value - startedAt) / 1000))
+  return Math.max(1, Math.floor((generationClockNow.value - startedAt) / 1000))
 }
 
 function formatGenerationDuration(durationMs?: number): string {
@@ -2915,12 +2914,10 @@ async function generate() {
     let url = `${apiBaseUrl.value}${requestReferences.length ? '/images/edits' : '/images/generations'}`
     let body: string | FormData
     let preparedReferences: PreparedImageReference[] = []
-    let remoteReferenceURLs: string[] = []
     if (requestReferences.length) {
       preparedReferences = await prepareImageReferenceImages(
         requestReferences.map((item) => ({ name: item.name, blob: item.file })),
       )
-      remoteReferenceURLs = await uploadPreparedImageReferences(preparedReferences)
       if (!isStudioOwnerCurrent(owner)) return
     }
     if (geminiModel) {
@@ -2932,29 +2929,18 @@ async function generate() {
       }))
       url = buildGeminiURL(apiBaseUrl.value, currentModel, currentKey.group?.platform)
     } else if (requestReferences.length) {
-      if (remoteReferenceURLs.length === preparedReferences.length) {
-        headers['Content-Type'] = 'application/json'
-        body = JSON.stringify(buildEditURLPayload(currentPrompt, remoteReferenceURLs, {
+      body = buildEditForm(
+        currentPrompt,
+        preparedReferences,
+        {
           model: currentModel,
           size: currentSize,
           quality: currentQuality,
           format: currentFormat,
           background: currentBackground,
-        }))
-      } else {
-        body = buildEditForm(
-          currentPrompt,
-          preparedReferences,
-          {
-            model: currentModel,
-            size: currentSize,
-            quality: currentQuality,
-            format: currentFormat,
-            background: currentBackground,
-          },
-          references.value,
-        )
-      }
+        },
+        references.value,
+      )
     } else {
       headers['Content-Type'] = 'application/json'
       body = JSON.stringify({
@@ -2974,10 +2960,6 @@ async function generate() {
           : {}),
       })
     }
-    const requestStartedAt = Date.now()
-    pendingImages.forEach((image) => {
-      image.startedAt = requestStartedAt
-    })
     clearGenerationTimeoutTimer = schedulePendingImagesTimeout(pendingImages, owner)
     persistPendingImages()
     const results = await executeGenerationRequests(
@@ -3559,33 +3541,6 @@ async function resumeAmbiguousGatewaySubmissions(pendingImages: GeneratedImage[]
   }
 }
 
-async function uploadPreparedImageReferences(
-  preparedReferences: PreparedImageReference[],
-): Promise<string[]> {
-  const urls = new Array<string>(preparedReferences.length)
-  let nextIndex = 0
-  const workers = Array.from(
-    { length: Math.min(3, preparedReferences.length) },
-    async () => {
-      while (nextIndex < preparedReferences.length) {
-        const index = nextIndex
-        nextIndex += 1
-        const image = preparedReferences[index]
-        image.remoteUrl = await referenceAssetsAPI.uploadBlob('image', image.blob, image.mimeType)
-        urls[index] = image.remoteUrl
-      }
-    },
-  )
-  try {
-    await Promise.all(workers)
-    return urls.filter(Boolean)
-  } catch {
-    // Inline/multipart remains a compatibility fallback when object storage is
-    // unavailable or direct-upload CORS is not configured.
-    return []
-  }
-}
-
 function onFilesSelected(event: Event) {
   const input = event.target as HTMLInputElement
   addFiles(Array.from(input.files || []))
@@ -3826,6 +3781,7 @@ watch(
 
 onMounted(() => {
   componentDisposed = false
+  void prewarmPersistentImageGeneration()
   document.addEventListener('click', handleSizeOutside)
   document.addEventListener('pointerdown', closeImageDownloadMenu)
   document.addEventListener('keydown', handleSizeEscape)

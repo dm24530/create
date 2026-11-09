@@ -11,7 +11,7 @@ import { IMAGE_STUDIO_DEFAULT_PROMPT, imageStudioDraft, resetImageStudioDraft } 
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 
-const { listKeys, getPublicSettings, listGallery, saveGallery, saveGalleryFromTask, pinGallery, deleteGallery, downloadGallery, downloadURLGallery, thumbnailGallery, galleryQuota, reportDisplay, reportClientError, copyToClipboard, imageNeedsLocalResize, processImageForDisplay, prepareImageReferenceImages, uploadReferenceAssetBlob, createReferenceImagePreview, tryStartPersistent, waitForPersistent } = vi.hoisted(() => ({
+const { listKeys, getPublicSettings, listGallery, saveGallery, saveGalleryFromTask, pinGallery, deleteGallery, downloadGallery, downloadURLGallery, thumbnailGallery, galleryQuota, reportDisplay, reportClientError, copyToClipboard, imageNeedsLocalResize, processImageForDisplay, prepareImageReferenceImages, createReferenceImagePreview, tryStartPersistent, waitForPersistent } = vi.hoisted(() => ({
   listKeys: vi.fn(),
   getPublicSettings: vi.fn(),
   listGallery: vi.fn(),
@@ -29,7 +29,6 @@ const { listKeys, getPublicSettings, listGallery, saveGallery, saveGalleryFromTa
   imageNeedsLocalResize: vi.fn(),
   processImageForDisplay: vi.fn(),
   prepareImageReferenceImages: vi.fn(),
-  uploadReferenceAssetBlob: vi.fn(),
   createReferenceImagePreview: vi.fn(),
   tryStartPersistent: vi.fn(),
   waitForPersistent: vi.fn(),
@@ -79,12 +78,6 @@ vi.mock('@/utils/imageReferenceCompression', async (importOriginal) => {
     prepareImageReferenceImages,
   }
 })
-
-vi.mock('@/api/referenceAssets', () => ({
-  referenceAssetsAPI: {
-    uploadBlob: uploadReferenceAssetBlob,
-  },
-}))
 
 vi.mock('../referenceImagePreview', () => ({
   createReferenceImagePreview,
@@ -196,7 +189,6 @@ function resetCommonMocks() {
   imageNeedsLocalResize.mockReset()
   processImageForDisplay.mockReset()
   prepareImageReferenceImages.mockReset()
-  uploadReferenceAssetBlob.mockReset()
   createReferenceImagePreview.mockReset()
   tryStartPersistent.mockReset()
   waitForPersistent.mockReset()
@@ -235,10 +227,6 @@ function resetCommonMocks() {
     mimeType: 'image/webp',
     profileIndex: 0,
   })))
-  let uploadedReferenceIndex = 0
-  uploadReferenceAssetBlob.mockImplementation(async () => (
-    `https://r2.example.com/reference-${++uploadedReferenceIndex}.webp`
-  ))
   createReferenceImagePreview.mockResolvedValue('data:image/jpeg;base64,preview')
   saveGallery.mockResolvedValue({
     id: 'gallery-1',
@@ -4695,7 +4683,7 @@ describe('ImageStudioView gallery', () => {
       await flushPromises()
 
       expect(wrapper.get('[data-testid="image-active-generations"]').text()).toContain('1 个任务进行中')
-      expect(wrapper.get('[data-testid="image-pending-timer"]').text()).toBe('0 秒')
+      expect(wrapper.get('[data-testid="image-pending-timer"]').text()).toBe('1 秒')
 
       await vi.advanceTimersByTimeAsync(2100)
       await flushPromises()
@@ -5097,11 +5085,10 @@ describe('ImageStudioView composer controls', () => {
 
     expect(prepareImageReferenceImages).toHaveBeenCalledOnce()
     const geminiParts = generationBody?.contents?.[0]?.parts || []
-    expect(geminiParts.filter((part: any) => part.fileData?.mimeType === 'image/webp')).toHaveLength(14)
-    expect(uploadReferenceAssetBlob).toHaveBeenCalledTimes(14)
+    expect(geminiParts.filter((part: any) => part.inlineData?.mimeType === 'image/webp')).toHaveLength(14)
   })
 
-  it('allows another generation while reference uploads are still in flight', async () => {
+  it('allows another generation while reference compression is still in flight', async () => {
     listKeys.mockResolvedValue({
       items: [{
         id: 1,
@@ -5124,7 +5111,11 @@ describe('ImageStudioView composer controls', () => {
       if (url.endsWith('/images/edits/async')) return asyncImageUnavailableResponse()
       throw new Error(`Unexpected request: ${url}`)
     })
-    uploadReferenceAssetBlob.mockImplementation(() => new Promise<string>(() => {}))
+    let pendingPreparations = 0
+    vi.mocked(prepareImageReferenceImages).mockImplementation(() => {
+      pendingPreparations += 1
+      return new Promise(() => {})
+    })
 
     const wrapper = mountImageStudio()
     await flushPromises()
@@ -5144,7 +5135,7 @@ describe('ImageStudioView composer controls', () => {
 
     await wrapper.get('form').trigger('submit')
     await vi.waitFor(() => {
-      expect(uploadReferenceAssetBlob).toHaveBeenCalledTimes(1)
+      expect(pendingPreparations).toBe(1)
     })
 
     const submitButton = wrapper.get('.image-composer__generate')
@@ -5156,12 +5147,12 @@ describe('ImageStudioView composer controls', () => {
 
     await wrapper.get('form').trigger('submit')
     await vi.waitFor(() => {
-      expect(uploadReferenceAssetBlob).toHaveBeenCalledTimes(2)
+      expect(pendingPreparations).toBe(2)
     })
     expect(wrapper.get('[data-testid="image-active-generations"]').text()).toContain('2 个任务进行中')
   })
 
-  it('uploads all 14 compressed references before sending a URL-based image edit request', async () => {
+  it('sends all 14 compressed references inline in a multipart image edit request', async () => {
     listKeys.mockResolvedValue({
       items: [{
         id: 1,
@@ -5173,7 +5164,7 @@ describe('ImageStudioView composer controls', () => {
       }],
     })
     getPublicSettings.mockResolvedValue({ api_base_url: '/v1' })
-    let editBody: Record<string, any> | null = null
+    let editBody: FormData | null = null
     vi.mocked(fetch).mockImplementation(async (input, init) => {
       const url = String(input)
       if (url.endsWith('/images/batches/models')) {
@@ -5184,7 +5175,8 @@ describe('ImageStudioView composer controls', () => {
       }
       if (url.endsWith('/images/edits/async')) return asyncImageUnavailableResponse()
       if (url.endsWith('/images/edits')) {
-        editBody = JSON.parse(String(init?.body || '{}'))
+        expect(init?.body).toBeInstanceOf(FormData)
+        editBody = init?.body as FormData
         return {
           ok: true,
           json: async () => ({ data: [{ b64_json: 'cmVzdWx0', mime_type: 'image/png' }] }),
@@ -5217,9 +5209,9 @@ describe('ImageStudioView composer controls', () => {
     })
 
     expect(prepareImageReferenceImages).toHaveBeenCalledOnce()
-    expect(uploadReferenceAssetBlob).toHaveBeenCalledTimes(14)
-    expect(editBody!.images).toHaveLength(14)
-    expect(editBody!.images.every((image: any) => String(image.image_url).startsWith('https://r2.example.com/'))).toBe(true)
+    const files = editBody!.getAll('image[]')
+    expect(files).toHaveLength(14)
+    expect(files.every((file) => (file as Blob).type === 'image/webp')).toBe(true)
   })
 
   it('shows model-specific reference and quality limits before generation', async () => {
