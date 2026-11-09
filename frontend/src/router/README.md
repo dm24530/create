@@ -20,14 +20,22 @@ This directory contains the Vue Router configuration for the Create frontend app
 
 ### User Routes (Authentication Required)
 
-| Path         | Component     | Description                  |
-| ------------ | ------------- | ---------------------------- |
-| `/`          | -             | Redirects to `/dashboard`    |
-| `/dashboard` | DashboardView | User dashboard with stats    |
-| `/keys`      | KeysView      | API key management           |
-| `/usage`     | UsageView     | Usage records and statistics |
-| `/redeem`    | RedeemView    | Redeem code interface        |
-| `/profile`   | ProfileView   | User profile settings        |
+| Path               | Component           | Description                         |
+| ------------------ | ------------------- | ----------------------------------- |
+| `/dashboard`       | -                   | Redirects to `/image-studio`        |
+| `/keys`            | -                   | Opens API keys in `/image-studio`   |
+| `/usage`           | -                   | Opens usage records in `/image-studio` |
+| `/profile`         | -                   | Opens profile settings in `/image-studio` |
+| `/image-studio`    | ImageStudioView     | Image generation and editing        |
+| `/video-studio`    | VideoStudioView     | Video generation                    |
+| `/image-inspiration` | ImageInspirationView | Image inspiration library         |
+| `/video-inspiration` | VideoInspirationView | Video inspiration library         |
+| `/video-works`     | VideoWorksView      | Saved video works                   |
+| `/canvas`          | CanvasRoutePlaceholder | Infinite canvas host             |
+| `/playground`      | PlaygroundView      | API playground                      |
+| `/redeem`          | -                   | Opens recharge in `/image-studio`   |
+| `/models`          | -                   | Opens model plaza in `/image-studio` |
+| `/manual`          | -                   | Opens the user manual in `/image-studio` |
 
 ### Admin Routes (Admin Role Required)
 
@@ -62,7 +70,7 @@ The router implements a comprehensive navigation guard that:
    - Redirects authenticated users away from login/register pages
 4. **Role-Based Access Control**:
    - Admin routes (`requiresAdmin: true`) require admin role
-   - Non-admin users are redirected to `/dashboard`
+   - Non-admin users are redirected to `/home`
 5. **Preserves Intended Destination**:
    - Saves original URL in query parameter for post-login redirect
 
@@ -73,14 +81,14 @@ User navigates to route
         ↓
 Set page title from meta
         ↓
-Is route public? ──Yes──→ Already authenticated? ──Yes──→ Redirect to /dashboard
+Is route public? ──Yes──→ Already authenticated? ──Yes──→ Redirect to /home
         ↓ No                                        ↓ No
         ↓                                      Allow access
         ↓
 Is user authenticated? ──No──→ Redirect to /login with redirect query
         ↓ Yes
         ↓
-Requires admin role? ──Yes──→ Is user admin? ──No──→ Redirect to /dashboard
+Requires admin role? ──Yes──→ Is user admin? ──No──→ Redirect to /home
         ↓ No                                  ↓ Yes
         ↓                                     ↓
 Allow access ←────────────────────────────────┘
@@ -110,7 +118,7 @@ interface RouteMeta {
 All route components use dynamic imports for code splitting:
 
 ```typescript
-component: () => import('@/views/user/DashboardView.vue')
+component: () => import('@/features/image-studio/ImageStudioView.vue')
 ```
 
 Benefits:
@@ -144,7 +152,7 @@ import { useRouter } from 'vue-router'
 const router = useRouter()
 
 // Navigate to a route
-router.push('/dashboard')
+router.push('/image-studio')
 
 // Navigate with query parameters
 router.push({
@@ -161,7 +169,7 @@ router.push('/admin/users')
 ```vue
 <template>
   <!-- Simple link -->
-  <router-link to="/dashboard">Dashboard</router-link>
+  <router-link to="/image-studio">Image Studio</router-link>
 
   <!-- Named route -->
   <router-link :to="{ name: 'Keys' }">API Keys</router-link>
@@ -208,8 +216,8 @@ router.onError((error) => {
 To test navigation guards and route access:
 
 1. **Public Route Access**: Visit `/login` without authentication
-2. **Protected Route**: Try accessing `/dashboard` without login (should redirect)
-3. **Admin Access**: Login as regular user, try `/admin/users` (should redirect to dashboard)
+2. **Protected Route**: Try accessing `/image-studio` without login (should redirect)
+3. **Admin Access**: Login as regular user, try `/admin/users` (should redirect to home)
 4. **Admin Success**: Login as admin, access `/admin/users` (should succeed)
 5. **404 Handling**: Visit non-existent route (should show 404 page)
 
