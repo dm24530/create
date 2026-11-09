@@ -5,6 +5,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"image"
@@ -167,18 +168,22 @@ func TestImageStudioGalleryHidesPendingLocalAssetURL(t *testing.T) {
 }
 
 type gallerySaverStub struct {
-	key           string
-	thumbKey      string
-	contentType   string
-	data          []byte
-	retention     time.Duration
-	fetchData     []byte
-	fetchType     string
-	fetchErr      error
-	fetchedURL    string
-	fetchCalls    int
-	deleteErr     error
-	deletedObject []string
+	key              string
+	thumbKey         string
+	thumbContentType string
+	thumbData        []byte
+	contentType      string
+	data             []byte
+	retention        time.Duration
+	fetchData        []byte
+	fetchType        string
+	fetchErr         error
+	fetchedURL       string
+	fetchedURLs      []string
+	fetchFailures    map[string]error
+	fetchCalls       int
+	deleteErr        error
+	deletedObject    []string
 	// quota 为 0 时走内置默认值，用来验证后台配置的配额能被读到。
 	quota        int
 	resolvedURLs map[string]string
@@ -195,6 +200,8 @@ func (s *gallerySaverStub) SaveImageWithKey(
 ) (string, string, error) {
 	if strings.Contains(key, "/thumbs/") || strings.HasPrefix(key, "thumbs/") {
 		s.thumbKey = key
+		s.thumbContentType = contentType
+		s.thumbData = append([]byte(nil), data...)
 		return "https://cdn.example.com/" + key, "images/" + key, nil
 	}
 	s.key = key
@@ -206,9 +213,13 @@ func (s *gallerySaverStub) SaveImageWithKey(
 
 func (s *gallerySaverStub) FetchImageURL(_ context.Context, rawURL string) ([]byte, string, error) {
 	s.fetchedURL = rawURL
+	s.fetchedURLs = append(s.fetchedURLs, rawURL)
 	s.fetchCalls++
 	if s.fetchErr != nil {
 		return nil, "", s.fetchErr
+	}
+	if err := s.fetchFailures[rawURL]; err != nil {
+		return nil, "", err
 	}
 	return s.fetchData, s.fetchType, nil
 }
@@ -480,6 +491,33 @@ func TestImageStudioGallerySaveExistingObjectDoesNotReupload(t *testing.T) {
 	require.Len(t, store.entries, 1)
 }
 
+func TestImageStudioGallerySaveExistingObjectStoresProvidedPreviewThumbnail(t *testing.T) {
+	store := &galleryStoreStub{}
+	saver := &gallerySaverStub{}
+	svc := NewImageStudioGalleryService(store, saver)
+	preview := smallPNG(t)
+	dataURL := "data:image/png;base64," + base64.StdEncoding.EncodeToString(preview)
+
+	entry, err := svc.SaveExistingObject(
+		context.Background(),
+		42,
+		"images/users/42/task-1.png",
+		"https://gen.example.com/images/users/42/task-1.png",
+		"a cat",
+		"gpt-image-1",
+		"1024x1024",
+		"png",
+		false,
+		ImageStudioGallerySaveOptions{PreviewDataURL: dataURL},
+	)
+
+	require.NoError(t, err)
+	require.NotEmpty(t, entry.ThumbURL)
+	require.NotEmpty(t, entry.ThumbObjectKey)
+	require.Contains(t, entry.ThumbObjectKey, "/thumbs/")
+	require.Equal(t, preview, saver.thumbData)
+}
+
 func TestImageStudioGallerySaveExistingObjectIsIdempotentBySourceID(t *testing.T) {
 	store := &galleryStoreStub{}
 	svc := NewImageStudioGalleryService(store, &gallerySaverStub{})
@@ -716,10 +754,11 @@ func TestImageStudioGalleryThumbnailPrefersExistingThumbnailObject(t *testing.T)
 func TestImageStudioGalleryThumbnailUsesStoredThumbURLInsteadOfDerivedObjectKey(t *testing.T) {
 	store := &galleryStoreStub{entries: []*ImageStudioGalleryEntry{
 		{
-			ID:        "work-1",
-			ObjectKey: "images/users/42/task-1.png",
-			URL:       "https://cdn.example.com/work-1-original.png",
-			ThumbURL:  "https://cdn.example.com/images/thumbs/work-1.jpg",
+			ID:             "work-1",
+			ObjectKey:      "images/users/42/task-1.png",
+			URL:            "https://cdn.example.com/work-1-original.png",
+			ThumbURL:       "https://cdn.example.com/images/thumbs/work-1.jpg",
+			ThumbObjectKey: "images/users/42/thumbs/work-1.jpg",
 		},
 	}}
 	saver := &gallerySaverStub{
@@ -736,6 +775,34 @@ func TestImageStudioGalleryThumbnailUsesStoredThumbURLInsteadOfDerivedObjectKey(
 	require.Equal(t, saver.fetchData, thumb)
 	require.Equal(t, "https://cdn.example.com/images/thumbs/work-1.jpg", saver.fetchedURL)
 	require.Zero(t, saver.presignCalls)
+}
+
+func TestImageStudioGalleryThumbnailFallsBackToThumbObjectKeyWhenStoredURLFails(t *testing.T) {
+	store := &galleryStoreStub{entries: []*ImageStudioGalleryEntry{
+		{
+			ID:             "work-1",
+			ObjectKey:      "images/users/42/task-1.png",
+			URL:            "https://cdn.example.com/work-1-original.png",
+			ThumbURL:       "https://cdn.example.com/images/thumbs/work-1.jpg",
+			ThumbObjectKey: "images/users/42/thumbs/work-1.jpg",
+		},
+	}}
+	saver := &gallerySaverStub{
+		fetchData:     []byte{0xFF, 0xD8, 0xFF, 0x00},
+		fetchType:     "image/jpeg",
+		fetchFailures: map[string]error{"https://cdn.example.com/images/thumbs/work-1.jpg": errors.New("expired")},
+		resolvedURLs:  map[string]string{"images/users/42/thumbs/work-1.jpg": "https://cdn.example.com/fresh-thumb.jpg"},
+	}
+	svc := NewImageStudioGalleryService(store, saver)
+
+	thumb, err := svc.Thumbnail(context.Background(), 7, "work-1", 120)
+	require.NoError(t, err)
+	require.Equal(t, saver.fetchData, thumb)
+	require.Equal(t, []string{
+		"https://cdn.example.com/images/thumbs/work-1.jpg",
+		"https://cdn.example.com/fresh-thumb.jpg",
+	}, saver.fetchedURLs)
+	require.Equal(t, 1, saver.presignCalls)
 }
 
 // 删除作品：先把对象存储里的文件删掉，再删记录。

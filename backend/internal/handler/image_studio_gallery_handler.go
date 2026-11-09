@@ -157,10 +157,11 @@ func (h *ImageStudioGalleryHandler) SaveFromTask(c *gin.Context) {
 	h.markImageGenerationDuration(c.Request.Context(), record, request.DurationMs)
 	var payload struct {
 		Data []struct {
-			ObjectKey  string `json:"object_key"`
-			URL        string `json:"url"`
-			DisplayURL string `json:"display_url"`
-			MIMEType   string `json:"mime_type"`
+			ObjectKey      string `json:"object_key"`
+			URL            string `json:"url"`
+			DisplayURL     string `json:"display_url"`
+			MIMEType       string `json:"mime_type"`
+			PreviewDataURL string `json:"preview_data_url"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(record.Result, &payload); err != nil || len(payload.Data) == 0 {
@@ -197,11 +198,12 @@ func (h *ImageStudioGalleryHandler) SaveFromTask(c *gin.Context) {
 		request.Format,
 		saved,
 		service.ImageStudioGallerySaveOptions{
-			DurationMs:  request.DurationMs,
-			CreatedAt:   request.CreatedAt,
-			SortOrder:   request.SortOrder,
-			ContentType: item.MIMEType,
-			SourceID:    sourceID,
+			DurationMs:     request.DurationMs,
+			CreatedAt:      request.CreatedAt,
+			SortOrder:      request.SortOrder,
+			ContentType:    item.MIMEType,
+			SourceID:       sourceID,
+			PreviewDataURL: item.PreviewDataURL,
 		},
 	)
 	if err != nil {

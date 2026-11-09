@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"image"
 	"image/jpeg"
@@ -80,11 +81,12 @@ type ImageStudioGalleryEntry struct {
 }
 
 type ImageStudioGallerySaveOptions struct {
-	DurationMs  int
-	CreatedAt   int64
-	SortOrder   int64
-	ContentType string
-	SourceID    string
+	DurationMs     int
+	CreatedAt      int64
+	SortOrder      int64
+	ContentType    string
+	SourceID       string
+	PreviewDataURL string
 }
 
 type ExpiredStudioWork struct {
@@ -489,23 +491,55 @@ func (s *ImageStudioGalleryService) SaveExistingObject(
 	if sortOrder <= 0 {
 		sortOrder = createdAt.Unix() * 1_000_000
 	}
+	id := strings.ReplaceAll(uuid.NewString(), "-", "")
+	thumbURL := ""
+	thumbObjectKey := ""
+	if len(options) > 0 && strings.TrimSpace(options[0].PreviewDataURL) != "" {
+		thumb, thumbContentType, thumbErr := decodeStudioPreviewDataURL(options[0].PreviewDataURL)
+		if thumbErr != nil {
+			logger.L().Warn("studio_work.preview_thumbnail_decode_failed",
+				zap.String("work_id", id), zap.Error(thumbErr))
+		} else if userPrefix, keyErr := s.userStorageKey(ctx, userID); keyErr != nil {
+			logger.L().Warn("studio_work.preview_thumbnail_key_failed",
+				zap.String("work_id", id), zap.Error(keyErr))
+		} else {
+			thumbURL, thumbObjectKey, thumbErr = s.storage.SaveImageWithKey(
+				ctx,
+				path.Join(userPrefix, "thumbs", id+extensionForContentType(thumbContentType)),
+				thumbContentType,
+				thumb,
+			)
+			if thumbErr != nil {
+				logger.L().Warn("studio_work.preview_thumbnail_upload_failed",
+					zap.String("work_id", id), zap.Error(thumbErr))
+			}
+		}
+	}
 	entry := &ImageStudioGalleryEntry{
-		ID:         strings.ReplaceAll(uuid.NewString(), "-", ""),
-		UserID:     userID,
-		SourceID:   sourceID,
-		ObjectKey:  strings.TrimSpace(objectKey),
-		URL:        strings.TrimSpace(url),
-		Prompt:     strings.TrimSpace(prompt),
-		Model:      strings.TrimSpace(model),
-		Size:       strings.TrimSpace(size),
-		Format:     imageStudioExistingObjectFormat(objectKey, format, options),
-		Saved:      saved,
-		CreatedAt:  createdAt.Unix(),
-		SortOrder:  sortOrder,
-		DurationMs: durationMs,
-		ExpiresAt:  expiresAt,
+		ID:             id,
+		UserID:         userID,
+		SourceID:       sourceID,
+		ObjectKey:      strings.TrimSpace(objectKey),
+		URL:            strings.TrimSpace(url),
+		ThumbURL:       thumbURL,
+		ThumbObjectKey: thumbObjectKey,
+		Prompt:         strings.TrimSpace(prompt),
+		Model:          strings.TrimSpace(model),
+		Size:           strings.TrimSpace(size),
+		Format:         imageStudioExistingObjectFormat(objectKey, format, options),
+		Saved:          saved,
+		CreatedAt:      createdAt.Unix(),
+		SortOrder:      sortOrder,
+		DurationMs:     durationMs,
+		ExpiresAt:      expiresAt,
 	}
 	if err := s.store.Save(ctx, entry, resolveStudioQuota(s.storage)); err != nil {
+		if thumbObjectKey != "" {
+			if deleteErr := s.storage.DeleteObject(ctx, thumbObjectKey); deleteErr != nil {
+				logger.L().Warn("studio_work.preview_thumbnail_rollback_failed",
+					zap.String("object_key", thumbObjectKey), zap.Error(deleteErr))
+			}
+		}
 		if errors.Is(err, ErrStudioWorkAlreadyExists) && sourceID != "" {
 			existing, findErr := s.store.FindBySourceID(ctx, userID, sourceID)
 			if findErr != nil {
@@ -622,8 +656,12 @@ func (s *ImageStudioGalleryService) List(
 				seen[key] = struct{}{}
 				keys = append(keys, key)
 			}
-			addObjectKey(entry.ObjectKey)
-			addObjectKey(entry.ThumbObjectKey)
+			if s.originalURLNeedsRefresh(entry) {
+				addObjectKey(entry.ObjectKey)
+			}
+			if imageObjectURLNeedsRefresh(entry.ThumbURL) {
+				addObjectKey(entry.ThumbObjectKey)
+			}
 		}
 		if len(keys) > 0 {
 			resolved, resolveErr := batchResolver.PresignImageObjects(ctx, keys)
@@ -642,13 +680,19 @@ func (s *ImageStudioGalleryService) List(
 					!s.localAssets.IsUploadedURL(entry.URL) {
 					continue
 				}
-				objectKey := strings.TrimSpace(entry.ObjectKey)
-				if resolvedURL := resolved[objectKey]; resolvedURL != "" {
-					entry.URL = resolvedURL
+				if s.originalURLNeedsRefresh(entry) {
+					objectKey := strings.TrimSpace(entry.ObjectKey)
+					if resolvedURL := resolved[objectKey]; resolvedURL != "" {
+						entry.URL = resolvedURL
+					}
 				}
-				if thumbKey := strings.TrimSpace(entry.ThumbObjectKey); thumbKey != "" {
-					if resolvedURL := resolved[thumbKey]; resolvedURL != "" {
-						entry.ThumbURL = resolvedURL
+				if imageObjectURLNeedsRefresh(entry.ThumbURL) {
+					thumbKey := strings.TrimSpace(entry.ThumbObjectKey)
+					if thumbKey != "" {
+						resolvedURL := resolved[thumbKey]
+						if resolvedURL != "" {
+							entry.ThumbURL = resolvedURL
+						}
 					}
 				}
 			}
@@ -670,12 +714,13 @@ func (s *ImageStudioGalleryService) List(
 				continue
 			}
 			objectKey := strings.TrimSpace(entry.ObjectKey)
-			if objectKey != "" {
+			if objectKey != "" && s.originalURLNeedsRefresh(entry) {
 				if resolved, resolveErr := resolver.PresignImageObject(ctx, objectKey); resolveErr == nil && resolved != "" {
 					entry.URL = resolved
 				}
 			}
-			if thumbKey := strings.TrimSpace(entry.ThumbObjectKey); thumbKey != "" {
+			thumbKey := strings.TrimSpace(entry.ThumbObjectKey)
+			if thumbKey != "" && imageObjectURLNeedsRefresh(entry.ThumbURL) {
 				if resolved, resolveErr := resolver.PresignImageObject(ctx, thumbKey); resolveErr == nil && resolved != "" {
 					entry.ThumbURL = resolved
 				}
@@ -683,6 +728,26 @@ func (s *ImageStudioGalleryService) List(
 		}
 	}
 	return entries, nil
+}
+
+func (s *ImageStudioGalleryService) originalURLNeedsRefresh(entry *ImageStudioGalleryEntry) bool {
+	if entry == nil {
+		return true
+	}
+	if strings.TrimSpace(entry.LocalAssetID) != "" {
+		return true
+	}
+	return imageObjectURLNeedsRefresh(entry.URL)
+}
+
+func imageObjectURLNeedsRefresh(rawURL string) bool {
+	rawURL = strings.ToLower(strings.TrimSpace(rawURL))
+	if rawURL == "" {
+		return true
+	}
+	return strings.Contains(rawURL, "x-amz-signature=") ||
+		strings.Contains(rawURL, "x-amz-credential=") ||
+		strings.Contains(rawURL, "ossaccesskeyid=")
 }
 
 // Get returns one owned gallery entry. The list is already bounded by the
@@ -804,12 +869,21 @@ func (s *ImageStudioGalleryService) Thumbnail(ctx context.Context, userID int64,
 	s.thumbMu.Unlock()
 
 	if thumbURL := strings.TrimSpace(entry.ThumbURL); thumbURL != "" {
-		data, _, fetchErr := s.fetchEntryImage(ctx, entry, entry.ThumbObjectKey, thumbURL)
+		data, _, fetchErr := s.storage.FetchImageURL(ctx, thumbURL)
 		if fetchErr == nil {
 			s.cacheThumbnail(cacheKey, data, now)
 			return data, nil
 		}
 		logger.L().Warn("studio_work.thumbnail_fetch_failed", zap.String("work_id", id), zap.Error(fetchErr))
+		if thumbObjectKey := strings.TrimSpace(entry.ThumbObjectKey); thumbObjectKey != "" {
+			data, _, fetchErr = s.fetchEntryImage(ctx, entry, thumbObjectKey, "")
+			if fetchErr == nil {
+				s.cacheThumbnail(cacheKey, data, now)
+				return data, nil
+			}
+			logger.L().Warn("studio_work.thumbnail_object_fetch_failed",
+				zap.String("work_id", id), zap.String("object_key", thumbObjectKey), zap.Error(fetchErr))
+		}
 	}
 	data, _, err := s.fetchEntryImage(ctx, entry, entry.ObjectKey, entry.URL)
 	if err != nil {
@@ -840,6 +914,37 @@ func (s *ImageStudioGalleryService) Thumbnail(ctx context.Context, userID int64,
 	}
 	s.cacheThumbnail(cacheKey, thumb, now)
 	return thumb, nil
+}
+
+func decodeStudioPreviewDataURL(raw string) ([]byte, string, error) {
+	raw = strings.TrimSpace(raw)
+	lower := strings.ToLower(raw)
+	if !strings.HasPrefix(lower, "data:image/") {
+		return nil, "", errors.New("preview thumbnail must be an image data URL")
+	}
+	header, payload, ok := strings.Cut(raw[len("data:"):], ",")
+	if !ok {
+		return nil, "", errors.New("preview thumbnail data URL is missing a comma")
+	}
+	parts := strings.Split(header, ";")
+	if len(parts) < 2 || !strings.EqualFold(strings.TrimSpace(parts[len(parts)-1]), "base64") {
+		return nil, "", errors.New("preview thumbnail data URL must be base64 encoded")
+	}
+	contentType := strings.ToLower(strings.TrimSpace(parts[0]))
+	if !strings.HasPrefix(contentType, "image/") {
+		return nil, "", errors.New("preview thumbnail data URL has a non-image content type")
+	}
+	data, err := base64.StdEncoding.DecodeString(payload)
+	if err != nil {
+		return nil, "", err
+	}
+	if len(data) == 0 {
+		return nil, "", errors.New("preview thumbnail data URL is empty")
+	}
+	if len(data) > 8<<20 {
+		return nil, "", errors.New("preview thumbnail exceeds 8 MiB")
+	}
+	return data, contentType, nil
 }
 
 func (s *ImageStudioGalleryService) fetchEntryImage(

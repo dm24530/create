@@ -106,17 +106,19 @@ func (s *galleryHandlerStoreStub) Delete(context.Context, int64, string) error {
 
 type galleryHandlerSaverStub struct {
 	saveCalls   int
+	saveKeys    []string
 	fetchCalls  int
 	downloadURL string
 }
 
 func (s *galleryHandlerSaverStub) SaveImageWithKey(
-	context.Context,
-	string,
-	string,
-	[]byte,
+	_ context.Context,
+	key string,
+	_ string,
+	_ []byte,
 ) (string, string, error) {
 	s.saveCalls++
+	s.saveKeys = append(s.saveKeys, key)
 	return "https://cdn.example.com/unexpected.png", "images/unexpected.png", nil
 }
 
@@ -188,6 +190,7 @@ func TestImageStudioGalleryDownloadURLReturnsSignedAttachment(t *testing.T) {
 
 func TestImageStudioGallerySaveFromTaskUsesPersistedObject(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	previewDataURL := "data:image/png;base64," + base64.StdEncoding.EncodeToString(smallPNGForHandler())
 	taskStore := &asyncImageMemoryStore{tasks: map[string]*service.ImageTaskRecord{
 		"imgtask_owned": {
 			ID:         "imgtask_owned",
@@ -196,7 +199,7 @@ func TestImageStudioGallerySaveFromTaskUsesPersistedObject(t *testing.T) {
 			Status:     service.ImageTaskStatusReady,
 			HTTPStatus: http.StatusOK,
 			Result: json.RawMessage(
-				`{"data":[{"object_key":"images/users/7/task-owned.png","url":"https://gen.example.com/images/users/7/task-owned.png","mime_type":"image/png"}]}`,
+				`{"data":[{"object_key":"images/users/7/task-owned.png","url":"https://gen.example.com/images/users/7/task-owned.png","mime_type":"image/png","preview_data_url":"` + previewDataURL + `"}]}`,
 			),
 		},
 	}}
@@ -231,7 +234,9 @@ func TestImageStudioGallerySaveFromTaskUsesPersistedObject(t *testing.T) {
 	require.Equal(t, "png", galleryStore.entries[0].Format)
 	require.Equal(t, int64(7), galleryStore.entries[0].UserID)
 	require.True(t, galleryStore.entries[0].Saved)
-	require.Zero(t, saver.saveCalls, "saving from a completed task must not upload the image again")
+	require.NotEmpty(t, galleryStore.entries[0].ThumbURL)
+	require.NotEmpty(t, galleryStore.entries[0].ThumbObjectKey)
+	require.NotContains(t, saver.saveKeys, "images/users/7/task-owned.png", "saving from a completed task must not upload the original again")
 	require.Zero(t, saver.fetchCalls, "saving from a completed task must not download the image again")
 }
 
