@@ -72,8 +72,8 @@ describe('image generation worker persistence', () => {
     expect(workerSource).toContain('为避免重复扣费未自动重试')
   })
 
-  it('stops the browser worker after three minutes', () => {
-    expect(workerSource).toContain('const TASK_TIMEOUT_MS = 3 * 60 * 1000')
-    expect(workerSource).toContain('const TASK_DEADLINE_MS = 3 * 60 * 1000')
+  it('stops the browser worker after ten minutes', () => {
+    expect(workerSource).toContain('const TASK_TIMEOUT_MS = 10 * 60 * 1000')
+    expect(workerSource).toContain('const TASK_DEADLINE_MS = 10 * 60 * 1000')
   })
 })

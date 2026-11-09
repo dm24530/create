@@ -1,43 +1,44 @@
-export const GEMINI_REFERENCE_MAX_IMAGES = 14
-export const GEMINI_REFERENCE_MAX_IMAGE_BYTES = 1_000_000
-export const GEMINI_REFERENCE_TOTAL_BYTES = 10_000_000
+export const IMAGE_REFERENCE_MAX_IMAGES = 14
+export const IMAGE_REFERENCE_MAX_IMAGE_BYTES = 1_000_000
+export const IMAGE_REFERENCE_TOTAL_BYTES = 10_000_000
 
-export interface GeminiReferenceSource {
+export interface ImageReferenceSource {
   name: string
   blob: Blob
 }
 
-export interface GeminiReferenceProfile {
+export interface ImageReferenceProfile {
   maxEdge: number
   quality: number
 }
 
-export interface GeminiReferenceEncoding {
+export interface ImageReferenceEncoding {
   blob: Blob
   dataUrl: string
   width: number
   height: number
 }
 
-export interface PreparedGeminiReference extends GeminiReferenceEncoding {
+export interface PreparedImageReference extends ImageReferenceEncoding {
   name: string
   mimeType: 'image/webp'
   bytes: number
   profileIndex: number
+  remoteUrl?: string
 }
 
-export type GeminiReferenceEncoder = (
+export type ImageReferenceEncoder = (
   blob: Blob,
-  profile: GeminiReferenceProfile,
+  profile: ImageReferenceProfile,
   profileIndex: number,
-) => Promise<GeminiReferenceEncoding>
+) => Promise<ImageReferenceEncoding>
 
-export interface PrepareGeminiReferenceOptions {
-  encoder?: GeminiReferenceEncoder
+export interface PrepareImageReferenceOptions {
+  encoder?: ImageReferenceEncoder
   onProgress?: (completed: number, total: number) => void
 }
 
-export const GEMINI_REFERENCE_PROFILES: readonly GeminiReferenceProfile[] = [
+export const IMAGE_REFERENCE_PROFILES: readonly ImageReferenceProfile[] = [
   { maxEdge: 2048, quality: 0.88 },
   { maxEdge: 1600, quality: 0.86 },
   { maxEdge: 1280, quality: 0.82 },
@@ -46,7 +47,7 @@ export const GEMINI_REFERENCE_PROFILES: readonly GeminiReferenceProfile[] = [
   { maxEdge: 640, quality: 0.62 },
 ]
 
-const defaultEncodingCache = new WeakMap<Blob, Map<number, Promise<GeminiReferenceEncoding>>>()
+const defaultEncodingCache = new WeakMap<Blob, Map<number, Promise<ImageReferenceEncoding>>>()
 
 export function fitReferenceDimensions(width: number, height: number, maxEdge: number) {
   if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
@@ -60,40 +61,40 @@ export function fitReferenceDimensions(width: number, height: number, maxEdge: n
   }
 }
 
-export async function prepareGeminiReferenceImages(
-  sources: readonly GeminiReferenceSource[],
-  options: PrepareGeminiReferenceOptions = {},
-): Promise<PreparedGeminiReference[]> {
-  if (sources.length > GEMINI_REFERENCE_MAX_IMAGES) {
-    throw new Error(`Gemini 参考图最多 ${GEMINI_REFERENCE_MAX_IMAGES} 张`)
+export async function prepareImageReferenceImages(
+  sources: readonly ImageReferenceSource[],
+  options: PrepareImageReferenceOptions = {},
+): Promise<PreparedImageReference[]> {
+  if (sources.length > IMAGE_REFERENCE_MAX_IMAGES) {
+    throw new Error(`参考图最多 ${IMAGE_REFERENCE_MAX_IMAGES} 张`)
   }
   if (!sources.length) {
     options.onProgress?.(0, 0)
     return []
   }
 
-  const encoder = options.encoder || encodeGeminiReference
-  const encodedBySource = sources.map(() => new Map<number, Promise<GeminiReferenceEncoding>>())
+  const encoder = options.encoder || encodeImageReference
+  const encodedBySource = sources.map(() => new Map<number, Promise<ImageReferenceEncoding>>())
   const encodeAt = (sourceIndex: number, profileIndex: number) => {
     const cache = encodedBySource[sourceIndex]
     const cached = cache.get(profileIndex)
     if (cached) return cached
     const blob = sources[sourceIndex].blob
     const pending = options.encoder
-      ? encoder(blob, GEMINI_REFERENCE_PROFILES[profileIndex], profileIndex)
+      ? encoder(blob, IMAGE_REFERENCE_PROFILES[profileIndex], profileIndex)
       : encodeDefaultProfile(blob, profileIndex)
     cache.set(profileIndex, pending)
     return pending
   }
 
   const bestWithinPerImageCap = async (sourceIndex: number) => {
-    for (let profileIndex = 0; profileIndex < GEMINI_REFERENCE_PROFILES.length; profileIndex += 1) {
+    for (let profileIndex = 0; profileIndex < IMAGE_REFERENCE_PROFILES.length; profileIndex += 1) {
       const encoded = await encodeAt(sourceIndex, profileIndex)
-      if (encoded.blob.size <= GEMINI_REFERENCE_MAX_IMAGE_BYTES) {
+      if (encoded.blob.size <= IMAGE_REFERENCE_MAX_IMAGE_BYTES) {
         return toPrepared(sources[sourceIndex].name, encoded, profileIndex)
       }
     }
-    throw new Error(`${sources[sourceIndex].name} 压缩后仍超过 ${formatMegabytes(GEMINI_REFERENCE_MAX_IMAGE_BYTES)}`)
+    throw new Error(`${sources[sourceIndex].name} 压缩后仍超过 ${formatMegabytes(IMAGE_REFERENCE_MAX_IMAGE_BYTES)}`)
   }
 
   let completed = 0
@@ -109,19 +110,19 @@ export async function prepareGeminiReferenceImages(
   )
 
   let totalBytes = prepared.reduce((total, image) => total + image.bytes, 0)
-  while (totalBytes >= GEMINI_REFERENCE_TOTAL_BYTES) {
+  while (totalBytes >= IMAGE_REFERENCE_TOTAL_BYTES) {
     const candidateIndex = findLargestDowngradeCandidate(prepared)
     if (candidateIndex < 0) {
       throw new Error(
-        `14 张以内的参考图压缩后仍达到 ${formatMegabytes(totalBytes)}，请减少图片数量后再试`,
+        `参考图压缩后仍达到 ${formatMegabytes(totalBytes)}，请减少图片数量后再试`,
       )
     }
     const current = prepared[candidateIndex]
     let nextProfileIndex = current.profileIndex + 1
-    let next: PreparedGeminiReference | null = null
-    while (nextProfileIndex < GEMINI_REFERENCE_PROFILES.length) {
+    let next: PreparedImageReference | null = null
+    while (nextProfileIndex < IMAGE_REFERENCE_PROFILES.length) {
       const encoded = await encodeAt(candidateIndex, nextProfileIndex)
-      if (encoded.blob.size <= GEMINI_REFERENCE_MAX_IMAGE_BYTES) {
+      if (encoded.blob.size <= IMAGE_REFERENCE_MAX_IMAGE_BYTES) {
         next = toPrepared(sources[candidateIndex].name, encoded, nextProfileIndex)
         break
       }
@@ -129,7 +130,7 @@ export async function prepareGeminiReferenceImages(
     }
     if (!next) {
       throw new Error(
-        `14 张以内的参考图压缩后仍达到 ${formatMegabytes(totalBytes)}，请减少图片数量后再试`,
+        `参考图压缩后仍达到 ${formatMegabytes(totalBytes)}，请减少图片数量后再试`,
       )
     }
     totalBytes += next.bytes - current.bytes
@@ -147,17 +148,17 @@ function encodeDefaultProfile(blob: Blob, profileIndex: number) {
   }
   const cached = cache.get(profileIndex)
   if (cached) return cached
-  const pending = encodeGeminiReference(blob, GEMINI_REFERENCE_PROFILES[profileIndex])
+  const pending = encodeImageReference(blob, IMAGE_REFERENCE_PROFILES[profileIndex])
   cache.set(profileIndex, pending)
   return pending
 }
 
-function findLargestDowngradeCandidate(images: readonly PreparedGeminiReference[]) {
+function findLargestDowngradeCandidate(images: readonly PreparedImageReference[]) {
   let index = -1
   let largestBytes = -1
   for (let currentIndex = 0; currentIndex < images.length; currentIndex += 1) {
     const image = images[currentIndex]
-    if (image.profileIndex >= GEMINI_REFERENCE_PROFILES.length - 1) continue
+    if (image.profileIndex >= IMAGE_REFERENCE_PROFILES.length - 1) continue
     if (image.bytes > largestBytes) {
       largestBytes = image.bytes
       index = currentIndex
@@ -168,9 +169,9 @@ function findLargestDowngradeCandidate(images: readonly PreparedGeminiReference[
 
 function toPrepared(
   name: string,
-  encoded: GeminiReferenceEncoding,
+  encoded: ImageReferenceEncoding,
   profileIndex: number,
-): PreparedGeminiReference {
+): PreparedImageReference {
   return {
     name,
     blob: encoded.blob,
@@ -183,10 +184,10 @@ function toPrepared(
   }
 }
 
-async function encodeGeminiReference(
+async function encodeImageReference(
   blob: Blob,
-  profile: GeminiReferenceProfile,
-): Promise<GeminiReferenceEncoding> {
+  profile: ImageReferenceProfile,
+): Promise<ImageReferenceEncoding> {
   const bitmap = await createImageBitmap(blob)
   try {
     const { width, height } = fitReferenceDimensions(bitmap.width, bitmap.height, profile.maxEdge)

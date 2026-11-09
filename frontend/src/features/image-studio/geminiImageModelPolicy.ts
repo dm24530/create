@@ -1,4 +1,4 @@
-import { GEMINI_REFERENCE_MAX_IMAGES } from './geminiReferenceImages'
+import { IMAGE_REFERENCE_MAX_IMAGES } from '@/utils/imageReferenceCompression'
 
 export type GeminiImageQuality = 'auto' | 'high' | 'medium' | 'low'
 
@@ -23,14 +23,14 @@ export function resolveGeminiImageModelPolicy(model: string): GeminiImageModelPo
 
   if (normalized.includes('gemini-3.1-flash-lite-image')) {
     return {
-      maxReferences: GEMINI_REFERENCE_MAX_IMAGES,
+      maxReferences: IMAGE_REFERENCE_MAX_IMAGES,
       allowedQualities: ['auto', 'low'],
       notice: '当前模型只支持 1K 输出，请将质量切换为自动或 1K。',
     }
   }
 
   return {
-    maxReferences: GEMINI_REFERENCE_MAX_IMAGES,
+    maxReferences: IMAGE_REFERENCE_MAX_IMAGES,
     allowedQualities: ALL_QUALITIES,
     notice: '',
   }

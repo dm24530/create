@@ -101,6 +101,9 @@ export async function processImageForDisplay(
     const decoded = await decodeSource(src, blob)
     cleanup = decoded.cleanup
     if (!decoded.width || !decoded.height) throw new Error('image dimensions are unavailable')
+    if (decoded.width === target.width && decoded.height === target.height) {
+      return { src, format, processed: false }
+    }
 
     const scale = Math.max(target.width / decoded.width, target.height / decoded.height)
     const drawWidth = decoded.width * scale

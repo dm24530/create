@@ -59,8 +59,8 @@ const STORE_NAME = 'tasks'
 const RESPONSE_CACHE = 'sub2api-image-generation-responses-v1'
 const WORKER_URL = '/generation-sw.js'
 const WAIT_INTERVAL_MS = 750
-const WAIT_TIMEOUT_MS = 3 * 60 * 1000
-const TASK_DEADLINE_MS = 3 * 60 * 1000
+const WAIT_TIMEOUT_MS = 10 * 60 * 1000
+const TASK_DEADLINE_MS = 10 * 60 * 1000
 const HEARTBEAT_INTERVAL_MS = 15 * 1000
 
 export class ImageGenerationWaitCancelled extends Error {
@@ -71,7 +71,7 @@ export class ImageGenerationWaitCancelled extends Error {
 }
 
 export class ImageGenerationStillRunning extends Error {
-  constructor(message = '图片生成超过 3 分钟，已停止等待') {
+  constructor(message = '图片生成超过 10 分钟，已停止等待') {
     super(message)
     this.name = 'ImageGenerationStillRunning'
   }

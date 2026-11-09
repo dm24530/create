@@ -2,8 +2,8 @@ const DB_NAME = 'sub2api-image-generation'
 const DB_VERSION = 1
 const STORE_NAME = 'tasks'
 const RESPONSE_CACHE = 'sub2api-image-generation-responses-v1'
-const TASK_TIMEOUT_MS = 3 * 60 * 1000
-const TASK_DEADLINE_MS = 3 * 60 * 1000
+const TASK_TIMEOUT_MS = 10 * 60 * 1000
+const TASK_DEADLINE_MS = 10 * 60 * 1000
 
 const runningTasks = new Set()
 
@@ -123,7 +123,7 @@ async function runTask(taskId) {
         ...initial,
         status: 'failed',
         updatedAt: Date.now(),
-        error: '图片生成超过 3 分钟，已停止等待，请重新生成',
+        error: '图片生成超过 10 分钟，已停止等待，请重新生成',
       }
       await putTask(failedRecord)
       await notifyClients(failedRecord)
@@ -172,7 +172,7 @@ async function runTask(taskId) {
         status: 'failed',
         updatedAt: Date.now(),
         error: requestError?.name === 'AbortError'
-          ? '图片生成超过 3 分钟，已停止等待，请重新生成'
+          ? '图片生成超过 10 分钟，已停止等待，请重新生成'
           : requestError instanceof Error
             ? requestError.message
             : '图片生成请求中断',

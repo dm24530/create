@@ -1,4 +1,4 @@
-import { fitReferenceDimensions } from './geminiReferenceImages'
+import { fitReferenceDimensions } from '@/utils/imageReferenceCompression'
 
 export const REFERENCE_PREVIEW_MAX_EDGE = 320
 export const REFERENCE_PREVIEW_QUALITY = 0.72

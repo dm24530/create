@@ -89,9 +89,9 @@ func (s *imageTaskMemoryStore) ReleaseIdempotencyKey(_ context.Context, apiKeyID
 	return nil
 }
 
-func TestImageTaskServiceDefaultExecutionTimeoutIsThreeMinutes(t *testing.T) {
+func TestImageTaskServiceDefaultExecutionTimeoutIsTenMinutes(t *testing.T) {
 	svc := NewImageTaskService(&imageTaskMemoryStore{})
-	require.Equal(t, 3*time.Minute, svc.ExecutionTimeout())
+	require.Equal(t, 10*time.Minute, svc.ExecutionTimeout())
 }
 
 func TestImageTaskServiceLifecycleAndOwnership(t *testing.T) {

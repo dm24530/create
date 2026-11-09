@@ -74,8 +74,8 @@
             <button
               type="button"
               class="image-result-card__media relative block w-full overflow-hidden"
-              :disabled="image.pending || image.failed"
-              @click="!image.pending && !image.failed && (previewImage = image)"
+              :disabled="!canOpenImagePreview(image)"
+              @click="canOpenImagePreview(image) && (previewImage = image)"
               @contextmenu.prevent.stop="openImageDownloadMenu($event, image)"
             >
               <div
@@ -100,7 +100,7 @@
                 <template v-else>
                   <span class="image-generation-spinner" aria-hidden="true"></span>
                   <strong>正在生成</strong>
-                  <small>最多等待 3 分钟，超时后会直接停止</small>
+                  <small>最多等待 10 分钟，超时后会直接停止</small>
                   <small class="image-pending-card__timer" data-testid="image-pending-timer">
                     {{ pendingElapsedSeconds(image) }} 秒
                   </small>
@@ -341,13 +341,6 @@
           >
             {{ modelQualityIssue }}
           </p>
-          <p
-            v-if="optimizingReferences"
-            class="image-composer__helper"
-            data-testid="image-reference-optimization"
-          >
-            {{ referenceOptimizationLabel }}
-          </p>
         </section>
 
         <p
@@ -557,7 +550,7 @@
         <div class="image-composer__footer">
           <button type="submit" class="image-composer__generate" :disabled="!canGenerate">
             <Icon name="sparkles" size="sm" />
-            {{ optimizingReferences ? '正在优化参考图' : generating ? '继续生成' : '开始生成' }}
+            {{ optimizingReferences ? '正在生成' : generating ? '继续生成' : '开始生成' }}
           </button>
         </div>
       </form>
@@ -670,7 +663,7 @@
             type="button"
             class="image-detail-dialog__save"
             data-testid="save-preview-to-gallery"
-            :disabled="savingPreviewImage"
+            :disabled="savingPreviewImage || previewImage.pending"
             @click="savePreviewToGallery"
           >
             <Icon name="bookmark" size="sm" />
@@ -760,9 +753,9 @@ import {
   processImageForDisplay,
 } from './imagePostProcess'
 import {
-  prepareGeminiReferenceImages,
-  type PreparedGeminiReference,
-} from './geminiReferenceImages'
+  prepareImageReferenceImages,
+  type PreparedImageReference,
+} from '@/utils/imageReferenceCompression'
 import { resolveGeminiImageModelPolicy, type GeminiImageQuality } from './geminiImageModelPolicy'
 import { createReferenceImagePreview } from './referenceImagePreview'
 import { extractGeminiImageResults } from './geminiImageResults'
@@ -781,16 +774,18 @@ import {
 import { usePromptResize } from '@/composables/usePromptResize'
 import { ensureCreatorKey, isCreationServiceUnavailable } from '@/composables/useCreatorKey'
 import { authAPI, imageStudioGalleryAPI, type ImageStudioGalleryEntry } from '@/api'
+import { referenceAssetsAPI } from '@/api/referenceAssets'
 import type { ApiKey } from '@/types'
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 import { resolvePlaygroundApiEndpoint } from '@/utils/apiEndpoint'
 import { notifyCreatorKeyChanged } from '@/utils/creatorKeyEvents'
 
-const IMAGE_GENERATION_TIMEOUT_MS = 3 * 60 * 1000
-const IMAGE_ASYNC_SUBMIT_TIMEOUT_MS = 2 * 60 * 1000
-const IMAGE_GENERATION_TIMEOUT_MESSAGE = '图片生成超过 3 分钟，已停止等待，请重新生成'
+const IMAGE_GENERATION_TIMEOUT_MS = 10 * 60 * 1000
+const IMAGE_ASYNC_SUBMIT_TIMEOUT_MS = 8 * 60 * 1000
+const IMAGE_GENERATION_TIMEOUT_MESSAGE = '图片生成超过 10 分钟，已停止等待，请重新生成'
 const IMAGE_MEDIA_LOAD_TIMEOUT_MS = 10_000
+const GALLERY_URL_REFRESH_INTERVAL_MS = 6 * 60 * 60 * 1000
 const reportedGenerationFailures = new Set<string>()
 const reportedVisibleErrors = new Set<string>()
 
@@ -815,6 +810,7 @@ interface GeneratedImage {
   format?: string
   quality?: string
   background?: string
+  customSizeRequested?: boolean
   pending?: boolean
   taskId?: string
   batchId?: string
@@ -923,8 +919,6 @@ const activeImageTaskCount = computed(() => images.value.filter((image) => image
 const keyCredentialsReady = ref(false)
 const references = ref<ReferenceItem[]>([])
 const optimizingReferences = ref(false)
-const referenceOptimizationCompleted = ref(0)
-const referenceOptimizationTotal = ref(0)
 const generationRequestSnapshots = new Map<string, GenerationRequestSnapshot>()
 const retryingFailureIds = ref<Set<string>>(new Set())
 const previewImage = ref<GeneratedImage | null>(null)
@@ -1369,11 +1363,6 @@ const canRegeneratePreview = computed(() => Boolean(
   !generating.value,
 ))
 const hasReferences = computed(() => references.value.length > 0)
-const referenceOptimizationLabel = computed(() => (
-  referenceOptimizationTotal.value > 0
-    ? `正在优化参考图 ${referenceOptimizationCompleted.value}/${referenceOptimizationTotal.value}`
-    : '正在优化参考图'
-))
 
 // 本会话里已保存进图库的条目 id：这些图本地已有可显示的副本，
 // 图库列表里再渲染一次就会出现"生成一张却显示两张"的重复卡片。
@@ -1396,6 +1385,18 @@ let activeGalleryThumbnailLoads = 0
 let galleryThumbnailEpoch = 0
 const imageMediaTimeoutIds = new Map<string, ReturnType<typeof setTimeout>>()
 const imageProcessingTasks = new Map<string, Promise<void>>()
+const IMAGE_DISPLAY_PROCESSING_FALLBACK_MS = IMAGE_MEDIA_LOAD_TIMEOUT_MS
+interface PendingImageDisplayProcessing {
+  image: GeneratedImage
+  source: string
+  targetSize: string
+  targetFormat: string
+  owner?: StudioOwnerSnapshot
+  resolve: () => void
+  onError: (error: string) => void
+}
+const pendingImageDisplayProcessing = new Map<string, PendingImageDisplayProcessing>()
+const imageDisplayProcessingFallbackTimers = new Map<string, number>()
 const studioQuota = ref<{ used: number; limit: number } | null>(null)
 const resumedGenerationBatches = new Set<string>()
 const resumedGatewayBatches = new Set<string>()
@@ -1427,7 +1428,7 @@ function clearStudioUserState() {
   imageMediaRetryNonce.value.clear()
   for (const timer of imageMediaTimeoutIds.values()) clearTimeout(timer)
   imageMediaTimeoutIds.clear()
-  imageProcessingTasks.clear()
+  cancelPendingImageDisplayProcessing()
   locallySavedGalleryIds.clear()
   galleryBackedIds.value.clear()
   localToGalleryId.value.clear()
@@ -1449,8 +1450,6 @@ function clearStudioUserState() {
   prompt.value = IMAGE_STUDIO_DEFAULT_PROMPT
   references.value = []
   optimizingReferences.value = false
-  referenceOptimizationCompleted.value = 0
-  referenceOptimizationTotal.value = 0
   generationRequestSnapshots.clear()
   retryingFailureIds.value.clear()
   nextImageId = 1
@@ -1889,7 +1888,10 @@ async function loadGallery(epoch = studioUserEpoch, ownerId = studioStateOwnerId
       image.galleryId = String(entry.id)
       image.gallerySourceId = entry.source_id || image.gallerySourceId
       const storedURL = resolveImageAssetURL(String(entry.url || ''))
-      if (storedURL && !sameStoredObject(image.src, storedURL)) {
+      // Object identity stays stable while the signed query string rotates.
+      // Always adopt the latest server-issued display URL so expired snapshots
+      // do not keep rendering an old signature after gallery refresh.
+      if (storedURL && image.src !== storedURL) {
         image.src = storedURL
         resetImageMediaState(image)
       }
@@ -1897,7 +1899,7 @@ async function loadGallery(epoch = studioUserEpoch, ownerId = studioStateOwnerId
       if (
         storedThumbURL
         && !isInlineImageSource(image.thumbSrc)
-        && !sameStoredObject(image.thumbSrc, storedThumbURL)
+        && image.thumbSrc !== storedThumbURL
       ) {
         image.thumbSrc = storedThumbURL
         image.thumbSrcSet = ''
@@ -2500,7 +2502,15 @@ function isShowingThumbnail(image: GeneratedImage) {
 }
 
 function isPreviewShowingThumbnail(image: GeneratedImage) {
-  return Boolean(previewDisplaySrc.value && image.src && previewDisplaySrc.value !== image.src)
+  return Boolean(
+    previewDisplaySrc.value
+    && (image.src || image.previewSrc)
+    && previewDisplaySrc.value !== image.src,
+  )
+}
+
+function canOpenImagePreview(image: GeneratedImage) {
+  return !image.failed && (!image.pending || Boolean(image.previewSrc))
 }
 
 function isImageMediaLoaded(image: GeneratedImage) {
@@ -2517,6 +2527,7 @@ function markImageMediaLoaded(image: GeneratedImage) {
   failedImageMediaIds.value.delete(id)
   loadedImageMediaIds.value.add(id)
   reportImageDisplay(image)
+  startImageDisplayProcessing(image)
 }
 
 const reportedImageDisplayTaskIds = new Set<string>()
@@ -2539,6 +2550,80 @@ function markImageMediaFailed(image: GeneratedImage) {
   clearImageMediaTimeout(image)
   loadedImageMediaIds.value.delete(id)
   failedImageMediaIds.value.add(id)
+  startImageDisplayProcessing(image)
+}
+
+function queueImageDisplayProcessing(
+  image: GeneratedImage,
+  source: string,
+  targetSize: string,
+  targetFormat: string,
+  owner: StudioOwnerSnapshot | undefined,
+  onError: (error: string) => void,
+) {
+  // Canvas resizing blocks the main thread; start it only after the first image
+  // load so preview visibility is not delayed by multi-megapixel encoding.
+  const key = String(image.id)
+  const existing = imageProcessingTasks.get(key)
+  if (existing) return existing
+
+  let resolveTask!: () => void
+  const task = new Promise<void>((resolve) => {
+    resolveTask = resolve
+  })
+  pendingImageDisplayProcessing.set(key, {
+    image,
+    source,
+    targetSize,
+    targetFormat,
+    owner,
+    resolve: resolveTask,
+    onError,
+  })
+  imageProcessingTasks.set(key, task)
+  const fallbackTimer = window.setTimeout(() => {
+    startImageDisplayProcessing(image)
+  }, IMAGE_DISPLAY_PROCESSING_FALLBACK_MS)
+  imageDisplayProcessingFallbackTimers.set(key, fallbackTimer)
+  return task
+}
+
+function startImageDisplayProcessing(image: GeneratedImage) {
+  const key = String(image.id)
+  const pending = pendingImageDisplayProcessing.get(key)
+  if (!pending) return
+  pendingImageDisplayProcessing.delete(key)
+  const fallbackTimer = imageDisplayProcessingFallbackTimers.get(key)
+  if (fallbackTimer) window.clearTimeout(fallbackTimer)
+  imageDisplayProcessingFallbackTimers.delete(key)
+
+  void processImageForDisplay(
+    pending.source,
+    pending.targetSize,
+    pending.targetFormat,
+  ).then((processed) => {
+    if (pending.owner && !isStudioOwnerCurrent(pending.owner)) return
+    pending.image.src = processed.src
+    pending.image.originalSrc = pending.source
+    pending.image.format = processed.format
+    pending.image.meta = `${processed.format.toUpperCase()} · ${pending.targetSize} · ${pending.image.model || imageModel.value}`
+    images.value = [...images.value]
+    if (processed.error) pending.onError(processed.error)
+  }).catch((error) => {
+    if (pending.owner && !isStudioOwnerCurrent(pending.owner)) return
+    pending.onError(error instanceof Error ? error.message : 'image processing failed')
+  }).finally(() => {
+    imageProcessingTasks.delete(key)
+    pending.resolve()
+  })
+}
+
+function cancelPendingImageDisplayProcessing() {
+  for (const timer of imageDisplayProcessingFallbackTimers.values()) window.clearTimeout(timer)
+  imageDisplayProcessingFallbackTimers.clear()
+  for (const pending of pendingImageDisplayProcessing.values()) pending.resolve()
+  pendingImageDisplayProcessing.clear()
+  imageProcessingTasks.clear()
 }
 
 function bindImageMediaElement(image: GeneratedImage, element: unknown) {
@@ -2622,10 +2707,11 @@ function retryImageMedia(image: GeneratedImage) {
 }
 
 let previewLoadToken = 0
+let galleryURLRefreshTimer: ReturnType<typeof setInterval> | null = null
 
 async function loadPreviewDisplay(image: GeneratedImage) {
   const token = ++previewLoadToken
-  const thumbnail = image.thumbSrc || image.thumbSrcSet || image.src
+  const thumbnail = image.previewSrc || image.thumbSrc || image.thumbSrcSet || image.src
   previewDisplaySrc.value = thumbnail
   if (!thumbnail || thumbnail === image.src || typeof Image === 'undefined') return
   // Let the dialog paint the existing thumbnail before competing for network
@@ -2656,6 +2742,31 @@ async function loadPreviewDisplay(image: GeneratedImage) {
 
 let generationClockTimer: ReturnType<typeof setInterval> | null = null
 let expiryPruneTimer: ReturnType<typeof setInterval> | null = null
+
+function refreshGalleryURLsIfVisible() {
+  if (componentDisposed) return
+  if (!studioStateOwnerId.value) return
+  if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
+  refreshGalleryAfterExternalChange()
+}
+
+function handleGalleryVisibilityChange() {
+  if (document.visibilityState === 'visible') refreshGalleryURLsIfVisible()
+}
+
+function startGalleryURLRefreshTimer() {
+  if (galleryURLRefreshTimer) return
+  galleryURLRefreshTimer = setInterval(
+    refreshGalleryURLsIfVisible,
+    GALLERY_URL_REFRESH_INTERVAL_MS,
+  )
+}
+
+function stopGalleryURLRefreshTimer() {
+  if (!galleryURLRefreshTimer) return
+  clearInterval(galleryURLRefreshTimer)
+  galleryURLRefreshTimer = null
+}
 
 function pruneExpiredImages() {
   const nowSeconds = Math.floor(Date.now() / 1000)
@@ -3144,6 +3255,7 @@ async function generate() {
     format: format.value,
     quality: quality.value,
     background: background.value,
+    customSizeRequested: appliedSize.mode === 'custom',
     hadReferences: requestReferences.length > 0,
   }))
   images.value.unshift(...pendingImages)
@@ -3157,33 +3269,31 @@ async function generate() {
     const headers: Record<string, string> = { Authorization: `Bearer ${selectedKey.value.key}` }
     let url = `${apiBaseUrl.value}${hasReferences.value ? '/images/edits' : '/images/generations'}`
     let body: string | FormData
+    let preparedReferences: PreparedImageReference[] = []
+    let remoteReferenceURLs: string[] = []
+    if (requestReferences.length) {
+      optimizingReferences.value = true
+      try {
+        preparedReferences = await prepareImageReferenceImages(
+          requestReferences.map((item) => ({ name: item.name, blob: item.file })),
+        )
+        remoteReferenceURLs = await uploadPreparedImageReferences(preparedReferences)
+        if (!isStudioOwnerCurrent(owner)) return
+      } finally {
+        optimizingReferences.value = false
+      }
+    }
     if (geminiModel) {
       headers['Content-Type'] = 'application/json'
-      let preparedReferences: PreparedGeminiReference[] = []
-      if (requestReferences.length) {
-        optimizingReferences.value = true
-        referenceOptimizationCompleted.value = 0
-        referenceOptimizationTotal.value = requestReferences.length
-        try {
-          preparedReferences = await prepareGeminiReferenceImages(
-            requestReferences.map((item) => ({ name: item.name, blob: item.file })),
-            {
-              onProgress: (completed, total) => {
-                if (!isStudioOwnerCurrent(owner)) return
-                referenceOptimizationCompleted.value = completed
-                referenceOptimizationTotal.value = total
-              },
-            },
-          )
-          if (!isStudioOwnerCurrent(owner)) return
-        } finally {
-          optimizingReferences.value = false
-        }
-      }
       body = JSON.stringify(buildGeminiPayload(currentPrompt, preparedReferences))
       url = buildGeminiURL(imageModel.value)
     } else if (hasReferences.value) {
-      body = buildEditForm(currentPrompt)
+      if (remoteReferenceURLs.length === preparedReferences.length) {
+        headers['Content-Type'] = 'application/json'
+        body = JSON.stringify(buildEditURLPayload(currentPrompt, remoteReferenceURLs))
+      } else {
+        body = buildEditForm(currentPrompt, preparedReferences)
+      }
     } else {
       headers['Content-Type'] = 'application/json'
       body = JSON.stringify({
@@ -3559,7 +3669,7 @@ function reportImageGenerationFailure(image: GeneratedImage, error: unknown, mes
   const normalized = message.toLowerCase()
   const errorType = normalized.includes('超时')
     || normalized.includes('timeout')
-    || normalized.includes('超过 3 分钟')
+    || normalized.includes('超过 10 分钟')
     || normalized.includes('停止等待')
     ? 'client_timeout'
     : normalized.includes('无法连接') || normalized.includes('network')
@@ -4345,7 +4455,8 @@ async function finishGenerationBatch(
     : undefined
   const generated: GeneratedImage[] = []
   const resizeTargets: Array<{ image: GeneratedImage; source: string }> = []
-  const needsLocalResize = imageNeedsLocalResize(requestedSize, IMAGE_MAX_EDGE)
+  const needsLocalResize = Boolean(firstPending?.customSizeRequested)
+    && imageNeedsLocalResize(requestedSize, IMAGE_MAX_EDGE)
   for (let index = 0; index < items.length; index += 1) {
     const item = items[index]
     const resultFormat = imageFormatFromResult(item, '', requestedFormat)
@@ -4373,6 +4484,7 @@ async function finishGenerationBatch(
       format: actualFormat,
       quality: firstPending?.quality || quality.value,
       background: firstPending?.background || background.value,
+      customSizeRequested: firstPending?.customSizeRequested,
       meta: `${actualFormat.toUpperCase()} · ${requestedSize} · ${currentModel}`,
       createdAt: Math.floor((itemCompletedAt > 0 ? itemCompletedAt : completedAtMs) / 1000),
       durationMs: itemDurationMs > 0 ? itemDurationMs : fallbackDurationMs,
@@ -4407,27 +4519,14 @@ async function finishGenerationBatch(
     appStore.showWarning(message, 6000)
   }
   const processingTasks = resizeTargets.map((target) => {
-    const key = String(target.image.id)
-    const task = processImageForDisplay(
+    return queueImageDisplayProcessing(
+      target.image,
       target.source,
       requestedSize,
       requestedFormat,
-    ).then((processed) => {
-      if (owner && !isStudioOwnerCurrent(owner)) return
-      target.image.src = processed.src
-      target.image.originalSrc = target.source
-      target.image.format = processed.format
-      target.image.meta = `${processed.format.toUpperCase()} · ${requestedSize} · ${currentModel}`
-      images.value = [...images.value]
-      if (processed.error) reportLocalProcessError(processed.error)
-    }).catch((error) => {
-      if (owner && !isStudioOwnerCurrent(owner)) return
-      reportLocalProcessError(error instanceof Error ? error.message : 'image processing failed')
-    }).finally(() => {
-      if (imageProcessingTasks.get(key) === task) imageProcessingTasks.delete(key)
-    })
-    imageProcessingTasks.set(key, task)
-    return task
+      owner,
+      reportLocalProcessError,
+    )
   })
 
   if (persist) {
@@ -4443,11 +4542,20 @@ function buildGeminiURL(model: string) {
   return `${root}${prefix}/models/${encodeURIComponent(model)}:generateContent`
 }
 
-function buildGeminiPayload(text: string, preparedReferences: readonly PreparedGeminiReference[] = []) {
+function buildGeminiPayload(text: string, preparedReferences: readonly PreparedImageReference[] = []) {
   const parts: any[] = []
   preparedReferences.forEach((item, index) => {
-    const match = /^data:([^;,]+);base64,(.+)$/i.exec(item.dataUrl)
     parts.push({ text: `图片${index + 1}` })
+    if (item.remoteUrl) {
+      parts.push({
+        fileData: {
+          mimeType: item.mimeType,
+          fileUri: item.remoteUrl,
+        },
+      })
+      return
+    }
+    const match = /^data:([^;,]+);base64,(.+)$/i.exec(item.dataUrl)
     parts.push(match
       ? { inlineData: { mimeType: item.mimeType, data: match[2] } }
       : { text: item.name })
@@ -4491,7 +4599,51 @@ function greatestCommonDivisor(a: number, b: number): number {
   return b === 0 ? Math.max(1, a) : greatestCommonDivisor(b, a % b)
 }
 
-function buildEditForm(text: string) {
+async function uploadPreparedImageReferences(
+  preparedReferences: PreparedImageReference[],
+): Promise<string[]> {
+  const urls = new Array<string>(preparedReferences.length)
+  let nextIndex = 0
+  const workers = Array.from(
+    { length: Math.min(3, preparedReferences.length) },
+    async () => {
+      while (nextIndex < preparedReferences.length) {
+        const index = nextIndex
+        nextIndex += 1
+        const image = preparedReferences[index]
+        image.remoteUrl = await referenceAssetsAPI.uploadBlob('image', image.blob, image.mimeType)
+        urls[index] = image.remoteUrl
+      }
+    },
+  )
+  try {
+    await Promise.all(workers)
+    return urls.filter(Boolean)
+  } catch {
+    // Inline/multipart remains a compatibility fallback when object storage is
+    // unavailable or direct-upload CORS is not configured.
+    return []
+  }
+}
+
+function buildEditURLPayload(text: string, imageURLs: readonly string[]) {
+  return {
+    model: imageModel.value.trim(),
+    prompt: text,
+    size: size.value,
+    quality: quality.value,
+    output_format: format.value,
+    background: background.value,
+    n: 1,
+    response_format: 'b64_json',
+    images: imageURLs.map((imageURL) => ({ image_url: imageURL })),
+  }
+}
+
+function buildEditForm(
+  text: string,
+  preparedReferences: readonly PreparedImageReference[] = [],
+) {
   const form = new FormData()
   form.append('model', imageModel.value.trim())
   form.append('prompt', text)
@@ -4501,8 +4653,19 @@ function buildEditForm(text: string) {
   form.append('background', background.value)
   form.append('n', '1')
   form.append('response_format', 'b64_json')
-  references.value.forEach((item) => form.append('image[]', item.file, item.name))
+  if (preparedReferences.length) {
+    preparedReferences.forEach((item, index) => {
+      form.append('image[]', item.blob, compressedReferenceFileName(item.name, index))
+    })
+  } else {
+    references.value.forEach((item) => form.append('image[]', item.file, item.name))
+  }
   return form
+}
+
+function compressedReferenceFileName(name: string, index: number) {
+  const base = String(name || '').replace(/\.[^.]+$/, '').trim() || `reference-${index + 1}`
+  return `${base}.webp`
 }
 
 function extractImages(payload: any): any[] {
@@ -4868,10 +5031,12 @@ onMounted(() => {
   document.addEventListener('click', handleSizeOutside)
   document.addEventListener('pointerdown', closeImageDownloadMenu)
   document.addEventListener('keydown', handleSizeEscape)
+  document.addEventListener('visibilitychange', handleGalleryVisibilityChange)
   window.addEventListener(IMAGE_STUDIO_GALLERY_CHANGED_EVENT, refreshGalleryAfterExternalChange)
   window.addEventListener('online', resumeAmbiguousTasksOnOnline)
   applyInspirationFromRoute()
   startExpiryPruneTimer()
+  startGalleryURLRefreshTimer()
   void loadData()
 })
 onActivated(() => {
@@ -4886,6 +5051,7 @@ onActivated(() => {
   }
   if (studioLoadedOnce) refreshGalleryAfterExternalChange()
   startExpiryPruneTimer()
+  startGalleryURLRefreshTimer()
   applyInspirationFromRoute()
   const restored = images.value.filter((item) => item.pending && item.taskId && !item.gatewayPollUrl && !item.gatewaySubmitPending)
   if (restored.length) void resumePersistentGeneration(restored)
@@ -4897,22 +5063,26 @@ onActivated(() => {
 onDeactivated(() => {
   stopGenerationClock()
   stopExpiryPruneTimer()
+  stopGalleryURLRefreshTimer()
   if (studioStateOwnerId.value) writeStudioSnapshot(studioStateOwnerId.value)
 })
 onBeforeUnmount(() => {
   componentDisposed = true
   stopGenerationClock()
   stopExpiryPruneTimer()
+  stopGalleryURLRefreshTimer()
   if (studioStateOwnerId.value) writeStudioSnapshot(studioStateOwnerId.value)
   document.removeEventListener('click', handleSizeOutside)
   document.removeEventListener('pointerdown', closeImageDownloadMenu)
   document.removeEventListener('keydown', handleSizeEscape)
+  document.removeEventListener('visibilitychange', handleGalleryVisibilityChange)
   window.removeEventListener(IMAGE_STUDIO_GALLERY_CHANGED_EVENT, refreshGalleryAfterExternalChange)
   window.removeEventListener('online', resumeAmbiguousTasksOnOnline)
   for (const timer of imageMediaTimeoutIds.values()) {
     clearTimeout(timer)
   }
   imageMediaTimeoutIds.clear()
+  cancelPendingImageDisplayProcessing()
 })
 </script>
 

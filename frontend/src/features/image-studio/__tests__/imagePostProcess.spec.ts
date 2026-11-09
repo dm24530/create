@@ -32,6 +32,34 @@ describe('imagePostProcess', () => {
     expect(result.error).toContain('cors blocked')
   })
 
+  it('keeps the original bytes when the output already matches the requested size', async () => {
+    const close = vi.fn()
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      blob: async () => new Blob(['source'], { type: 'image/png' }),
+    }))
+    vi.stubGlobal('createImageBitmap', vi.fn().mockResolvedValue({
+      width: 2880,
+      height: 2880,
+      close,
+    }))
+    const createElement = vi.spyOn(document, 'createElement')
+
+    const result = await processImageForDisplay(
+      'https://cdn.example.com/source.png',
+      '2880x2880',
+      'png',
+    )
+
+    expect(result).toEqual({
+      src: 'https://cdn.example.com/source.png',
+      format: 'png',
+      processed: false,
+    })
+    expect(createElement).not.toHaveBeenCalledWith('canvas')
+    expect(close).toHaveBeenCalledOnce()
+  })
+
   it('returns a processed image only after resizing succeeds', async () => {
     const close = vi.fn()
     const drawImage = vi.fn()

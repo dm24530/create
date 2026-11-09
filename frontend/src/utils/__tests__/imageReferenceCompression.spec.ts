@@ -1,13 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
-  GEMINI_REFERENCE_MAX_IMAGES,
-  GEMINI_REFERENCE_MAX_IMAGE_BYTES,
-  GEMINI_REFERENCE_TOTAL_BYTES,
+  IMAGE_REFERENCE_MAX_IMAGES,
+  IMAGE_REFERENCE_MAX_IMAGE_BYTES,
+  IMAGE_REFERENCE_TOTAL_BYTES,
   fitReferenceDimensions,
-  prepareGeminiReferenceImages,
-  type GeminiReferenceEncoder,
-} from '../geminiReferenceImages'
+  prepareImageReferenceImages,
+  type ImageReferenceEncoder,
+} from '../imageReferenceCompression'
 
 function source(name: string) {
   return {
@@ -16,7 +16,7 @@ function source(name: string) {
   }
 }
 
-describe('geminiReferenceImages', () => {
+describe('imageReferenceCompression', () => {
   afterEach(() => {
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
@@ -29,7 +29,7 @@ describe('geminiReferenceImages', () => {
   })
 
   it('keeps 14 images under the per-image and combined byte budgets', async () => {
-    const encoder: GeminiReferenceEncoder = vi.fn(async (_blob, profile) => {
+    const encoder: ImageReferenceEncoder = vi.fn(async (_blob, profile) => {
       const bytes = profile.maxEdge >= 1600 ? 800_000 : 700_000
       return {
         blob: new Blob([new Uint8Array(bytes)], { type: 'image/webp' }),
@@ -40,30 +40,30 @@ describe('geminiReferenceImages', () => {
     })
     const onProgress = vi.fn()
 
-    const prepared = await prepareGeminiReferenceImages(
-      Array.from({ length: GEMINI_REFERENCE_MAX_IMAGES }, (_, index) => source(`image-${index + 1}.png`)),
+    const prepared = await prepareImageReferenceImages(
+      Array.from({ length: IMAGE_REFERENCE_MAX_IMAGES }, (_, index) => source(`image-${index + 1}.png`)),
       { encoder, onProgress },
     )
 
-    expect(prepared).toHaveLength(GEMINI_REFERENCE_MAX_IMAGES)
-    expect(prepared.every((image) => image.bytes <= GEMINI_REFERENCE_MAX_IMAGE_BYTES)).toBe(true)
+    expect(prepared).toHaveLength(IMAGE_REFERENCE_MAX_IMAGES)
+    expect(prepared.every((image) => image.bytes <= IMAGE_REFERENCE_MAX_IMAGE_BYTES)).toBe(true)
     expect(prepared.reduce((total, image) => total + image.bytes, 0))
-      .toBeLessThan(GEMINI_REFERENCE_TOTAL_BYTES)
-    expect(onProgress).toHaveBeenLastCalledWith(GEMINI_REFERENCE_MAX_IMAGES, GEMINI_REFERENCE_MAX_IMAGES)
+      .toBeLessThan(IMAGE_REFERENCE_TOTAL_BYTES)
+    expect(onProgress).toHaveBeenLastCalledWith(IMAGE_REFERENCE_MAX_IMAGES, IMAGE_REFERENCE_MAX_IMAGES)
   })
 
   it('fails before submission when the smallest profile still exceeds the total budget', async () => {
-    const encoder: GeminiReferenceEncoder = vi.fn(async () => ({
+    const encoder: ImageReferenceEncoder = vi.fn(async () => ({
       blob: new Blob([new Uint8Array(900_000)], { type: 'image/webp' }),
       dataUrl: 'data:image/webp;base64,test',
       width: 640,
       height: 480,
     }))
 
-    await expect(prepareGeminiReferenceImages(
-      Array.from({ length: GEMINI_REFERENCE_MAX_IMAGES }, (_, index) => source(`image-${index + 1}.png`)),
+    await expect(prepareImageReferenceImages(
+      Array.from({ length: IMAGE_REFERENCE_MAX_IMAGES }, (_, index) => source(`image-${index + 1}.png`)),
       { encoder },
-    )).rejects.toThrow('14')
+    )).rejects.toThrow('请减少图片数量')
   })
 
   it('encodes 14 proportional WebP images through the browser compression path', async () => {
@@ -91,15 +91,15 @@ describe('geminiReferenceImages', () => {
       return canvas as unknown as HTMLCanvasElement
     }) as typeof document.createElement)
 
-    const prepared = await prepareGeminiReferenceImages(
-      Array.from({ length: GEMINI_REFERENCE_MAX_IMAGES }, (_, index) => source(`image-${index + 1}.png`)),
+    const prepared = await prepareImageReferenceImages(
+      Array.from({ length: IMAGE_REFERENCE_MAX_IMAGES }, (_, index) => source(`image-${index + 1}.png`)),
     )
 
-    expect(prepared).toHaveLength(GEMINI_REFERENCE_MAX_IMAGES)
+    expect(prepared).toHaveLength(IMAGE_REFERENCE_MAX_IMAGES)
     expect(prepared.every((image) => image.width === 2048 && image.height === 1024)).toBe(true)
     expect(prepared.every((image) => image.dataUrl.startsWith('data:image/webp;base64,'))).toBe(true)
     expect(prepared.reduce((total, image) => total + image.bytes, 0))
-      .toBeLessThan(GEMINI_REFERENCE_TOTAL_BYTES)
-    expect(close).toHaveBeenCalledTimes(GEMINI_REFERENCE_MAX_IMAGES)
+      .toBeLessThan(IMAGE_REFERENCE_TOTAL_BYTES)
+    expect(close).toHaveBeenCalledTimes(IMAGE_REFERENCE_MAX_IMAGES)
   })
 })
