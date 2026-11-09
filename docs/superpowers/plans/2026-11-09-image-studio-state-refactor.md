@@ -289,3 +289,34 @@ Expected: PASS with 130 tests.
 
 Run: `pnpm run typecheck`
 Expected: exit 0.
+
+### Task 9: Extract Generation Queue Primitives
+
+**Files:**
+- Create: `frontend/src/features/image-studio/imageGenerationQueue.ts`
+- Create: `frontend/src/features/image-studio/__tests__/imageGenerationQueue.spec.ts`
+- Modify: `frontend/src/features/image-studio/ImageStudioView.vue`
+
+**Interfaces:**
+- Consumes: requested count, current display-order cursor, task factory, generation settings, and pending task lists.
+- Produces: `normalizeImageRequestCount`, `allocateImageBatchDisplayOrder`, `createPendingImageBatch`, `failImageTask`, and `removePendingTaskImages`.
+
+- [x] **Step 1: Write failing queue tests**
+
+Run: `pnpm exec vitest run src/features/image-studio/__tests__/imageGenerationQueue.spec.ts`
+Expected: FAIL because `imageGenerationQueue.ts` does not exist.
+
+- [x] **Step 2: Implement and verify queue primitives**
+
+Run: `pnpm exec vitest run src/features/image-studio/__tests__/imageGenerationQueue.spec.ts`
+Expected: PASS with 5 tests.
+
+- [x] **Step 3: Replace inline batch construction and failure mutation**
+
+Run: `pnpm exec vitest run src/features/image-studio/__tests__/imageGenerationQueue.spec.ts src/features/image-studio/__tests__/ImageStudioView.spec.ts`
+Expected: PASS with 122 tests.
+
+- [x] **Step 4: Run type checking**
+
+Run: `pnpm run typecheck`
+Expected: exit 0.

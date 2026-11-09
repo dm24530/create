@@ -797,6 +797,13 @@ import {
   writeStudioSnapshot as writeStoredStudioSnapshot,
   type ImageStudioSnapshot,
 } from './imageStudioPersistence'
+import {
+  allocateImageBatchDisplayOrder as allocateImageQueueDisplayOrder,
+  createPendingImageBatch,
+  failImageTask,
+  normalizeImageRequestCount,
+  removePendingTaskImages,
+} from './imageGenerationQueue'
 import type {
   GeneratedImage,
   GenerationRequestSnapshot,
@@ -943,15 +950,6 @@ if (imageStudioDraft.ownerId !== draftOwnerId) {
 
 let nextImageId = 1
 let imageDisplayOrderCursor = Date.now() * 1000
-
-function allocateImageBatchDisplayOrder(count: number) {
-  const batchSize = Math.max(1, count)
-  imageDisplayOrderCursor = Math.max(
-    Date.now() * 1000,
-    imageDisplayOrderCursor + batchSize + 1,
-  )
-  return imageDisplayOrderCursor
-}
 
 function imageDisplayOrder(image: GeneratedImage) {
   return normalizeStudioDisplayOrder(image.displayOrder)
@@ -3149,10 +3147,15 @@ async function generate() {
   const currentBackground = background.value
   const currentAppliedSize = { ...appliedSize }
   const currentSize = formatSize(currentAppliedSize)
-  const requestCount = Math.min(Math.max(Number(count.value) || 1, 1), 4)
+  const requestCount = normalizeImageRequestCount(count.value)
   const batchId = createImageGenerationTaskId()
   const startedAt = Date.now()
-  const displayOrderBase = allocateImageBatchDisplayOrder(requestCount)
+  const displayOrder = allocateImageQueueDisplayOrder(
+    imageDisplayOrderCursor,
+    startedAt,
+    requestCount,
+  )
+  imageDisplayOrderCursor = displayOrder.nextCursor
   const requestReferences = references.value.map((item) => ({ ...item }))
   generationRequestSnapshots.set(batchId, {
     prompt: currentPrompt,
@@ -3165,17 +3168,14 @@ async function generate() {
     appliedSize: currentAppliedSize,
     references: requestReferences,
   })
-  const pendingImages = Array.from({ length: requestCount }, (_, index): GeneratedImage => ({
-    id: nextImageId++,
-    title: `正在生成 ${index + 1}`,
-    src: '',
-    meta: `${currentFormat.toUpperCase()} · ${currentSize} · ${currentModel}`,
-    pending: true,
-    taskId: createImageGenerationTaskId(),
+  const pendingBatch = createPendingImageBatch({
+    count: requestCount,
+    nextImageId,
+    createTaskId: createImageGenerationTaskId,
     batchId,
     apiKeyId: currentKey.id,
     startedAt,
-    displayOrder: displayOrderBase - index,
+    displayOrderBase: displayOrder.order,
     prompt: currentPrompt,
     model: currentModel,
     size: currentSize,
@@ -3184,7 +3184,9 @@ async function generate() {
     background: currentBackground,
     customSizeRequested: currentAppliedSize.mode === 'custom',
     hadReferences: requestReferences.length > 0,
-  }))
+  })
+  const pendingImages = pendingBatch.images
+  nextImageId = pendingBatch.nextImageId
   images.value.unshift(...pendingImages)
   persistPendingImages()
   errorMessage.value = ''
@@ -3502,8 +3504,7 @@ function removePendingImages(
   owner?: StudioOwnerSnapshot,
 ) {
   if (owner && !isStudioOwnerCurrent(owner)) return
-  const pendingIds = new Set(pendingImages.filter((item) => item.pending).map((item) => item.id))
-  images.value = images.value.filter((item) => !pendingIds.has(item.id))
+  images.value = removePendingTaskImages(images.value, pendingImages, new Set())
   persistPendingImages()
 }
 
@@ -3567,21 +3568,7 @@ function markPendingImagesFailed(
 
 function markImageFailed(image: GeneratedImage, error: unknown) {
   const message = errorMessageFrom(error, '生成失败')
-  image.pending = false
-  image.failed = true
-  image.error = message
-  image.title = '生成失败'
-  image.src = ''
-  image.originalSrc = undefined
-  image.thumbSrc = undefined
-  image.thumbSrcSet = undefined
-  image.previewSrc = undefined
-  image.saved = false
-  image.expiresAt = 0
-  image.createdAt = image.createdAt || Math.floor(Date.now() / 1000)
-  image.durationMs = image.startedAt
-    ? Math.max(1, Date.now() - Number(image.startedAt))
-    : image.durationMs
+  failImageTask(image, message)
   reportImageGenerationFailure(image, error, message)
 }
 
