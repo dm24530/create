@@ -815,6 +815,10 @@ import {
   stableDisplayOrder,
 } from './imageGalleryState'
 import {
+  mergeImageGallery,
+  type GalleryMergeEntry,
+} from './imageGalleryMerge'
+import {
   PENDING_PROMPT_STORAGE_KEY,
   PENDING_STORAGE_KEY,
   failedImageStorageKey,
@@ -851,7 +855,7 @@ import {
 } from '@/utils/imageGenerationWorker'
 import { usePromptResize } from '@/composables/usePromptResize'
 import { ensureCreatorKey, isCreationServiceUnavailable } from '@/composables/useCreatorKey'
-import { authAPI, imageStudioGalleryAPI, type ImageStudioGalleryEntry } from '@/api'
+import { authAPI, imageStudioGalleryAPI } from '@/api'
 import { referenceAssetsAPI } from '@/api/referenceAssets'
 import type { ApiKey } from '@/types'
 import { useAppStore } from '@/stores/app'
@@ -1716,87 +1720,29 @@ async function loadGallery(epoch = studioUserEpoch, ownerId = studioStateOwnerId
   try {
     const entries = await imageStudioGalleryAPI.list()
     if (epoch !== studioUserEpoch || ownerId !== studioStateOwnerId.value) return
-    const entryById = new Map(entries.map((entry) => [String(entry.id), entry]))
-    const matchedGalleryIds = new Set<string>()
     for (const entry of entries) {
       if (entry?.id) galleryBackedIds.value.add(String(entry.id))
       if (entry?.id && entry.thumb_url) {
         galleryRemoteThumbUrls.set(String(entry.id), String(entry.thumb_url))
       }
     }
-
-    for (const image of images.value) {
-      const mappedId = localToGalleryId.value.get(String(image.id))
-      const entry = entryById.get(String(image.id))
-        || entryById.get(String(image.galleryId || ''))
-        || entryById.get(String(mappedId || ''))
-        || entries.find((candidate) =>
-          Boolean(candidate.source_id) &&
-          candidate.source_id === imageGallerySourceID(image),
-        )
-        || entries.find((candidate) => sameStoredObject(
-          image.src,
-          candidate.url,
-          window.location.origin,
-        ))
-        || entries.find((candidate) => sameGalleryDisplayOrder(image, candidate))
-      if (!entry) continue
-      matchedGalleryIds.add(String(entry.id))
-      if (mappedId !== String(entry.id)) {
-        localToGalleryId.value.set(String(image.id), String(entry.id))
-      }
-      image.galleryId = String(entry.id)
-      image.gallerySourceId = entry.source_id || image.gallerySourceId
-      const storedURL = resolveImageAssetURL(String(entry.url || ''))
-      // Object identity stays stable while the signed query string rotates.
-      // Always adopt the latest server-issued display URL so expired snapshots
-      // do not keep rendering an old signature after gallery refresh.
-      if (storedURL && !sameStoredObject(image.src, storedURL, window.location.origin)) {
-        image.src = storedURL
-        resetImageMediaState(image)
-      }
-      const storedThumbURL = String(entry.thumb_url || '')
-      if (
-        storedThumbURL
-        && !isInlineImageSource(image.thumbSrc)
-        && !sameStoredObject(image.thumbSrc, storedThumbURL, window.location.origin)
-      ) {
-        image.thumbSrc = storedThumbURL
-        image.thumbSrcSet = ''
-        resetImageMediaState(image)
-      }
-      image.prompt = entry.prompt
-      image.model = entry.model
-      image.size = entry.size
-      image.format = entry.format
-      image.saved = entry.saved !== false
-      image.expiresAt = entry.expires_at || 0
-      image.durationMs = Number(entry.duration_ms || 0) || image.durationMs
-      image.createdAt = entry.created_at || image.createdAt
-      // A task owns its card slot from submission time. Gallery refreshes may
-      // update status and storage URLs, but must not reorder a live result.
-      image.displayOrder = stableDisplayOrder(image.displayOrder, Number(entry.sort_order || 0))
-    }
-    const seen = new Set<string>()
-    const gallery = entries
-      // 本会话刚保存进图库的图片，本地已经有一份可显示的数据副本；
-      // 再从图库列表渲染一份就会变成"生成一个却显示两个"。
-      .filter((entry) => !locallySavedGalleryIds.has(String(entry.id)))
-      .filter((entry) => !matchedGalleryIds.has(String(entry.id)))
-      .map((entry, index) => galleryEntryToImage(entry, index))
-      .filter((item) => {
-        const key = String(item.id || item.src)
-        if (seen.has(key)) return false
-        seen.add(key)
-        return true
-      })
-    const merged = [...images.value, ...gallery].filter((item, index, all) => {
-      const key = String(item.id || item.src)
-      return all.findIndex((candidate) => String(candidate.id || candidate.src) === key) === index
+    const merged = mergeImageGallery(images.value, entries, {
+      localToGalleryId: localToGalleryId.value,
+      locallySavedGalleryIds,
+      createGalleryImage: galleryEntryToImage,
+      resolveEntryURL: resolveImageAssetURL,
+      matchesFallback: sameGalleryDisplayOrder,
     })
-    // Every gallery merge has one ordering contract. Keep the immutable
-    // generation slot even when save status or the server response changes.
-    const ordered = sortStudioItemsByDisplayOrder(merged)
+    for (const [localId, galleryId] of merged.matchedImageGalleryIds) {
+      if (localToGalleryId.value.get(localId) !== galleryId) {
+        localToGalleryId.value.set(localId, galleryId)
+      }
+    }
+    for (const imageId of merged.changedMediaIds) {
+      const image = images.value.find((item) => String(item.id) === imageId)
+      if (image) resetImageMediaState(image)
+    }
+    const ordered = merged.images
     if (!sameImageIdentityOrder(images.value, ordered)) {
       images.value = ordered
     }
@@ -1818,7 +1764,10 @@ async function loadGallery(epoch = studioUserEpoch, ownerId = studioStateOwnerId
   }
 }
 
-function sameGalleryDisplayOrder(image: GeneratedImage, entry: ImageStudioGalleryEntry) {
+function sameGalleryDisplayOrder(
+  image: GeneratedImage,
+  entry: { sort_order?: number; prompt?: string; model?: string },
+) {
   const imageOrder = Number(image.displayOrder || 0)
   const entryOrder = Number(entry.sort_order || 0)
   if (imageOrder <= 0 || entryOrder <= 0 || imageOrder !== entryOrder) return false
@@ -1913,13 +1862,13 @@ function blobToDataURL(blob: Blob): Promise<string> {
   })
 }
 
-function galleryEntryToImage(entry: ImageStudioGalleryEntry, index: number): GeneratedImage {
+function galleryEntryToImage(entry: GalleryMergeEntry, index: number): GeneratedImage {
   return {
     id: entry.id,
     galleryId: entry.id,
     gallerySourceId: entry.source_id,
     title: `历史图片 ${index + 1}`,
-    src: resolveImageAssetURL(entry.url),
+    src: resolveImageAssetURL(entry.url || ''),
     thumbSrc: entry.thumb_url || '',
     thumbSrcSet: '',
     prompt: entry.prompt,

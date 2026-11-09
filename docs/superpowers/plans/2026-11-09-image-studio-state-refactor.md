@@ -491,3 +491,34 @@ Expected: PASS with 121 tests.
 
 Run: `pnpm run typecheck`
 Expected: exit 0.
+
+### Task 16: Extract Gallery Merge
+
+**Files:**
+- Create: `frontend/src/features/image-studio/imageGalleryMerge.ts`
+- Create: `frontend/src/features/image-studio/__tests__/imageGalleryMerge.spec.ts`
+- Modify: `frontend/src/features/image-studio/ImageStudioView.vue`
+
+**Interfaces:**
+- Consumes: current generated images, server gallery entries, saved ids, local gallery mapping, URL resolver, and fallback matcher.
+- Produces: merged stable images, matched local/gallery ids, and media ids requiring reload.
+
+- [x] **Step 1: Write failing gallery-merge tests**
+
+Run: `pnpm exec vitest run src/features/image-studio/__tests__/imageGalleryMerge.spec.ts`
+Expected: FAIL because `imageGalleryMerge.ts` does not exist.
+
+- [x] **Step 2: Implement and verify gallery merge**
+
+Run: `pnpm exec vitest run src/features/image-studio/__tests__/imageGalleryMerge.spec.ts`
+Expected: PASS with 5 tests.
+
+- [x] **Step 3: Replace the inline merge loop**
+
+Run: `pnpm exec vitest run src/features/image-studio/__tests__/imageGalleryMerge.spec.ts src/features/image-studio/__tests__/ImageStudioView.spec.ts`
+Expected: PASS with 122 tests.
+
+- [x] **Step 4: Run type checking**
+
+Run: `pnpm run typecheck`
+Expected: exit 0.
