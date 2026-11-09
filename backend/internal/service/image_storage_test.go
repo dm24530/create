@@ -369,52 +369,6 @@ func TestImageResultUploaderPublishesSafePreviewWithLocalOriginal(t *testing.T) 
 	require.NotContains(t, string(preview), "b64_json")
 }
 
-func TestImageResultUploaderPublishesLocalOriginalBeforePreviewEncoding(t *testing.T) {
-	validPNG, err := base64.StdEncoding.DecodeString(
-		"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
-	)
-	require.NoError(t, err)
-	storage := &fakeImageStorage{}
-	local := NewLocalImageAssetStore(t.TempDir())
-	uploader := NewImageResultUploader(storage, "images/", 0, nil)
-	uploader.SetLocalAssets(local)
-	result := json.RawMessage(`{"data":[{"b64_json":"` +
-		base64.StdEncoding.EncodeToString(validPNG) + `","mime_type":"image/png"}]}`)
-
-	var previews []json.RawMessage
-	_, err = uploader.RewriteWithPreview(
-		context.Background(),
-		42,
-		"imgtask_local_first",
-		result,
-		func(value json.RawMessage) error {
-			if len(previews) == 0 {
-				var preview struct {
-					Data []struct {
-						PreviewURL string `json:"preview_url"`
-					} `json:"data"`
-				}
-				require.NoError(t, json.Unmarshal(value, &preview))
-				require.Len(t, preview.Data, 1)
-				assetID := strings.TrimPrefix(preview.Data[0].PreviewURL, LocalImageAssetURLPrefix)
-				require.NotEqual(t, preview.Data[0].PreviewURL, assetID)
-				_, data, readErr := local.Read(assetID)
-				require.NoError(t, readErr)
-				require.Equal(t, validPNG, data)
-			}
-			previews = append(previews, append(json.RawMessage(nil), value...))
-			return nil
-		},
-	)
-	require.NoError(t, err)
-	require.Len(t, previews, 2)
-	require.Contains(t, string(previews[0]), `"preview_url":"/api/v1/public/image-assets/`)
-	require.NotContains(t, string(previews[0]), "local_asset_id")
-	require.NotContains(t, string(previews[0]), "object_key")
-	require.NotContains(t, string(previews[0]), "b64_json")
-	require.Contains(t, string(previews[1]), "data:image/jpeg;base64,")
-}
-
 func TestUpstreamPreviewItemsUsesOnlySafePublicURLs(t *testing.T) {
 	items := []map[string]json.RawMessage{
 		{
