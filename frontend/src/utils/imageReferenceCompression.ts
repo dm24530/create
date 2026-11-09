@@ -1,6 +1,7 @@
 export const IMAGE_REFERENCE_MAX_IMAGES = 14
 export const IMAGE_REFERENCE_MAX_IMAGE_BYTES = 1_000_000
 export const IMAGE_REFERENCE_TOTAL_BYTES = 10_000_000
+export const IMAGE_REFERENCE_FAST_IMAGE_BYTES = 200_000
 
 export interface ImageReferenceSource {
   name: string
@@ -36,6 +37,8 @@ export type ImageReferenceEncoder = (
 export interface PrepareImageReferenceOptions {
   encoder?: ImageReferenceEncoder
   onProgress?: (completed: number, total: number) => void
+  profiles?: readonly ImageReferenceProfile[]
+  maxImageBytes?: number
 }
 
 export const IMAGE_REFERENCE_PROFILES: readonly ImageReferenceProfile[] = [
@@ -45,6 +48,13 @@ export const IMAGE_REFERENCE_PROFILES: readonly ImageReferenceProfile[] = [
   { maxEdge: 1024, quality: 0.76 },
   { maxEdge: 768, quality: 0.70 },
   { maxEdge: 640, quality: 0.62 },
+]
+
+export const IMAGE_REFERENCE_FAST_PROFILES: readonly ImageReferenceProfile[] = [
+  { maxEdge: 1024, quality: 0.72 },
+  { maxEdge: 768, quality: 0.62 },
+  { maxEdge: 640, quality: 0.55 },
+  { maxEdge: 512, quality: 0.48 },
 ]
 
 const defaultEncodingCache = new WeakMap<Blob, Map<number, Promise<ImageReferenceEncoding>>>()
@@ -74,6 +84,8 @@ export async function prepareImageReferenceImages(
   }
 
   const encoder = options.encoder || encodeImageReference
+  const profiles = options.profiles || IMAGE_REFERENCE_PROFILES
+  const maxImageBytes = options.maxImageBytes || IMAGE_REFERENCE_MAX_IMAGE_BYTES
   const encodedBySource = sources.map(() => new Map<number, Promise<ImageReferenceEncoding>>())
   const encodeAt = (sourceIndex: number, profileIndex: number) => {
     const cache = encodedBySource[sourceIndex]
@@ -81,20 +93,22 @@ export async function prepareImageReferenceImages(
     if (cached) return cached
     const blob = sources[sourceIndex].blob
     const pending = options.encoder
-      ? encoder(blob, IMAGE_REFERENCE_PROFILES[profileIndex], profileIndex)
-      : encodeDefaultProfile(blob, profileIndex)
+      ? encoder(blob, profiles[profileIndex], profileIndex)
+      : profiles === IMAGE_REFERENCE_PROFILES
+        ? encodeDefaultProfile(blob, profileIndex)
+        : encodeImageReference(blob, profiles[profileIndex])
     cache.set(profileIndex, pending)
     return pending
   }
 
   const bestWithinPerImageCap = async (sourceIndex: number) => {
-    for (let profileIndex = 0; profileIndex < IMAGE_REFERENCE_PROFILES.length; profileIndex += 1) {
+    for (let profileIndex = 0; profileIndex < profiles.length; profileIndex += 1) {
       const encoded = await encodeAt(sourceIndex, profileIndex)
-      if (encoded.blob.size <= IMAGE_REFERENCE_MAX_IMAGE_BYTES) {
+      if (encoded.blob.size <= maxImageBytes) {
         return toPrepared(sources[sourceIndex].name, encoded, profileIndex)
       }
     }
-    throw new Error(`${sources[sourceIndex].name} 压缩后仍超过 ${formatMegabytes(IMAGE_REFERENCE_MAX_IMAGE_BYTES)}`)
+    throw new Error(`${sources[sourceIndex].name} 压缩后仍超过 ${formatMegabytes(maxImageBytes)}`)
   }
 
   let completed = 0
@@ -111,7 +125,7 @@ export async function prepareImageReferenceImages(
 
   let totalBytes = prepared.reduce((total, image) => total + image.bytes, 0)
   while (totalBytes >= IMAGE_REFERENCE_TOTAL_BYTES) {
-    const candidateIndex = findLargestDowngradeCandidate(prepared)
+    const candidateIndex = findLargestDowngradeCandidate(prepared, profiles.length)
     if (candidateIndex < 0) {
       throw new Error(
         `参考图压缩后仍达到 ${formatMegabytes(totalBytes)}，请减少图片数量后再试`,
@@ -120,9 +134,9 @@ export async function prepareImageReferenceImages(
     const current = prepared[candidateIndex]
     let nextProfileIndex = current.profileIndex + 1
     let next: PreparedImageReference | null = null
-    while (nextProfileIndex < IMAGE_REFERENCE_PROFILES.length) {
+    while (nextProfileIndex < profiles.length) {
       const encoded = await encodeAt(candidateIndex, nextProfileIndex)
-      if (encoded.blob.size <= IMAGE_REFERENCE_MAX_IMAGE_BYTES) {
+      if (encoded.blob.size <= maxImageBytes) {
         next = toPrepared(sources[candidateIndex].name, encoded, nextProfileIndex)
         break
       }
@@ -153,12 +167,15 @@ function encodeDefaultProfile(blob: Blob, profileIndex: number) {
   return pending
 }
 
-function findLargestDowngradeCandidate(images: readonly PreparedImageReference[]) {
+function findLargestDowngradeCandidate(
+  images: readonly PreparedImageReference[],
+  profileCount: number,
+) {
   let index = -1
   let largestBytes = -1
   for (let currentIndex = 0; currentIndex < images.length; currentIndex += 1) {
     const image = images[currentIndex]
-    if (image.profileIndex >= IMAGE_REFERENCE_PROFILES.length - 1) continue
+    if (image.profileIndex >= profileCount - 1) continue
     if (image.bytes > largestBytes) {
       largestBytes = image.bytes
       index = currentIndex

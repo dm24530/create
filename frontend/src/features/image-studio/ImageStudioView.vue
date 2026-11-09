@@ -753,6 +753,8 @@ import {
   processImageForDisplay,
 } from './imagePostProcess'
 import {
+  IMAGE_REFERENCE_FAST_IMAGE_BYTES,
+  IMAGE_REFERENCE_FAST_PROFILES,
   prepareImageReferenceImages,
   type PreparedImageReference,
 } from '@/utils/imageReferenceCompression'
@@ -2917,6 +2919,10 @@ async function generate() {
     if (requestReferences.length) {
       preparedReferences = await prepareImageReferenceImages(
         requestReferences.map((item) => ({ name: item.name, blob: item.file })),
+        {
+          profiles: IMAGE_REFERENCE_FAST_PROFILES,
+          maxImageBytes: IMAGE_REFERENCE_FAST_IMAGE_BYTES,
+        },
       )
       if (!isStudioOwnerCurrent(owner)) return
     }

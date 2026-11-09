@@ -52,6 +52,34 @@ describe('imageReferenceCompression', () => {
     expect(onProgress).toHaveBeenLastCalledWith(IMAGE_REFERENCE_MAX_IMAGES, IMAGE_REFERENCE_MAX_IMAGES)
   })
 
+  it('supports a faster profile and smaller byte budget for image studio references', async () => {
+    const profiles = [
+      { maxEdge: 1024, quality: 0.72 },
+      { maxEdge: 768, quality: 0.62 },
+    ]
+    const encoder: ImageReferenceEncoder = vi.fn(async (_blob, profile) => {
+      const bytes = profile.maxEdge > 768 ? 120_000 : 80_000
+      return {
+        blob: new Blob([new Uint8Array(bytes)], { type: 'image/webp' }),
+        dataUrl: 'data:image/webp;base64,test',
+        width: profile.maxEdge,
+        height: profile.maxEdge,
+      }
+    })
+
+    const prepared = await prepareImageReferenceImages([source('image.png')], {
+      encoder,
+      profiles,
+      maxImageBytes: 100_000,
+    })
+
+    expect(prepared).toHaveLength(1)
+    expect(prepared[0].profileIndex).toBe(1)
+    expect(prepared[0].bytes).toBe(80_000)
+    expect(encoder).toHaveBeenNthCalledWith(1, expect.any(Blob), profiles[0], 0)
+    expect(encoder).toHaveBeenNthCalledWith(2, expect.any(Blob), profiles[1], 1)
+  })
+
   it('fails before submission when the smallest profile still exceeds the total budget', async () => {
     const encoder: ImageReferenceEncoder = vi.fn(async () => ({
       blob: new Blob([new Uint8Array(900_000)], { type: 'image/webp' }),
