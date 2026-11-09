@@ -1143,7 +1143,6 @@ func (s *ImageStudioGalleryService) hidePendingLocalAssetURL(entry *ImageStudioG
 		// the work as permanently pending.
 		entry.LocalAssetPending = false
 		entry.URL = ""
-		entry.ThumbURL = ""
 		return
 	}
 	if err == nil && meta.Uploaded && strings.TrimSpace(meta.RemoteURL) != "" {

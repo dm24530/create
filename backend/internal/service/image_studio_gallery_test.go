@@ -394,6 +394,32 @@ func TestImageStudioGalleryListFallsBackToObjectStorageAfterLocalAssetCleanup(t 
 	require.Equal(t, 1, saver.batchCalls)
 }
 
+func TestImageStudioGalleryListKeepsThumbnailWhenLocalAssetMetadataIsGone(t *testing.T) {
+	local := NewLocalImageAssetStore(t.TempDir())
+	store := &galleryStoreStub{entries: []*ImageStudioGalleryEntry{{
+		ID:             "work-1",
+		UserID:         7,
+		ObjectKey:      "images/users/7/task-1.png",
+		URL:            local.URL("25908bce95ce416eb8b11c0fcede8682"),
+		ThumbURL:       "https://gen.example.com/images/users/7/thumbs/work-1.jpg",
+		ThumbObjectKey: "images/users/7/thumbs/work-1.jpg",
+	}}}
+	saver := &gallerySaverStub{resolvedURLs: map[string]string{
+		"images/users/7/task-1.png":        "https://cdn.example.com/original.png",
+		"images/users/7/thumbs/work-1.jpg": "https://cdn.example.com/wrong-thumb.jpg",
+	}}
+	svc := NewImageStudioGalleryService(store, saver)
+	svc.SetLocalAssetStore(local)
+
+	entries, err := svc.List(context.Background(), 7, 20, nil)
+
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	require.Equal(t, "https://cdn.example.com/original.png", entries[0].URL)
+	require.Equal(t, "https://gen.example.com/images/users/7/thumbs/work-1.jpg", entries[0].ThumbURL)
+	require.Equal(t, 1, saver.batchCalls, "only the original object URL should be refreshed")
+}
+
 // 作品记录是永久的：不再写过期时间，但要记下 object_key，删除时才知道删哪个文件。
 func TestImageStudioGallerySaveKeepsWorkPermanently(t *testing.T) {
 	store := &galleryStoreStub{}
