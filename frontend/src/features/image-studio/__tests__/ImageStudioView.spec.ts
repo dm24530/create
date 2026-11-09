@@ -4578,6 +4578,87 @@ describe('ImageStudioView gallery', () => {
     expect(wrapper.find('img[alt="生成结果 2"]').exists()).toBe(true)
   })
 
+  it('keeps every result in the slot reserved when the task was submitted', async () => {
+    listKeys.mockResolvedValue({
+      items: [{ id: 1, name: 'dd', key: 'sk-local', status: 'active', group_id: 2 }],
+    })
+    getPublicSettings.mockResolvedValue({ api_base_url: '/v1' })
+    const resolvers: Array<(response: Response) => void> = []
+    let savedIndex = 0
+    saveGallery.mockImplementation(async () => ({
+      id: `gallery-slot-${++savedIndex}`,
+      url: `https://cdn.example.com/gallery-slot-${savedIndex}.png`,
+      prompt: '',
+      model: 'gpt-image-1',
+      size: '1024x1024',
+      format: 'png',
+      created_at: savedIndex,
+      expires_at: 0,
+      // Deliberately opposite to completion order. Submission slots must win.
+      sort_order: 1_900_000_000_000_000 - savedIndex,
+    }))
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/images/batches/models')) {
+        return { ok: true, json: async () => ({ data: [] }) } as Response
+      }
+      if (url.endsWith('/models')) {
+        return { ok: true, json: async () => ({ data: [{ id: 'gpt-image-1' }] }) } as Response
+      }
+      if (url.endsWith('/images/generations/async')) return asyncImageUnavailableResponse()
+      if (url.endsWith('/images/generations')) {
+        return await new Promise<Response>((resolve) => resolvers.push(resolve))
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountImageStudio()
+    await flushPromises()
+    await flushPromises()
+    await wrapper.get('[data-testid="image-count-control"]').findAll('button')[2].trigger('click')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(resolvers).toHaveLength(3)
+    const cards = () => wrapper
+      .get('[data-testid="image-results-grid"]')
+      .findAll('article')
+
+    // Finish the middle request first. It must fill slot 2 without moving to
+    // the front or displacing the other still-pending cards.
+    resolvers[1]({
+      ok: true,
+      json: async () => ({ data: [{ b64_json: 'bWlkZGxl' }] }),
+    } as Response)
+    await vi.waitFor(() => {
+      expect(cards()).toHaveLength(3)
+      expect(cards()[1].find('img[alt="生成结果 1"]').exists()).toBe(true)
+    })
+    expect(cards()[0].find('.image-pending-card').exists()).toBe(true)
+    expect(cards()[2].find('.image-pending-card').exists()).toBe(true)
+
+    resolvers[0]({
+      ok: true,
+      json: async () => ({ data: [{ b64_json: 'Zmlyc3Q=' }] }),
+    } as Response)
+    resolvers[2]({
+      ok: true,
+      json: async () => ({ data: [{ b64_json: 'bGFzdA==' }] }),
+    } as Response)
+    await flushPromises()
+    await flushPromises()
+
+    await vi.waitFor(() => {
+      expect(saveGallery).toHaveBeenCalledTimes(3)
+      expect(cards()).toHaveLength(3)
+      expect(cards().map((card) => card.get('img[alt^="生成结果"]').attributes('alt'))).toEqual([
+        '生成结果 2',
+        '生成结果 1',
+        '生成结果 3',
+      ])
+    })
+  })
+
   it('shows elapsed seconds while generating and removes them when finished', async () => {
     vi.useFakeTimers()
     try {

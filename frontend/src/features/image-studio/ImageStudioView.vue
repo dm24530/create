@@ -1916,7 +1916,11 @@ async function loadGallery(epoch = studioUserEpoch, ownerId = studioStateOwnerId
       image.expiresAt = entry.expires_at || 0
       image.durationMs = Number(entry.duration_ms || 0) || image.durationMs
       image.createdAt = entry.created_at || image.createdAt
-      image.displayOrder = Number(entry.sort_order || 0) || image.displayOrder
+      // A task owns its card slot from submission time. Gallery refreshes may
+      // update status and storage URLs, but must not reorder a live result.
+      if (!image.displayOrder) {
+        image.displayOrder = Number(entry.sort_order || 0) || undefined
+      }
     }
     const seen = new Set<string>()
     const gallery = entries
@@ -2373,8 +2377,9 @@ async function persistGeneratedImages(
       // 记住服务端状态，卡片上才能显示"还剩 N 天 / 已保存"。
       result.value.item.saved = result.value.entry.saved !== false
       result.value.item.expiresAt = result.value.entry.expires_at || 0
-      result.value.item.displayOrder = Number(result.value.entry.sort_order || 0)
-        || result.value.item.displayOrder
+      if (!result.value.item.displayOrder) {
+        result.value.item.displayOrder = Number(result.value.entry.sort_order || 0) || undefined
+      }
       const storedURL = resolveImageAssetURL(String(result.value.entry.url || ''))
       if (storedURL && storedURL !== result.value.item.src) {
         result.value.item.src = storedURL
