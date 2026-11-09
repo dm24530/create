@@ -771,6 +771,11 @@ import {
   gatewayTaskState,
   resolveGatewayPollUrl,
 } from './imageTaskTransport'
+import {
+  sameImageIdentityOrder,
+  sameStoredObject,
+  stableDisplayOrder,
+} from './imageGalleryState'
 import type {
   GeneratedImage,
   GenerationRequestSnapshot,
@@ -1833,7 +1838,11 @@ async function loadGallery(epoch = studioUserEpoch, ownerId = studioStateOwnerId
           Boolean(candidate.source_id) &&
           candidate.source_id === imageGallerySourceID(image),
         )
-        || entries.find((candidate) => sameStoredObject(image.src, candidate.url))
+        || entries.find((candidate) => sameStoredObject(
+          image.src,
+          candidate.url,
+          window.location.origin,
+        ))
         || entries.find((candidate) => sameGalleryDisplayOrder(image, candidate))
       if (!entry) continue
       matchedGalleryIds.add(String(entry.id))
@@ -1846,7 +1855,7 @@ async function loadGallery(epoch = studioUserEpoch, ownerId = studioStateOwnerId
       // Object identity stays stable while the signed query string rotates.
       // Always adopt the latest server-issued display URL so expired snapshots
       // do not keep rendering an old signature after gallery refresh.
-      if (storedURL && !sameStoredObject(image.src, storedURL)) {
+      if (storedURL && !sameStoredObject(image.src, storedURL, window.location.origin)) {
         image.src = storedURL
         resetImageMediaState(image)
       }
@@ -1854,7 +1863,7 @@ async function loadGallery(epoch = studioUserEpoch, ownerId = studioStateOwnerId
       if (
         storedThumbURL
         && !isInlineImageSource(image.thumbSrc)
-        && !sameStoredObject(image.thumbSrc, storedThumbURL)
+        && !sameStoredObject(image.thumbSrc, storedThumbURL, window.location.origin)
       ) {
         image.thumbSrc = storedThumbURL
         image.thumbSrcSet = ''
@@ -1870,9 +1879,7 @@ async function loadGallery(epoch = studioUserEpoch, ownerId = studioStateOwnerId
       image.createdAt = entry.created_at || image.createdAt
       // A task owns its card slot from submission time. Gallery refreshes may
       // update status and storage URLs, but must not reorder a live result.
-      if (!image.displayOrder) {
-        image.displayOrder = Number(entry.sort_order || 0) || undefined
-      }
+      image.displayOrder = stableDisplayOrder(image.displayOrder, Number(entry.sort_order || 0))
     }
     const seen = new Set<string>()
     const gallery = entries
@@ -1912,25 +1919,6 @@ async function loadGallery(epoch = studioUserEpoch, ownerId = studioStateOwnerId
     }
   } catch {
     // Gallery storage is optional; generation remains available without it.
-  }
-}
-
-function sameImageIdentityOrder(
-  current: GeneratedImage[],
-  next: GeneratedImage[],
-) {
-  return current.length === next.length
-    && current.every((image, index) => String(image.id) === String(next[index]?.id))
-}
-
-function sameStoredObject(current: string | undefined, next: string | undefined) {
-  if (!current || !next) return false
-  try {
-    const currentURL = new URL(current, window.location.origin)
-    const nextURL = new URL(next, window.location.origin)
-    return currentURL.origin === nextURL.origin && currentURL.pathname === nextURL.pathname
-  } catch {
-    return current === next
   }
 }
 
@@ -2329,17 +2317,30 @@ async function persistGeneratedImages(
       // 记住服务端状态，卡片上才能显示"还剩 N 天 / 已保存"。
       result.value.item.saved = result.value.entry.saved !== false
       result.value.item.expiresAt = result.value.entry.expires_at || 0
-      if (!result.value.item.displayOrder) {
-        result.value.item.displayOrder = Number(result.value.entry.sort_order || 0) || undefined
-      }
+      result.value.item.displayOrder = stableDisplayOrder(
+        result.value.item.displayOrder,
+        Number(result.value.entry.sort_order || 0),
+      )
       const storedURL = resolveImageAssetURL(String(result.value.entry.url || ''))
-      if (storedURL && storedURL !== result.value.item.src) {
+      if (storedURL && !sameStoredObject(
+        result.value.item.src,
+        storedURL,
+        window.location.origin,
+      )) {
         result.value.item.src = storedURL
         result.value.item.originalSrc = storedURL
         resetImageMediaState(result.value.item)
       }
       const storedThumbURL = String(result.value.entry.thumb_url || '')
-      if (storedThumbURL && !isInlineImageSource(result.value.item.thumbSrc)) {
+      if (
+        storedThumbURL
+        && !isInlineImageSource(result.value.item.thumbSrc)
+        && !sameStoredObject(
+          result.value.item.thumbSrc,
+          storedThumbURL,
+          window.location.origin,
+        )
+      ) {
         result.value.item.thumbSrc = storedThumbURL
         result.value.item.thumbSrcSet = ''
         resetImageMediaState(result.value.item)

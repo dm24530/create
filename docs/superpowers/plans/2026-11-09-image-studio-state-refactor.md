@@ -201,3 +201,34 @@ Expected: PASS with 134 tests.
 
 Run: `pnpm run typecheck`
 Expected: exit 0.
+
+### Task 6: Isolate Gallery Stability Rules
+
+**Files:**
+- Create: `frontend/src/features/image-studio/imageGalleryState.ts`
+- Create: `frontend/src/features/image-studio/__tests__/imageGalleryState.spec.ts`
+- Modify: `frontend/src/features/image-studio/ImageStudioView.vue`
+
+**Interfaces:**
+- Consumes: stored image URLs, display order values, and image identity lists.
+- Produces: `sameStoredObject(current, next, origin)`, `stableDisplayOrder(current, incoming)`, and `sameImageIdentityOrder(current, next)`.
+
+- [x] **Step 1: Write failing tests for signed URL rotation and stable slots**
+
+Run: `pnpm exec vitest run src/features/image-studio/__tests__/imageGalleryState.spec.ts`
+Expected: FAIL because `imageGalleryState.ts` does not exist.
+
+- [x] **Step 2: Implement the gallery stability helpers**
+
+Run: `pnpm exec vitest run src/features/image-studio/__tests__/imageGalleryState.spec.ts`
+Expected: PASS with 5 tests.
+
+- [x] **Step 3: Replace duplicate gallery rules in `ImageStudioView.vue`**
+
+Run: `pnpm exec vitest run src/features/image-studio/__tests__/imageGalleryState.spec.ts src/features/image-studio/__tests__/imageTaskTransport.spec.ts src/features/image-studio/__tests__/imageTaskState.spec.ts src/features/image-studio/__tests__/ImageStudioView.spec.ts`
+Expected: PASS with 139 tests.
+
+- [x] **Step 4: Run type checking**
+
+Run: `pnpm run typecheck`
+Expected: exit 0.
