@@ -839,6 +839,11 @@ import {
   normalizeImageRequestCount,
   removePendingTaskImages,
 } from './imageGenerationQueue'
+import {
+  createImageGenerationProgress,
+  type GenerationResultHandler,
+} from './imageGenerationProgress'
+import { ImageSubmissionUnconfirmed } from './imageSubmissionErrors'
 import type {
   GeneratedImage,
   GenerationRequestSnapshot,
@@ -872,18 +877,6 @@ const IMAGE_MEDIA_LOAD_TIMEOUT_MS = 10_000
 const GALLERY_URL_REFRESH_INTERVAL_MS = 6 * 60 * 60 * 1000
 const reportedGenerationFailures = new Set<string>()
 const reportedVisibleErrors = new Set<string>()
-
-class ImageSubmissionUnconfirmed extends Error {
-  constructor(message = '图片任务提交状态暂无法确认，正在等待网络恢复') {
-    super(message)
-    this.name = 'ImageSubmissionUnconfirmed'
-  }
-}
-
-type GenerationResultHandler = (
-  image: GeneratedImage,
-  result: PromiseSettledResult<any[]>,
-) => Promise<void> | void
 
 const keys = ref<ApiKey[]>([])
 const selectedKeyId = ref('')
@@ -3118,94 +3111,21 @@ async function retryFailedImage(image: GeneratedImage) {
 }
 
 function createGenerationProgress(owner: StudioOwnerSnapshot) {
-  const completedIds = new Set<GeneratedImage['id']>()
-  const inFlightIds = new Set<GeneratedImage['id']>()
-  let generatedCount = 0
-  let firstError: unknown = null
-  let stillRunning = false
-  let queue = Promise.resolve()
-  let persistenceQueue = Promise.resolve()
-  let persistenceNeedsRefresh = false
-
-  const recordError = (error: unknown) => {
-    if (error instanceof ImageSubmissionUnconfirmed) return
-    if (error instanceof ImageGenerationStillRunning) {
-      stillRunning = true
-      return
-    }
-    if (!firstError) firstError = error
-  }
-
-  const enqueue: GenerationResultHandler = (image, result) => {
-    if (!isStudioOwnerCurrent(owner)) return queue
-    if (completedIds.has(image.id) || inFlightIds.has(image.id)) return queue
-    inFlightIds.add(image.id)
-    queue = queue.then(async () => {
-      if (result.status === 'rejected') {
-        if (result.reason instanceof ImageGenerationStillRunning) {
-          stillRunning = true
-          return
-        }
-        recordError(result.reason)
-        return
-      }
-      if (!result.value.length) {
-        recordError(new Error('上游没有返回图片'))
-        return
-      }
-      const generated = await finishGenerationBatch(
-        [image],
-        [result],
-        generatedCount + 1,
-        false,
+  return createImageGenerationProgress({
+    owner,
+    isOwnerCurrent: isStudioOwnerCurrent,
+    finishBatch: (images, results, titleStart) =>
+      finishGenerationBatch(images, results, titleStart, false, owner),
+    persistBatch: (generated, imagePrompt, imageModelName) =>
+      persistGeneratedImages(generated, imagePrompt, imageModelName, {
+        refresh: false,
         owner,
-      )
-      if (!generated.length) {
-        recordError(new Error('上游没有返回可用图片'))
-        return
-      }
-      completedIds.add(image.id)
-      generatedCount += generated.length
-      persistenceQueue = persistenceQueue
-        .then(async () => {
-          const saved = await persistGeneratedImages(
-            generated,
-            image.prompt || prompt.value.trim(),
-            image.model || imageModel.value,
-            { refresh: false, owner },
-          )
-          if (saved) persistenceNeedsRefresh = true
-        })
-        .catch(recordError)
-    }).catch((error) => {
-      recordError(error)
-    }).finally(() => {
-      inFlightIds.delete(image.id)
-    })
-    return queue
-  }
-
-  return {
-    completedIds,
-    enqueue,
-    recordError,
-    drain: async () => {
-      await queue
-      await persistenceQueue
-      if (persistenceNeedsRefresh) {
-        await Promise.allSettled([loadGallery(), loadStudioQuota()])
-      }
-    },
-    get generatedCount() {
-      return generatedCount
-    },
-    get firstError() {
-      return firstError
-    },
-    get stillRunning() {
-      return stillRunning
-    },
-  }
+      }),
+    loadGallery,
+    loadQuota: loadStudioQuota,
+    resolvePrompt: (image) => image.prompt || prompt.value.trim(),
+    resolveModel: (image) => image.model || imageModel.value,
+  })
 }
 
 function removePendingImages(

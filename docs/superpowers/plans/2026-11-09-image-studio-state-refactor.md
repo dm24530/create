@@ -599,3 +599,29 @@ Expected: PASS with 119 tests.
 
 Run: `pnpm run typecheck`
 Expected: exit 0.
+
+### Task 20: Extract Generation Progress Coordination
+
+**Files:**
+- Create: `frontend/src/features/image-studio/imageGenerationProgress.ts`
+- Create: `frontend/src/features/image-studio/imageSubmissionErrors.ts`
+- Create: `frontend/src/features/image-studio/__tests__/imageGenerationProgress.spec.ts`
+- Modify: `frontend/src/features/image-studio/ImageStudioView.vue`
+
+**Interfaces:**
+- Produces: per-image completion deduplication, serialized persistence, first-error aggregation, still-running detection, and deferred gallery/quota refresh.
+
+- [x] **Step 1: Write failing progress tests**
+
+Run: `pnpm exec vitest run src/features/image-studio/__tests__/imageGenerationProgress.spec.ts`
+Expected: PASS after implementation with 1 test.
+
+- [x] **Step 2: Replace the inline progress coordinator**
+
+Run: `pnpm exec vitest run src/features/image-studio/__tests__/imageGenerationProgress.spec.ts src/features/image-studio/__tests__/ImageStudioView.spec.ts`
+Expected: PASS with 118 tests.
+
+- [x] **Step 3: Run type checking**
+
+Run: `pnpm run typecheck`
+Expected: exit 0.
