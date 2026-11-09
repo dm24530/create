@@ -170,3 +170,34 @@ git add docs/superpowers/specs/2026-11-09-image-studio-state-refactor-design.md 
   frontend/src/features/image-studio/ImageStudioView.vue
 git commit -m "refactor: establish image task state model"
 ```
+
+### Task 5: Extract Gateway Task Transport
+
+**Files:**
+- Create: `frontend/src/features/image-studio/imageTaskTransport.ts`
+- Create: `frontend/src/features/image-studio/__tests__/imageTaskTransport.spec.ts`
+- Modify: `frontend/src/features/image-studio/ImageStudioView.vue`
+
+**Interfaces:**
+- Consumes: raw Gateway and async task payloads.
+- Produces: `gatewayTaskPayload(payload)`, `gatewayPollUrlForTask(task, apiBaseUrl)`, `resolveGatewayPollUrl(raw, apiBaseUrl, fallbackOrigin)`, `gatewayTaskState(task)`, and `GatewayTaskState`.
+
+- [x] **Step 1: Write failing tests for response unwrapping, poll URL resolution, and status classification**
+
+Run: `pnpm exec vitest run src/features/image-studio/__tests__/imageTaskTransport.spec.ts`
+Expected: FAIL because `imageTaskTransport.ts` does not exist.
+
+- [x] **Step 2: Implement the task transport helpers**
+
+Run: `pnpm exec vitest run src/features/image-studio/__tests__/imageTaskTransport.spec.ts`
+Expected: PASS with 6 tests.
+
+- [x] **Step 3: Replace duplicate helpers in `ImageStudioView.vue`**
+
+Run: `pnpm exec vitest run src/features/image-studio/__tests__/imageTaskState.spec.ts src/features/image-studio/__tests__/imageTaskTransport.spec.ts src/features/image-studio/__tests__/ImageStudioView.spec.ts`
+Expected: PASS with 134 tests.
+
+- [x] **Step 4: Run type checking**
+
+Run: `pnpm run typecheck`
+Expected: exit 0.

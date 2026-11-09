@@ -765,6 +765,12 @@ import {
   isImageTaskActive,
   isImageTaskDisplayReady,
 } from './imageTaskState'
+import {
+  gatewayPollUrlForTask,
+  gatewayTaskPayload,
+  gatewayTaskState,
+  resolveGatewayPollUrl,
+} from './imageTaskTransport'
 import type {
   GeneratedImage,
   GenerationRequestSnapshot,
@@ -820,6 +826,7 @@ const loadingModels = ref(false)
 const refreshing = ref(false)
 const modelLoadError = ref('')
 const prompt = ref(IMAGE_STUDIO_DEFAULT_PROMPT)
+const lastSubmittedPrompt = ref('')
 const promptTextareaRef = ref<HTMLTextAreaElement | null>(null)
 const { height: promptHeight, startResize: startPromptResize } = usePromptResize(promptTextareaRef, {
   storageKey: 'sub2api:image-studio:prompt-height',
@@ -852,6 +859,12 @@ watch(errorMessage, (message) => {
   reportVisibleImageStudioError(normalized)
 })
 const images = ref<GeneratedImage[]>([])
+const generationPrompt = computed(() => (
+  prompt.value.trim()
+  || lastSubmittedPrompt.value.trim()
+  || images.value.find((image) => image.prompt?.trim())?.prompt?.trim()
+  || ''
+))
 const generationClockNow = ref(Date.now())
 const activeImageTaskCount = computed(() => images.value.filter(isImageTaskActive).length)
 const keyCredentialsReady = ref(false)
@@ -1257,7 +1270,7 @@ const hasActiveImageGeneration = computed(() => (
   || activeGenerations.value > 0
   || activeImageTaskCount.value > 0
 ))
-const canGenerate = computed(() => Boolean(apiBaseUrl.value && selectedKey.value?.key && imageModel.value.trim() && prompt.value.trim())
+const canGenerate = computed(() => Boolean(apiBaseUrl.value && selectedKey.value?.key && imageModel.value.trim() && generationPrompt.value)
   && !sizeIssue.value
   && !referenceLimitIssue.value
   && !modelQualityIssue.value)
@@ -1386,6 +1399,7 @@ function clearStudioUserState() {
   previewPromptDraft.value = ''
   resetImageStudioDraft()
   prompt.value = IMAGE_STUDIO_DEFAULT_PROMPT
+  lastSubmittedPrompt.value = ''
   references.value = []
   generationRequestSnapshots.clear()
   retryingFailureIds.value.clear()
@@ -3180,7 +3194,8 @@ async function generate() {
   const owner = captureStudioOwner()
   generating.value = true
   activeGenerations.value += 1
-  const currentPrompt = prompt.value.trim()
+  const currentPrompt = generationPrompt.value
+  lastSubmittedPrompt.value = currentPrompt
   const currentKey = selectedKey.value
   const currentModel = imageModel.value.trim()
   const currentQuality = quality.value
@@ -3702,17 +3717,6 @@ function gatewayIdempotencyLookupUrl(idempotencyKey: string) {
   return `${apiBaseUrl.value.replace(/\/+$/, '')}/images/tasks/by-idempotency/${encodeURIComponent(idempotencyKey)}`
 }
 
-function gatewayPollUrlForTask(task: any) {
-  const direct = String(task?.poll_url || '').trim()
-  if (direct) return direct
-  const id = String(task?.task_id || task?.id || '').trim()
-  return id ? `${apiBaseUrl.value.replace(/\/+$/, '')}/images/tasks/${encodeURIComponent(id)}` : ''
-}
-
-function gatewayTaskPayload(payload: any) {
-  return payload?.data && !payload?.task_id && !payload?.id ? payload.data : payload
-}
-
 class ImageGatewayTaskError extends Error {
   readonly statusCode?: number
 
@@ -3733,15 +3737,6 @@ function gatewayTaskError(payload: any, httpStatus?: number): Error {
     status > 0 ? `上游 API 错误 (HTTP ${status})：${message}` : String(message),
     status > 0 ? status : undefined,
   )
-}
-
-function resolveGatewayPollUrl(raw: string) {
-  if (/^https?:\/\//i.test(raw)) return raw
-  const fallbackOrigin = typeof window !== 'undefined' && window.location.origin
-    ? window.location.origin
-    : 'http://localhost'
-  const apiBase = new URL(apiBaseUrl.value || fallbackOrigin, fallbackOrigin)
-  return new URL(raw, apiBase.origin).toString()
 }
 
 async function waitForGatewayPollRetry(delay: number) {
@@ -3843,15 +3838,19 @@ async function pollGatewayImageTask(
     Number(options.deadline || 0) || Number.POSITIVE_INFINITY,
   )
   const pollStartedAt = Date.now()
-  const url = resolveGatewayPollUrl(pollUrl)
+  const fallbackOrigin = typeof window !== 'undefined' && window.location.origin
+    ? window.location.origin
+    : 'http://localhost'
+  const url = resolveGatewayPollUrl(pollUrl, apiBaseUrl.value, fallbackOrigin)
   let previewDelivered = false
   const resolveTask = (task: any): any[] | null => {
-    if (task?.status === 'ready' || task?.status === 'completed') {
+    const state = gatewayTaskState(task)
+    if (state === 'completed') {
       const result = task.result
       const normalized = typeof result === 'string' ? JSON.parse(result) : result
       return extractImages(normalized)
     }
-    if (task?.status === 'preview_ready' && !previewDelivered) {
+    if (state === 'preview_ready' && !previewDelivered) {
       const result = task.result
       const normalized = typeof result === 'string' ? JSON.parse(result) : result
       const previewItems = extractImages(normalized)
@@ -3860,7 +3859,7 @@ async function pollGatewayImageTask(
         options.onPreview?.(previewItems)
       }
     }
-    if (task?.status === 'failed') {
+    if (state === 'failed') {
       throw gatewayTaskError(task.error || task, Number(task?.http_status || 0))
     }
     return null
@@ -4006,7 +4005,7 @@ async function tryExecuteGatewayAsyncRequests(
     if (!response && transientSubmitFailure) {
       try {
         const recovered = await lookupGatewayTaskByIdempotency(idempotencyKey, headers)
-        if (recovered && gatewayPollUrlForTask(recovered)) {
+        if (recovered && gatewayPollUrlForTask(recovered, apiBaseUrl.value)) {
           response = {
             ok: true,
             json: async () => recovered,
@@ -4056,7 +4055,7 @@ async function tryExecuteGatewayAsyncRequests(
       continue
     }
     const task = gatewayTaskPayload(payload)
-    const taskPollUrl = gatewayPollUrlForTask(task)
+    const taskPollUrl = gatewayPollUrlForTask(task, apiBaseUrl.value)
     if (!taskPollUrl) {
       const error = new Error('服务端没有返回图片任务地址')
       if (!submitted.length) throw error
@@ -4232,7 +4231,7 @@ async function resumeAmbiguousGatewaySubmissions(pendingImages: GeneratedImage[]
         const task = await lookupGatewayTaskByIdempotency(image.taskId, {
           Authorization: `Bearer ${taskKey.key}`,
         })
-        const pollUrl = gatewayPollUrlForTask(task)
+        const pollUrl = gatewayPollUrlForTask(task, apiBaseUrl.value)
         if (!isStudioOwnerCurrent(owner) || !pollUrl) return
         image.gatewayTaskId = String(task?.task_id || task?.id || image.taskId)
         image.gatewayPollUrl = pollUrl
