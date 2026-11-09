@@ -772,10 +772,31 @@ import {
   resolveGatewayPollUrl,
 } from './imageTaskTransport'
 import {
+  ImageGatewayTaskError,
+  fetchWithTimeout,
+  gatewayAsyncSubmitUrl,
+  gatewayTaskError,
+  isTransientGatewayError,
+  isTransientGatewayStatus,
+  lookupGatewayTaskByIdempotency,
+} from './imageTaskClient'
+import {
   sameImageIdentityOrder,
   sameStoredObject,
   stableDisplayOrder,
 } from './imageGalleryState'
+import {
+  PENDING_PROMPT_STORAGE_KEY,
+  PENDING_STORAGE_KEY,
+  failedImageStorageKey,
+  pendingImageStorageKey,
+  pendingPromptStorageKey,
+  readStudioPreferences as readStoredStudioPreferences,
+  readStudioSnapshot as readStoredStudioSnapshot,
+  writeStudioPreferences as writeStoredStudioPreferences,
+  writeStudioSnapshot as writeStoredStudioSnapshot,
+  type ImageStudioSnapshot,
+} from './imageStudioPersistence'
 import type {
   GeneratedImage,
   GenerationRequestSnapshot,
@@ -920,11 +941,6 @@ if (imageStudioDraft.ownerId !== draftOwnerId) {
   references.value = imageStudioDraft.references.map((item) => ({ ...item }))
 }
 
-const PENDING_STORAGE_KEY = 'sub2api:image-studio:pending'
-const FAILED_STORAGE_KEY = 'sub2api:image-studio:failures'
-const PENDING_PROMPT_STORAGE_KEY = 'sub2api:image-studio:pending-prompt'
-const STUDIO_PREFERENCES_STORAGE_KEY = 'sub2api:image-studio:preferences'
-const STUDIO_SNAPSHOT_STORAGE_KEY = 'sub2api:image-studio:snapshot-v1'
 let nextImageId = 1
 let imageDisplayOrderCursor = Date.now() * 1000
 
@@ -956,80 +972,9 @@ function mergeImagesByDisplayOrder(
   return sortStudioItemsByDisplayOrder(merged)
 }
 
-function pendingImageStorageKey(userId: number | string) {
-  return `${PENDING_STORAGE_KEY}:${userId}`
-}
-
-function failedImageStorageKey(userId: number | string) {
-  return `${FAILED_STORAGE_KEY}:${userId}`
-}
-
-interface ImageStudioPreferences {
-  keyId: string
-  model: string
-}
-
-function studioPreferencesStorageKey(userId = authStore.user?.id) {
-  return userId == null ? STUDIO_PREFERENCES_STORAGE_KEY : `${STUDIO_PREFERENCES_STORAGE_KEY}:${userId}`
-}
-
-function readStudioPreferences(): ImageStudioPreferences {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(studioPreferencesStorageKey()) || '{}')
-    return {
-      keyId: typeof parsed?.keyId === 'string' ? parsed.keyId : '',
-      model: typeof parsed?.model === 'string' ? parsed.model : '',
-    }
-  } catch {
-    return { keyId: '', model: '' }
-  }
-}
-
-function writeStudioPreferences(update: Partial<ImageStudioPreferences>) {
-  try {
-    const current = readStudioPreferences()
-    localStorage.setItem(studioPreferencesStorageKey(), JSON.stringify({
-      ...current,
-      ...update,
-    }))
-  } catch {
-    // Persisting UI preferences is optional.
-  }
-}
-
-interface ImageStudioSnapshot {
-  keys: ApiKey[]
-  selectedKeyId: string
-  imageModels: string[]
-  imageModel: string
-  images: GeneratedImage[]
-}
-
-function studioSnapshotStorageKey(userId: number | string) {
-  return `${STUDIO_SNAPSHOT_STORAGE_KEY}:${userId}`
-}
-
-function readStudioSnapshot(userId: number | string): ImageStudioSnapshot | null {
-  try {
-    // 旧版本共用同一个 key，清掉它可以避免跨账号泄露历史图片。
-    sessionStorage.removeItem(STUDIO_SNAPSHOT_STORAGE_KEY)
-    const parsed = JSON.parse(sessionStorage.getItem(studioSnapshotStorageKey(userId)) || 'null')
-    if (!parsed || typeof parsed !== 'object') return null
-    return {
-      keys: Array.isArray(parsed.keys) ? parsed.keys : [],
-      selectedKeyId: typeof parsed.selectedKeyId === 'string' ? parsed.selectedKeyId : '',
-      imageModels: Array.isArray(parsed.imageModels) ? parsed.imageModels.filter((item: unknown) => typeof item === 'string') : [],
-      imageModel: typeof parsed.imageModel === 'string' ? parsed.imageModel : '',
-      images: Array.isArray(parsed.images) ? parsed.images : [],
-    }
-  } catch {
-    return null
-  }
-}
-
 function restoreStudioSnapshot(userId?: number | string) {
   if (userId == null) return
-  const snapshot = readStudioSnapshot(userId)
+  const snapshot = readStoredStudioSnapshot(sessionStorage, userId)
   if (!snapshot) return
   keys.value = snapshot.keys.map((key) => ({ ...key, key: '' }))
   selectedKeyId.value = snapshot.selectedKeyId
@@ -1073,7 +1018,7 @@ function writeStudioSnapshot(userId: number | string | null | undefined = authSt
             : image.thumbSrc,
         })),
     }
-    sessionStorage.setItem(studioSnapshotStorageKey(userId), JSON.stringify(snapshot))
+    writeStoredStudioSnapshot(sessionStorage, userId, snapshot)
   } catch {
     // A cached UI snapshot is optional; failed writes must not affect the studio.
   }
@@ -1760,7 +1705,7 @@ async function loadKeysAndSettings(epoch = studioUserEpoch, ownerId = studioStat
     .then((result) => {
       if (!isCurrentUser()) return
       keys.value = result.keys
-      const preferences = readStudioPreferences()
+      const preferences = readStoredStudioPreferences(localStorage, authStore.user?.id)
       const preferredKey = result.keys.find((key) => (
         String(key.id) === preferences.keyId
         && key.status === 'active'
@@ -2147,7 +2092,7 @@ function applyInspirationFromRoute() {
     sessionStorage.removeItem(PENDING_PROMPT_STORAGE_KEY)
     const userId = authStore.user?.id
     if (userId == null) return
-    const storageKey = `${PENDING_PROMPT_STORAGE_KEY}:${userId}`
+    const storageKey = pendingPromptStorageKey(userId)
     const pending = sessionStorage.getItem(storageKey)
     if (pending && pending.trim()) {
       prompt.value = pending.trim()
@@ -2948,7 +2893,7 @@ function imageMIMETypeForFormat(value: unknown): string {
 
 async function loadModels() {
   const requestId = ++modelRequestId
-  const preferredModel = readStudioPreferences().model
+  const preferredModel = readStoredStudioPreferences(localStorage, authStore.user?.id).model
   loadingModels.value = true
   imageModels.value = []
   imageModel.value = ''
@@ -3707,88 +3652,10 @@ function removeFailedImage(image: GeneratedImage) {
   persistFailedImages()
 }
 
-function gatewayAsyncSubmitUrl(syncUrl: string, geminiModel: boolean) {
-  if (geminiModel) {
-    return `${apiBaseUrl.value.replace(/\/+$/, '')}/images/generations/async`
-  }
-  return syncUrl.replace(/\/images\/(generations|edits)$/, '/images/$1/async')
-}
-
-function gatewayIdempotencyLookupUrl(idempotencyKey: string) {
-  return `${apiBaseUrl.value.replace(/\/+$/, '')}/images/tasks/by-idempotency/${encodeURIComponent(idempotencyKey)}`
-}
-
-class ImageGatewayTaskError extends Error {
-  readonly statusCode?: number
-
-  constructor(message: string, statusCode?: number) {
-    super(message)
-    this.name = 'ImageGatewayTaskError'
-    this.statusCode = statusCode
-  }
-}
-
-function gatewayTaskError(payload: any, httpStatus?: number): Error {
-  const message = payload?.error?.message
-    || payload?.error
-    || payload?.message
-    || '图片生成任务失败'
-  const status = Number(payload?.http_status || httpStatus || 0)
-  return new ImageGatewayTaskError(
-    status > 0 ? `上游 API 错误 (HTTP ${status})：${message}` : String(message),
-    status > 0 ? status : undefined,
-  )
-}
-
 async function waitForGatewayPollRetry(delay: number) {
   if (componentDisposed) throw new ImageGenerationWaitCancelled()
   await new Promise((resolve) => window.setTimeout(resolve, delay))
   if (componentDisposed) throw new ImageGenerationWaitCancelled()
-}
-
-class ImageRequestTimeout extends Error {
-  constructor(readonly timeoutMs: number) {
-    super(`请求超时（${formatRequestTimeout(timeoutMs)}），请稍后重试`)
-    this.name = 'ImageRequestTimeout'
-  }
-}
-
-function formatRequestTimeout(timeoutMs: number) {
-  if (timeoutMs < 60_000) return `${Math.max(1, Math.ceil(timeoutMs / 1_000))} 秒`
-  return `${Math.ceil(timeoutMs / 60_000)} 分钟`
-}
-
-function isTransientGatewayError(error: unknown) {
-  if (error instanceof ImageRequestTimeout) return true
-  const message = error instanceof Error ? error.message : String(error || '')
-  return /failed to fetch|network error|networkerror|load failed|fetch failed|econnreset|etimedout|temporarily unavailable/i.test(message)
-}
-
-function isTransientGatewayStatus(status: number) {
-  return status === 408 || status === 429 || status === 502 || status === 503 || status === 504
-}
-
-async function fetchWithTimeout(
-  input: Parameters<typeof fetch>[0],
-  init: Parameters<typeof fetch>[1] = {},
-  timeoutMs = 30_000,
-) {
-  const controller = new AbortController()
-  let timedOut = false
-  const timer = window.setTimeout(() => {
-    timedOut = true
-    controller.abort()
-  }, timeoutMs)
-  try {
-    return await fetch(input, { ...init, signal: controller.signal })
-  } catch (error) {
-    if (timedOut) {
-      throw new ImageRequestTimeout(timeoutMs)
-    }
-    throw error
-  } finally {
-    window.clearTimeout(timer)
-  }
 }
 
 function imageResultWithTaskTiming(
@@ -3938,7 +3805,7 @@ async function tryExecuteGatewayAsyncRequests(
   geminiModel: boolean,
   onResult?: GenerationResultHandler,
 ): Promise<PromiseSettledResult<any[]>[] | null> {
-  const submitUrl = gatewayAsyncSubmitUrl(syncUrl, geminiModel)
+  const submitUrl = gatewayAsyncSubmitUrl(apiBaseUrl.value, syncUrl, geminiModel)
   const submitted: Array<{ image: GeneratedImage; pollUrl: string }> = []
   const results: Array<PromiseSettledResult<any[]> | null> = new Array(pendingImages.length).fill(null)
   let ambiguousSubmission = false
@@ -4005,7 +3872,11 @@ async function tryExecuteGatewayAsyncRequests(
     }
     if (!response && transientSubmitFailure) {
       try {
-        const recovered = await lookupGatewayTaskByIdempotency(idempotencyKey, headers)
+        const recovered = await lookupGatewayTaskByIdempotency(
+          apiBaseUrl.value,
+          idempotencyKey,
+          headers,
+        )
         if (recovered && gatewayPollUrlForTask(recovered, apiBaseUrl.value)) {
           response = {
             ok: true,
@@ -4229,9 +4100,11 @@ async function resumeAmbiguousGatewaySubmissions(pendingImages: GeneratedImage[]
           ? imageCapableKeys.value.find((key) => Number(key.id) === Number(image.apiKeyId))
           : selectedKey.value
         if (!taskKey?.key) return
-        const task = await lookupGatewayTaskByIdempotency(image.taskId, {
-          Authorization: `Bearer ${taskKey.key}`,
-        })
+        const task = await lookupGatewayTaskByIdempotency(
+          apiBaseUrl.value,
+          image.taskId,
+          { Authorization: `Bearer ${taskKey.key}` },
+        )
         const pollUrl = gatewayPollUrlForTask(task, apiBaseUrl.value)
         if (!isStudioOwnerCurrent(owner) || !pollUrl) return
         image.gatewayTaskId = String(task?.task_id || task?.id || image.taskId)
@@ -4261,21 +4134,6 @@ async function resumeAmbiguousGatewaySubmissions(pendingImages: GeneratedImage[]
       if (image.taskId) resumingAmbiguousTaskIDs.delete(image.taskId)
     }
   }
-}
-
-async function lookupGatewayTaskByIdempotency(
-  idempotencyKey: string,
-  headers: Record<string, string>,
-) {
-  const response = await fetchWithTimeout(
-    gatewayIdempotencyLookupUrl(idempotencyKey),
-    { headers },
-    15_000,
-  )
-  if (response.status === 404) return null
-  const payload = await response.json().catch(() => null)
-  if (!response.ok) throw gatewayTaskError(payload, response.status)
-  return gatewayTaskPayload(payload)
 }
 
 function workerResponseToSettledResult(
@@ -4940,7 +4798,7 @@ watch(errorMessage, (message) => {
 
 watch(selectedKeyId, (keyId) => {
   if (!keyId) return
-  writeStudioPreferences({ keyId })
+  writeStoredStudioPreferences(localStorage, authStore.user?.id, { keyId })
   notifyCreatorKeyChanged('image', keyId)
 })
 
@@ -4957,7 +4815,7 @@ watch(imageModel, (model, previousModel) => {
     appStore.showWarning(modelQualityIssue.value, 6000)
   }
   if (imageModels.value.includes(model)) {
-    writeStudioPreferences({ model })
+  writeStoredStudioPreferences(localStorage, authStore.user?.id, { model })
   }
 })
 

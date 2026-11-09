@@ -232,3 +232,60 @@ Expected: PASS with 139 tests.
 
 Run: `pnpm run typecheck`
 Expected: exit 0.
+
+### Task 7: Extract Image Task Client
+
+**Files:**
+- Create: `frontend/src/features/image-studio/imageTaskClient.ts`
+- Create: `frontend/src/features/image-studio/__tests__/imageTaskClient.spec.ts`
+- Modify: `frontend/src/features/image-studio/ImageStudioView.vue`
+
+**Interfaces:**
+- Consumes: API base URL, headers, idempotency keys, and request timeouts.
+- Produces: async-submit URL mapping, idempotency lookup URL, timeout-aware fetch, transient error/status checks, and idempotency recovery.
+
+- [x] **Step 1: Write failing client tests**
+
+Run: `pnpm exec vitest run src/features/image-studio/__tests__/imageTaskClient.spec.ts`
+Expected: FAIL because `imageTaskClient.ts` does not exist.
+
+- [x] **Step 2: Implement and verify the client**
+
+Run: `pnpm exec vitest run src/features/image-studio/__tests__/imageTaskClient.spec.ts`
+Expected: PASS with 8 tests.
+
+- [x] **Step 3: Replace duplicate client helpers in the page**
+
+Run: `pnpm exec vitest run src/features/image-studio/__tests__/imageTaskClient.spec.ts src/features/image-studio/__tests__/ImageStudioView.spec.ts`
+Expected: PASS with 125 tests.
+
+### Task 8: Extract User-Scoped Persistence
+
+**Files:**
+- Create: `frontend/src/features/image-studio/imageStudioPersistence.ts`
+- Create: `frontend/src/features/image-studio/__tests__/imageStudioPersistence.spec.ts`
+- Modify: `frontend/src/features/image-studio/ImageStudioView.vue`
+
+**Interfaces:**
+- Consumes: browser `Storage` objects, user ids, preference updates, and compact snapshots.
+- Produces: user-scoped storage keys, validated preference/snapshot reads, and safe writes.
+
+- [x] **Step 1: Write failing persistence tests**
+
+Run: `pnpm exec vitest run src/features/image-studio/__tests__/imageStudioPersistence.spec.ts`
+Expected: FAIL because `imageStudioPersistence.ts` does not exist.
+
+- [x] **Step 2: Implement and verify persistence**
+
+Run: `pnpm exec vitest run src/features/image-studio/__tests__/imageStudioPersistence.spec.ts`
+Expected: PASS with 5 tests.
+
+- [x] **Step 3: Replace duplicate storage helpers in the page**
+
+Run: `pnpm exec vitest run src/features/image-studio/__tests__/imageStudioPersistence.spec.ts src/features/image-studio/__tests__/imageTaskClient.spec.ts src/features/image-studio/__tests__/ImageStudioView.spec.ts`
+Expected: PASS with 130 tests.
+
+- [x] **Step 4: Run type checking**
+
+Run: `pnpm run typecheck`
+Expected: exit 0.

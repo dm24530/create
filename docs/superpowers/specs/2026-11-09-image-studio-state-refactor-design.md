@@ -52,6 +52,11 @@ checks independent flags. Later stages will extract polling and gallery state
 into independent composables, but those modules are not required to establish
 the first safe boundary.
 
+The full refactor follows the behavior inventory in
+`2026-11-09-image-studio-full-refactor-inventory.md`. The page must eventually
+become an orchestration layer, with network, persistence, gallery, media, and
+presentational responsibilities split into separate modules.
+
 ## Task Phases
 
 - `submitted`: request exists locally but has not received a usable task URL.
