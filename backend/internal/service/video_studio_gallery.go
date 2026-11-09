@@ -25,6 +25,10 @@ const (
 	maxVideoArchiveBytes int64 = 256 << 20
 	// Video studio reference audio is small compared with generated videos.
 	maxVideoReferenceAudioBytes int64 = 16 << 20
+	// Direct-upload reference assets are resized on the client. Keep a generous
+	// server-side ceiling for large originals while avoiding an unbounded bucket
+	// write endpoint.
+	MaxVideoReferenceAssetBytes int64 = 512 << 20
 )
 
 var (
@@ -42,6 +46,11 @@ var (
 		http.StatusRequestEntityTooLarge,
 		"VIDEO_STUDIO_ARCHIVE_TOO_LARGE",
 		"video exceeds the archive size limit",
+	)
+	ErrVideoStudioReferenceAssetTooLarge = infraerrors.New(
+		http.StatusRequestEntityTooLarge,
+		"VIDEO_STUDIO_REFERENCE_ASSET_TOO_LARGE",
+		"reference asset exceeds the size limit",
 	)
 	ErrVideoStudioUnsupportedType = infraerrors.New(
 		http.StatusUnsupportedMediaType,
@@ -113,6 +122,20 @@ type videoStudioReferenceImageSaver interface {
 
 type videoStudioReferenceAudioSaver interface {
 	SaveVideoReferenceAudio(ctx context.Context, key, contentType string, data []byte) (string, error)
+}
+
+type videoStudioReferenceDirectStorage interface {
+	videoStudioReferenceImageSaver
+	PresignImageUpload(ctx context.Context, objectKey, contentType string) (ImageStorageUploadRequest, error)
+	PresignImageObject(ctx context.Context, objectKey string) (string, error)
+	ImageObjectStat(ctx context.Context, objectKey string) (ImageObjectMetadata, error)
+}
+
+type VideoStudioReferenceAssetPresign struct {
+	ObjectKey     string
+	UploadURL     string
+	UploadHeaders map[string]string
+	ContentType   string
 }
 
 type VideoStudioGalleryService struct {
@@ -200,6 +223,142 @@ func (s *VideoStudioGalleryService) UploadReferenceAsset(
 	default:
 		return "", ErrVideoStudioUnsupportedType
 	}
+}
+
+// PresignReferenceAsset creates a browser-to-object-storage upload URL. The
+// application server only signs the request and never receives the media bytes.
+func (s *VideoStudioGalleryService) PresignReferenceAsset(
+	ctx context.Context,
+	userID int64,
+	kind string,
+	contentType string,
+	bytes int64,
+) (*VideoStudioReferenceAssetPresign, error) {
+	if s == nil || s.storage == nil || userID <= 0 {
+		return nil, ErrVideoStudioGalleryUnavailable
+	}
+	normalizedType, extension, err := normalizeReferenceAssetUpload(kind, contentType)
+	if err != nil {
+		return nil, err
+	}
+	if bytes <= 0 || bytes > MaxVideoReferenceAssetBytes {
+		return nil, ErrVideoStudioReferenceAssetTooLarge
+	}
+	storage, ok := s.storage.(videoStudioReferenceDirectStorage)
+	if !ok {
+		return nil, ErrVideoStudioGalleryUnavailable
+	}
+	storageKey := strconv.FormatInt(userID, 10)
+	if s.identities != nil {
+		resolved, resolveErr := s.identities.StorageKey(ctx, userID)
+		if resolveErr != nil {
+			return nil, resolveErr
+		}
+		storageKey = resolved
+	}
+	id := strings.ReplaceAll(uuid.NewString(), "-", "")
+	objectKey := storageKey + "/video-references/" + id + extension
+	upload, err := storage.PresignImageUpload(ctx, objectKey, normalizedType)
+	if err != nil {
+		return nil, err
+	}
+	return &VideoStudioReferenceAssetPresign{
+		ObjectKey:     objectKey,
+		UploadURL:     upload.URL,
+		UploadHeaders: upload.Headers,
+		ContentType:   normalizedType,
+	}, nil
+}
+
+// CompleteReferenceAsset verifies the directly uploaded object and returns a
+// short-lived read URL suitable for image and video providers.
+func (s *VideoStudioGalleryService) CompleteReferenceAsset(
+	ctx context.Context,
+	userID int64,
+	kind string,
+	contentType string,
+	objectKey string,
+	expectedBytes int64,
+) (string, error) {
+	if s == nil || s.storage == nil || userID <= 0 {
+		return "", ErrVideoStudioGalleryUnavailable
+	}
+	normalizedType, _, err := normalizeReferenceAssetUpload(kind, contentType)
+	if err != nil {
+		return "", err
+	}
+	if expectedBytes <= 0 || expectedBytes > MaxVideoReferenceAssetBytes {
+		return "", ErrVideoStudioReferenceAssetTooLarge
+	}
+	storage, ok := s.storage.(videoStudioReferenceDirectStorage)
+	if !ok {
+		return "", ErrVideoStudioGalleryUnavailable
+	}
+	storageKey := strconv.FormatInt(userID, 10)
+	if s.identities != nil {
+		resolved, resolveErr := s.identities.StorageKey(ctx, userID)
+		if resolveErr != nil {
+			return "", resolveErr
+		}
+		storageKey = resolved
+	}
+	prefix := storageKey + "/video-references/"
+	objectKey = strings.TrimSpace(objectKey)
+	if !strings.HasPrefix(objectKey, prefix) || len(objectKey) <= len(prefix) {
+		return "", ErrVideoStudioUnsupportedType
+	}
+	meta, err := storage.ImageObjectStat(ctx, objectKey)
+	if err != nil {
+		return "", err
+	}
+	if meta.Bytes != expectedBytes {
+		_ = s.storage.DeleteObject(ctx, objectKey)
+		return "", ErrVideoStudioReferenceAssetTooLarge
+	}
+	if !strings.EqualFold(strings.TrimSpace(strings.Split(meta.ContentType, ";")[0]), normalizedType) {
+		_ = s.storage.DeleteObject(ctx, objectKey)
+		return "", ErrVideoStudioUnsupportedType
+	}
+	return storage.PresignImageObject(ctx, objectKey)
+}
+
+func normalizeReferenceAssetUpload(kind, contentType string) (string, string, error) {
+	kind = strings.ToLower(strings.TrimSpace(kind))
+	contentType = strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0]))
+	switch kind {
+	case "image":
+		switch contentType {
+		case "image/png":
+			return contentType, ".png", nil
+		case "image/jpeg":
+			return contentType, ".jpg", nil
+		case "image/webp":
+			return contentType, ".webp", nil
+		}
+	case "video":
+		switch contentType {
+		case "video/mp4":
+			return contentType, ".mp4", nil
+		case "video/quicktime":
+			return contentType, ".mov", nil
+		case "video/webm":
+			return contentType, ".webm", nil
+		}
+	case "audio":
+		switch contentType {
+		case "audio/mpeg":
+			return contentType, ".mp3", nil
+		case "audio/mp4":
+			return contentType, ".m4a", nil
+		case "audio/wav", "audio/x-wav":
+			return "audio/wav", ".wav", nil
+		case "audio/aac":
+			return contentType, ".aac", nil
+		case "audio/ogg":
+			return contentType, ".ogg", nil
+		}
+	}
+	return "", "", ErrVideoStudioUnsupportedType
 }
 
 // Save 归档一段视频。contentType 必须是视频类型，大小不超过 maxVideoArchiveBytes。

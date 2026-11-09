@@ -127,6 +127,9 @@ func RegisterUserRoutes(
 		videoStudio := authenticated.Group("/video-studio")
 		{
 			videoStudio.POST("/reference-assets", h.VideoStudioGallery.UploadReferenceAsset)
+			videoStudio.POST("/reference-assets/upload", h.VideoStudioGallery.UploadReferenceAssetBinary)
+			videoStudio.POST("/reference-assets/presign", h.VideoStudioGallery.PresignReferenceAsset)
+			videoStudio.POST("/reference-assets/complete", h.VideoStudioGallery.CompleteReferenceAsset)
 			videoStudio.GET("/gallery", h.VideoStudioGallery.List)
 			videoStudio.POST("/gallery", h.VideoStudioGallery.Save)
 			videoStudio.POST("/gallery/:id/pin", h.VideoStudioGallery.Pin)

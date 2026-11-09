@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"io"
+	"net/http"
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
@@ -37,6 +39,112 @@ type saveVideoStudioGalleryRequest struct {
 type uploadVideoReferenceAssetRequest struct {
 	Kind    string `json:"kind"`
 	DataURL string `json:"data_url"`
+}
+
+type presignVideoReferenceAssetRequest struct {
+	Kind        string `json:"kind"`
+	ContentType string `json:"content_type"`
+	Bytes       int64  `json:"bytes"`
+}
+
+type completeVideoReferenceAssetRequest struct {
+	Kind        string `json:"kind"`
+	ContentType string `json:"content_type"`
+	ObjectKey   string `json:"object_key"`
+	Bytes       int64  `json:"bytes"`
+}
+
+func (h *VideoStudioGalleryHandler) PresignReferenceAsset(c *gin.Context) {
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not found in context")
+		return
+	}
+	var request presignVideoReferenceAssetRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		response.BadRequest(c, "Invalid reference asset presign request")
+		return
+	}
+	presign, err := h.gallery.PresignReferenceAsset(
+		c.Request.Context(),
+		subject.UserID,
+		request.Kind,
+		request.ContentType,
+		request.Bytes,
+	)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, gin.H{
+		"object_key":     presign.ObjectKey,
+		"upload_url":     presign.UploadURL,
+		"upload_headers": presign.UploadHeaders,
+		"content_type":   presign.ContentType,
+	})
+}
+
+func (h *VideoStudioGalleryHandler) CompleteReferenceAsset(c *gin.Context) {
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not found in context")
+		return
+	}
+	var request completeVideoReferenceAssetRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		response.BadRequest(c, "Invalid reference asset completion request")
+		return
+	}
+	url, err := h.gallery.CompleteReferenceAsset(
+		c.Request.Context(),
+		subject.UserID,
+		request.Kind,
+		request.ContentType,
+		request.ObjectKey,
+		request.Bytes,
+	)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, gin.H{"url": url})
+}
+
+func (h *VideoStudioGalleryHandler) UploadReferenceAssetBinary(c *gin.Context) {
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not found in context")
+		return
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, service.MaxVideoReferenceAssetBytes+1)
+	file, header, err := c.Request.FormFile("file")
+	if err != nil {
+		response.BadRequest(c, "Invalid reference asset file")
+		return
+	}
+	defer func() { _ = file.Close() }()
+	if header.Size <= 0 || header.Size > service.MaxVideoReferenceAssetBytes {
+		response.BadRequest(c, "Reference asset is empty or too large")
+		return
+	}
+	data, err := io.ReadAll(io.LimitReader(file, service.MaxVideoReferenceAssetBytes+1))
+	if err != nil || int64(len(data)) != header.Size {
+		response.BadRequest(c, "Failed to read reference asset")
+		return
+	}
+	contentType := strings.TrimSpace(header.Header.Get("Content-Type"))
+	url, err := h.gallery.UploadReferenceAsset(
+		c.Request.Context(),
+		subject.UserID,
+		c.PostForm("kind"),
+		contentType,
+		data,
+	)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, gin.H{"url": url})
 }
 
 func (h *VideoStudioGalleryHandler) UploadReferenceAsset(c *gin.Context) {

@@ -97,6 +97,8 @@ type videoMediaSaverStub struct {
 	audioTypes    []string
 	deletedObject []string
 	quota         int
+	presignBytes  int64
+	presignType   string
 }
 
 func TestVideoStudioGalleryUnpinReturnsTemporaryExpiry(t *testing.T) {
@@ -152,6 +154,27 @@ func (s *videoMediaSaverStub) SaveImageWithKey(
 	s.imageKeys = append(s.imageKeys, key)
 	s.imageTypes = append(s.imageTypes, contentType)
 	return "https://cdn.example.com/" + key, key, nil
+}
+
+func (s *videoMediaSaverStub) PresignImageUpload(
+	_ context.Context,
+	key string,
+	contentType string,
+) (ImageStorageUploadRequest, error) {
+	s.imageKeys = append(s.imageKeys, key)
+	s.imageTypes = append(s.imageTypes, contentType)
+	return ImageStorageUploadRequest{
+		URL:     "https://upload.example.com/" + strings.TrimLeft(key, "/"),
+		Headers: map[string]string{"Content-Type": contentType},
+	}, nil
+}
+
+func (s *videoMediaSaverStub) PresignImageObject(_ context.Context, key string) (string, error) {
+	return "https://read.example.com/" + strings.TrimLeft(key, "/"), nil
+}
+
+func (s *videoMediaSaverStub) ImageObjectStat(_ context.Context, _ string) (ImageObjectMetadata, error) {
+	return ImageObjectMetadata{Bytes: s.presignBytes, ContentType: s.presignType}, nil
 }
 
 func (s *videoMediaSaverStub) SaveVideoReferenceAudio(
@@ -297,6 +320,48 @@ func TestVideoStudioGalleryUploadReferenceAssetSkipsGalleryRows(t *testing.T) {
 	require.Equal(t, "audio/mpeg", saver.audioTypes[0])
 
 	require.Empty(t, store.saved, "temporary reference assets must not create studio works")
+}
+
+func TestVideoStudioGalleryDirectReferenceUploadPresignAndComplete(t *testing.T) {
+	saver := &videoMediaSaverStub{}
+	svc := NewVideoStudioGalleryService(&videoGalleryStoreStub{}, saver)
+	ctx := context.Background()
+
+	presign, err := svc.PresignReferenceAsset(ctx, 42, "image", "image/webp", 900_000)
+	require.NoError(t, err)
+	require.Contains(t, presign.ObjectKey, "/video-references/")
+	require.Contains(t, presign.UploadURL, "https://upload.example.com/")
+	require.Equal(t, "image/webp", presign.ContentType)
+
+	saver.presignBytes = 900_000
+	saver.presignType = "image/webp"
+	url, err := svc.CompleteReferenceAsset(
+		ctx,
+		42,
+		"image",
+		"image/webp",
+		presign.ObjectKey,
+		900_000,
+	)
+	require.NoError(t, err)
+	require.Contains(t, url, "https://read.example.com/")
+	require.Empty(t, saver.deletedObject)
+}
+
+func TestVideoStudioGalleryDirectReferenceUploadRejectsWrongOwnerAndSize(t *testing.T) {
+	saver := &videoMediaSaverStub{presignBytes: 10, presignType: "image/webp"}
+	svc := NewVideoStudioGalleryService(&videoGalleryStoreStub{}, saver)
+	ctx := context.Background()
+
+	presign, err := svc.PresignReferenceAsset(ctx, 42, "image", "image/webp", 900_000)
+	require.NoError(t, err)
+
+	_, err = svc.CompleteReferenceAsset(ctx, 7, "image", "image/webp", presign.ObjectKey, 900_000)
+	require.ErrorIs(t, err, ErrVideoStudioUnsupportedType)
+
+	_, err = svc.CompleteReferenceAsset(ctx, 42, "image", "image/webp", presign.ObjectKey, 900_000)
+	require.ErrorIs(t, err, ErrVideoStudioReferenceAssetTooLarge)
+	require.Equal(t, []string{presign.ObjectKey}, saver.deletedObject)
 }
 
 func TestVideoStudioGalleryListHidesLegacyReferenceVideos(t *testing.T) {
