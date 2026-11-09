@@ -761,6 +761,16 @@ import { createReferenceImagePreview } from './referenceImagePreview'
 import { extractGeminiImageResults } from './geminiImageResults'
 import { imageDownloadURL, resolveImageAssetURL } from './imageDownload'
 import { imageTaskNextPollDelay, imageTaskRetryDelay } from './imagePolling'
+import {
+  isImageTaskActive,
+  isImageTaskDisplayReady,
+} from './imageTaskState'
+import type {
+  GeneratedImage,
+  GenerationRequestSnapshot,
+  ReferenceItem,
+  SizeSettings,
+} from './imageStudioTypes'
 import Icon from '@/components/icons/Icon.vue'
 import { useClipboard } from '@/composables/useClipboard'
 import {
@@ -796,82 +806,10 @@ class ImageSubmissionUnconfirmed extends Error {
   }
 }
 
-interface GeneratedImage {
-  id: number | string
-  title: string
-  src: string
-  originalSrc?: string
-  thumbSrc?: string
-  thumbSrcSet?: string
-  meta: string
-  prompt?: string
-  model?: string
-  size?: string
-  format?: string
-  quality?: string
-  background?: string
-  customSizeRequested?: boolean
-  pending?: boolean
-  taskId?: string
-  batchId?: string
-  gatewayTaskId?: string
-  gatewayPollUrl?: string
-  gatewaySubmitPending?: boolean
-  previewSrc?: string
-  failed?: boolean
-  error?: string
-  hadReferences?: boolean
-  apiKeyId?: number
-  startedAt?: number
-  durationMs?: number
-  // 服务端状态：saved 为真表示已经存进「我的作品」（永久），
-  // 否则是生成页的临时内容，expiresAt 是过期时间（秒）。
-  saved?: boolean
-  expiresAt?: number
-  createdAt?: number
-  displayOrder?: number
-  // Persisted gallery identity survives remounts without relying on signed URLs.
-  galleryId?: string
-  gallerySourceId?: string
-  restoredFromSnapshot?: boolean
-}
-
 type GenerationResultHandler = (
   image: GeneratedImage,
   result: PromiseSettledResult<any[]>,
 ) => Promise<void> | void
-
-interface ReferenceItem {
-  id: number
-  name: string
-  file: File
-  preview: string
-}
-
-interface GenerationRequestSnapshot {
-  prompt: string
-  model: string
-  size: string
-  quality: string
-  format: string
-  background: string
-  apiKeyId?: number
-  appliedSize: SizeSettings
-  references: ReferenceItem[]
-}
-
-type SizeMode = 'auto' | 'ratio' | 'custom'
-
-interface SizeSettings {
-  mode: SizeMode
-  aspectBase: number
-  aspectRatio: string
-  useCustomRatio: boolean
-  customRatioWidth: number
-  customRatioHeight: number
-  width: number
-  height: number
-}
 
 const keys = ref<ApiKey[]>([])
 const selectedKeyId = ref('')
@@ -915,7 +853,7 @@ watch(errorMessage, (message) => {
 })
 const images = ref<GeneratedImage[]>([])
 const generationClockNow = ref(Date.now())
-const activeImageTaskCount = computed(() => images.value.filter((image) => image.pending).length)
+const activeImageTaskCount = computed(() => images.value.filter(isImageTaskActive).length)
 const keyCredentialsReady = ref(false)
 const references = ref<ReferenceItem[]>([])
 const generationRequestSnapshots = new Map<string, GenerationRequestSnapshot>()
@@ -1317,7 +1255,7 @@ const modelQualityIssue = computed(() => (
 const hasActiveImageGeneration = computed(() => (
   generating.value
   || activeGenerations.value > 0
-  || images.value.some((image) => image.pending)
+  || activeImageTaskCount.value > 0
 ))
 const canGenerate = computed(() => Boolean(apiBaseUrl.value && selectedKey.value?.key && imageModel.value.trim() && prompt.value.trim())
   && !sizeIssue.value
@@ -2530,7 +2468,7 @@ function isPreviewShowingThumbnail(image: GeneratedImage) {
 }
 
 function canOpenImagePreview(image: GeneratedImage) {
-  return !image.failed && (!image.pending || Boolean(image.previewSrc))
+  return isImageTaskDisplayReady(image)
 }
 
 function isImageMediaLoaded(image: GeneratedImage) {
@@ -5085,7 +5023,7 @@ onActivated(() => {
     void switchStudioUser(currentUserId)
     return
   }
-  if (activeGenerations.value > 0 || images.value.some((image) => image.pending)) {
+  if (activeGenerations.value > 0 || activeImageTaskCount.value > 0) {
     startGenerationClock()
   }
   if (studioLoadedOnce) refreshGalleryAfterExternalChange()
