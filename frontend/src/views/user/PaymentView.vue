@@ -113,12 +113,8 @@
                 @select="selectedMethod = $event"
               />
             </div>
-            <div v-if="validAmount > 0" class="card p-6">
+            <div v-if="validAmount > 0 && hasRechargeSummary" class="card p-6">
               <div class="space-y-2 text-sm">
-                <div class="flex justify-between">
-                  <span class="text-gray-500 dark:text-gray-400">{{ t('payment.paymentAmount') }}</span>
-                  <span :class="discountAmount > 0 ? 'text-gray-400 line-through dark:text-gray-500' : 'text-gray-900 dark:text-white'">{{ formatSelectedPaymentAmount(validAmount) }}</span>
-                </div>
                 <div v-if="discountAmount > 0" class="flex justify-between" data-testid="recharge-discount-row">
                   <span class="text-gray-500 dark:text-gray-400">{{ t('payment.rechargeBonus.discountLabelWithPercent', { percent: formatRechargeBonusNumber(bonusQuote.percent) }) }}</span>
                   <span class="font-medium text-red-600 dark:text-red-400">-{{ formatSelectedPaymentAmount(discountAmount) }}</span>
@@ -908,6 +904,9 @@ const totalAmount = computed(() =>
     : payBaseAmount.value
 )
 const showActualPay = computed(() => feeRate.value > 0 || discountAmount.value > 0)
+const hasRechargeSummary = computed(() =>
+  showActualPay.value || showBonusRow.value || showCreditedBalance.value
+)
 
 const amountError = computed(() => {
   if (hasRechargePackages.value) return ''

@@ -321,7 +321,6 @@ export default {
     title: 'Recharge / Subscription',
     description: 'Recharge balance, buy subscriptions, or purchase recharge cards',
     amountLabel: 'Amount',
-    paymentAmount: 'Payment Amount',
     creditedBalance: 'Credited Balance',
     rechargeBonus: {
       creditedShort: 'Get {amount}',
