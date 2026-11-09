@@ -1,4 +1,10 @@
-import { gatewayTaskPayload } from './imageTaskTransport'
+import { imageTaskNextPollDelay, imageTaskRetryDelay } from './imagePolling'
+import {
+  gatewayTaskPayload,
+  gatewayTaskState,
+  resolveGatewayPollUrl,
+} from './imageTaskTransport'
+import { ImageGenerationWaitCancelled } from '@/utils/imageGenerationWorker'
 
 export class ImageGatewayTaskError extends Error {
   readonly statusCode?: number
@@ -19,6 +25,18 @@ export class ImageRequestTimeout extends Error {
 
 export interface ImageTaskClientOptions {
   fetchImpl?: typeof fetch
+}
+
+export interface PollGatewayImageTaskOptions extends ImageTaskClientOptions {
+  apiBaseUrl: string
+  extractImages: (payload: any) => any[]
+  isCancelled?: () => boolean
+  onPreview?: (items: any[]) => void
+  deadline?: number
+  timeoutMs?: number
+  timeoutMessage?: string
+  now?: () => number
+  wait?: (delay: number) => Promise<void>
 }
 
 export function gatewayAsyncSubmitUrl(
@@ -105,4 +123,84 @@ export async function lookupGatewayTaskByIdempotency(
   const payload = await response.json().catch(() => null)
   if (!response.ok) throw gatewayTaskError(payload, response.status)
   return gatewayTaskPayload(payload)
+}
+
+export async function pollGatewayImageTask(
+  pollUrl: string,
+  headers: Record<string, string>,
+  options: PollGatewayImageTaskOptions,
+): Promise<any[]> {
+  const now = options.now || Date.now
+  const wait = options.wait || ((delay: number) => (
+    new Promise<void>((resolve) => setTimeout(resolve, delay))
+  ))
+  const timeoutMs = options.timeoutMs || 10 * 60 * 1000
+  const timeoutMessage = options.timeoutMessage || '图片生成超时，已停止等待'
+  const deadline = Math.min(
+    now() + timeoutMs,
+    Number(options.deadline || 0) || Number.POSITIVE_INFINITY,
+  )
+  const pollStartedAt = now()
+  const fallbackOrigin = typeof window !== 'undefined' && window.location.origin
+    ? window.location.origin
+    : 'http://localhost'
+  const url = resolveGatewayPollUrl(pollUrl, options.apiBaseUrl, fallbackOrigin)
+  let previewDelivered = false
+
+  while (now() < deadline) {
+    if (options.isCancelled?.()) throw new ImageGenerationWaitCancelled()
+    let response: Response
+    let payload: any
+    try {
+      response = await fetchWithTimeout(
+        url,
+        { headers },
+        Math.min(30_000, Math.max(1, deadline - now())),
+        { fetchImpl: options.fetchImpl },
+      )
+      payload = await response.json().catch(() => null)
+    } catch (error) {
+      if (error instanceof ImageGenerationWaitCancelled) throw error
+      if (isTransientGatewayError(error)) {
+        if (now() < deadline) {
+          await wait(imageTaskRetryDelay(now() - pollStartedAt))
+          continue
+        }
+        throw new Error(timeoutMessage)
+      }
+      throw error instanceof Error ? error : new Error('查询图片任务失败')
+    }
+
+    if (isTransientGatewayStatus(response.status)) {
+      if (now() < deadline) {
+        await wait(imageTaskRetryDelay(now() - pollStartedAt))
+        continue
+      }
+      throw new Error(timeoutMessage)
+    }
+    if (!response.ok) throw gatewayTaskError(payload, response.status)
+
+    const task = gatewayTaskPayload(payload)
+    const state = gatewayTaskState(task)
+    if (state === 'completed') {
+      const result = task.result
+      const normalized = typeof result === 'string' ? JSON.parse(result) : result
+      return options.extractImages(normalized)
+    }
+    if (state === 'preview_ready' && !previewDelivered) {
+      const result = task.result
+      const normalized = typeof result === 'string' ? JSON.parse(result) : result
+      const previewItems = options.extractImages(normalized)
+      if (previewItems.length) {
+        previewDelivered = true
+        options.onPreview?.(previewItems)
+      }
+    }
+    if (state === 'failed') {
+      throw gatewayTaskError(task.error || task, Number(task?.http_status || 0))
+    }
+    await wait(imageTaskNextPollDelay(now() - pollStartedAt, previewDelivered))
+  }
+
+  throw new Error(timeoutMessage)
 }

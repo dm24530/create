@@ -758,9 +758,15 @@ import {
 } from '@/utils/imageReferenceCompression'
 import { resolveGeminiImageModelPolicy, type GeminiImageQuality } from './geminiImageModelPolicy'
 import { createReferenceImagePreview } from './referenceImagePreview'
-import { extractGeminiImageResults } from './geminiImageResults'
 import { imageDownloadURL, resolveImageAssetURL } from './imageDownload'
-import { imageTaskNextPollDelay, imageTaskRetryDelay } from './imagePolling'
+import {
+  buildEditForm,
+  buildEditURLPayload,
+  buildGeminiPayload,
+  buildGeminiURL,
+  extractImages,
+  greatestCommonDivisor,
+} from './imageRequestBuilder'
 import {
   isImageTaskActive,
   isImageTaskDisplayReady,
@@ -768,8 +774,6 @@ import {
 import {
   gatewayPollUrlForTask,
   gatewayTaskPayload,
-  gatewayTaskState,
-  resolveGatewayPollUrl,
 } from './imageTaskTransport'
 import {
   ImageGatewayTaskError,
@@ -779,6 +783,7 @@ import {
   isTransientGatewayError,
   isTransientGatewayStatus,
   lookupGatewayTaskByIdempotency,
+  pollGatewayImageTask as pollGatewayImageTaskFromClient,
 } from './imageTaskClient'
 import {
   sameImageIdentityOrder,
@@ -3214,13 +3219,30 @@ async function generate() {
         quality: currentQuality,
         appliedSize: currentAppliedSize,
       }))
-      url = buildGeminiURL(currentModel, currentKey.group?.platform)
+      url = buildGeminiURL(apiBaseUrl.value, currentModel, currentKey.group?.platform)
     } else if (requestReferences.length) {
       if (remoteReferenceURLs.length === preparedReferences.length) {
         headers['Content-Type'] = 'application/json'
-        body = JSON.stringify(buildEditURLPayload(currentPrompt, remoteReferenceURLs))
+        body = JSON.stringify(buildEditURLPayload(currentPrompt, remoteReferenceURLs, {
+          model: currentModel,
+          size: currentSize,
+          quality: currentQuality,
+          format: currentFormat,
+          background: currentBackground,
+        }))
       } else {
-        body = buildEditForm(currentPrompt, preparedReferences)
+        body = buildEditForm(
+          currentPrompt,
+          preparedReferences,
+          {
+            model: currentModel,
+            size: currentSize,
+            quality: currentQuality,
+            format: currentFormat,
+            background: currentBackground,
+          },
+          references.value,
+        )
       }
     } else {
       headers['Content-Type'] = 'application/json'
@@ -3688,76 +3710,18 @@ async function pollGatewayImageTask(
     deadline?: number
   } = {},
 ): Promise<any[]> {
-  const deadline = Math.min(
-    Date.now() + IMAGE_GENERATION_TIMEOUT_MS,
-    Number(options.deadline || 0) || Number.POSITIVE_INFINITY,
-  )
-  const pollStartedAt = Date.now()
-  const fallbackOrigin = typeof window !== 'undefined' && window.location.origin
-    ? window.location.origin
-    : 'http://localhost'
-  const url = resolveGatewayPollUrl(pollUrl, apiBaseUrl.value, fallbackOrigin)
-  let previewDelivered = false
-  const resolveTask = (task: any): any[] | null => {
-    const state = gatewayTaskState(task)
-    if (state === 'completed') {
-      const result = task.result
-      const normalized = typeof result === 'string' ? JSON.parse(result) : result
-      return extractImages(normalized)
-    }
-    if (state === 'preview_ready' && !previewDelivered) {
-      const result = task.result
-      const normalized = typeof result === 'string' ? JSON.parse(result) : result
-      const previewItems = extractImages(normalized)
-      if (previewItems.length) {
-        previewDelivered = true
-        options.onPreview?.(previewItems)
-      }
-    }
-    if (state === 'failed') {
-      throw gatewayTaskError(task.error || task, Number(task?.http_status || 0))
-    }
-    return null
-  }
-  while (Date.now() < deadline) {
-    if (options.isCancelled?.()) throw new ImageGenerationWaitCancelled()
-    let response: Response
-    let payload: any
-    try {
-      response = await fetchWithTimeout(
-        url,
-        { headers },
-        Math.min(30_000, Math.max(1, deadline - Date.now())),
-      )
-      payload = await response.json().catch(() => null)
-    } catch (error) {
-      if (error instanceof ImageGenerationWaitCancelled) throw error
-      if (isTransientGatewayError(error)) {
-        if (Date.now() < deadline) {
-          await waitForGatewayPollRetry(imageTaskRetryDelay(Date.now() - pollStartedAt))
-          continue
-        }
-        throw new Error(IMAGE_GENERATION_TIMEOUT_MESSAGE)
-      }
-      throw error instanceof Error ? error : new Error('查询图片任务失败')
-    }
-    if (isTransientGatewayStatus(response.status)) {
-      if (Date.now() < deadline) {
-        await waitForGatewayPollRetry(imageTaskRetryDelay(Date.now() - pollStartedAt))
-        continue
-      }
-      throw new Error(IMAGE_GENERATION_TIMEOUT_MESSAGE)
-    }
-    if (!response.ok) throw gatewayTaskError(payload, response.status)
-    const task = gatewayTaskPayload(payload)
-    const settled = resolveTask(task)
-    if (settled) return settled
-    await waitForGatewayPollRetry(
-      imageTaskNextPollDelay(Date.now() - pollStartedAt, previewDelivered),
-    )
-  }
-
-  throw new Error(IMAGE_GENERATION_TIMEOUT_MESSAGE)
+  return pollGatewayImageTaskFromClient(pollUrl, headers, {
+    ...options,
+    apiBaseUrl: apiBaseUrl.value,
+    extractImages,
+    timeoutMs: IMAGE_GENERATION_TIMEOUT_MS,
+    timeoutMessage: IMAGE_GENERATION_TIMEOUT_MESSAGE,
+    wait: async (delay) => {
+      if (componentDisposed) throw new ImageGenerationWaitCancelled()
+      await new Promise((resolve) => window.setTimeout(resolve, delay))
+      if (componentDisposed) throw new ImageGenerationWaitCancelled()
+    },
+  })
 }
 
 async function fetchGatewayTaskOriginalBlob(
@@ -4346,77 +4310,6 @@ async function finishGenerationBatch(
   return generated
 }
 
-function buildGeminiURL(model: string, platform = selectedKey.value?.group?.platform) {
-  const root = apiBaseUrl.value.replace(/\/+$/, '').replace(/\/v1$/, '')
-  const prefix = platform === 'antigravity' ? '/antigravity/v1beta' : '/v1beta'
-  return `${root}${prefix}/models/${encodeURIComponent(model)}:generateContent`
-}
-
-function buildGeminiPayload(
-  text: string,
-  preparedReferences: readonly PreparedImageReference[] = [],
-  options: { size: string; quality: string; appliedSize: SizeSettings } = {
-    size: size.value,
-    quality: quality.value,
-    appliedSize,
-  },
-) {
-  const parts: any[] = []
-  preparedReferences.forEach((item, index) => {
-    parts.push({ text: `图片${index + 1}` })
-    if (item.remoteUrl) {
-      parts.push({
-        fileData: {
-          mimeType: item.mimeType,
-          fileUri: item.remoteUrl,
-        },
-      })
-      return
-    }
-    const match = /^data:([^;,]+);base64,(.+)$/i.exec(item.dataUrl)
-    parts.push(match
-      ? { inlineData: { mimeType: item.mimeType, data: match[2] } }
-      : { text: item.name })
-  })
-  parts.push({ text })
-  const imageConfig: Record<string, string> = {
-    aspectRatio: geminiAspectRatio(options.size, options.appliedSize),
-  }
-  const imageSize = geminiImageSizeForQuality(options.quality)
-  if (imageSize) imageConfig.imageSize = imageSize
-  return {
-    contents: [{ role: 'user', parts }],
-    generationConfig: {
-      responseModalities: ['TEXT', 'IMAGE'],
-      imageConfig,
-    },
-  }
-}
-
-function geminiImageSizeForQuality(value: string) {
-  if (value === 'high') return '4K'
-  if (value === 'medium') return '2K'
-  if (value === 'low') return '1K'
-  return undefined
-}
-
-function geminiAspectRatio(value: string, settings: SizeSettings = appliedSize) {
-  if (settings.mode === 'ratio') {
-    return settings.useCustomRatio
-      ? `${settings.customRatioWidth}:${settings.customRatioHeight}`
-      : settings.aspectRatio
-  }
-  if (value === 'auto') return '1:1'
-  const dimensions = parseSize(value)
-  if (!dimensions) return '1:1'
-  const divisor = greatestCommonDivisor(dimensions.width, dimensions.height)
-  return `${Math.round(dimensions.width / divisor)}:${Math.round(dimensions.height / divisor)}`
-}
-
-function greatestCommonDivisor(a: number, b: number): number {
-  return b === 0 ? Math.max(1, a) : greatestCommonDivisor(b, a % b)
-}
-
 async function uploadPreparedImageReferences(
   preparedReferences: PreparedImageReference[],
 ): Promise<string[]> {
@@ -4442,68 +4335,6 @@ async function uploadPreparedImageReferences(
     // unavailable or direct-upload CORS is not configured.
     return []
   }
-}
-
-function buildEditURLPayload(text: string, imageURLs: readonly string[]) {
-  return {
-    model: imageModel.value.trim(),
-    prompt: text,
-    size: size.value,
-    quality: quality.value,
-    output_format: format.value,
-    background: background.value,
-    n: 1,
-    response_format: 'b64_json',
-    images: imageURLs.map((imageURL) => ({ image_url: imageURL })),
-  }
-}
-
-function buildEditForm(
-  text: string,
-  preparedReferences: readonly PreparedImageReference[] = [],
-) {
-  const form = new FormData()
-  form.append('model', imageModel.value.trim())
-  form.append('prompt', text)
-  form.append('size', size.value)
-  form.append('quality', quality.value)
-  form.append('output_format', format.value)
-  form.append('background', background.value)
-  form.append('n', '1')
-  form.append('response_format', 'b64_json')
-  if (preparedReferences.length) {
-    preparedReferences.forEach((item, index) => {
-      form.append('image[]', item.blob, compressedReferenceFileName(item.name, index))
-    })
-  } else {
-    references.value.forEach((item) => form.append('image[]', item.file, item.name))
-  }
-  return form
-}
-
-function compressedReferenceFileName(name: string, index: number) {
-  const base = String(name || '').replace(/\.[^.]+$/, '').trim() || `reference-${index + 1}`
-  return `${base}.webp`
-}
-
-function extractImages(payload: any): any[] {
-  if (!payload) return []
-  if (Array.isArray(payload.data)) return payload.data.flatMap(extractImages)
-  const geminiResults = extractGeminiImageResults(payload)
-  if (geminiResults.length) return geminiResults
-  if (Array.isArray(payload.response?.output)) return payload.response.output
-  if (Array.isArray(payload.output)) return payload.output
-  if (
-    payload.b64_json
-    || payload.preview_data_url
-    || payload.preview_url
-    || payload.display_url
-    || payload.url
-    || payload.result
-  ) {
-    return [payload]
-  }
-  return []
 }
 
 function onFilesSelected(event: Event) {

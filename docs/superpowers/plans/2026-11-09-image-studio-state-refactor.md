@@ -320,3 +320,60 @@ Expected: PASS with 122 tests.
 
 Run: `pnpm run typecheck`
 Expected: exit 0.
+
+### Task 10: Move Gateway Polling Into The Client
+
+**Files:**
+- Modify: `frontend/src/features/image-studio/imageTaskClient.ts`
+- Modify: `frontend/src/features/image-studio/__tests__/imageTaskClient.spec.ts`
+- Modify: `frontend/src/features/image-studio/ImageStudioView.vue`
+
+**Interfaces:**
+- Consumes: poll URL, headers, API base URL, image extractor, deadline, preview callback, fetch, clock, and wait function.
+- Produces: `pollGatewayImageTask` with shared preview, retry, cancellation, and terminal-state handling.
+
+- [x] **Step 1: Write failing poll tests**
+
+Run: `pnpm exec vitest run src/features/image-studio/__tests__/imageTaskClient.spec.ts`
+Expected: FAIL because `pollGatewayImageTask` is missing.
+
+- [x] **Step 2: Implement and verify polling**
+
+Run: `pnpm exec vitest run src/features/image-studio/__tests__/imageTaskClient.spec.ts`
+Expected: PASS with 10 tests.
+
+- [x] **Step 3: Replace the page polling loop with the client**
+
+Run: `pnpm exec vitest run src/features/image-studio/__tests__/imageTaskClient.spec.ts src/features/image-studio/__tests__/ImageStudioView.spec.ts`
+Expected: PASS with 127 tests.
+
+### Task 11: Extract Request Construction
+
+**Files:**
+- Create: `frontend/src/features/image-studio/imageRequestBuilder.ts`
+- Create: `frontend/src/features/image-studio/__tests__/imageRequestBuilder.spec.ts`
+- Modify: `frontend/src/features/image-studio/ImageStudioView.vue`
+
+**Interfaces:**
+- Consumes: API base URL, model, platform, prompt, references, size, quality, format, and background.
+- Produces: Gemini URL/payload, edit URL payload, multipart edit form, result extraction, and aspect-ratio helpers.
+
+- [x] **Step 1: Write failing request-builder tests**
+
+Run: `pnpm exec vitest run src/features/image-studio/__tests__/imageRequestBuilder.spec.ts`
+Expected: FAIL because `imageRequestBuilder.ts` does not exist.
+
+- [x] **Step 2: Implement and verify request construction**
+
+Run: `pnpm exec vitest run src/features/image-studio/__tests__/imageRequestBuilder.spec.ts`
+Expected: PASS with 6 tests.
+
+- [x] **Step 3: Replace duplicate builders in the page**
+
+Run: `pnpm exec vitest run src/features/image-studio/__tests__/imageRequestBuilder.spec.ts src/features/image-studio/__tests__/ImageStudioView.spec.ts`
+Expected: PASS with 123 tests.
+
+- [x] **Step 4: Run type checking**
+
+Run: `pnpm run typecheck`
+Expected: exit 0.

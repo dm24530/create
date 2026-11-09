@@ -8,6 +8,7 @@ import {
   gatewayTaskError,
   isTransientGatewayStatus,
   lookupGatewayTaskByIdempotency,
+  pollGatewayImageTask,
 } from '../imageTaskClient'
 
 describe('image task client', () => {
@@ -112,5 +113,60 @@ describe('image task client', () => {
       task_id: 'task-1',
       status: 'processing',
     })
+  })
+
+  it('delivers a preview once and then returns the completed result', async () => {
+    const preview = vi.fn()
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        task_id: 'task-1',
+        status: 'preview_ready',
+        result: { data: [{ preview_url: 'https://cdn.example.com/preview.png' }] },
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        task_id: 'task-1',
+        status: 'completed',
+        result: { data: [{ url: 'https://cdn.example.com/original.png' }] },
+      }), { status: 200 }))
+
+    const items = await pollGatewayImageTask(
+      '/images/tasks/task-1',
+      { Authorization: 'Bearer test' },
+      {
+        apiBaseUrl: 'https://api.example.com/v1',
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        extractImages: (payload) => payload?.data || [],
+        onPreview: preview,
+        wait: async () => undefined,
+        now: () => 1_000,
+      },
+    )
+
+    expect(preview).toHaveBeenCalledTimes(1)
+    expect(items).toEqual([{ url: 'https://cdn.example.com/original.png' }])
+  })
+
+  it('retries a transient poll without surfacing an error', async () => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(new Response('', { status: 503 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        task_id: 'task-1',
+        status: 'completed',
+        result: { data: [{ url: 'https://cdn.example.com/original.png' }] },
+      }), { status: 200 }))
+
+    await expect(pollGatewayImageTask(
+      '/images/tasks/task-1',
+      {},
+      {
+        apiBaseUrl: 'https://api.example.com/v1',
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        extractImages: (payload) => payload?.data || [],
+        wait: async () => undefined,
+        now: () => 1_000,
+      },
+    )).resolves.toEqual([
+      { url: 'https://cdn.example.com/original.png' },
+    ])
   })
 })
