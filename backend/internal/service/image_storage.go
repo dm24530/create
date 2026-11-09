@@ -422,6 +422,7 @@ func (u *ImageResultUploader) RewriteWithPreview(
 	if len(items) == 0 {
 		return result, nil
 	}
+	earlyPreviewPublished := false
 	if onPreview != nil {
 		earlyPreviewItems := upstreamPreviewItems(items)
 		if len(earlyPreviewItems) > 0 {
@@ -430,6 +431,8 @@ func (u *ImageResultUploader) RewriteWithPreview(
 					zap.String("task_id", taskID),
 					zap.Int64("user_id", userID),
 					zap.Error(err))
+			} else {
+				earlyPreviewPublished = true
 			}
 		}
 	}
@@ -466,42 +469,6 @@ func (u *ImageResultUploader) RewriteWithPreview(
 		}
 	}
 
-	// Keep one small preview in the task result. The browser uses this for all
-	// normal rendering; the original is fetched only for explicit downloads.
-	previewItems := make([]map[string]json.RawMessage, 0, len(prepared))
-	for i := range prepared {
-		previewData, previewContentType, thumbErr := buildImagePreview(prepared[i].data, 1024)
-		if thumbErr != nil {
-			continue
-		}
-		previewItem, encodeErr := cloneImageItem(prepared[i].item)
-		if encodeErr != nil {
-			continue
-		}
-		previewURL := "data:" + previewContentType + ";base64," + base64.StdEncoding.EncodeToString(previewData)
-		previewItem["url"] = encodedJSON(previewURL)
-		previewItem["preview_url"] = encodedJSON(previewURL)
-		previewItem["preview_data_url"] = encodedJSON(previewURL)
-		delete(previewItem, "b64_json")
-		delete(previewItem, "display_url")
-		delete(previewItem, "local_asset_id")
-		delete(previewItem, "object_key")
-		prepared[i].item["preview_data_url"] = encodedJSON(previewURL)
-		previewItems = append(previewItems, previewItem)
-	}
-
-	if onPreview != nil && len(previewItems) > 0 {
-		if err := onPreview(imagePreviewPayload(top, previewItems)); err != nil {
-			logger.L().Warn("image_storage.preview_publish_failed",
-				zap.String("task_id", taskID),
-				zap.Int64("user_id", userID),
-				zap.Error(err))
-			if u.localAssets == nil {
-				return nil, fmt.Errorf("publish image preview: %w", err)
-			}
-		}
-	}
-
 	for i := range prepared {
 		data, contentType, err := TranscodeImageOutput(
 			prepared[i].data,
@@ -516,6 +483,8 @@ func (u *ImageResultUploader) RewriteWithPreview(
 		prepared[i].key = u.buildKey(storageKey, taskID, i, contentType)
 	}
 
+	localPreviewItems := make([]map[string]json.RawMessage, 0, len(prepared))
+	localOriginalReady := false
 	if u.localAssets != nil {
 		expiresAt := time.Now().UTC().Add(defaultImageTaskTTL).Unix()
 		stagedKeys := make([]string, 0, len(prepared))
@@ -548,21 +517,81 @@ func (u *ImageResultUploader) RewriteWithPreview(
 			item["upload_status"] = encodedJSON("pending")
 			delete(item, "b64_json")
 			items[i] = item
+			previewItem, previewErr := cloneImageItem(item)
+			if previewErr != nil {
+				stageErr = fmt.Errorf("image %d: prepare local preview: %w", i, previewErr)
+				break
+			}
+			previewURL := u.localAssets.URL(meta.ID)
+			previewItem["url"] = encodedJSON(previewURL)
+			previewItem["preview_url"] = encodedJSON(previewURL)
+			delete(previewItem, "display_url")
+			delete(previewItem, "local_asset_id")
+			delete(previewItem, "object_key")
+			localPreviewItems = append(localPreviewItems, previewItem)
 		}
 		if stageErr == nil {
-			out, err := imageResultWithItems(top, items)
-			if err != nil {
-				return nil, err
+			localOriginalReady = true
+			if onPreview != nil && !earlyPreviewPublished && len(localPreviewItems) > 0 {
+				if err := onPreview(imagePreviewPayload(top, localPreviewItems)); err != nil {
+					logger.L().Warn("image_storage.local_original_preview_publish_failed",
+						zap.String("task_id", taskID),
+						zap.Int64("user_id", userID),
+						zap.Error(err))
+				}
 			}
-			return out, nil
 		}
 		for _, key := range stagedKeys {
-			_ = u.localAssets.DeleteByObjectKey(key)
+			if stageErr != nil {
+				_ = u.localAssets.DeleteByObjectKey(key)
+			}
 		}
-		logger.L().Warn("image_storage.local_stage_failed; falling back to direct object upload",
-			zap.String("task_id", taskID),
-			zap.Int64("user_id", userID),
-			zap.Error(stageErr))
+		if stageErr != nil {
+			logger.L().Warn("image_storage.local_stage_failed; falling back to direct object upload",
+				zap.String("task_id", taskID),
+				zap.Int64("user_id", userID),
+				zap.Error(stageErr))
+		}
+	}
+
+	// Keep one small preview in the task result. Local originals are published
+	// first above so the browser can start loading before resize/encode finishes.
+	previewItems := make([]map[string]json.RawMessage, 0, len(prepared))
+	for i := range prepared {
+		previewData, previewContentType, thumbErr := buildImagePreview(prepared[i].data, 1024)
+		if thumbErr != nil {
+			continue
+		}
+		previewItem, encodeErr := cloneImageItem(prepared[i].item)
+		if encodeErr != nil {
+			continue
+		}
+		previewURL := "data:" + previewContentType + ";base64," + base64.StdEncoding.EncodeToString(previewData)
+		previewItem["url"] = encodedJSON(previewURL)
+		previewItem["preview_url"] = encodedJSON(previewURL)
+		previewItem["preview_data_url"] = encodedJSON(previewURL)
+		delete(previewItem, "b64_json")
+		delete(previewItem, "display_url")
+		delete(previewItem, "local_asset_id")
+		delete(previewItem, "object_key")
+		prepared[i].item["preview_data_url"] = encodedJSON(previewURL)
+		items[i]["preview_data_url"] = encodedJSON(previewURL)
+		previewItems = append(previewItems, previewItem)
+	}
+
+	if onPreview != nil && len(previewItems) > 0 {
+		if err := onPreview(imagePreviewPayload(top, previewItems)); err != nil {
+			logger.L().Warn("image_storage.preview_publish_failed",
+				zap.String("task_id", taskID),
+				zap.Int64("user_id", userID),
+				zap.Error(err))
+			if u.localAssets == nil {
+				return nil, fmt.Errorf("publish image preview: %w", err)
+			}
+		}
+	}
+	if localOriginalReady {
+		return imageResultWithItems(top, items)
 	}
 
 	const uploadWorkers = 3
