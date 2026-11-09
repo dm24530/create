@@ -112,6 +112,10 @@ vi.mock('@/utils/imageGenerationWorker', async (importOriginal) => {
 
 const componentPath = resolve(dirname(fileURLToPath(import.meta.url)), '../ImageStudioView.vue')
 const componentSource = readFileSync(componentPath, 'utf8')
+const componentStyles = readFileSync(
+  resolve(dirname(componentPath), 'ImageStudioView.css'),
+  'utf8',
+)
 
 function imageStudioPendingStorageKey(userId = 2) {
   return `sub2api:image-studio:pending:${userId}`
@@ -1637,7 +1641,7 @@ describe('ImageStudioView gallery', () => {
     expect(image.classes()).toContain('h-full')
     expect(image.classes()).toContain('object-cover')
     expect(image.classes()).not.toContain('object-contain')
-    expect(componentSource).toContain('aspect-ratio: 16 / 10')
+    expect(componentStyles).toContain('aspect-ratio: 16 / 10')
     expect(thumbnailGallery).not.toHaveBeenCalledWith('gallery-1')
 
     await media.trigger('click')
@@ -5146,6 +5150,9 @@ describe('ImageStudioView composer controls', () => {
     const submitButton = wrapper.get('.image-composer__generate')
     expect(submitButton.attributes('disabled')).toBeUndefined()
     expect(submitButton.text()).toContain('继续生成')
+
+    await wrapper.get('textarea.image-composer__prompt').setValue('')
+    expect(submitButton.attributes('disabled')).toBeUndefined()
 
     await wrapper.get('form').trigger('submit')
     await vi.waitFor(() => {

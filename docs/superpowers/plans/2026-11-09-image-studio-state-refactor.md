@@ -522,3 +522,35 @@ Expected: PASS with 122 tests.
 
 Run: `pnpm run typecheck`
 Expected: exit 0.
+
+### Task 17: Externalize Page Styles
+
+**Files:**
+- Create: `frontend/src/features/image-studio/ImageStudioView.css`
+- Modify: `frontend/src/features/image-studio/ImageStudioView.vue`
+- Modify: `frontend/src/features/image-studio/__tests__/ImageStudioView.spec.ts`
+
+**Interfaces:**
+- Preserves the scoped selectors and visual contract.
+- Moves the full style block out of the orchestration component.
+
+- [x] **Step 1: Extract the complete scoped style block**
+
+Run: `Get-Content frontend/src/features/image-studio/ImageStudioView.css | Measure-Object -Line`
+Expected: 2069 style lines in the external file.
+
+- [x] **Step 2: Point the SFC at the external scoped stylesheet**
+
+```vue
+<style scoped src="./ImageStudioView.css"></style>
+```
+
+- [x] **Step 3: Update the source-level layout test**
+
+Run: `pnpm exec vitest run src/features/image-studio/__tests__/ImageStudioView.spec.ts`
+Expected: PASS with 117 tests.
+
+- [x] **Step 4: Run type checking**
+
+Run: `pnpm run typecheck`
+Expected: exit 0.
