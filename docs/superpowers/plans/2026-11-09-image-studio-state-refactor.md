@@ -625,3 +625,28 @@ Expected: PASS with 118 tests.
 
 Run: `pnpm run typecheck`
 Expected: exit 0.
+
+### Task 21: Extract Gateway Task Content And Timing
+
+**Files:**
+- Create: `frontend/src/features/image-studio/imageGatewayTaskContent.ts`
+- Create: `frontend/src/features/image-studio/__tests__/imageGatewayTaskContent.spec.ts`
+- Modify: `frontend/src/features/image-studio/ImageStudioView.vue`
+
+**Interfaces:**
+- Produces: task-content fetch by original API key, per-result task timing, and worker response conversion.
+
+- [x] **Step 1: Write failing content/timing tests**
+
+Run: `pnpm exec vitest run src/features/image-studio/__tests__/imageGatewayTaskContent.spec.ts`
+Expected: PASS after implementation with 3 tests.
+
+- [x] **Step 2: Replace local content and worker conversion**
+
+Run: `pnpm exec vitest run src/features/image-studio/__tests__/imageGatewayTaskContent.spec.ts src/features/image-studio/__tests__/ImageStudioView.spec.ts`
+Expected: PASS with 120 tests.
+
+- [x] **Step 3: Run type checking**
+
+Run: `pnpm run typecheck`
+Expected: exit 0.
