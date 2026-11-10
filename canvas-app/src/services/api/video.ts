@@ -5,7 +5,7 @@ import i18n from "@/i18n";
 import { dataUrlToFile, readFileAsDataUrl } from "@/lib/image-utils";
 import { clampVideoSeconds, computeVideoSize, inferVideoRatio } from "@/lib/media-size";
 import { getMediaBlob, resolveMediaUrl, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
-import { imageToDataUrl } from "@/services/image-storage";
+import { prepareImageRequestDataUrls } from "@/services/image-storage";
 import { boolConfig, buildApiUrl, modelOptionName, resolveModelRequestConfig, resolveModelScript, withLocalProxy, type AiConfig } from "@/stores/use-config-store";
 import { runModelPlugin } from "./model-plugin";
 import type { ReferenceImage } from "@/types/image";
@@ -93,7 +93,7 @@ export async function pollVideoGenerationTask(config: AiConfig, task: VideoGener
 async function createPluginVideoTask(config: AiConfig, model: string, script: string, prompt: string, references: ReferenceImage[], options?: VideoMediaOptions): Promise<VideoGenerationTask> {
     if (!config.baseUrl.trim()) throw new Error(apiText("baseUrlRequired"));
     if (!config.apiKey.trim()) throw new Error(apiText("apiKeyRequired"));
-    const refs = await Promise.all(references.map((image) => imageToDataUrl(image)));
+    const refs = (await prepareImageRequestDataUrls(references, options)).map((image) => image.dataUrl);
     const videos = await Promise.all((options?.videos || []).map((video) => referenceMediaToFile(video, "ref.mp4", "invalidReferenceVideo", options)));
     const audios = await Promise.all((options?.audios || []).map((audio) => referenceMediaToFile(audio, "ref.mp3", "invalidReferenceAudio", options)));
     const result = videoPluginResult(
@@ -147,7 +147,13 @@ export async function storeGeneratedVideo(result: VideoGenerationResult): Promis
 }
 
 async function createOpenAIVideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], options?: VideoMediaOptions): Promise<VideoGenerationTask> {
-    const images = await Promise.all(references.map(async (image) => dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) })));
+    const prepared = await prepareImageRequestDataUrls(references, options);
+    const images = prepared.map((image, index) => dataUrlToFile({
+        id: `reference-${index}`,
+        name: `reference-${index + 1}.${image.mimeType.includes("jpeg") ? "jpg" : image.mimeType.includes("webp") ? "webp" : "png"}`,
+        type: image.mimeType,
+        dataUrl: image.dataUrl,
+    }));
     const videos = await Promise.all((options?.videos || []).map((video) => referenceMediaToFile(video, "ref.mp4", "invalidReferenceVideo", options)));
     const audios = await Promise.all((options?.audios || []).map((audio) => referenceMediaToFile(audio, "ref.mp3", "invalidReferenceAudio", options)));
     const mode = resolveVideoMode(config.videoMode, images.length);
@@ -219,7 +225,7 @@ async function videoResultFromUrl(url: string, options?: RequestOptions): Promis
 }
 
 async function createGeminiVideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], options?: VideoMediaOptions): Promise<VideoGenerationTask> {
-    const images = await Promise.all(references.map((image) => imageToDataUrl(image)));
+    const images = (await prepareImageRequestDataUrls(references, options)).map((image) => image.dataUrl);
     const videos = await Promise.all((options?.videos || []).map((video) => referenceMediaToFile(video, "ref.mp4", "invalidReferenceVideo", options)));
     const audios = await Promise.all((options?.audios || []).map((audio) => referenceMediaToFile(audio, "ref.mp3", "invalidReferenceAudio", options)));
     const mode = resolveVideoMode(config.videoMode, images.length);

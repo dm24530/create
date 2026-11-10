@@ -1,18 +1,14 @@
 import { defaultConfig, resolveModelForCapability, type AiConfig } from "@/stores/use-config-store";
 import i18n from "@/i18n";
-import { claimLegacyStoredImage, ensureImagePreview, getImageBlob, resolveImageUrl, uploadImage } from "@/services/image-storage";
+import { claimLegacyStoredImage, ensureImagePreview, getImageBlob, prepareImageRequestDataUrls, resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { resolveMediaUrl } from "@/services/file-storage";
 import { imageMetadata, referenceUrl } from "@/lib/canvas/canvas-node-factory";
 import { normalizeImageBackground, normalizeImageOutputFormat } from "@/lib/image-output-format";
-import { isCanvasCloudReady, uploadCloudCanvasAsset } from "@/services/canvas-cloud";
-import { mapWithConcurrency } from "@/lib/concurrency";
 import type { NodeGenerationInput } from "@/components/canvas/canvas-node-generation";
 import type { CanvasNodeGenerationMode } from "@/components/canvas/canvas-node-prompt-panel";
 import type { CanvasImageAngleParams } from "@/components/canvas/canvas-node-angle-dialog";
 import type { ReferenceImage } from "@/types/image";
 import { CanvasNodeType, type CanvasAssistantSession, type CanvasConnection, type CanvasNodeData, type CanvasNodeMetadata } from "@/types/canvas";
-
-const CLOUD_REFERENCE_UPLOAD_TIMEOUT_MS = 12_000;
 
 export function imageExtension(dataUrl: string) {
     const mimeSubtype = dataUrl.match(/^data:image[/]([^;]+)/)?.[1] || dataUrl.match(/image[/]([^;]+)/)?.[1] || "png";
@@ -59,40 +55,23 @@ export async function resolveMetadataReferences(metadata: CanvasNodeMetadata) {
     return references.every(Boolean) ? (references as ReferenceImage[]) : null;
 }
 
-export async function prepareCanvasReferenceImagesForRequest(projectId: string, references: ReferenceImage[]) {
-    if (!references.length || !isCanvasCloudReady()) return references;
-    return mapWithConcurrency(references, 2, async (image) => {
-        const remoteURL = /^https?:\/\//i.test(image.url || "") ? image.url! : "";
-        if (remoteURL) {
-            return { ...image, dataUrl: remoteURL, url: remoteURL, storageKey: undefined };
-        }
-        if (!image.storageKey) return image;
-        try {
-            const file = image.sourceObjectKey ? undefined : (await getImageBlob(image.storageKey)) || undefined;
-            if (!image.sourceObjectKey && !file) return image;
-            const asset = await withUploadTimeout(uploadCloudCanvasAsset({
-                projectId,
-                nodeId: image.id,
-                kind: "image",
-                file,
-                filename: image.name || `${image.id}.png`,
-                width: image.width || 0,
-                height: image.height || 0,
-                sourceObjectKey: image.sourceObjectKey,
-            }));
-            if (!asset.url) return image;
-            return { ...image, dataUrl: asset.url, url: asset.url, storageKey: undefined };
-        } catch (error) {
-            console.warn("Failed to prepare a cloud reference image; using inline upload.", error);
-            return image;
-        }
-    });
-}
-
-function withUploadTimeout<T>(task: Promise<T>) {
-    return new Promise<T>((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error("cloud reference upload timed out")), CLOUD_REFERENCE_UPLOAD_TIMEOUT_MS);
-        task.then(resolve, reject).finally(() => clearTimeout(timer));
+export async function prepareCanvasReferenceImagesForRequest(_projectId: string, references: ReferenceImage[]) {
+    if (!references.length) return references;
+    const prepared = await prepareImageRequestDataUrls(references.map((image) => ({ ...image, url: undefined })));
+    return references.map((image, index) => {
+        const requestImage = prepared[index];
+        if (!requestImage) return image;
+        return {
+            ...image,
+            type: requestImage.mimeType,
+            dataUrl: requestImage.dataUrl,
+            url: undefined,
+            storageKey: undefined,
+            width: requestImage.width || image.width,
+            height: requestImage.height || image.height,
+            bytes: requestImage.bytes,
+            requestDataUrlPrepared: true,
+        };
     });
 }
 

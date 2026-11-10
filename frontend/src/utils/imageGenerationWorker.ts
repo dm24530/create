@@ -156,6 +156,16 @@ async function waitForWorker(): Promise<ServiceWorker> {
   return worker
 }
 
+export async function prewarmPersistentImageGeneration() {
+  if (typeof window === 'undefined' || !canUsePersistentGeneration()) return false
+  try {
+    await waitForWorker()
+    return true
+  } catch {
+    return false
+  }
+}
+
 async function postResumeMessage(ids: string[]) {
   const registration = await navigator.serviceWorker.ready
   const worker = registration.active || navigator.serviceWorker.controller

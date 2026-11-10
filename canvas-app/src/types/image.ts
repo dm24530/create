@@ -9,4 +9,5 @@ export type ReferenceImage = {
     width?: number;
     height?: number;
     bytes?: number;
+    requestDataUrlPrepared?: boolean;
 };

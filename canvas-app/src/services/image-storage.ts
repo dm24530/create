@@ -45,12 +45,22 @@ const IMAGE_REMOTE_LOAD_TIMEOUT_MS = 10 * 60_000;
 const IMAGE_DECODE_TIMEOUT_MS = 10_000;
 const IMAGE_RESPONSE_ERROR = "ImageResponseError";
 const IMAGE_TIMEOUT_ERROR = "ImageTimeoutError";
-const REQUEST_IMAGE_CACHE_LIMIT = 24;
+const REQUEST_IMAGE_CACHE_LIMIT = 64;
+const REQUEST_IMAGE_PREP_CONCURRENCY = 8;
 
 type StoredImagePreview = { version: number; blob?: Blob };
 
 type ImageReadOptions = { signal?: AbortSignal };
-type ImageReferenceSource = { url?: string; dataUrl?: string; storageKey?: string };
+type ImageReferenceSource = {
+    url?: string;
+    dataUrl?: string;
+    storageKey?: string;
+    type?: string;
+    width?: number;
+    height?: number;
+    bytes?: number;
+    requestDataUrlPrepared?: boolean;
+};
 
 export type PreparedImageRequest = {
     dataUrl: string;
@@ -308,7 +318,23 @@ export async function imageToDataUrl(image: { url?: string; dataUrl?: string; st
 export async function prepareImageRequestDataUrls(images: readonly ImageReferenceSource[], options?: ImageReadOptions): Promise<PreparedImageRequest[]> {
     if (images.length === 0) return [];
     const remotePrepared = new Map<number, PreparedImageRequest>();
-    const blobs = await mapWithConcurrency(images, 2, async (image, index) => {
+    const directPrepared = new Map<number, PreparedImageRequest>();
+    images.forEach((image, index) => {
+        if (!image.requestDataUrlPrepared || !image.dataUrl?.startsWith("data:")) return;
+        const bytes = image.bytes || estimateBase64Bytes(image.dataUrl);
+        directPrepared.set(index, {
+            dataUrl: image.dataUrl,
+            mimeType: image.type || image.dataUrl.match(/^data:([^;,]+)/i)?.[1] || "image/webp",
+            bytes,
+            sourceBytes: bytes,
+            width: image.width || 0,
+            height: image.height || 0,
+            reencoded: true,
+            policy: -1,
+        });
+    });
+    const blobs = await mapWithConcurrency(images, REQUEST_IMAGE_PREP_CONCURRENCY, async (image, index) => {
+        if (directPrepared.has(index)) return null;
         const remoteURL = remoteImageReferenceURL(image);
         if (remoteURL) {
             remotePrepared.set(index, {
@@ -331,7 +357,9 @@ export async function prepareImageRequestDataUrls(images: readonly ImageReferenc
     let smallestTotal = Number.POSITIVE_INFINITY;
     for (let policyIndex = 0; policyIndex < CANVAS_IMAGE_REQUEST_POLICIES.length; policyIndex += 1) {
         const policy = CANVAS_IMAGE_REQUEST_POLICIES[policyIndex];
-        const prepared = await mapWithConcurrency(images, 2, (image, index) => {
+        const prepared = await mapWithConcurrency(images, REQUEST_IMAGE_PREP_CONCURRENCY, (image, index) => {
+            const direct = directPrepared.get(index);
+            if (direct) return Promise.resolve(direct);
             const remote = remotePrepared.get(index);
             if (remote) return Promise.resolve(remote);
             const blob = blobs[index];

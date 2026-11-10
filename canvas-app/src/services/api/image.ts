@@ -7,7 +7,7 @@ import { nanoid } from "nanoid";
 import { mapWithConcurrency } from "@/lib/concurrency";
 import { dataUrlToFile } from "@/lib/image-utils";
 import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
-import { imageToDataUrl, prepareImageRequestDataUrls, type PreparedImageRequest } from "@/services/image-storage";
+import { prepareImageRequestDataUrls, type PreparedImageRequest } from "@/services/image-storage";
 import { imageSizePresets, inferMediaScale } from "@/lib/media-size";
 import { isGeminiImageModel } from "@/lib/image-model";
 import { shouldSkipClientImageNormalization } from "@/lib/image-normalization-policy";
@@ -121,7 +121,7 @@ const IMAGE_REQUEST_TIMEOUT_MS = 4 * 60_000;
 // on mobile or tunneled connections; timing out here looked like a server-side
 // body parsing failure because the browser closed the upload mid-request.
 const IMAGE_TASK_SUBMIT_TIMEOUT_MS = 3 * 60_000;
-const GEMINI_IMAGE_REQUEST_CONCURRENCY = 3;
+const GEMINI_IMAGE_REQUEST_CONCURRENCY = 12;
 
 const GEMINI_SUPPORTED_RATIOS = ["1:1", "1:4", "1:8", "2:3", "3:2", "3:4", "4:1", "4:3", "4:5", "5:4", "8:1", "9:16", "16:9", "21:9"];
 
@@ -892,7 +892,13 @@ export async function submitPersistentImageTask(
     if (quality) formData.set("quality", quality);
     if (requestSize) formData.set("size", requestSize);
     if (background) formData.set("background", background);
-    const files = await Promise.all(references.map(async (image) => dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) })));
+    const prepared = await prepareImageRequestDataUrls(references, options);
+    const files = prepared.map((image, index) => dataUrlToFile({
+        id: `reference-${index}`,
+        name: `reference-${index + 1}.${image.mimeType.includes("jpeg") ? "jpg" : image.mimeType.includes("webp") ? "webp" : "png"}`,
+        type: image.mimeType,
+        dataUrl: image.dataUrl,
+    }));
     const imageField = files.length > 1 ? "image[]" : "image";
     files.forEach((file) => formData.append(imageField, file));
     return submitAsyncImageTask(requestConfig, "/images/edits/async", formData, "", "openai", options);
@@ -1036,7 +1042,7 @@ async function pollImageTask(
         if (task.status === "failed") {
             throw new Error(readApiErrorMessage(task.error) || task.message || apiText("requestFailed"))
         }
-        await waitForAsyncImagePoll(250, options?.signal)
+        await waitForAsyncImagePoll(500, options?.signal)
     }
     throw new Error(apiText("imageTimeout"))
 }
@@ -1144,10 +1150,11 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     const script = resolveModelScript(config, config.model || config.imageModel);
     const outputFormat = normalizeImageOutputFormat(config.outputFormat);
     const background = normalizeImageBackground(requestConfig.model, config.background, outputFormat);
+    const preparedReferences = references.length ? await prepareImageRequestDataUrls(references, options) : [];
     if (script) {
         const quality = normalizeQuality(config.quality);
         const requestSize = resolveRequestSize(config.size);
-        const refs = await Promise.all(references.map((image) => imageToDataUrl(image)));
+        const refs = preparedReferences.map((image) => image.dataUrl);
         try {
             const result = await runModelPlugin({
                 capability: "image",
@@ -1197,7 +1204,12 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     if (background) {
         formData.set("background", background);
     }
-    const files = await Promise.all(references.map(async (image) => dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) })));
+    const files = preparedReferences.map((image, index) => dataUrlToFile({
+        id: `reference-${index}`,
+        name: `reference-${index + 1}.${image.mimeType.includes("jpeg") ? "jpg" : image.mimeType.includes("webp") ? "webp" : "png"}`,
+        type: image.mimeType,
+        dataUrl: image.dataUrl,
+    }));
     const imageField = files.length > 1 ? "image[]" : "image";
     files.forEach((file) => formData.append(imageField, file));
 
