@@ -58,8 +58,8 @@ func (s *OpenAIGatewayService) ForwardOpenAIVideo(
 	body []byte,
 ) (*OpenAIForwardResult, error) {
 	if account == nil || account.Type != AccountTypeAPIKey ||
-		(account.Platform != PlatformMiniMax && account.Platform != PlatformOpenAI) {
-		return nil, fmt.Errorf("video generation requires a minimax or openai API key account")
+		(account.Platform != PlatformMiniMax && account.Platform != PlatformOpenAI && account.Platform != PlatformMuse) {
+		return nil, fmt.Errorf("video generation requires a minimax, openai, or muse API key account")
 	}
 	base, err := s.validateUpstreamBaseURL(account.GetCredential("base_url"))
 	if err != nil {
@@ -169,12 +169,16 @@ func (s *OpenAIGatewayService) ForwardOpenAIVideo(
 			return nil, fmt.Errorf("video create response missing task ID")
 		}
 		result.ResponseID = responseID
-		result.VideoResolution = NormalizeVideoBillingResolutionOrDefault(resolution)
+		result.VideoResolution = NormalizeVideoBillingResolutionForModelOrDefault(model, resolution)
 		result.VideoDurationSeconds = durationSeconds
 	} else {
 		result.ResponseID = taskID
 		result.Model = strings.TrimSpace(gjson.GetBytes(responseBody, "model").String())
 		result.BillingModel = result.Model
+		if endpoint == OpenAIVideoEndpointStatus && IsSeedanceVideoStatusBillable(responseBody) {
+			result.VideoCount = 1
+			result.VideoDurationSeconds = int(gjson.GetBytes(responseBody, "duration").Int())
+		}
 	}
 	writeGrokMediaResponse(c, resp, responseBody, s.responseHeaderFilter)
 	return result, nil

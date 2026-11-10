@@ -99,9 +99,20 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 		h.errorResponse(c, http.StatusInternalServerError, "api_error", "User context not found")
 		return
 	}
-	if endpoint.IsOpenAIVideo() && apiKey.Group != nil &&
-		(apiKey.Group.Platform == service.PlatformMiniMax || apiKey.Group.Platform == service.PlatformOpenAI) {
-		platform = apiKey.Group.Platform
+	if endpoint.IsOpenAIVideo() && apiKey.Group != nil {
+		groupPlatform := apiKey.Group.Platform
+		if groupPlatform == service.PlatformComposite {
+			if target, ok := service.ResolvedTargetPlatformFromContext(c.Request.Context()); ok {
+				groupPlatform = target
+			} else if target, ok := service.DetectModelPlatform(c.Query("model")); ok {
+				groupPlatform = target
+			}
+		}
+		if groupPlatform == service.PlatformMiniMax ||
+			groupPlatform == service.PlatformOpenAI ||
+			groupPlatform == service.PlatformMuse {
+			platform = groupPlatform
+		}
 	}
 
 	reqLog := requestLogger(
@@ -144,6 +155,9 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 		}
 	}
 	requestModel := requestInfo.Model
+	if endpoint.IsVideoLookupRequest() && strings.TrimSpace(requestModel) == "" {
+		requestModel = strings.TrimSpace(c.Query("model"))
+	}
 	routingModel := service.NormalizeGrokMediaModelForEndpoint(endpoint, requestModel, requestInfo.HasInputImage())
 	if endpoint.IsGenerationRequest() && strings.TrimSpace(requestModel) == "" {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "model is required")

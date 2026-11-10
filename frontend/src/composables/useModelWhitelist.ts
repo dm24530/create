@@ -464,6 +464,7 @@ export function getModelsByPlatform(platform: string): string[] {
     case 'meta': return metaModels
     case 'xai':
     case 'grok': return xaiModels
+    case 'muse': return ['muse-video', 'muse-cheap']
     case 'cohere': return cohereModels
     case 'yi': return yiModels
     case 'moonshot':

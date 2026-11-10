@@ -594,7 +594,7 @@
           </div>
           <div>
             <dt>协议</dt>
-            <dd>{{ previewTask.provider === 'grok' ? 'Grok 视频' : 'Seedance' }}</dd>
+            <dd>{{ videoProviderLabel(previewTask.provider) }}</dd>
           </div>
         </dl>
       </div>
@@ -700,6 +700,7 @@ import { findVideoInspiration } from './videoInspiration'
 import { formatVideoElapsedSeconds } from './videoElapsed'
 import { normalizeStudioDisplayOrder } from '@/features/studioDisplayOrder'
 import { notifyCreatorKeyChanged } from '@/utils/creatorKeyEvents'
+import { prepareImageReferenceImages } from '@/utils/imageReferenceCompression'
 
 interface StudioTask {
   localId: string
@@ -732,7 +733,7 @@ interface StudioTask {
 
 const MAX_TASK_COUNT = 4
 // 参考素材限制对齐自家灵感站：单件体积 + 合计体积。
-const MAX_IMAGE_BYTES = 5 * 1024 * 1024
+const MAX_IMAGE_BYTES = 1_000_000
 const MAX_VIDEO_BYTES = 20 * 1024 * 1024
 const MAX_AUDIO_BYTES = 8 * 1024 * 1024
 const MAX_REFERENCE_TOTAL_BYTES = 30 * 1024 * 1024
@@ -833,7 +834,7 @@ const { height: promptHeight, startResize: startPromptResize } = usePromptResize
 })
 const durationSeconds = ref(
   Number.isFinite(storedPreferences.durationSeconds)
-    ? Math.min(30, Math.max(1, Math.round(Number(storedPreferences.durationSeconds))))
+    ? Math.min(60, Math.max(1, Math.round(Number(storedPreferences.durationSeconds))))
     : 5,
 )
 const taskCount = ref(
@@ -949,8 +950,12 @@ const supportsGenerateAudioToggle = computed(() =>
     videoModelProfile.value.supportsAudio,
 )
 const durationPresetOptions = computed(() => {
-  const presets = [5, 8, 10, 15, 30]
-  const values = presets.filter((value) => value >= MIN_DURATION.value && value <= MAX_DURATION.value)
+  const allowed = videoModelProfile.value.durationOptions
+  const defaultPresets = [5, 8, 10, 15, 30]
+  const values = allowed?.length
+    ? [1, 5, 8, 10, 20, 30].filter((value) => allowed.includes(value))
+    : [...defaultPresets, ...(MAX_DURATION.value >= 60 ? [60] : [])]
+      .filter((value) => value >= MIN_DURATION.value && value <= MAX_DURATION.value)
   if (!values.includes(videoModelProfile.value.defaultDuration)) {
     values.push(videoModelProfile.value.defaultDuration)
     values.sort((a, b) => a - b)
@@ -1062,7 +1067,7 @@ const referenceFileLabel = computed(() => {
 })
 const referenceLimitHint = computed(() => {
   if (referenceKind.value === 'image') {
-    return `参考图最多 ${maxImages.value} 张，每张不超过 5MB，可上传本地图片或粘贴链接。`
+    return `参考图最多 ${maxImages.value} 张，本地图片会自动压缩，压缩后每张不超过 1MB。`
   }
   if (referenceKind.value === 'video') return `参考视频最多 ${maxVideos.value} 个，不超过 20MB，可上传本地视频或粘贴链接。`
   return `参考音频最多 ${maxAudios.value} 个，不超过 8MB，可上传本地音频或粘贴链接。`
@@ -1150,13 +1155,22 @@ function kindName(kind: 'image' | 'video' | 'audio'): string {
 }
 
 function taskMeta(task: StudioTask): string {
+  const profile = getVideoModelProfile(task.model, task.provider)
   return [
     task.model,
     task.durationSeconds ? `${task.durationSeconds}秒` : '',
     task.resolution,
     task.aspectRatio,
-    task.generateAudio ? '含音频' : '',
+    task.generateAudio || profile.outputsAudio ? '含音频' : '',
   ].filter(Boolean).join(' · ')
+}
+
+function videoProviderLabel(provider: VideoProvider): string {
+  if (provider === 'grok') return 'Grok 视频'
+  if (provider === 'muse_video') return 'Muse 视频'
+  if (provider === 'video_tasks') return 'MiniMax 视频'
+  if (provider === 'seedance_video') return 'Seedance Video'
+  return 'Seedance'
 }
 
 function archiveStateText(task: StudioTask): string {
@@ -1646,7 +1660,7 @@ function addReference(asset: Omit<VideoReferenceAsset, 'id'>): boolean {
   return true
 }
 
-function onReferenceFileSelected(event: Event) {
+async function onReferenceFileSelected(event: Event) {
   const input = event.target as HTMLInputElement
   const file = input.files?.[0]
   input.value = ''
@@ -1654,6 +1668,15 @@ function onReferenceFileSelected(event: Event) {
   const kind = referenceKind.value
   if (!ACCEPTED_TYPES[kind].includes(file.type)) {
     referenceDialogError.value = `${kindName(kind)}的格式不支持，请换一个文件。`
+    return
+  }
+  if (kind === 'image') {
+    try {
+      const asset = await prepareVideoReferenceImage(file, referenceRole.value)
+      if (addReference(asset)) closeReferenceDialog()
+    } catch (error) {
+      referenceDialogError.value = errorMessageFrom(error, '参考图压缩失败')
+    }
     return
   }
   if (file.size > referenceSizeLimit(kind)) {
@@ -1666,11 +1689,7 @@ function onReferenceFileSelected(event: Event) {
       kind,
       name: file.name || 'reference',
       url: String(reader.result || ''),
-      role: kind === 'image'
-        ? referenceRole.value
-        : kind === 'video'
-          ? videoReferenceRole.value
-          : undefined,
+      role: kind === 'video' ? videoReferenceRole.value : undefined,
       sizeBytes: file.size,
     })
     if (added) closeReferenceDialog()
@@ -1702,42 +1721,47 @@ function confirmReferenceUrl() {
   if (added) closeReferenceDialog()
 }
 
-function onPaste(event: ClipboardEvent) {
+async function onPaste(event: ClipboardEvent) {
   const file = Array.from(event.clipboardData?.files || []).find((item) => item.type.startsWith('image/'))
   if (!file) return
-  const reader = new FileReader()
-  reader.onload = () => {
-    addReference({
-      kind: 'image',
-      name: file.name || 'pasted.png',
-      url: String(reader.result || ''),
-      role: referenceRole.value,
-    })
+  try {
+    addReference(await prepareVideoReferenceImage(file, referenceRole.value))
+  } catch (error) {
+    errorMessage.value = errorMessageFrom(error, '参考图压缩失败')
   }
-  reader.readAsDataURL(file)
 }
 
-function onDropReferences(event: DragEvent) {
+async function onDropReferences(event: DragEvent) {
   const files = Array.from(event.dataTransfer?.files || [])
     .filter((file) => ACCEPTED_TYPES.image.includes(file.type))
     .slice(0, Math.max(0, maxImages.value - referenceCount('image')))
-  files.forEach((file) => {
-    if (file.size > MAX_IMAGE_BYTES) {
-      errorMessage.value = `单个参考图不能超过 ${referenceSizeLimitLabel('image')}。`
-      return
+  for (const file of files) {
+    try {
+      addReference(await prepareVideoReferenceImage(file, referenceRole.value))
+    } catch (error) {
+      errorMessage.value = errorMessageFrom(error, '参考图压缩失败')
     }
-    const reader = new FileReader()
-    reader.onload = () => {
-      addReference({
-        kind: 'image',
-        name: file.name || 'reference.png',
-        url: String(reader.result || ''),
-        role: referenceRole.value,
-        sizeBytes: file.size,
-      })
-    }
-    reader.readAsDataURL(file)
-  })
+  }
+}
+
+async function prepareVideoReferenceImage(
+  file: File,
+  role: VideoReferenceAsset['role'],
+): Promise<Omit<VideoReferenceAsset, 'id'>> {
+  const [prepared] = await prepareImageReferenceImages([{ name: file.name, blob: file }])
+  if (!prepared) throw new Error('参考图压缩失败')
+  return {
+    kind: 'image',
+    name: compressedReferenceFileName(file.name),
+    url: prepared.dataUrl,
+    role,
+    sizeBytes: prepared.bytes,
+  }
+}
+
+function compressedReferenceFileName(name: string) {
+  const base = String(name || '').replace(/\.[^.]+$/, '').trim() || 'reference'
+  return `${base}.webp`
 }
 
 function removeReference(id: number) {
@@ -1805,7 +1829,16 @@ function normalizeDuration() {
 
 function clampDuration(value: number): number {
   if (!Number.isFinite(value)) return 5
-  return Math.min(Math.max(Math.round(value), MIN_DURATION.value), MAX_DURATION.value)
+  const rounded = Math.min(Math.max(Math.round(value), MIN_DURATION.value), MAX_DURATION.value)
+  const allowed = videoModelProfile.value.durationOptions
+  if (!allowed?.length || allowed.includes(rounded)) return rounded
+  return allowed.reduce((nearest, option) => {
+    const distance = Math.abs(option - rounded)
+    const nearestDistance = Math.abs(nearest - rounded)
+    return distance < nearestDistance || (distance === nearestDistance && option < nearest)
+      ? option
+      : nearest
+  }, allowed[0])
 }
 
 function normalizeTaskCount() {
@@ -1970,7 +2003,9 @@ async function runTask(
       isCancelled: () => cancelledTasks.has(task.localId),
       onProgress: (progress) => {
         task.status = progress.status
-        task.stageText = statusText(progress.status)
+        task.stageText = progress.progress > 0 && progress.status !== 'succeeded'
+          ? `生成中 ${progress.progress}%`
+          : statusText(progress.status)
       },
       onRetry: () => {
         task.stageText = '网络波动，正在自动重连'

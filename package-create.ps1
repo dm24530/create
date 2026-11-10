@@ -174,6 +174,7 @@ try {
 }
 
 Copy-Item -Force (Join-Path $repoRoot "deploy/docker-compose.create.yml") $stageDir
+Copy-Item -Force -Recurse (Join-Path $repoRoot "deploy/muse") (Join-Path $stageDir "muse")
 
 $updateScript = Get-Content -Raw (Join-Path $repoRoot "release/create-update/update-server.sh")
 $updateScript = $updateScript -replace '(?m)^TARGET_IMAGE=.*$', ('TARGET_IMAGE="${TARGET_IMAGE:-' + $Tag + '}"')
@@ -189,6 +190,7 @@ Contents:
 - storage-key-migrate-linux-amd64
 - docker-compose.create.yml
 - update-server.sh
+- muse/ (optional Muse account and video-group seed)
 
 Run on the server from any directory:
 
@@ -212,6 +214,10 @@ The script:
 7. restores the previous image and .env automatically if health fails
 
 It does not delete PostgreSQL, Redis, application data, or R2 objects.
+
+To configure Muse after the update, run:
+
+  bash muse/apply.sh
 "@
 Write-Utf8NoBom -Path (Join-Path $stageDir "README.txt") -Value $readme
 

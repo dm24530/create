@@ -399,6 +399,10 @@ func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int
 		}
 	}
 
+	if account.Platform == PlatformMuse {
+		return s.testMuseAccountConnection(c, account, modelID)
+	}
+
 	if account.IsOpenAI() {
 		return s.testOpenAIAccountConnection(c, account, modelID, prompt, normalizeAccountTestMode(mode))
 	}
@@ -425,6 +429,71 @@ func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int
 	}
 
 	return s.testClaudeAccountConnection(c, account, modelID)
+}
+
+func (s *AccountTestService) testMuseAccountConnection(c *gin.Context, account *Account, modelID string) error {
+	if s.httpUpstream == nil {
+		return s.sendErrorAndEnd(c, "HTTP upstream not configured")
+	}
+	base := strings.TrimRight(strings.TrimSpace(account.GetCredential("base_url")), "/")
+	if base == "" {
+		base = "https://momoapi.xin/v1"
+	}
+	if !strings.HasSuffix(base, "/v1") {
+		base += "/v1"
+	}
+	token := strings.TrimSpace(account.GetCredential("api_key"))
+	if token == "" {
+		return s.sendErrorAndEnd(c, "Muse API key is missing")
+	}
+
+	s.prepareGrokTestSSE(c)
+	s.sendEvent(c, TestEvent{Type: "test_start", Model: modelID})
+	s.sendEvent(c, TestEvent{Type: "status", Text: "Calling Muse /v1/models..."})
+
+	req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, base+"/models", nil)
+	if err != nil {
+		return s.sendErrorAndEnd(c, "Failed to create Muse model list request")
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/json")
+	account.ApplyHeaderOverrides(req.Header)
+	resp, err := s.httpUpstream.Do(req, s.grokTestProxyURL(account), account.ID, account.Concurrency)
+	if err != nil {
+		return s.sendErrorAndEnd(c, fmt.Sprintf("Muse model list request failed: %s", err.Error()))
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return s.sendErrorAndEnd(c, "Failed to read Muse model list response")
+	}
+	if resp.StatusCode != http.StatusOK {
+		return s.sendErrorAndEnd(c, fmt.Sprintf("Muse models API returned %d: %s", resp.StatusCode, string(body)))
+	}
+
+	models := make([]string, 0)
+	for _, item := range gjson.GetBytes(body, "data").Array() {
+		if id := strings.TrimSpace(item.Get("id").String()); id != "" {
+			models = append(models, id)
+		}
+	}
+	if len(models) == 0 {
+		return s.sendErrorAndEnd(c, "Muse models API returned no models")
+	}
+	hasMuse := false
+	for _, model := range models {
+		if model == "muse-video" || model == "muse-cheap" {
+			hasMuse = true
+			break
+		}
+	}
+	if !hasMuse {
+		return s.sendErrorAndEnd(c, "Muse models API is reachable, but muse-video / muse-cheap is not enabled")
+	}
+
+	s.sendEvent(c, TestEvent{Type: "content", Text: fmt.Sprintf("Muse account is reachable; %d models available.\n", len(models))})
+	s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
+	return nil
 }
 
 // testModelRoutedAccountConnection probes the native endpoint for the selected

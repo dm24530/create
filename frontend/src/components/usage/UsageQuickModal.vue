@@ -71,6 +71,7 @@
           :data="logs"
           :loading="loading"
           :columns="columns"
+          :empty-message="hasQueried ? undefined : '点击搜索查看使用记录'"
           :server-side-sort="false"
           :show-account-billing="false"
           :show-upstream-endpoint="false"
@@ -115,6 +116,7 @@ const logs = ref<AdminUsageLog[]>([])
 const stats = ref<UsageStatsResponse | null>(null)
 const loading = ref(false)
 const refreshing = ref(false)
+const hasQueried = ref(false)
 const errorMessage = ref('')
 const keys = ref<ApiKey[]>([])
 const filterApiKeyId = ref('all')
@@ -140,10 +142,25 @@ const columns: Column[] = [
   { key: 'created_at', label: '时间', sortable: false },
 ]
 
+function formatLocalDate(date = new Date()): string {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function initializeDefaultDateRange() {
+  const today = formatLocalDate()
+  if (!filterStartDate.value) filterStartDate.value = today
+  if (!filterEndDate.value) filterEndDate.value = today
+}
+
 watch(
   () => props.show,
   (show) => {
     if (show) {
+      initializeDefaultDateRange()
+      pagination.page = 1
       void loadKeys()
       void loadData()
     }
@@ -192,6 +209,7 @@ function onEndDateChange() {
 }
 
 function applyFilters() {
+  if (loading.value || refreshing.value) return
   pagination.page = 1
   void loadData()
 }
@@ -222,6 +240,7 @@ async function loadData() {
     } catch {
       stats.value = null
     }
+    hasQueried.value = true
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '加载使用记录失败'
   } finally {

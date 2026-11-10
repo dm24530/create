@@ -112,6 +112,7 @@ export default {
         gemini: 'Gemini',
         antigravity: 'Antigravity',
         grok: 'Grok',
+        muse: 'Muse Video',
         kimi: 'Kimi',
         zhipu: 'Zhipu GLM',
         deepseek: 'DeepSeek',
@@ -626,6 +627,10 @@ export default {
         official: '{platform} official API'
       },
       // OpenAI specific hints
+      muse: {
+        baseUrlHint: 'Muse Video API base URL. Defaults to https://momoapi.xin/v1.',
+        apiKeyHint: 'The API key used for Muse video generation',
+      },
       openai: {
         baseUrlHint: 'Leave default for official OpenAI API',
         apiKeyHint: 'Your OpenAI API Key',

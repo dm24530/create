@@ -108,6 +108,39 @@ func TestLookupVideoBillingResolutionReportsUnknownTiers(t *testing.T) {
 	require.Equal(t, VideoBillingResolution1080P, NormalizeVideoBillingResolutionOrDefault("full_hd"))
 }
 
+func TestMuseVideoBillingDefaults(t *testing.T) {
+	t.Parallel()
+	require.True(t, IsMuseVideoModel("muse-video"))
+	require.True(t, IsMuseVideoModel("muse-cheap"))
+	require.False(t, IsMuseVideoModel("muse-spark-1.3-contributor"))
+	require.Equal(t, 60, NormalizeVideoBillingDurationSecondsForModelOrDefault("muse-video", 60))
+	require.Equal(t, 30, NormalizeVideoBillingDurationSecondsForModelOrDefault("muse-cheap", 45))
+	require.Equal(t, VideoBillingResolution720P, NormalizeVideoBillingResolutionForModelOrDefault("muse-video", ""))
+	require.Equal(t, VideoBillingResolution720P, NormalizeVideoBillingResolutionForModelOrDefault("muse-cheap", "ignored"))
+}
+
+func TestCalculateVideoCostMuseDefaults(t *testing.T) {
+	t.Parallel()
+	service := &BillingService{}
+
+	museVideo := service.CalculateVideoCost("muse-video", "720p", 1, 1, nil, 1)
+	require.InDelta(t, 0.03, museVideo.TotalCost, 1e-9)
+	require.InDelta(t, 0.03, museVideo.ActualCost, 1e-9)
+
+	for _, tc := range []struct {
+		duration int
+		want     float64
+	}{
+		{duration: 1, want: 0.92},
+		{duration: 10, want: 0.92},
+		{duration: 20, want: 1.49},
+		{duration: 30, want: 1.72},
+	} {
+		cost := service.CalculateVideoCost("muse-cheap", "720p", 1, tc.duration, nil, 1)
+		require.InDelta(t, tc.want, cost.TotalCost, 1e-9, "duration=%d", tc.duration)
+	}
+}
+
 func TestVideoModelPriceMissingTierFallsBackToFlatTierPrice(t *testing.T) {
 	t.Parallel()
 	flat720P := 0.7

@@ -264,6 +264,24 @@
             {{ spec.display_name }}
           </button>
         </div>
+
+        <!-- 视频专用平台 -->
+        <div class="mt-2 flex flex-wrap rounded-lg bg-gray-100 p-1 dark:bg-dark-700" data-testid="platform-row-video">
+          <button
+            type="button"
+            data-testid="platform-button-muse"
+            @click="selectMusePlatform()"
+            :class="[
+              'flex flex-1 items-center justify-center gap-2 rounded-md px-3 py-2.5 text-sm font-medium transition-all',
+              form.platform === 'muse'
+                ? 'bg-white text-rose-600 shadow-sm dark:bg-dark-600 dark:text-rose-400'
+                : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
+            ]"
+          >
+            <PlatformIcon platform="muse" size="sm" />
+            Muse 视频
+          </button>
+        </div>
       </div>
 
       <!-- Account Type Selection (Anthropic) -->
@@ -4096,12 +4114,14 @@ const baseUrlHint = computed(() => {
   if (form.platform === 'openai') return t('admin.accounts.openai.baseUrlHint')
   if (form.platform === 'gemini') return t('admin.accounts.gemini.baseUrlHint')
   if (form.platform === 'grok') return ''
+  if (form.platform === 'muse') return t('admin.accounts.muse.baseUrlHint')
   return t('admin.accounts.baseUrlHint')
 })
 
 const apiKeyHint = computed(() => {
   if (form.platform === 'openai') return t('admin.accounts.openai.apiKeyHint')
   if (form.platform === 'gemini') return t('admin.accounts.gemini.apiKeyHint')
+  if (form.platform === 'muse') return t('admin.accounts.muse.apiKeyHint')
   // Grok 与多协议供应商没有对应的说明文案；通用文案指 Claude Console Key。
   if (form.platform === 'grok' || isMultiProtocolPlatform.value) return ''
   return t('admin.accounts.apiKeyHint')
@@ -4143,6 +4163,7 @@ const apiKeyValuePlaceholder = computed(() => {
       return 'sk-...'
     case 'minimax':
     case 'opencode_go':
+    case 'muse':
       return 'sk-...'
     case 'typesafe':
       return 'ts-...'
@@ -4375,6 +4396,14 @@ function selectGenericMultiProtocolPlatform(platform: string) {
   apiKeyBaseUrl.value = defaultCNBaseUrl(platform, accountMode.value, apiProtocol.value)
   resetAdaptiveBaseUrls(platform, accountMode.value)
   openCodeGoProtocolRules.value = cloneOpenCodeGoProtocolRules(defaultProviderProtocolRules(platform, accountMode.value))
+}
+function selectMusePlatform() {
+  form.platform = 'muse'
+  form.type = 'apikey'
+  accountCategory.value = 'apikey'
+  apiKeyBaseUrl.value = 'https://momoapi.xin/v1'
+  modelRestrictionMode.value = 'whitelist'
+  allowedModels.value = ['muse-video', 'muse-cheap']
 }
 // 账号类型 / 协议变更时同步默认 base url。
 watch(openCodeAccountMode, (mode, previousMode) => {
@@ -4964,6 +4993,8 @@ watch(
             ? 'https://generativelanguage.googleapis.com'
             : newPlatform === 'grok'
               ? 'https://api.x.ai/v1'
+              : newPlatform === 'muse'
+                ? 'https://momoapi.xin/v1'
               : newPlatform === 'typesafe'
                 ? 'https://api.typesafe.ai'
               : 'https://api.anthropic.com'
@@ -4977,6 +5008,10 @@ watch(
       // Grok 等平台会把模式切到映射；TypeSafe 只用白名单写入 jev-latest。
       modelRestrictionMode.value = 'whitelist'
       allowedModels.value = ['jev-latest']
+    } else if (newPlatform === 'muse') {
+      accountCategory.value = 'apikey'
+      modelRestrictionMode.value = 'whitelist'
+      allowedModels.value = ['muse-video', 'muse-cheap']
     }
     // Antigravity: 默认使用映射模式并填充默认映射
     if (newPlatform === 'antigravity') {
@@ -5900,6 +5935,8 @@ const handleSubmit = async () => {
         ? 'https://generativelanguage.googleapis.com'
         : form.platform === 'grok'
           ? 'https://api.x.ai/v1'
+          : form.platform === 'muse'
+            ? 'https://momoapi.xin/v1'
           : form.platform === 'typesafe'
             ? 'https://api.typesafe.ai'
           : 'https://api.anthropic.com'

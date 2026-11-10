@@ -1,6 +1,7 @@
 // 视频作品的持久化归档：文件存在对象存储（与图片共用同一份配置，videos/ 前缀），
 // 记录存在后端，因此换浏览器、清缓存都还在。
 import { apiClient } from '@/api/client'
+import { uploadReferenceAssetDataURL, type ReferenceAssetKind } from '@/api/referenceAssets'
 
 export interface ArchivedVideoEntry {
   id: string
@@ -34,7 +35,7 @@ export interface ArchiveVideoRequest {
 }
 
 export interface VideoReferenceAssetUpload {
-  kind: 'image' | 'video' | 'audio'
+  kind: ReferenceAssetKind
   data_url: string
 }
 
@@ -47,12 +48,8 @@ export interface VideoReferenceAssetUploadResult {
 export async function uploadVideoReferenceAsset(
   request: VideoReferenceAssetUpload,
 ): Promise<VideoReferenceAssetUploadResult> {
-  const { data } = await apiClient.post<VideoReferenceAssetUploadResult>(
-    '/video-studio/reference-assets',
-    request,
-    { timeout: 4 * 60 * 1000 },
-  )
-  return data
+  const url = await uploadReferenceAssetDataURL(request.kind, request.data_url)
+  return { url }
 }
 
 export async function listArchivedVideos(

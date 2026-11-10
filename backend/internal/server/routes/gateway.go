@@ -100,7 +100,8 @@ func RegisterGatewayRoutes(
 			return
 		}
 		if platform == service.PlatformComposite && openAIVideoCreate {
-			if target, ok := service.ResolvedTargetPlatformFromContext(c.Request.Context()); ok && target == service.PlatformMiniMax {
+			if target, ok := service.ResolvedTargetPlatformFromContext(c.Request.Context()); ok &&
+				(target == service.PlatformMiniMax || target == service.PlatformMuse) {
 				h.OpenAIGateway.OpenAIVideoGeneration(c)
 				return
 			}
@@ -111,7 +112,7 @@ func RegisterGatewayRoutes(
 			h.OpenAIGateway.GrokVideoGeneration(c)
 			return
 		}
-		if platform == service.PlatformOpenAI && openAIVideoCreate {
+		if (platform == service.PlatformOpenAI || platform == service.PlatformMuse) && openAIVideoCreate {
 			h.OpenAIGateway.OpenAIVideoGeneration(c)
 			return
 		}
@@ -145,7 +146,7 @@ func RegisterGatewayRoutes(
 		// be resolved by compositeTargetPlatformMiddleware. Route them through
 		// the Grok handler and let scheduler/account selection enforce capacity.
 		groupPlatform := getGroupPlatform(c)
-		if groupPlatform == service.PlatformMiniMax ||
+		if groupPlatform == service.PlatformMiniMax || groupPlatform == service.PlatformMuse ||
 			(groupPlatform == service.PlatformOpenAI && c.Query("model") != "") ||
 			(groupPlatform == service.PlatformComposite && c.Query("model") != "") {
 			h.OpenAIGateway.OpenAIVideoStatus(c)
@@ -172,7 +173,7 @@ func RegisterGatewayRoutes(
 		// be resolved by compositeTargetPlatformMiddleware. Route them through
 		// the Grok handler just like video status lookups.
 		groupPlatform := getGroupPlatform(c)
-		if groupPlatform == service.PlatformMiniMax ||
+		if groupPlatform == service.PlatformMiniMax || groupPlatform == service.PlatformMuse ||
 			(groupPlatform == service.PlatformOpenAI && c.Query("model") != "") ||
 			(groupPlatform == service.PlatformComposite && c.Query("model") != "") {
 			h.OpenAIGateway.OpenAIVideoContent(c)

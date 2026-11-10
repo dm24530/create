@@ -424,6 +424,31 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     })
   })
 
+  it('creates a dedicated Muse video account with Muse model presets', async () => {
+    const wrapper = mountModal()
+    await wrapper.get('[data-testid="platform-button-muse"]').trigger('click')
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('Muse 主账号')
+    await wrapper.get('form#create-account-form input[type="password"]').setValue('sk-muse')
+
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(createAccountMock).toHaveBeenCalledTimes(1)
+    expect(createAccountMock.mock.calls[0]?.[0]).toMatchObject({
+      name: 'Muse 主账号',
+      platform: 'muse',
+      type: 'apikey',
+      credentials: {
+        base_url: 'https://momoapi.xin/v1',
+        api_key: 'sk-muse',
+        model_mapping: {
+          'muse-video': 'muse-video',
+          'muse-cheap': 'muse-cheap',
+        },
+      },
+    })
+  })
+
   describe('providers using the generic form', () => {
     const serverOnlyProviders = {
       platforms: [

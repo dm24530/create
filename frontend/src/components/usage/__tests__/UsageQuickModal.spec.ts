@@ -31,7 +31,7 @@ const stubs = {
   },
   UsageStatsCards: true,
   UsageTable: {
-    props: ['data', 'loading', 'columns', 'serverSideSort', 'showAccountBilling', 'showUpstreamEndpoint', 'statusInTypeColumn', 'defaultSortKey', 'defaultSortOrder', 'flat'],
+    props: ['data', 'loading', 'columns', 'emptyMessage', 'serverSideSort', 'showAccountBilling', 'showUpstreamEndpoint', 'statusInTypeColumn', 'defaultSortKey', 'defaultSortOrder', 'flat'],
     template: '<div data-testid="usage-table" />',
   },
   Pagination: {
@@ -61,6 +61,25 @@ describe('UsageQuickModal', () => {
     expect(wrapper.findComponent(stubs.BaseDialog).props('closeOnClickOutside')).toBe(true)
     await wrapper.get('[data-testid="backdrop"]').trigger('click')
     expect(wrapper.emitted('close')).toHaveLength(1)
+  })
+
+  it('loads usage automatically when opened and still supports manual refresh', async () => {
+    const wrapper = mount(UsageQuickModal, {
+      props: { show: true },
+      global: { stubs },
+    })
+    await flushPromises()
+
+    expect(queryUsage).toHaveBeenCalledTimes(1)
+    expect(getUsageStats).toHaveBeenCalledTimes(1)
+    expect(wrapper.findComponent(stubs.UsageTable).props('emptyMessage')).toBeUndefined()
+
+    await wrapper.get('button.btn-primary').trigger('click')
+    await flushPromises()
+
+    expect(queryUsage).toHaveBeenCalledTimes(2)
+    expect(getUsageStats).toHaveBeenCalledTimes(2)
+    expect(wrapper.findComponent(stubs.UsageTable).props('emptyMessage')).toBeUndefined()
   })
 
   it('keeps pagination outside the scrollable table and disables body scrolling', async () => {

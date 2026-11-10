@@ -2218,11 +2218,16 @@ func (s *BillingService) CalculateVideoCost(model string, resolution string, vid
 	if videoCount <= 0 {
 		return &CostBreakdown{}
 	}
-	resolution = NormalizeVideoBillingResolutionOrDefault(resolution)
-	durationSeconds = NormalizeVideoBillingDurationSecondsOrDefault(durationSeconds)
+	resolution = NormalizeVideoBillingResolutionForModelOrDefault(model, resolution)
+	durationSeconds = NormalizeVideoBillingDurationSecondsForModelOrDefault(model, durationSeconds)
 
-	perSecondPrice := s.getVideoUnitPrice(model, resolution, groupConfig)
-	totalCost := perSecondPrice * float64(durationSeconds) * float64(videoCount)
+	totalCost := 0.0
+	if IsMuseCheapVideoModel(model) && !hasConfiguredVideoUnitPrice(groupConfig, model, resolution) {
+		totalCost = defaultMuseCheapVideoCallPrice(durationSeconds) * float64(videoCount)
+	} else {
+		perSecondPrice := s.getVideoUnitPrice(model, resolution, groupConfig)
+		totalCost = perSecondPrice * float64(durationSeconds) * float64(videoCount)
+	}
 
 	if rateMultiplier < 0 {
 		rateMultiplier = 0
@@ -2285,6 +2290,25 @@ func (s *BillingService) getVideoUnitPrice(model string, resolution string, grou
 	return s.getDefaultVideoPrice(model, resolution)
 }
 
+func hasConfiguredVideoUnitPrice(groupConfig *VideoPriceConfig, model string, resolution string) bool {
+	if groupConfig == nil {
+		return false
+	}
+	if price := LookupVideoModelPrice(groupConfig.ModelPrices, model, resolution); price != nil {
+		return true
+	}
+	switch NormalizeVideoBillingResolutionOrDefault(resolution) {
+	case VideoBillingResolution480P:
+		return groupConfig.Price480P != nil
+	case VideoBillingResolution720P:
+		return groupConfig.Price720P != nil
+	case VideoBillingResolution1080P:
+		return groupConfig.Price1080P != nil
+	default:
+		return false
+	}
+}
+
 // getDefaultImagePrice 获取 LiteLLM 默认图片价格
 func (s *BillingService) getDefaultImagePrice(model string, imageSize string) float64 {
 	if price, ok := getDefaultGrokImagineImagePrice(model, imageSize); ok {
@@ -2318,6 +2342,9 @@ func (s *BillingService) getDefaultImagePrice(model string, imageSize string) fl
 }
 
 func (s *BillingService) getDefaultVideoPrice(model string, resolution string) float64 {
+	if IsMuseVideoModel(model) {
+		return 0.03
+	}
 	if price, ok := getDefaultGrokImagineVideoPrice(model, resolution); ok {
 		return price
 	}
@@ -2327,6 +2354,17 @@ func (s *BillingService) getDefaultVideoPrice(model string, resolution string) f
 	// rate; today only Grok models reach video billing, so this path is a safety net),
 	// while letting group-level video prices override it independently from image prices.
 	return s.getDefaultImagePrice(model, ImageBillingSize2K)
+}
+
+func defaultMuseCheapVideoCallPrice(durationSeconds int) float64 {
+	switch {
+	case durationSeconds <= 10:
+		return 0.92
+	case durationSeconds <= 20:
+		return 1.49
+	default:
+		return 1.72
+	}
 }
 
 func getDefaultGrokImagineImagePrice(model string, imageSize string) (float64, bool) {

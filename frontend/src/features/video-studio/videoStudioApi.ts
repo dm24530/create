@@ -1,8 +1,9 @@
 // 视频工作台的接口封装：直接调用用户自己的 API Key，
 // 视频生成走异步任务协议，创建 + 轮询 + 取内容三步。
 //
-// 工作台支持三种视频协议，前端按模型和分组平台选择：
+// 工作台支持多种视频协议，前端按模型和分组平台选择：
 //   - Seedance Video（OpenAI-compatible）：POST /video/generations
+//   - Muse Video（统一视频协议）：POST /video/generations
 //   - Seedance（Ark 任务协议）：POST /contents/generations/tasks
 //   - Grok（xAI 视频协议）：POST /videos/generations
 // 三种协议的状态查询与内容下载路径不同，统一在这里归一化。
@@ -13,7 +14,7 @@ import {
   type VideoReferenceAssetUploadResult,
 } from './videoArchiveApi'
 
-export type VideoProvider = 'seedance' | 'seedance_video' | 'video_tasks' | 'grok'
+export type VideoProvider = 'seedance' | 'seedance_video' | 'muse_video' | 'video_tasks' | 'grok'
 
 export type VideoTaskStatus = 'queued' | 'running' | 'succeeded' | 'failed'
 
@@ -55,6 +56,7 @@ export interface VideoGenerationParams {
 
 export interface VideoTaskSnapshot {
   status: VideoTaskStatus
+  progress: number
   videoUrl: string
   durationSeconds: number
   rawStatus: string
@@ -107,11 +109,13 @@ export interface VideoModelProfile {
   minDuration: number
   maxDuration: number
   defaultDuration: number
+  durationOptions?: readonly number[]
   resolutions: readonly string[]
   aspectRatios: readonly string[]
   maxImages: number
   maxVideos: number
   supportsAudio: boolean
+  outputsAudio?: boolean
   modes: readonly VideoMode[]
 }
 
@@ -142,6 +146,36 @@ const MINIMAX_H3_PROFILE: VideoModelProfile = {
   maxVideos: 3,
   supportsAudio: true,
   modes: ['text-to-video', 'image-to-video', 'first-last-frame', 'reference-images', 'reference-video'],
+}
+
+const MUSE_MODEL_PROFILES: Record<string, VideoModelProfile> = {
+  'muse-video': {
+    provider: 'muse_video',
+    minDuration: 1,
+    maxDuration: 60,
+    defaultDuration: 6,
+    resolutions: ['720p'],
+    aspectRatios: ['16:9', '9:16'],
+    maxImages: 4,
+    maxVideos: 0,
+    supportsAudio: false,
+    outputsAudio: true,
+    modes: ['text-to-video', 'image-to-video', 'reference-images'],
+  },
+  'muse-cheap': {
+    provider: 'muse_video',
+    minDuration: 1,
+    maxDuration: 30,
+    defaultDuration: 10,
+    durationOptions: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 30],
+    resolutions: ['720p'],
+    aspectRatios: ['16:9', '9:16'],
+    maxImages: 7,
+    maxVideos: 0,
+    supportsAudio: false,
+    outputsAudio: true,
+    modes: ['text-to-video', 'reference-images'],
+  },
 }
 
 const SEEDANCE_MODEL_PROFILES: Record<string, VideoModelProfile> = {
@@ -251,6 +285,10 @@ function isKnownSeedanceModel(model: string): boolean {
   return normalizedModelName(model) in SEEDANCE_MODEL_PROFILES
 }
 
+function isKnownMuseModel(model: string): boolean {
+  return normalizedModelName(model) in MUSE_MODEL_PROFILES
+}
+
 function isMinimaxH3VideoModel(model: string): boolean {
   return MINIMAX_H3_MODEL_PATTERN.test(normalizedModelName(model))
 }
@@ -263,6 +301,7 @@ export function resolveVideoProvider(
   const platform = hint.platform?.trim().toLowerCase()
   if (platform === 'grok') return 'grok'
   if (isMinimaxH3VideoModel(value)) return 'video_tasks'
+  if (isKnownMuseModel(value)) return 'muse_video'
   if (isKnownSeedanceModel(value) && (platform === 'openai' || platform === 'composite')) {
     return 'seedance_video'
   }
@@ -288,6 +327,8 @@ export function resolveVideoProvider(
 export function getVideoModelProfile(model: string, provider?: VideoProvider): VideoModelProfile {
   const value = normalizedModelName(model)
   if (isMinimaxH3VideoModel(value)) return MINIMAX_H3_PROFILE
+  const museProfile = MUSE_MODEL_PROFILES[value]
+  if (museProfile) return museProfile
   const seedanceProfile = SEEDANCE_MODEL_PROFILES[value]
   if (seedanceProfile && provider !== 'grok') {
     return seedanceProfile
@@ -323,6 +364,7 @@ export function isVideoModel(name: string): boolean {
   const value = normalizedModelName(name)
   // Avoid broad matches such as "wan": Wanx image models start with "wanx".
   return isMinimaxH3VideoModel(value) ||
+    isKnownMuseModel(value) ||
     isKnownSeedanceModel(value) ||
     value.includes('video') ||
     value.includes('seedance')
@@ -412,6 +454,26 @@ export function buildVideoRequest(
         content.push({ type: 'audio_url', audio_url: { url: asset.url }, role: 'reference_audio' })
       }
       body.metadata = { content }
+    }
+    return { path: '/videos', body }
+  }
+
+  if (provider === 'muse_video') {
+    const firstFrame = params.images.find((asset) => asset.role === 'first_frame')
+    const referenceImages = params.images.filter((asset) => asset.role === 'reference_image')
+    const body: Record<string, unknown> = {
+      model: params.model.trim(),
+      prompt: params.prompt.trim(),
+      seconds: params.durationSeconds,
+      aspect_ratio: params.aspectRatio,
+    }
+    if (firstFrame) {
+      body.image = firstFrame.url
+    } else if (!referenceImages.length && params.images.length) {
+      body.image = params.images[0].url
+    }
+    if (referenceImages.length) {
+      body.reference_images = referenceImages.map((asset) => asset.url)
     }
     return { path: '/videos', body }
   }
@@ -544,7 +606,7 @@ export async function createVideoTask(
 
 function normalizeStatus(provider: VideoProvider, raw: string): VideoTaskStatus {
   const value = raw.trim().toLowerCase()
-  if (provider === 'grok' || provider === 'seedance_video' || provider === 'video_tasks') {
+  if (provider === 'grok' || provider === 'seedance_video' || provider === 'muse_video' || provider === 'video_tasks') {
     if (value === 'done' || value === 'succeeded' || value === 'completed') return 'succeeded'
     if (value === 'failed' || value === 'expired' || value === 'cancelled' || value === 'canceled') return 'failed'
     return value === 'running' || value === 'processing' || value === 'in_progress' ? 'running' : 'queued'
@@ -557,7 +619,7 @@ function normalizeStatus(provider: VideoProvider, raw: string): VideoTaskStatus 
 export function parseVideoTaskSnapshot(provider: VideoProvider, payload: any): VideoTaskSnapshot {
   const rawStatus = String(payload?.status ?? payload?.data?.status ?? '')
   const status = normalizeStatus(provider, rawStatus)
-  const videoUrl = provider === 'grok' || provider === 'seedance_video'
+  const videoUrl = provider === 'grok' || provider === 'seedance_video' || provider === 'muse_video'
     ? String(
         payload?.video?.url ??
         payload?.metadata?.url ??
@@ -566,7 +628,7 @@ export function parseVideoTaskSnapshot(provider: VideoProvider, payload: any): V
         '',
       )
     : String(payload?.content?.video_url ?? payload?.data?.content?.video_url ?? '')
-  const duration = provider === 'grok' || provider === 'seedance_video' || provider === 'video_tasks'
+  const duration = provider === 'grok' || provider === 'seedance_video' || provider === 'muse_video' || provider === 'video_tasks'
     ? Number(
         payload?.video?.duration ??
         payload?.duration ??
@@ -575,6 +637,7 @@ export function parseVideoTaskSnapshot(provider: VideoProvider, payload: any): V
         0,
       )
     : Number(payload?.content?.duration ?? payload?.usage?.duration ?? 0)
+  const progressValue = Number(payload?.progress ?? payload?.data?.progress ?? 0)
   const errorMessage = String(
     payload?.error?.message ||
     payload?.failure_reason ||
@@ -583,6 +646,7 @@ export function parseVideoTaskSnapshot(provider: VideoProvider, payload: any): V
   )
   return {
     status,
+    progress: Number.isFinite(progressValue) ? Math.min(100, Math.max(0, progressValue)) : 0,
     videoUrl: videoUrl.trim(),
     durationSeconds: Number.isFinite(duration) ? duration : 0,
     rawStatus: rawStatus.trim(),
@@ -595,6 +659,9 @@ export function videoTaskPath(provider: VideoProvider, requestId: string): strin
   if (provider === 'video_tasks') {
     return `/videos/${id}?model=MiniMax-H3`
   }
+  if (provider === 'muse_video') {
+    return `/videos/${id}?model=muse-video`
+  }
   return provider === 'grok' || provider === 'seedance_video'
     ? `/videos/${id}`
     : `/contents/generations/tasks/${id}`
@@ -603,6 +670,9 @@ export function videoTaskPath(provider: VideoProvider, requestId: string): strin
 function videoContentPath(provider: VideoProvider, requestId: string): string {
   if (provider === 'video_tasks') {
     return `/videos/${encodeURIComponent(requestId)}/content?model=MiniMax-H3`
+  }
+  if (provider === 'muse_video') {
+    return `/videos/${encodeURIComponent(requestId)}/content?model=muse-video`
   }
   return `${videoTaskPath(provider, requestId)}/content`
 }
@@ -654,7 +724,7 @@ export async function cancelVideoTask(
   provider: VideoProvider,
   requestId: string,
 ): Promise<void> {
-  if (provider === 'grok' || provider === 'seedance_video' || provider === 'video_tasks') return
+  if (provider === 'grok' || provider === 'seedance_video' || provider === 'muse_video' || provider === 'video_tasks') return
   await fetch(joinUrl(context.baseUrl, videoTaskPath(provider, requestId)), {
     method: 'DELETE',
     headers: authHeaders(context.apiKey),
@@ -682,6 +752,7 @@ export async function pollVideoTask(
   let retryAttempt = 0
   let last: VideoTaskSnapshot = {
     status: 'queued',
+    progress: 0,
     videoUrl: '',
     durationSeconds: 0,
     rawStatus: '',

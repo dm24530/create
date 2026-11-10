@@ -359,6 +359,31 @@ func TestGatewayRoutesOpenAIVideoCreateIsAllowedForOpenAI(t *testing.T) {
 	}
 }
 
+func TestGatewayRoutesMuseVideoCreateAndLookupAreAllowed(t *testing.T) {
+	router := newGatewayRoutesTestRouter(service.PlatformMuse)
+
+	for _, path := range []string{"/v1/videos", "/videos"} {
+		req := httptest.NewRequest(
+			http.MethodPost,
+			path,
+			strings.NewReader(`{"model":"muse-video","prompt":"waves","seconds":1,"aspect_ratio":"16:9"}`),
+		)
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		require.NotEqual(t, http.StatusNotFound, w.Code, "path=%s", path)
+		require.NotContains(t, w.Body.String(), "Videos API is not supported")
+	}
+
+	for _, path := range []string{"/v1/videos/task-1", "/videos/task-1/content"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		require.NotEqual(t, http.StatusNotFound, w.Code, "path=%s", path)
+		require.NotContains(t, w.Body.String(), "Videos API is not supported")
+	}
+}
+
 func TestGatewayRoutesSeedanceVideoIsAllowedForOpenAI(t *testing.T) {
 	router := newGatewayRoutesTestRouter(service.PlatformOpenAI)
 	for _, path := range []string{"/v1/video/generations", "/video/generations"} {

@@ -315,6 +315,7 @@ export default {
         gemini: 'Gemini',
         antigravity: 'Antigravity',
         grok: 'Grok',
+        muse: 'Muse 视频',
         kimi: 'Kimi',
         zhipu: 'Zhipu GLM',
         deepseek: 'DeepSeek',
@@ -744,6 +745,10 @@ export default {
         official: '{platform} 官方 API'
       },
       // OpenAI specific hints
+      muse: {
+        baseUrlHint: 'Muse 视频 API 地址，默认使用 https://momoapi.xin/v1；也可以填写你的兼容网关地址。',
+        apiKeyHint: '用于 Muse 视频生成的 API Key',
+      },
       openai: {
         baseUrlHint: '留空使用官方 OpenAI API',
         apiKeyHint: '您的 OpenAI API Key',

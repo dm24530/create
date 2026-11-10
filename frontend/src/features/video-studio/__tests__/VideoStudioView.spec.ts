@@ -21,6 +21,7 @@ const {
   listArchivedVideos,
   pinArchivedVideo,
   uploadVideoReferenceAsset,
+  prepareImageReferenceImages,
 } = vi.hoisted(() => ({
   archiveVideo: vi.fn(),
   deleteArchivedVideo: vi.fn(),
@@ -28,6 +29,7 @@ const {
   listArchivedVideos: vi.fn(),
   pinArchivedVideo: vi.fn(),
   uploadVideoReferenceAsset: vi.fn(),
+  prepareImageReferenceImages: vi.fn(),
 }))
 
 vi.mock('../videoArchiveApi', () => ({
@@ -60,6 +62,10 @@ vi.mock('@/composables/useCreatorKey', () => ({
     const result = await listKeys()
     return { keys: result.items, key: result.items[0] }
   },
+}))
+
+vi.mock('@/utils/imageReferenceCompression', () => ({
+  prepareImageReferenceImages,
 }))
 
 vi.mock('vue-router', () => ({
@@ -115,6 +121,17 @@ function resetMocks() {
   uploadVideoReferenceAsset.mockReset()
   listArchivedVideos.mockResolvedValue([])
   uploadVideoReferenceAsset.mockResolvedValue({ url: 'https://r2.example.com/reference.png' })
+  prepareImageReferenceImages.mockReset()
+  prepareImageReferenceImages.mockImplementation(async (inputs: Array<{ name: string }>) => inputs.map((input, index) => ({
+    name: String(input.name || `reference-${index + 1}`).replace(/\.[^.]+$/, '') + '.webp',
+    blob: new Blob(['compressed'], { type: 'image/webp' }),
+    dataUrl: `data:image/webp;base64,compressed-${index + 1}`,
+    width: 1024,
+    height: 768,
+    bytes: 10,
+    mimeType: 'image/webp',
+    profileIndex: 0,
+  })))
   // 默认按"对象存储没配"处理：归档失败只提示，不影响生成结果本身。
   archiveVideo.mockRejectedValue({ reason: 'IMAGE_STORAGE_DISABLED', message: 'image storage is not enabled' })
   routeQuery.value = {}
@@ -707,6 +724,91 @@ describe('VideoStudioView Seedance model controls', () => {
       .find((button) => button.classes('is-active'))?.text()).toBe('1080P')
   })
 
+  it('submits Muse image-to-video with its documented fields and limits', async () => {
+    useOpenAIVideoKey()
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = String(input)
+      if (url.endsWith('/models')) return jsonResponse({ data: [{ id: 'muse-video' }] })
+      if (url.endsWith('/videos') && init?.method === 'POST') {
+        return jsonResponse({ id: 'task-muse', task_id: 'task-muse', status: 'queued' })
+      }
+      if (url.endsWith('/videos/task-muse?model=muse-video')) {
+        return jsonResponse({
+          id: 'task-muse',
+          status: 'completed',
+          duration: 6,
+          metadata: { url: '/v1/videos/task-muse/content' },
+        })
+      }
+      if (url.endsWith('/videos/task-muse/content?model=muse-video')) {
+        return { ok: true, status: 200, statusText: 'OK', blob: async () => new Blob(['video']) } as unknown as Response
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountStudio()
+    await flushPromises()
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="video-model-select"]').text()).toContain('muse-video')
+    expect(wrapper.findAll('[data-testid="video-resolution-control"] button').map((button) => button.text()))
+      .toEqual(['720P'])
+    const durationInput = wrapper.get('[data-testid="video-duration-control"] input')
+    await durationInput.setValue('60')
+    await durationInput.trigger('blur')
+
+    await wrapper.get('textarea').setValue('让首帧里的海浪继续向前翻涌')
+    await wrapper.get('[data-testid="video-reference-trigger"]').trigger('click')
+    await wrapper.get('[data-testid="reference-url-input"]').setValue('https://cdn.example.com/first.png')
+    await wrapper.findAll('button').find((button) => button.text() === '添加')!.trigger('click')
+    await flushPromises()
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    await flushPromises()
+
+    const createCall = fetchMock.mock.calls.find(
+      (call) => String(call[0]).endsWith('/videos') && call[1]?.method === 'POST',
+    )
+    expect(createCall).toBeDefined()
+    expect(JSON.parse(String(createCall?.[1]?.body))).toEqual({
+      model: 'muse-video',
+      prompt: '让首帧里的海浪继续向前翻涌',
+      seconds: 60,
+      aspect_ratio: '16:9',
+      image: 'https://cdn.example.com/first.png',
+    })
+    expect(wrapper.get('video').attributes('src')).toBe('blob:seedance-video')
+
+    await wrapper.findAll('.mini-action')
+      .find((button) => button.attributes('title') === '查看详情')!
+      .trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('Muse 视频')
+  })
+
+  it('shows only the supported Muse cheap durations and snaps invalid input', async () => {
+    useOpenAIVideoKey()
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/models')) return jsonResponse({ data: [{ id: 'muse-cheap' }] })
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountStudio()
+    await flushPromises()
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="video-model-select"]').text()).toContain('muse-cheap')
+    expect(wrapper.findAll('[data-testid="video-duration-control"] button').map((button) => button.text()))
+      .toEqual(['1秒', '5秒', '8秒', '10秒', '20秒', '30秒'])
+
+    const durationInput = wrapper.get('[data-testid="video-duration-control"] input')
+    await durationInput.setValue('15')
+    await durationInput.trigger('blur')
+    expect((durationInput.element as HTMLInputElement).value).toBe('10')
+  })
+
   it('archives authenticated Momo video bytes instead of asking the server to refetch', async () => {
     useOpenAIVideoKey()
     archiveVideo.mockResolvedValue({
@@ -1063,7 +1165,7 @@ describe('VideoStudioView references', () => {
 
     expect(uploadVideoReferenceAsset).toHaveBeenCalledWith({
       kind: 'image',
-      data_url: expect.stringContaining('data:image/png;base64,'),
+      data_url: expect.stringContaining('data:image/webp;base64,'),
     })
     const createCall = fetchMock.mock.calls.find(
       (call) => String(call[0]).endsWith('/videos/generations') && call[1]?.method === 'POST',
@@ -1348,7 +1450,7 @@ describe('VideoStudioView reference limits', () => {
     })
   })
 
-  it('rejects a reference image that goes over the per-file size limit', async () => {
+  it('attempts compression for a very large reference image instead of rejecting it by file size', async () => {
     vi.mocked(fetch).mockImplementation(async (input) => {
       const url = String(input)
       if (url.endsWith('/models')) return jsonResponse({ data: [] })
@@ -1360,17 +1462,43 @@ describe('VideoStudioView reference limits', () => {
     await wrapper.get('[data-testid="video-reference-trigger"]').trigger('click')
 
     const input = wrapper.get('input[type="file"]')
-    const oversized = new File(
-      [new Uint8Array(5 * 1024 * 1024 + 1)],
-      'huge.png',
-      { type: 'image/png' },
-    )
+    const oversized = new File([new Uint8Array(1)], 'huge.png', { type: 'image/png' })
+    Object.defineProperty(oversized, 'size', { configurable: true, value: 64 * 1024 * 1024 })
     Object.defineProperty(input.element, 'files', { value: [oversized], configurable: true })
     await input.trigger('change')
     await flushPromises()
 
-    expect(wrapper.text()).toContain('单个文件不能超过 5MB')
-    expect(wrapper.findAll('.reference-chip').length).toBe(0)
+    await vi.waitFor(() => {
+      expect(wrapper.findAll('.video-composer__reference').length).toBe(1)
+    })
+    expect(prepareImageReferenceImages).toHaveBeenCalledOnce()
+  })
+
+  it('compresses a local image before adding it as a video reference', async () => {
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/models')) return jsonResponse({ data: [] })
+      throw new Error(`Unexpected request: ${url}`)
+    })
+
+    const wrapper = mountStudio()
+    await flushPromises()
+    await wrapper.get('[data-testid="video-reference-trigger"]').trigger('click')
+
+    const input = wrapper.get('input[type="file"]')
+    const largeButCompressible = new File([new Uint8Array(1)], 'large.png', { type: 'image/png' })
+    Object.defineProperty(largeButCompressible, 'size', { configurable: true, value: 6 * 1024 * 1024 })
+    Object.defineProperty(input.element, 'files', {
+      value: [largeButCompressible],
+      configurable: true,
+    })
+    await input.trigger('change')
+    await vi.waitFor(() => {
+      expect(wrapper.findAll('.video-composer__reference').length).toBe(1)
+    })
+
+    expect(prepareImageReferenceImages).toHaveBeenCalledOnce()
+    expect(wrapper.get('.video-composer__reference img').attributes('alt')).toBe('large.webp')
   })
 
   it('accepts a reference video through the file picker up to 20MB', async () => {

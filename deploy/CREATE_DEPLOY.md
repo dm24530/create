@@ -133,7 +133,25 @@ docker compose -f docker-compose.create.yml up -d create
    tar czf /backup/create-$(date +%F).tar.gz -C /opt/create create-postgres-data create-data
    ```
 
-8. **在线更新**：`update.enabled` 在 create 上默认关闭（不去比对上游版本，避免后台一直
+8. **Muse 视频配置**：镜像包含 Muse 的文生视频、图生视频、参考图和
+   `muse-video` / `muse-cheap` 实现，但 PostgreSQL 数据和真实上游 Key 不会打进镜像。
+   新部署如果没有账号或“Muse 视频”分组，执行一次：
+
+   ```bash
+   ./deploy/muse/apply.sh
+   ```
+
+   Windows PowerShell：
+
+   ```powershell
+   .\deploy\muse\apply.ps1
+   ```
+
+   脚本交互读取 Muse API Key，创建或更新 `muse` 账号、`Muse 视频` 分组和路由关系。
+   它不会迁移 Create 的用户、API Key、用量、支付和作品数据；完整迁移仍应恢复旧
+   PostgreSQL 数据库。详见 `deploy/muse/README.md`。
+
+9. **在线更新**：`update.enabled` 在 create 上默认关闭（不去比对上游版本，避免后台一直
    提示别的产品线的版本号）。要启用就在 `.env` 里加 `UPDATE_ENABLED=true` 并配
    `UPDATE_REPO=<owner>/<name>` 指向自己的 releases。
 

@@ -9,6 +9,7 @@ import {
   parseVideoTaskSnapshot,
   pollVideoTask,
   resolveVideoProvider,
+  videoTaskPath,
 } from '../videoStudioApi'
 
 const context = { baseUrl: '/v1', apiKey: 'sk-test' }
@@ -29,6 +30,12 @@ describe('video model classification', () => {
     expect(isVideoModel('grok-imagine-video')).toBe(true)
     expect(isVideoModel('grok-imagine-video-1.5')).toBe(true)
     expect(isVideoModel('wan3.0-yuanlian')).toBe(true)
+  })
+
+  it('recognizes Muse video models without matching Muse chat models', () => {
+    expect(isVideoModel('muse-video')).toBe(true)
+    expect(isVideoModel('muse-cheap')).toBe(true)
+    expect(isVideoModel('muse-spark-1.3-contributor')).toBe(false)
   })
 
   it('recognizes the whole minimax H3 model family as video models', () => {
@@ -55,6 +62,12 @@ describe('video model classification', () => {
     expect(resolveVideoProvider('MiniMax_H3')).toBe('video_tasks')
     expect(resolveVideoProvider('minimax H3-self')).toBe('video_tasks')
     expect(resolveVideoProvider('minimax H3-pro', { platform: 'composite' })).toBe('video_tasks')
+  })
+
+  it('routes Muse video models to the Muse video protocol', () => {
+    expect(resolveVideoProvider('muse-video')).toBe('muse_video')
+    expect(resolveVideoProvider('muse-video', { platform: 'openai' })).toBe('muse_video')
+    expect(resolveVideoProvider('muse-cheap', { baseUrl: 'https://momoapi.xin/v1' })).toBe('muse_video')
   })
 
   it('applies model-specific duration, resolution and reference limits', () => {
@@ -84,6 +97,27 @@ describe('video model classification', () => {
     expect(minimaxH3.maxVideos).toBe(3)
     expect(minimaxH3.supportsAudio).toBe(true)
     expect(minimaxH3.modes).toEqual(['text-to-video', 'image-to-video', 'first-last-frame', 'reference-images', 'reference-video'])
+
+    const museVideo = getVideoModelProfile('muse-video', 'muse_video')
+    expect(museVideo.provider).toBe('muse_video')
+    expect(museVideo.minDuration).toBe(1)
+    expect(museVideo.maxDuration).toBe(60)
+    expect(museVideo.defaultDuration).toBe(6)
+    expect(museVideo.resolutions).toEqual(['720p'])
+    expect(museVideo.aspectRatios).toEqual(['16:9', '9:16'])
+    expect(museVideo.maxImages).toBe(4)
+    expect(museVideo.maxVideos).toBe(0)
+    expect(museVideo.supportsAudio).toBe(false)
+    expect(museVideo.outputsAudio).toBe(true)
+    expect(museVideo.modes).toEqual(['text-to-video', 'image-to-video', 'reference-images'])
+
+    const museCheap = getVideoModelProfile('muse-cheap', 'muse_video')
+    expect(museCheap.maxDuration).toBe(30)
+    expect(museCheap.defaultDuration).toBe(10)
+    expect(museCheap.maxImages).toBe(7)
+    expect(museCheap.outputsAudio).toBe(true)
+    expect(museCheap.durationOptions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 30])
+    expect(museCheap.modes).toEqual(['text-to-video', 'reference-images'])
   })
 })
 
@@ -177,6 +211,97 @@ describe('Seedance video request mapping', () => {
     expect(request.body).toHaveProperty('generate_audio', false)
   })
 
+  it('builds the documented Muse text-to-video body', () => {
+    const request = buildVideoRequest('muse_video', {
+      ...base,
+      model: 'muse-video',
+      durationSeconds: 6,
+      resolution: '720p',
+    })
+
+    expect(request.path).toBe('/videos')
+    expect(request.body).toEqual({
+      model: 'muse-video',
+      prompt: 'slow push in',
+      seconds: 6,
+      aspect_ratio: '16:9',
+    })
+  })
+
+  it('uses the Muse images array for image-to-video', () => {
+    const request = buildVideoRequest('muse_video', {
+      ...base,
+      model: 'muse-video',
+      images: [{
+        id: 1,
+        kind: 'image',
+        name: 'first.png',
+        url: 'https://cdn.example.com/first.png',
+        role: 'first_frame',
+      }],
+    })
+
+    expect(request.body).toMatchObject({
+      model: 'muse-video',
+      image: 'https://cdn.example.com/first.png',
+    })
+    expect(request.body).not.toHaveProperty('mode')
+    expect(request.body).not.toHaveProperty('images')
+    expect(request.body).not.toHaveProperty('resolution')
+  })
+
+  it('uses Muse reference-image fields when first-frame and references are combined', () => {
+    const request = buildVideoRequest('muse_video', {
+      ...base,
+      model: 'muse-video',
+      images: [
+        {
+          id: 1,
+          kind: 'image',
+          name: 'first.png',
+          url: 'https://cdn.example.com/first.png',
+          role: 'first_frame',
+        },
+        {
+          id: 2,
+          kind: 'image',
+          name: 'ref.png',
+          url: 'https://cdn.example.com/ref.png',
+          role: 'reference_image',
+        },
+      ],
+    })
+
+    expect(request.body).toMatchObject({
+      model: 'muse-video',
+      image: 'https://cdn.example.com/first.png',
+      reference_images: ['https://cdn.example.com/ref.png'],
+    })
+    expect(request.body).not.toHaveProperty('images')
+    expect(request.body).not.toHaveProperty('mode')
+    expect(request.body).not.toHaveProperty('duration')
+  })
+
+  it('keeps Muse cheap reference images out of the first-frame image field', () => {
+    const request = buildVideoRequest('muse_video', {
+      ...base,
+      model: 'muse-cheap',
+      images: [{
+        id: 1,
+        kind: 'image',
+        name: 'ref.png',
+        url: 'https://cdn.example.com/ref.png',
+        role: 'reference_image',
+      }],
+    })
+
+    expect(request.body).toMatchObject({
+      model: 'muse-cheap',
+      reference_images: ['https://cdn.example.com/ref.png'],
+    })
+    expect(request.body).not.toHaveProperty('image')
+  })
+
   it('normalizes in-progress Seedance status responses', () => {
     expect(parseVideoTaskSnapshot('seedance', { status: 'in_progress' }).status).toBe('running')
     const completed = parseVideoTaskSnapshot('seedance', {
@@ -186,6 +311,34 @@ describe('Seedance video request mapping', () => {
     expect(completed.status).toBe('succeeded')
     expect(completed.durationSeconds).toBe(12)
     expect(completed.videoUrl).toBe('https://cdn.example.com/out.mp4')
+  })
+
+  it('normalizes completed Muse status responses with a content URL', () => {
+    const completed = parseVideoTaskSnapshot('muse_video', {
+      id: 'task-muse',
+      status: 'completed',
+      duration: 6,
+      metadata: { url: '/v1/videos/task-muse/content' },
+    })
+
+    expect(completed.status).toBe('succeeded')
+    expect(completed.durationSeconds).toBe(6)
+    expect(completed.videoUrl).toBe('/v1/videos/task-muse/content')
+  })
+
+  it('preserves Muse progress while the upstream still reports queued', () => {
+    const queued = parseVideoTaskSnapshot('muse_video', {
+      id: 'task-muse',
+      status: 'queued',
+      progress: 40,
+    })
+
+    expect(queued.status).toBe('queued')
+    expect(queued.progress).toBe(40)
+  })
+
+  it('routes Muse status lookups with a model hint for composite keys', () => {
+    expect(videoTaskPath('muse_video', 'task/muse')).toBe('/videos/task%2Fmuse?model=muse-video')
   })
 
   it('builds the unified Seedance video body with reference fields', () => {

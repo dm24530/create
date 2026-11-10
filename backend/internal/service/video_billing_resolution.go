@@ -15,6 +15,7 @@ const (
 	VideoBillingMaxDurationSeconds     = 15
 	VideoBillingDefaultDurationSeconds = 8
 	SeedanceBillingMaxDurationSeconds  = 30
+	MuseBillingMaxDurationSeconds      = 60
 )
 
 // NormalizeVideoBillingDurationSecondsOrDefault 归一化计费用视频时长：
@@ -28,7 +29,11 @@ func NormalizeVideoBillingDurationSecondsOrDefault(durationSeconds int) int {
 // while the Grok video API remains capped at 15 seconds.
 func NormalizeVideoBillingDurationSecondsForModelOrDefault(model string, durationSeconds int) int {
 	maxSeconds := VideoBillingMaxDurationSeconds
-	if IsSeedanceVideoModel(model) {
+	if strings.EqualFold(strings.TrimSpace(model), "muse-cheap") {
+		maxSeconds = SeedanceBillingMaxDurationSeconds
+	} else if IsMuseVideoModel(model) {
+		maxSeconds = MuseBillingMaxDurationSeconds
+	} else if IsSeedanceVideoModel(model) {
 		maxSeconds = SeedanceBillingMaxDurationSeconds
 	}
 	return normalizeVideoBillingDurationSeconds(durationSeconds, maxSeconds)
@@ -38,6 +43,19 @@ func NormalizeVideoBillingDurationSecondsForModelOrDefault(model string, duratio
 // duration normalization.
 func IsSeedanceVideoModel(model string) bool {
 	return strings.Contains(strings.ToLower(strings.TrimSpace(model)), "seedance")
+}
+
+func IsMuseVideoModel(model string) bool {
+	switch strings.ToLower(strings.TrimSpace(model)) {
+	case "muse-video", "muse-cheap":
+		return true
+	default:
+		return false
+	}
+}
+
+func IsMuseCheapVideoModel(model string) bool {
+	return strings.EqualFold(strings.TrimSpace(model), "muse-cheap")
 }
 
 func normalizeVideoBillingDurationSeconds(durationSeconds, maxSeconds int) int {
@@ -74,6 +92,16 @@ func LookupVideoBillingResolution(resolution string) (string, bool) {
 func NormalizeVideoBillingResolutionOrDefault(resolution string) string {
 	if normalized, ok := LookupVideoBillingResolution(resolution); ok {
 		return normalized
+	}
+	return VideoBillingResolution480P
+}
+
+func NormalizeVideoBillingResolutionForModelOrDefault(model, resolution string) string {
+	if normalized, ok := LookupVideoBillingResolution(resolution); ok {
+		return normalized
+	}
+	if IsMuseVideoModel(model) {
+		return VideoBillingResolution720P
 	}
 	return VideoBillingResolution480P
 }

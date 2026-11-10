@@ -49,6 +49,15 @@ func TestOpenAICompatibleTextTargetAllowsCompositeProviders(t *testing.T) {
 	}
 }
 
+func TestCompositeTargetPlatformResolvesMuseVideoModels(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, model := range []string{"muse-video", "muse-cheap", "muse/muse-video"} {
+		platform, ok := service.DetectModelPlatform(model)
+		require.True(t, ok, "model=%s", model)
+		require.Equal(t, service.PlatformMuse, platform, "model=%s", model)
+	}
+}
+
 // WS ingress 对 CN 账号既过不了 transport 过滤、HTTP 桥也没有 Responses 转换，
 // 放行只会把明确的策略拒绝换成 "no available account"，因此 WS 白名单保持 openai+grok。
 func TestResponsesWebSocketCompositePlatformGuardKeepsOpenAIAndGrokOnly(t *testing.T) {
