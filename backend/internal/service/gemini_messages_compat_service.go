@@ -34,8 +34,6 @@ import (
 
 const geminiStickySessionTTL = time.Hour
 
-const AccountExtraGeminiAsyncStreamingEnabled = "gemini_async_streaming_enabled"
-
 const (
 	geminiMaxRetries     = 5
 	geminiRetryBaseDelay = 1 * time.Second
@@ -1205,17 +1203,8 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 		proxyURL = account.Proxy.URL()
 	}
 
-	asyncStreaming := false
-	if async, _ := ctx.Value(ctxkey.AsyncImageTask).(bool); async &&
-		account.getExtraBool(AccountExtraGeminiAsyncStreamingEnabled) {
-		asyncStreaming = true
-	}
 	useUpstreamStream := stream
 	upstreamAction := action
-	if asyncStreaming && !stream && action == "generateContent" {
-		useUpstreamStream = true
-		upstreamAction = "streamGenerateContent"
-	}
 	if account.Type == AccountTypeOAuth && !stream && action == "generateContent" && strings.TrimSpace(account.GetCredential("project_id")) != "" {
 		// Code Assist's non-streaming generateContent may return no content; use streaming upstream and aggregate.
 		useUpstreamStream = true
@@ -1621,7 +1610,7 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 	} else {
 		if useUpstreamStream {
 			var best geminiResponseSignal
-			collected, usageObj, stats, err := collectGeminiSSEObservedUntilImage(resp.Body, isOAuth, asyncStreaming, func(rawBytes []byte) {
+			collected, usageObj, stats, err := collectGeminiSSEObserved(resp.Body, isOAuth, func(rawBytes []byte) {
 				if sig, ok := detectGeminiResponseSignal(rawBytes); ok && sig.Kind > best.Kind {
 					best = sig
 				}
@@ -2478,15 +2467,6 @@ type geminiSSECollectStats struct {
 
 // collectGeminiSSEObserved 在聚合的同时把每个解包后的事件原文交给 observe（可为 nil）。
 func collectGeminiSSEObserved(body io.Reader, isOAuth bool, observe func(rawBytes []byte)) (map[string]any, *ClaudeUsage, geminiSSECollectStats, error) {
-	return collectGeminiSSEObservedUntilImage(body, isOAuth, false, observe)
-}
-
-func collectGeminiSSEObservedUntilImage(
-	body io.Reader,
-	isOAuth bool,
-	stopAfterImage bool,
-	observe func(rawBytes []byte),
-) (map[string]any, *ClaudeUsage, geminiSSECollectStats, error) {
 	reader := bufio.NewReader(body)
 
 	var last map[string]any
@@ -2536,9 +2516,6 @@ func collectGeminiSSEObservedUntilImage(
 						}
 						if parts := extractGeminiParts(parsed); len(parts) > 0 {
 							lastWithParts = parsed
-							if stopAfterImage && geminiPartsContainInlineImage(parts) {
-								return mergeCollectedTextParts(pickGeminiCollectResult(last, lastWithParts), collectedTextParts), usage, stats, nil
-							}
 							// Collect text from each part for aggregation
 							for _, part := range parts {
 								if text, ok := part["text"].(string); ok && text != "" {
@@ -2560,29 +2537,6 @@ func collectGeminiSSEObservedUntilImage(
 	}
 
 	return mergeCollectedTextParts(pickGeminiCollectResult(last, lastWithParts), collectedTextParts), usage, stats, nil
-}
-
-func geminiPartsContainInlineImage(parts []map[string]any) bool {
-	for _, part := range parts {
-		for _, key := range []string{"inlineData", "inline_data"} {
-			inline, ok := part[key].(map[string]any)
-			if !ok {
-				continue
-			}
-			data, _ := inline["data"].(string)
-			if strings.TrimSpace(data) == "" {
-				continue
-			}
-			mimeType, _ := inline["mimeType"].(string)
-			if mimeType == "" {
-				mimeType, _ = inline["mime_type"].(string)
-			}
-			if mimeType == "" || strings.HasPrefix(strings.ToLower(mimeType), "image/") {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 func pickGeminiCollectResult(last map[string]any, lastWithParts map[string]any) map[string]any {
