@@ -824,6 +824,15 @@ function ImageContent({
               scale,
           })
         : undefined;
+    const primarySources = uniqueImageSources([
+        primarySource,
+        primaryPreviewUrl,
+        primaryCloudPreviewUrl,
+        primaryImage?.content,
+        primaryImage?.cloudURL,
+        node.metadata?.content,
+        node.metadata?.cloudURL,
+    ]);
     const showingThumbnail = primaryPreviewOnly || Boolean(
         primarySource
         && ((primaryCloudPreviewUrl && primarySource === primaryCloudPreviewUrl) || (primaryPreviewUrl && primarySource === primaryPreviewUrl)),
@@ -837,14 +846,12 @@ function ImageContent({
                       .map((image, index) => <ExpandedImageCard key={image.id} node={node} image={image} index={index} scale={scale} onView={() => onViewBatchImage?.(image.id)} onSetPrimary={() => onSetBatchPrimary?.(image.id)} onDuplicate={() => onDuplicateBatchImage?.(image.id)} onDownload={() => onDownloadBatchImage?.(image.id)} onRetry={() => onRetryBatchImage?.(image.id)} onDelete={() => onDeleteBatchImage?.(image.id)} />)
                 : null}
             <div className="h-full w-full overflow-hidden rounded-3xl">
-                {primaryContent ? (
-                    <img
-                        src={primarySource}
+                {primarySources.length ? (
+                    <ImageWithFallback
+                        sources={primarySources}
                         alt={node.title}
-                        draggable={false}
-                        onContextMenu={(event) => event.preventDefault()}
-                        onDragStart={(event) => event.preventDefault()}
                         className={`pointer-events-none block h-full w-full select-none ${node.metadata?.freeResize ? "object-fill" : "object-contain"}`}
+                        fallback={<ImageLoadFailure message={t("canvas.node.failed")} />}
                     />
                 ) : (
                     <ImageSlotStatus image={primaryImage} startedAt={node.metadata?.generationStartedAt} />
@@ -909,11 +916,17 @@ function ExpandedImageCard({ node, image, index, scale, onView, onSetPrimary, on
               scale,
           })
         : undefined;
+    const sources = uniqueImageSources([
+        source,
+        cloudPreviewUrl,
+        image.content,
+        image.cloudURL,
+    ]);
     const showingThumbnail = Boolean(image.previewOnly || (source && cloudPreviewUrl && source === cloudPreviewUrl));
 
     return (
         <div
-            className={`absolute z-20 overflow-hidden rounded-3xl ${image.content ? "" : "border shadow-[0_18px_50px_rgba(28,25,23,.18)]"}`}
+            className={`absolute z-20 overflow-hidden rounded-3xl ${sources.length ? "" : "border shadow-[0_18px_50px_rgba(28,25,23,.18)]"}`}
             style={
                 {
                     left: x,
@@ -931,14 +944,23 @@ function ExpandedImageCard({ node, image, index, scale, onView, onSetPrimary, on
             onMouseDown={(event) => event.stopPropagation()}
             onPointerDown={(event) => event.stopPropagation()}
             onDoubleClick={(event) => {
-                if (!image.content || (event.target instanceof Element && event.target.closest("button"))) return;
+                if (!sources.length || (event.target instanceof Element && event.target.closest("button"))) return;
                 event.stopPropagation();
                 onView();
             }}
         >
-            {image.content ? <img src={source} alt={node.title} draggable={false} onContextMenu={(event) => event.preventDefault()} className="pointer-events-none h-full w-full select-none object-contain" /> : <ImageSlotStatus image={image} startedAt={node.metadata?.generationStartedAt} />}
+            {sources.length ? (
+                <ImageWithFallback
+                    sources={sources}
+                    alt={node.title}
+                    className="pointer-events-none h-full w-full select-none object-contain"
+                    fallback={<ImageLoadFailure message={t("canvas.node.failed")} />}
+                />
+            ) : (
+                <ImageSlotStatus image={image} startedAt={node.metadata?.generationStartedAt} />
+            )}
             {showingThumbnail ? <span className="pointer-events-none absolute bottom-2 left-2 z-30 rounded-md bg-black/60 px-2 py-1 text-[10px] font-medium text-white backdrop-blur-sm">{t("canvas.node.thumbnailPreview")}</span> : null}
-            {image.content ? (
+            {sources.length ? (
                 <div className="pointer-events-none absolute inset-x-2 top-2 flex items-center gap-1 opacity-0 transition-opacity duration-150 group-hover/node:pointer-events-auto group-hover/node:opacity-100">
                     {!image.previewOnly ? <button type="button" className="flex h-8 min-w-0 flex-1 items-center justify-center gap-1 rounded-lg border px-1.5 text-[10px] font-medium shadow-[0_6px_18px_rgba(15,23,42,.16)] backdrop-blur-md transition hover:scale-[1.02]" style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.toolbar.activeText }} title={t("canvas.node.downloadOriginal")} onClick={(event) => (event.stopPropagation(), onDownload())}>
                         <Download className="size-3 shrink-0" />
@@ -955,6 +977,57 @@ function ExpandedImageCard({ node, image, index, scale, onView, onSetPrimary, on
                 </div>
             ) : null}
             {image.status === "error" ? <BatchImageFailureActions placement="right" onRetry={onRetry} onDelete={onDelete} /> : null}
+        </div>
+    );
+}
+
+function uniqueImageSources(sources: Array<string | undefined>) {
+    return Array.from(new Set(sources.filter((source): source is string => Boolean(source))));
+}
+
+function ImageWithFallback({
+    sources,
+    alt,
+    className,
+    fallback,
+}: {
+    sources: string[];
+    alt: string;
+    className: string;
+    fallback: ReactNode;
+}) {
+    const signature = sources.map((source) => `${source.length}:${source.slice(0, 32)}:${source.slice(-32)}`).join("|");
+    const [failedSources, setFailedSources] = useState<Set<string>>(() => new Set());
+    useEffect(() => {
+        setFailedSources(new Set());
+    }, [signature]);
+    const source = sources.find((item) => !failedSources.has(item));
+    if (!source) return fallback;
+    return (
+        <img
+            src={source}
+            alt={alt}
+            draggable={false}
+            onContextMenu={(event) => event.preventDefault()}
+            onDragStart={(event) => event.preventDefault()}
+            onError={() => {
+                setFailedSources((previous) => {
+                    if (previous.has(source)) return previous;
+                    const next = new Set(previous);
+                    next.add(source);
+                    return next;
+                });
+            }}
+            className={className}
+        />
+    );
+}
+
+function ImageLoadFailure({ message }: { message: string }) {
+    const theme = canvasThemes[useThemeStore((state) => state.theme)];
+    return (
+        <div className="flex h-full w-full items-center justify-center px-6 text-center text-xs leading-5" style={{ background: theme.node.fill, color: theme.node.text }}>
+            {message}
         </div>
     );
 }
