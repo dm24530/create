@@ -158,18 +158,20 @@
               />
               <div v-else-if="task.status === 'failed'" class="video-card__state video-card__state--error">
                 <Icon name="exclamationCircle" size="lg" />
-                <strong>生成失败</strong>
+                <div class="video-card__error-heading">
+                  <button
+                    type="button"
+                    class="video-card__copy-prompt video-card__copy-prompt--error"
+                    data-testid="video-card-copy-prompt"
+                    :disabled="!task.prompt"
+                    @click="copyTaskPrompt(task)"
+                  >
+                    <Icon name="copy" size="xs" />
+                    <span>复制提示词</span>
+                  </button>
+                  <strong>生成失败</strong>
+                </div>
                 <small>{{ task.error || '请稍后重试' }}</small>
-                <button
-                  type="button"
-                  class="video-card__copy-prompt video-card__copy-prompt--error"
-                  data-testid="video-card-copy-prompt"
-                  :disabled="!task.prompt"
-                  @click="copyTaskPrompt(task)"
-                >
-                  <Icon name="copy" size="xs" />
-                  <span>复制提示词</span>
-                </button>
               </div>
               <div v-else class="video-card__state">
                 <span class="video-card__spinner" aria-hidden="true"></span>
@@ -180,18 +182,20 @@
               </div>
             </div>
             <div class="video-card__body">
-              <p class="video-card__prompt" :title="task.prompt">{{ task.prompt || '未填写提示词' }}</p>
-              <button
-                v-if="task.status !== 'failed'"
-                type="button"
-                class="video-card__copy-prompt"
-                data-testid="video-card-copy-prompt"
-                :disabled="!task.prompt"
-                @click="copyTaskPrompt(task)"
-              >
-                <Icon name="copy" size="xs" />
-                <span>复制提示词</span>
-              </button>
+              <div class="video-card__prompt-row">
+                <button
+                  v-if="task.status !== 'failed'"
+                  type="button"
+                  class="video-card__copy-prompt"
+                  data-testid="video-card-copy-prompt"
+                  :disabled="!task.prompt"
+                  @click="copyTaskPrompt(task)"
+                >
+                  <Icon name="copy" size="xs" />
+                  <span>复制提示词</span>
+                </button>
+                <p class="video-card__prompt" :title="task.prompt">{{ task.prompt || '未填写提示词' }}</p>
+              </div>
               <p class="video-card__meta">{{ formatTaskTime(task.createdAt) }} · {{ taskMeta(task) }}</p>
               <p
                 v-if="task.archivedId"
@@ -2647,11 +2651,26 @@ onBeforeUnmount(() => {
   color: rgb(31 41 55);
 }
 
+.video-card__prompt-row {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 0.45rem;
+}
+
+.video-card__prompt-row .video-card__prompt {
+  min-width: 0;
+  flex: 1;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  -webkit-line-clamp: 1;
+}
+
 .video-card__copy-prompt {
   display: inline-flex;
+  flex-shrink: 0;
   align-items: center;
   gap: 0.25rem;
-  margin-top: 0.35rem;
   border: 1px solid rgb(226 232 240);
   border-radius: 0.45rem;
   background: rgb(248 250 252);
@@ -2660,6 +2679,7 @@ onBeforeUnmount(() => {
   font-weight: 500;
   color: rgb(71 85 105);
   transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+  white-space: nowrap;
 }
 
 .video-card__copy-prompt:hover:not(:disabled) {
@@ -2674,7 +2694,6 @@ onBeforeUnmount(() => {
 }
 
 .video-card__copy-prompt--error {
-  margin-top: 0.55rem;
   border-color: rgb(248 113 113 / 0.45);
   background: rgb(127 29 29 / 0.28);
   color: rgb(254 226 226);
@@ -2684,6 +2703,12 @@ onBeforeUnmount(() => {
   border-color: rgb(252 165 165);
   background: rgb(127 29 29 / 0.45);
   color: rgb(255 255 255);
+}
+
+.video-card__error-heading {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
 }
 
 .video-card__meta {

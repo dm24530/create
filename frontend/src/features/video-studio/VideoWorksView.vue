@@ -138,17 +138,19 @@
                 <div v-else class="work-card__placeholder"><Icon name="play" size="lg" /><strong>已归档</strong></div>
               </div>
               <div class="work-card__body">
-                <p class="work-card__prompt" :title="entry.prompt">{{ entry.prompt || '未填写提示词' }}</p>
-                <button
-                  type="button"
-                  class="work-card__copy-prompt"
-                  :data-testid="`archived-copy-${entry.id}`"
-                  :disabled="!entry.prompt"
-                  @click="copyPromptText(entry.prompt)"
-                >
-                  <Icon name="copy" size="xs" />
-                  <span>复制提示词</span>
-                </button>
+                <div class="work-card__prompt-row">
+                  <button
+                    type="button"
+                    class="work-card__copy-prompt"
+                    :data-testid="`archived-copy-${entry.id}`"
+                    :disabled="!entry.prompt"
+                    @click="copyPromptText(entry.prompt)"
+                  >
+                    <Icon name="copy" size="xs" />
+                    <span>复制提示词</span>
+                  </button>
+                  <p class="work-card__prompt" :title="entry.prompt">{{ entry.prompt || '未填写提示词' }}</p>
+                </div>
                 <p class="work-card__meta">{{ archivedMeta(entry) }}</p>
                 <p class="work-card__time">{{ formatTime(entry.created_at * 1000) }}</p>
                 <p v-if="entry.saved" class="work-card__state work-card__state--saved" data-testid="archived-saved-badge">
@@ -1087,11 +1089,26 @@ onBeforeUnmount(() => {
   color: rgb(31 41 55);
 }
 
+.work-card__prompt-row {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 0.45rem;
+}
+
+.work-card__prompt-row .work-card__prompt {
+  min-width: 0;
+  flex: 1;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  -webkit-line-clamp: 1;
+}
+
 .work-card__copy-prompt {
   display: inline-flex;
+  flex-shrink: 0;
   align-items: center;
   gap: 0.25rem;
-  margin-top: 0.35rem;
   border: 1px solid rgb(226 232 240);
   border-radius: 0.45rem;
   background: rgb(248 250 252);
@@ -1100,6 +1117,7 @@ onBeforeUnmount(() => {
   font-weight: 500;
   color: rgb(71 85 105);
   transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+  white-space: nowrap;
 }
 
 .work-card__copy-prompt:hover:not(:disabled) {
