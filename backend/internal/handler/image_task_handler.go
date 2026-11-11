@@ -312,6 +312,11 @@ func (h *AsyncImageHandler) Submit(c *gin.Context) {
 		executionBody = geminiEnvelope.Request
 		c.Set(asyncImageGeminiModelKey, geminiEnvelope.Model)
 	}
+	executionBody = prepareAsyncImageTaskStreamBody(
+		effectivePlatform,
+		c.GetHeader("Content-Type"),
+		executionBody,
+	)
 	taskCtx, recorder, cancel := newAsyncImageContext(c, executionBody, h.tasks.ExecutionTimeout())
 	if modelValue, exists := c.Get(asyncImageGeminiModelKey); exists {
 		taskCtx.Set(asyncImageGeminiModelKey, modelValue)
@@ -981,6 +986,20 @@ func (h *AsyncImageHandler) run(taskID, platform string, taskCtx *gin.Context, r
 		return
 	}
 	body := bytes.TrimSpace(recorder.Body.Bytes())
+	if platform == service.PlatformOpenAI && len(body) > 0 && !json.Valid(body) {
+		normalized, normalizeErr := service.OpenAIImagesTaskResultFromSSE(body)
+		if normalizeErr != nil {
+			logger.L().Warn("image_task.openai_stream_invalid_response",
+				zap.String("task_id", taskID),
+				zap.Int("status_code", recorder.Code),
+				zap.Int("body_bytes", len(body)),
+				zap.Error(normalizeErr),
+			)
+			h.failTask(taskID, http.StatusBadGateway, imageTaskErrorPayload("api_error", "OpenAI image stream returned no completed image"))
+			return
+		}
+		body = normalized
+	}
 	if isGeminiAsyncImagePlatform(platform) {
 		normalized, normalizeErr := normalizeGeminiImageTaskResult(body)
 		if normalizeErr != nil {
@@ -1604,6 +1623,29 @@ func asyncImageRequestStreams(contentType string, body []byte) bool {
 		Stream bool `json:"stream"`
 	}
 	return json.Unmarshal(body, &envelope) == nil && envelope.Stream
+}
+
+func prepareAsyncImageTaskStreamBody(platform, contentType string, body []byte) []byte {
+	if platform != service.PlatformOpenAI || isMultipartImagesContentType(contentType) {
+		return body
+	}
+	var request struct {
+		Model string `json:"model"`
+	}
+	if json.Unmarshal(body, &request) != nil || !service.IsGPTImageGenerationModel(request.Model) {
+		return body
+	}
+	var payload map[string]json.RawMessage
+	if json.Unmarshal(body, &payload) != nil {
+		return body
+	}
+	payload["stream"] = json.RawMessage("true")
+	payload["partial_images"] = json.RawMessage("1")
+	updated, err := json.Marshal(payload)
+	if err != nil {
+		return body
+	}
+	return updated
 }
 
 func imageTaskPollURL(submitPath, taskID string) string {

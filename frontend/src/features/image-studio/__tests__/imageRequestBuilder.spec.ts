@@ -4,6 +4,7 @@ import {
   buildEditURLPayload,
   buildGeminiPayload,
   buildGeminiURL,
+  buildImageGenerationPayload,
   extractImages,
   geminiAspectRatio,
 } from '../imageRequestBuilder'
@@ -115,9 +116,33 @@ describe('image request builder', () => {
       output_format: 'png',
       background: 'auto',
       n: 1,
-      response_format: 'b64_json',
+      response_format: 'url',
       images: [{ image_url: 'https://cdn.example.com/one.png' }],
     })
+  })
+
+  it('requests URL results for GPT image generation and keeps b64 for other models', () => {
+    const settings = {
+      model: 'gpt-image-2-5-sunburst',
+      size: '1024x1024',
+      quality: 'high',
+      format: 'png',
+      background: 'auto',
+    }
+    expect(buildImageGenerationPayload('draw a fox', settings)).toEqual({
+      model: 'gpt-image-2-5-sunburst',
+      prompt: 'draw a fox',
+      size: '1024x1024',
+      quality: 'high',
+      output_format: 'png',
+      background: 'auto',
+      n: 1,
+      response_format: 'url',
+    })
+    expect(buildImageGenerationPayload('draw a fox', {
+      ...settings,
+      model: 'flux-pro',
+    }).response_format).toBe('b64_json')
   })
 
   it('builds multipart edits with normalized reference names', () => {
@@ -141,6 +166,7 @@ describe('image request builder', () => {
 
     expect(form.get('model')).toBe('gpt-image-1')
     expect(form.get('prompt')).toBe('edit prompt')
+    expect(form.get('response_format')).toBe('url')
     const image = form.get('image[]') as File
     expect(image.name).toBe('portrait.webp')
   })

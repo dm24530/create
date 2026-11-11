@@ -1,4 +1,5 @@
 import { extractGeminiImageResults } from './geminiImageResults'
+import { prefersURLImageResponse } from './imageModelPolicy'
 import type { ReferenceItem, SizeSettings } from './imageStudioTypes'
 import type { PreparedImageReference } from '@/utils/imageReferenceCompression'
 
@@ -8,6 +9,26 @@ export interface ImageRequestSettings {
   quality: string
   format: string
   background: string
+}
+
+export function imageResponseFormatForModel(model: string) {
+  return prefersURLImageResponse(model) ? 'url' : 'b64_json'
+}
+
+export function buildImageGenerationPayload(
+  text: string,
+  settings: ImageRequestSettings,
+) {
+  return {
+    model: settings.model,
+    prompt: text,
+    size: settings.size,
+    quality: settings.quality,
+    output_format: settings.format,
+    background: settings.background,
+    n: 1,
+    response_format: imageResponseFormatForModel(settings.model),
+  }
 }
 
 export function buildGeminiURL(
@@ -87,14 +108,7 @@ export function buildEditURLPayload(
   settings: ImageRequestSettings,
 ) {
   return {
-    model: settings.model,
-    prompt: text,
-    size: settings.size,
-    quality: settings.quality,
-    output_format: settings.format,
-    background: settings.background,
-    n: 1,
-    response_format: 'b64_json',
+    ...buildImageGenerationPayload(text, settings),
     images: imageURLs.map((imageURL) => ({ image_url: imageURL })),
   }
 }
@@ -113,7 +127,7 @@ export function buildEditForm(
   form.append('output_format', settings.format)
   form.append('background', settings.background)
   form.append('n', '1')
-  form.append('response_format', 'b64_json')
+  form.append('response_format', imageResponseFormatForModel(settings.model))
   if (preparedReferences.length) {
     preparedReferences.forEach((item, index) => {
       form.append('image[]', item.blob, compressedReferenceFileName(item.name, index))

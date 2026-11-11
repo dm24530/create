@@ -765,6 +765,7 @@ import {
   buildEditForm,
   buildGeminiPayload,
   buildGeminiURL,
+  buildImageGenerationPayload,
   extractImages,
   greatestCommonDivisor,
 } from './imageRequestBuilder'
@@ -2949,22 +2950,18 @@ async function generate() {
       )
     } else {
       headers['Content-Type'] = 'application/json'
-      body = JSON.stringify({
+      const payload: Record<string, unknown> = buildImageGenerationPayload(currentPrompt, {
         model: currentModel,
-        prompt: currentPrompt,
         size: currentSize,
         quality: currentQuality,
-        output_format: currentFormat,
+        format: currentFormat,
         background: currentBackground,
-        n: 1,
-        response_format: 'b64_json',
-        ...(grokModel && currentAppliedSize.mode === 'ratio'
-          ? {
-              resolution: grokResolutionForBase(currentAppliedSize.aspectBase).toLowerCase(),
-              aspect_ratio: currentAppliedSize.aspectRatio,
-            }
-          : {}),
       })
+      if (grokModel && currentAppliedSize.mode === 'ratio') {
+        payload.resolution = grokResolutionForBase(currentAppliedSize.aspectBase).toLowerCase()
+        payload.aspect_ratio = currentAppliedSize.aspectRatio
+      }
+      body = JSON.stringify(payload)
     }
     clearGenerationTimeoutTimer = schedulePendingImagesTimeout(pendingImages, owner)
     persistPendingImages()

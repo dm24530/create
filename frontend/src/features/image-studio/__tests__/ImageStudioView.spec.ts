@@ -3427,6 +3427,13 @@ describe('ImageStudioView gallery', () => {
         headers: expect.objectContaining({ 'Idempotency-Key': expect.any(String) }),
       }),
     )
+    const submitCall = fetchMock.mock.calls.find(([input]) => (
+      String(input).endsWith('/images/generations/async')
+    ))
+    expect(JSON.parse(String((submitCall?.[1] as RequestInit | undefined)?.body))).toMatchObject({
+      model: 'gpt-image-1',
+      response_format: 'url',
+    })
     expect(fetchMock).toHaveBeenCalledWith(
       expect.stringContaining('/v1/images/tasks/imgtask_server'),
       expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer sk-local' }) }),

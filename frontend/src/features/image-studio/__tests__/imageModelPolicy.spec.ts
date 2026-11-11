@@ -4,6 +4,7 @@ import {
   isGeminiImageModelName,
   isGrokImageModelName,
   isImageModelName,
+  prefersURLImageResponse,
 } from '../imageModelPolicy'
 
 describe('image model policy', () => {
@@ -17,6 +18,14 @@ describe('image model policy', () => {
   it('distinguishes Grok image models from Grok video models', () => {
     expect(isGrokImageModelName('grok-imagine-image')).toBe(true)
     expect(isGrokImageModelName('grok-imagine-video')).toBe(false)
+  })
+
+  it('prefers URL responses for GPT image families', () => {
+    expect(prefersURLImageResponse('gpt-image-2-5-sunburst')).toBe(true)
+    expect(prefersURLImageResponse('GPT-IMAGE-2-6')).toBe(true)
+    expect(prefersURLImageResponse('dall-e-3')).toBe(true)
+    expect(prefersURLImageResponse('grok-imagine-image')).toBe(false)
+    expect(prefersURLImageResponse('flux-pro')).toBe(false)
   })
 
   it('recognizes Gemini-compatible image models', () => {

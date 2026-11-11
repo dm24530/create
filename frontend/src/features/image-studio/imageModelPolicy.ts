@@ -15,6 +15,11 @@ export function isGrokImageModelName(name: string) {
   return value.includes('grok-imagine') && !value.includes('video')
 }
 
+export function prefersURLImageResponse(name: string) {
+  const value = name.trim().toLowerCase()
+  return value.startsWith('gpt-image-') || value.includes('dall-e')
+}
+
 export function deduplicateImageModelNames(names: string[]) {
   const unique = new Map<string, string>()
   for (const rawName of names) {
