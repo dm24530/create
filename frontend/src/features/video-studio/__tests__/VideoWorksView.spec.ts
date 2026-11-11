@@ -541,6 +541,9 @@ describe('VideoWorksView', () => {
     expect(card.text()).toContain('已归档的镜头')
     expect(card.get('video').attributes('src')).toBe('https://cdn.example.com/archived.mp4')
     expect(wrapper.findAll('[data-testid^="work-"]').length).toBe(0)
+
+    await card.get('[data-testid="archived-copy-arch-1"]').trigger('click')
+    expect(copyToClipboard).toHaveBeenCalledWith('已归档的镜头', '提示词已复制')
   })
 
   it('deletes an archived entry through the archive API', async () => {

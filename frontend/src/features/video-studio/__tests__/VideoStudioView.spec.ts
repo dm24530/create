@@ -525,6 +525,8 @@ describe('VideoStudioView seedance generation', () => {
     const cards = wrapper.findAll('.video-grid article')
     expect(cards).toHaveLength(3)
     expect(cards[0].text()).toContain('first task failed')
+    await cards[0].get('[data-testid="video-card-copy-prompt"]').trigger('click')
+    expect(copyToClipboard).toHaveBeenCalledWith('镜头缓慢推进，海雾从左侧涌入', '提示词已复制')
     const failedRecord = JSON.parse(localStorage.getItem('sub2api:video-studio:works') || '[]')
       .find((record: { status?: string }) => record.status === 'failed')
     expect(failedRecord?.expiresAt).toBeGreaterThan(Math.floor(Date.now() / 1000))
@@ -722,6 +724,9 @@ describe('VideoStudioView Seedance model controls', () => {
     expect((wrapper.get('[data-testid="video-duration-control"] input').element as HTMLInputElement).value).toBe('30')
     expect(wrapper.findAll('[data-testid="video-resolution-control"] button')
       .find((button) => button.classes('is-active'))?.text()).toBe('1080P')
+
+    await wrapper.get('[data-testid="video-card-copy-prompt"]').trigger('click')
+    expect(copyToClipboard).toHaveBeenCalledWith('雨夜车窗外的霓虹缓慢后退', '提示词已复制')
   })
 
   it('submits Muse image-to-video with its documented fields and limits', async () => {

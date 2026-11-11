@@ -160,6 +160,16 @@
                 <Icon name="exclamationCircle" size="lg" />
                 <strong>生成失败</strong>
                 <small>{{ task.error || '请稍后重试' }}</small>
+                <button
+                  type="button"
+                  class="video-card__copy-prompt video-card__copy-prompt--error"
+                  data-testid="video-card-copy-prompt"
+                  :disabled="!task.prompt"
+                  @click="copyTaskPrompt(task)"
+                >
+                  <Icon name="copy" size="xs" />
+                  <span>复制提示词</span>
+                </button>
               </div>
               <div v-else class="video-card__state">
                 <span class="video-card__spinner" aria-hidden="true"></span>
@@ -171,6 +181,17 @@
             </div>
             <div class="video-card__body">
               <p class="video-card__prompt" :title="task.prompt">{{ task.prompt || '未填写提示词' }}</p>
+              <button
+                v-if="task.status !== 'failed'"
+                type="button"
+                class="video-card__copy-prompt"
+                data-testid="video-card-copy-prompt"
+                :disabled="!task.prompt"
+                @click="copyTaskPrompt(task)"
+              >
+                <Icon name="copy" size="xs" />
+                <span>复制提示词</span>
+              </button>
               <p class="video-card__meta">{{ formatTaskTime(task.createdAt) }} · {{ taskMeta(task) }}</p>
               <p
                 v-if="task.archivedId"
@@ -2214,6 +2235,12 @@ async function copyPreviewPrompt() {
   await copyToClipboard(text, '提示词已复制')
 }
 
+async function copyTaskPrompt(task: StudioTask) {
+  const text = task.prompt?.trim()
+  if (!text) return
+  await copyToClipboard(text, '提示词已复制')
+}
+
 async function copyComposerPrompt() {
   const text = prompt.value.trim()
   if (!text) return
@@ -2618,6 +2645,45 @@ onBeforeUnmount(() => {
   font-size: 0.85rem;
   font-weight: 500;
   color: rgb(31 41 55);
+}
+
+.video-card__copy-prompt {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin-top: 0.35rem;
+  border: 1px solid rgb(226 232 240);
+  border-radius: 0.45rem;
+  background: rgb(248 250 252);
+  padding: 0.2rem 0.45rem;
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: rgb(71 85 105);
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+
+.video-card__copy-prompt:hover:not(:disabled) {
+  border-color: rgb(232 121 78);
+  background: rgb(255 247 237);
+  color: rgb(173 74 41);
+}
+
+.video-card__copy-prompt:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.video-card__copy-prompt--error {
+  margin-top: 0.55rem;
+  border-color: rgb(248 113 113 / 0.45);
+  background: rgb(127 29 29 / 0.28);
+  color: rgb(254 226 226);
+}
+
+.video-card__copy-prompt--error:hover:not(:disabled) {
+  border-color: rgb(252 165 165);
+  background: rgb(127 29 29 / 0.45);
+  color: rgb(255 255 255);
 }
 
 .video-card__meta {
@@ -3185,6 +3251,12 @@ onBeforeUnmount(() => {
 
 :global(.dark .video-card__prompt) {
   color: rgb(242 237 229);
+}
+
+:global(.dark .video-card__copy-prompt) {
+  border-color: rgb(82 78 70);
+  background: rgb(43 41 37);
+  color: rgb(203 196 185);
 }
 
 :global(.dark .video-composer__prompt) {

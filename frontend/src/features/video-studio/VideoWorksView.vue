@@ -139,6 +139,16 @@
               </div>
               <div class="work-card__body">
                 <p class="work-card__prompt" :title="entry.prompt">{{ entry.prompt || '未填写提示词' }}</p>
+                <button
+                  type="button"
+                  class="work-card__copy-prompt"
+                  :data-testid="`archived-copy-${entry.id}`"
+                  :disabled="!entry.prompt"
+                  @click="copyPromptText(entry.prompt)"
+                >
+                  <Icon name="copy" size="xs" />
+                  <span>复制提示词</span>
+                </button>
                 <p class="work-card__meta">{{ archivedMeta(entry) }}</p>
                 <p class="work-card__time">{{ formatTime(entry.created_at * 1000) }}</p>
                 <p v-if="entry.saved" class="work-card__state work-card__state--saved" data-testid="archived-saved-badge">
@@ -1077,6 +1087,32 @@ onBeforeUnmount(() => {
   color: rgb(31 41 55);
 }
 
+.work-card__copy-prompt {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin-top: 0.35rem;
+  border: 1px solid rgb(226 232 240);
+  border-radius: 0.45rem;
+  background: rgb(248 250 252);
+  padding: 0.2rem 0.45rem;
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: rgb(71 85 105);
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+
+.work-card__copy-prompt:hover:not(:disabled) {
+  border-color: rgb(232 121 78);
+  background: rgb(255 247 237);
+  color: rgb(173 74 41);
+}
+
+.work-card__copy-prompt:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
 .work-card__meta {
   margin-top: 0.15rem;
   overflow: hidden;
@@ -1338,6 +1374,12 @@ onBeforeUnmount(() => {
 :global(.dark .work-card__prompt),
 :global(.dark .work-detail__prompt) {
   color: rgb(242 237 229);
+}
+
+:global(.dark .work-card__copy-prompt) {
+  border-color: rgb(82 78 70);
+  background: rgb(43 41 37);
+  color: rgb(203 196 185);
 }
 
 :global(.dark .work-detail__meta dt) {
