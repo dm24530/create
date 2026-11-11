@@ -33,6 +33,7 @@ dist/
 build/
 backend/bin/
 release/
+artifacts/
 
 # Node modules (will be installed in container)
 frontend/node_modules/
