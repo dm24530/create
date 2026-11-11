@@ -59,29 +59,52 @@ describe("waitForPersistentImageTask", () => {
         expect(result[0]?.dataUrl).toBe("data:image/png;base64,aW1hZ2U=");
     });
 
-    it("accepts ready tasks that only expose the inline preview before original upload", async () => {
-        vi.mocked(axios.get).mockResolvedValueOnce({
-            data: {
-                status: "ready",
-                result: {
-                    created: 1,
-                    data: [{
-                        preview_data_url: "data:image/jpeg;base64,cHJldmlldw==",
-                        upload_status: "pending",
-                    }],
+    it("keeps polling when a ready task only has a pending preview and returns the original", async () => {
+        vi.useFakeTimers();
+        const onPreview = vi.fn();
+        vi.mocked(axios.get)
+            .mockResolvedValueOnce({
+                data: {
+                    status: "ready",
+                    result: {
+                        created: 1,
+                        data: [{
+                            preview_data_url: "data:image/jpeg;base64,cHJldmlldw==",
+                            upload_status: "pending",
+                        }],
+                    },
                 },
-            },
-        });
+            })
+            .mockResolvedValueOnce({
+                data: {
+                    status: "ready",
+                    result: {
+                        created: 1,
+                        data: [{
+                            b64_json: "b3JpZ2luYWw=",
+                            mime_type: "image/png",
+                            upload_status: "uploaded",
+                        }],
+                    },
+                },
+            });
 
-        const result = await waitForPersistentImageTask(config, {
+        const pending = waitForPersistentImageTask(config, {
             taskId: "imgtask_preview_only",
             pollUrl: "/v1/images/tasks/imgtask_preview_only",
             provider: "openai",
+        }, {
+            onPreview,
         });
+        await vi.advanceTimersByTimeAsync(500);
+        const result = await pending;
 
         expect(result).toHaveLength(1);
-        expect(result[0]?.dataUrl).toBe("data:image/jpeg;base64,cHJldmlldw==");
-        expect(result[0]?.previewDataUrl).toBe("data:image/jpeg;base64,cHJldmlldw==");
+        expect(result[0]?.dataUrl).toBe("data:image/png;base64,b3JpZ2luYWw=");
+        expect(onPreview).toHaveBeenCalledWith([
+            expect.objectContaining({ dataUrl: "data:image/jpeg;base64,cHJldmlldw==" }),
+        ]);
+        expect(axios.get).toHaveBeenCalledTimes(2);
     });
 
     it("reports the end-to-end canvas display duration for the image task", async () => {

@@ -1019,16 +1019,30 @@ async function pollImageTask(
             timeout: Math.min(30_000, Math.max(1, deadline - Date.now())),
         })
         const task = response.data
+        const result = typeof task.result === "string" ? JSON.parse(task.result) : task.result
         if (task.status === "ready" || task.status === "completed") {
-            const result = typeof task.result === "string" ? JSON.parse(task.result) : task.result
             if (!result) throw new Error(apiText("noImageReturned"))
+            if (hasPendingImageOriginal(result)) {
+                if (!previewDelivered) {
+                    try {
+                        const previews = parseImagePayload(result as ImageApiResponse, config.outputFormat)
+                        if (previews.length) {
+                            previewDelivered = true
+                            options?.onPreview?.(previews)
+                        }
+                    } catch {
+                        // The final original is still pending; keep polling.
+                    }
+                }
+                await waitForAsyncImagePoll(500, options?.signal)
+                continue
+            }
             const images = parseImagePayload(result as ImageApiResponse, config.outputFormat)
             reportCanvasImageDisplay(taskId, options?.startedAt)
             return images
         }
         if (task.status === "preview_ready" && !previewDelivered) {
             try {
-                const result = typeof task.result === "string" ? JSON.parse(task.result) : task.result
                 const images = result ? parseImagePayload(result as ImageApiResponse, config.outputFormat) : []
                 if (images.length) {
                     previewDelivered = true
@@ -1045,6 +1059,24 @@ async function pollImageTask(
         await waitForAsyncImagePoll(500, options?.signal)
     }
     throw new Error(apiText("imageTimeout"))
+}
+
+function hasPendingImageOriginal(result: unknown) {
+    if (!result || typeof result !== "object") return false;
+    const data = (result as Record<string, unknown>).data
+        || (result as Record<string, unknown>).images
+        || (result as Record<string, unknown>).results;
+    if (!Array.isArray(data)) return false;
+    return data.some((item) => {
+        if (!item || typeof item !== "object") return false;
+        const record = item as Record<string, unknown>;
+        const uploadStatus = String(record.upload_status || "").trim().toLowerCase();
+        const hasOriginal = typeof record.b64_json === "string" && record.b64_json
+            || typeof record.url === "string" && record.url
+            || typeof record.display_url === "string" && record.display_url
+            || typeof record.image_url === "string" && record.image_url;
+        return uploadStatus === "pending" && !hasOriginal;
+    });
 }
 
 function waitForAsyncImagePoll(delay: number, signal?: AbortSignal) {
