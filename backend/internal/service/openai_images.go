@@ -17,6 +17,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -48,7 +49,19 @@ const (
 	// account into streaming internally for durable async image tasks. The public
 	// task still receives a normal Images JSON result.
 	AccountExtraImagesAsyncStreamingEnabled = "images_async_streaming_enabled"
+	// AccountExtraImagesAsyncStreamingExcludedModels lists models that should
+	// bypass streaming because the upstream has demonstrated an empty or invalid
+	// SSE response. Comma-separated, matched case-insensitively.
+	AccountExtraImagesAsyncStreamingExcludedModels = "images_async_streaming_excluded_models"
 )
+
+const openAIImagesAsyncStreamNegativeTTL = 30 * time.Minute
+
+type openAIImagesAsyncStreamNegativeEntry struct {
+	until time.Time
+}
+
+var openAIImagesAsyncStreamNegative sync.Map
 
 // openAIImagesResponsesMainModelValue selects the Responses driver independently
 // of the image_generation tool model. An environment override lets operators
@@ -657,6 +670,8 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 	}
 	asyncStreaming := isOpenAIAsyncImageTaskContext(ctx) &&
 		account.getExtraBool(AccountExtraImagesAsyncStreamingEnabled) &&
+		!openAIImagesAsyncStreamModelExcluded(account, upstreamModel) &&
+		!openAIImagesAsyncStreamNegativeCached(account.ID, upstreamModel) &&
 		!parsed.Multipart
 	if asyncStreaming && !parsed.Stream {
 		forwardBody, err = sjson.SetBytes(forwardBody, "stream", true)
@@ -763,6 +778,7 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 			nonStreamUsage, nonStreamCount, nonStreamSizes, nonStreamOutputs, err := s.handleOpenAIImagesStreamingAsyncResponse(resp, c, parsed)
 			if err != nil {
 				if shouldFallbackOpenAIImagesAsyncStream(err) {
+					markOpenAIImagesAsyncStreamNegative(account.ID, upstreamModel)
 					_ = resp.Body.Close()
 					fallbackParsed := *parsed
 					fallbackParsed.Stream = false
@@ -870,6 +886,46 @@ func isOpenAIAsyncImageTaskContext(ctx context.Context) bool {
 func shouldFallbackOpenAIImagesAsyncStream(err error) bool {
 	_, _, ok := OpenAIUpstreamStreamReadErrorDetails(err)
 	return ok
+}
+
+func openAIImagesAsyncStreamModelExcluded(account *Account, model string) bool {
+	if account == nil || strings.TrimSpace(model) == "" {
+		return false
+	}
+	for _, item := range strings.Split(account.getExtraString(AccountExtraImagesAsyncStreamingExcludedModels), ",") {
+		if strings.EqualFold(strings.TrimSpace(item), strings.TrimSpace(model)) {
+			return true
+		}
+	}
+	return false
+}
+
+func openAIImagesAsyncStreamNegativeCached(accountID int64, model string) bool {
+	key := openAIImagesAsyncStreamNegativeKey(accountID, model)
+	value, ok := openAIImagesAsyncStreamNegative.Load(key)
+	if !ok {
+		return false
+	}
+	entry, _ := value.(openAIImagesAsyncStreamNegativeEntry)
+	if time.Now().Before(entry.until) {
+		return true
+	}
+	openAIImagesAsyncStreamNegative.Delete(key)
+	return false
+}
+
+func markOpenAIImagesAsyncStreamNegative(accountID int64, model string) {
+	if accountID <= 0 || strings.TrimSpace(model) == "" {
+		return
+	}
+	openAIImagesAsyncStreamNegative.Store(
+		openAIImagesAsyncStreamNegativeKey(accountID, model),
+		openAIImagesAsyncStreamNegativeEntry{until: time.Now().Add(openAIImagesAsyncStreamNegativeTTL)},
+	)
+}
+
+func openAIImagesAsyncStreamNegativeKey(accountID int64, model string) string {
+	return fmt.Sprintf("%d|%s", accountID, strings.ToLower(strings.TrimSpace(model)))
 }
 
 func (s *OpenAIGatewayService) handleOpenAIImagesStreamingAsyncResponse(

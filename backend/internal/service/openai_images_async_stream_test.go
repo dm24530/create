@@ -211,6 +211,63 @@ func TestOpenAIImagesAsyncStreamingFallsBackWhenUpstreamStreamIsEmpty(t *testing
 	require.NotNil(t, result)
 	require.Equal(t, []bool{true, false}, streamModes)
 	require.Contains(t, rec.Body.String(), `"b64_json":"ZmFsbGJhY2s="`)
+
+	req = httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	c, _ = gin.CreateTestContext(rec)
+	c.Request = req
+	parsed, err = svc.ParseOpenAIImagesRequest(c, body)
+	require.NoError(t, err)
+	_, err = svc.ForwardImages(ctx, c, account, body, parsed, "")
+	require.NoError(t, err)
+	require.Equal(t, []bool{true, false, false}, streamModes)
+}
+
+func TestOpenAIImagesAsyncStreamingHonorsExcludedModels(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	var streamModes []bool
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		streamModes = append(streamModes, gjsonGetBool(body, "stream"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"created":1,"data":[{"b64_json":"ZmluYWw="}]}`)
+	}))
+	defer upstream.Close()
+
+	cfg := &config.Config{}
+	cfg.Security.URLAllowlist.AllowInsecureHTTP = true
+	svc := &OpenAIGatewayService{
+		cfg:          cfg,
+		httpUpstream: openAIImageAsyncStreamUpstream{client: upstream.Client()},
+	}
+	account := &Account{
+		ID:       43,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Extra: map[string]any{
+			AccountExtraImagesAsyncStreamingEnabled:        true,
+			AccountExtraImagesAsyncStreamingExcludedModels: "gpt-image-2-5-sunburst",
+		},
+		Credentials: map[string]any{
+			"api_key":  "test-key",
+			"base_url": upstream.URL,
+		},
+	}
+	body := []byte(`{"model":"gpt-image-2-5-sunburst","prompt":"draw a dog","response_format":"b64_json"}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = req
+	parsed, err := svc.ParseOpenAIImagesRequest(c, body)
+	require.NoError(t, err)
+
+	ctx := context.WithValue(context.Background(), ctxkey.AsyncImageTask, true)
+	_, err = svc.ForwardImages(ctx, c, account, body, parsed, "")
+	require.NoError(t, err)
+	require.Equal(t, []bool{false}, streamModes)
 }
 
 func gjsonGetBool(body []byte, path string) bool {
