@@ -91,6 +91,7 @@ export async function uploadImage(input: string | Blob, options?: ImageReadOptio
 async function storeImage(blob: Blob, options?: ImageReadOptions): Promise<UploadedImage> {
     const storageKey = `image:${nanoid()}`;
     const url = URL.createObjectURL(blob);
+    const previewReady = storeImagePreview(storageKey, blob).catch(() => undefined);
     try {
         const meta = await loadImageMeta(url, options);
         if (!meta) throw new Error(i18n.t("common.imageReadFailed"));
@@ -98,7 +99,7 @@ async function storeImage(blob: Blob, options?: ImageReadOptions): Promise<Uploa
         await store.setItem(scopedCanvasStorageKey(storageKey), blob);
         throwIfAborted(options?.signal);
         objectUrls.set(storageKey, url);
-        queueImagePreview(storageKey);
+        await previewReady;
         return { url, storageKey, width: meta.width, height: meta.height, bytes: blob.size, mimeType: blob.type.startsWith("image/") ? blob.type : "" };
     } catch (error) {
         URL.revokeObjectURL(url);

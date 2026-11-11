@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { deleteStoredMedia, getMediaBlob, uploadMediaFile } from "../file-storage";
-import { deleteStoredImages, getImageBlob, uploadImage } from "../image-storage";
+import { deleteStoredImages, getImageBlob, previewUrlFor, uploadImage } from "../image-storage";
 
 class MockImage {
-  naturalWidth = 640;
-  naturalHeight = 480;
+  naturalWidth = 1600;
+  naturalHeight = 1200;
   onload: (() => void) | null = null;
   onerror: (() => void) | null = null;
 
@@ -25,6 +25,17 @@ describe("canvas local uploads", () => {
   it("stores, reads, and deletes local image blobs", async () => {
     let objectURL = 0;
     vi.stubGlobal("Image", MockImage);
+    vi.stubGlobal("createImageBitmap", vi.fn(async () => ({
+      width: 1600,
+      height: 1200,
+      close: vi.fn(),
+    })));
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+      drawImage: vi.fn(),
+    } as unknown as CanvasRenderingContext2D);
+    vi.spyOn(HTMLCanvasElement.prototype, "toBlob").mockImplementation((callback) => {
+      callback(new Blob(["thumbnail"], { type: "image/webp" }));
+    });
     Object.defineProperty(URL, "createObjectURL", {
       configurable: true,
       value: vi.fn(() => `blob:image-${++objectURL}`),
@@ -38,10 +49,11 @@ describe("canvas local uploads", () => {
     const uploaded = await uploadImage(source);
 
     expect(uploaded.storageKey).toMatch(/^image:/);
-    expect(uploaded.width).toBe(640);
-    expect(uploaded.height).toBe(480);
+    expect(uploaded.width).toBe(1600);
+    expect(uploaded.height).toBe(1200);
     expect(uploaded.mimeType).toBe("image/png");
     expect(uploaded.url).toMatch(/^blob:image-/);
+    expect(previewUrlFor(uploaded.storageKey)).toMatch(/^blob:image-/);
     expect(await getImageBlob(uploaded.storageKey!)).toBeInstanceOf(Blob);
 
     await deleteStoredImages([uploaded.storageKey!]);
