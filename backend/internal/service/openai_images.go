@@ -762,6 +762,13 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 		if asyncStreaming && !requestedStream {
 			nonStreamUsage, nonStreamCount, nonStreamSizes, nonStreamOutputs, err := s.handleOpenAIImagesStreamingAsyncResponse(resp, c, parsed)
 			if err != nil {
+				if shouldFallbackOpenAIImagesAsyncStream(err) {
+					_ = resp.Body.Close()
+					fallbackParsed := *parsed
+					fallbackParsed.Stream = false
+					fallbackCtx := context.WithValue(ctx, ctxkey.AsyncImageTask, false)
+					return s.forwardOpenAIImagesAPIKey(fallbackCtx, c, account, body, &fallbackParsed, channelMappedModel)
+				}
 				return nil, err
 			}
 			usage = nonStreamUsage
@@ -858,6 +865,11 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 func isOpenAIAsyncImageTaskContext(ctx context.Context) bool {
 	async, _ := ctx.Value(ctxkey.AsyncImageTask).(bool)
 	return async
+}
+
+func shouldFallbackOpenAIImagesAsyncStream(err error) bool {
+	_, _, ok := OpenAIUpstreamStreamReadErrorDetails(err)
+	return ok
 }
 
 func (s *OpenAIGatewayService) handleOpenAIImagesStreamingAsyncResponse(
