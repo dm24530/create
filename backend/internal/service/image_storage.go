@@ -446,10 +446,11 @@ func (u *ImageResultUploader) RewriteWithPreview(
 	}
 
 	type preparedImage struct {
-		item        map[string]json.RawMessage
-		data        []byte
-		contentType string
-		key         string
+		item           map[string]json.RawMessage
+		data           []byte
+		contentType    string
+		key            string
+		previewDataURL string
 	}
 
 	prepared := make([]preparedImage, len(items))
@@ -481,6 +482,41 @@ func (u *ImageResultUploader) RewriteWithPreview(
 		prepared[i].data = data
 		prepared[i].contentType = contentType
 		prepared[i].key = u.buildKey(storageKey, taskID, i, contentType)
+		if previewDataURL := buildPreviewDataURL(data); previewDataURL != "" {
+			prepared[i].previewDataURL = previewDataURL
+		}
+	}
+
+	if onPreview != nil && !earlyPreviewPublished {
+		previewItems := make([]map[string]json.RawMessage, 0, len(prepared))
+		for i := range prepared {
+			if prepared[i].previewDataURL == "" {
+				continue
+			}
+			previewItem, cloneErr := cloneImageItem(prepared[i].item)
+			if cloneErr != nil {
+				continue
+			}
+			previewItem["url"] = encodedJSON(prepared[i].previewDataURL)
+			previewItem["preview_url"] = encodedJSON(prepared[i].previewDataURL)
+			previewItem["preview_data_url"] = encodedJSON(prepared[i].previewDataURL)
+			previewItem["mime_type"] = encodedJSON("image/jpeg")
+			delete(previewItem, "b64_json")
+			delete(previewItem, "display_url")
+			delete(previewItem, "local_asset_id")
+			delete(previewItem, "object_key")
+			previewItems = append(previewItems, previewItem)
+		}
+		if len(previewItems) > 0 {
+			if err := onPreview(imagePreviewPayload(top, previewItems)); err != nil {
+				logger.L().Warn("image_storage.generated_preview_publish_failed",
+					zap.String("task_id", taskID),
+					zap.Int64("user_id", userID),
+					zap.Error(err))
+			} else {
+				earlyPreviewPublished = true
+			}
+		}
 	}
 
 	localPreviewItems := make([]map[string]json.RawMessage, 0, len(prepared))
@@ -509,7 +545,13 @@ func (u *ImageResultUploader) RewriteWithPreview(
 				break
 			}
 			item["url"] = encodedJSON(u.localAssets.URL(meta.ID))
-			item["display_url"] = encodedJSON(u.localAssets.URL(meta.ID))
+			displayURL := u.localAssets.URL(meta.ID)
+			if prepared[i].previewDataURL != "" {
+				displayURL = prepared[i].previewDataURL
+				item["preview_data_url"] = encodedJSON(prepared[i].previewDataURL)
+				item["preview_url"] = encodedJSON(prepared[i].previewDataURL)
+			}
+			item["display_url"] = encodedJSON(displayURL)
 			item["local_asset_id"] = encodedJSON(meta.ID)
 			item["object_key"] = encodedJSON(prepared[i].key)
 			item["mime_type"] = encodedJSON(prepared[i].contentType)
@@ -522,9 +564,15 @@ func (u *ImageResultUploader) RewriteWithPreview(
 				stageErr = fmt.Errorf("image %d: prepare local preview: %w", i, previewErr)
 				break
 			}
-			previewURL := u.localAssets.URL(meta.ID)
+			previewURL := prepared[i].previewDataURL
+			if previewURL == "" {
+				previewURL = u.localAssets.URL(meta.ID)
+			}
 			previewItem["url"] = encodedJSON(previewURL)
 			previewItem["preview_url"] = encodedJSON(previewURL)
+			if prepared[i].previewDataURL != "" {
+				previewItem["preview_data_url"] = encodedJSON(prepared[i].previewDataURL)
+			}
 			delete(previewItem, "display_url")
 			delete(previewItem, "local_asset_id")
 			delete(previewItem, "object_key")
@@ -583,6 +631,11 @@ func (u *ImageResultUploader) RewriteWithPreview(
 					continue
 				}
 				item["url"] = encodedJSON(url)
+				if prepared[index].previewDataURL != "" {
+					item["display_url"] = encodedJSON(prepared[index].previewDataURL)
+					item["preview_url"] = encodedJSON(prepared[index].previewDataURL)
+					item["preview_data_url"] = encodedJSON(prepared[index].previewDataURL)
+				}
 				item["object_key"] = encodedJSON(prepared[index].key)
 				item["mime_type"] = encodedJSON(prepared[index].contentType)
 				delete(item, "b64_json")
@@ -846,6 +899,17 @@ func buildFastImagePreview(data []byte, maxEdge int) ([]byte, error) {
 		return nil, err
 	}
 	return out.Bytes(), nil
+}
+
+func buildPreviewDataURL(data []byte) string {
+	if len(data) == 0 || detectedImageContentType(data) == "image/gif" {
+		return ""
+	}
+	preview, err := buildFastImagePreview(data, 1024)
+	if err != nil || len(preview) == 0 {
+		return ""
+	}
+	return "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(preview)
 }
 
 func (u *ImageResultUploader) fetchImageBytes(ctx context.Context, item map[string]json.RawMessage) ([]byte, string, error) {

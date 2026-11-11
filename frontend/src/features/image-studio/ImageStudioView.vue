@@ -2593,34 +2593,9 @@ let galleryURLRefreshTimer: ReturnType<typeof setInterval> | null = null
 let galleryRefreshDeferred = false
 
 async function loadPreviewDisplay(image: GeneratedImage) {
-  const token = ++previewLoadToken
+  ++previewLoadToken
   const thumbnail = image.previewSrc || image.thumbSrc || image.thumbSrcSet || image.src
   previewDisplaySrc.value = thumbnail
-  if (!thumbnail || thumbnail === image.src || typeof Image === 'undefined') return
-  // Let the dialog paint the existing thumbnail before competing for network
-  // and decode work with the full-resolution original.
-  await nextTick()
-  if (token !== previewLoadToken || previewImage.value?.id !== image.id) return
-
-  const loader = new Image()
-  loader.decoding = 'async'
-  loader.fetchPriority = 'low'
-  loader.src = image.src
-  try {
-    if (typeof loader.decode === 'function') {
-      await loader.decode()
-    } else {
-      await new Promise<void>((resolve, reject) => {
-        loader.onload = () => resolve()
-        loader.onerror = () => reject(new Error('preview image failed to load'))
-      })
-    }
-  } catch {
-    return
-  }
-  if (token === previewLoadToken && previewImage.value?.id === image.id) {
-    previewDisplaySrc.value = image.src
-  }
 }
 
 let generationClockTimer: ReturnType<typeof setInterval> | null = null

@@ -865,11 +865,15 @@ func publicImageTaskResult(result json.RawMessage, localAssets *LocalImageAssetS
 		}
 		localURL := localAssets.URL(assetID)
 		item["url"] = encodedJSON(localURL)
-		item["display_url"] = encodedJSON(localURL)
+		if _, ok := item["preview_data_url"]; !ok {
+			item["display_url"] = encodedJSON(localURL)
+		}
 		meta, err := localAssets.Get(assetID)
 		if err == nil && meta.Uploaded && strings.TrimSpace(meta.RemoteURL) != "" {
 			item["url"] = encodedJSON(strings.TrimSpace(meta.RemoteURL))
-			item["display_url"] = encodedJSON(strings.TrimSpace(meta.RemoteURL))
+			if _, ok := item["preview_data_url"]; !ok {
+				item["display_url"] = encodedJSON(strings.TrimSpace(meta.RemoteURL))
+			}
 			item["upload_status"] = encodedJSON("uploaded")
 		}
 	}
