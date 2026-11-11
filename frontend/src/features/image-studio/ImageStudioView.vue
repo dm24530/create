@@ -167,6 +167,16 @@
                 </div>
                 <div v-if="!image.pending && !image.failed" class="flex shrink-0 gap-1">
                   <button
+                    v-if="image.prompt"
+                    type="button"
+                    class="mini-action"
+                    data-testid="copy-generated-prompt"
+                    title="复制提示词"
+                    @click="copyImagePrompt(image)"
+                  >
+                    <Icon name="copy" size="sm" />
+                  </button>
+                  <button
                     v-if="!image.saved && galleryBackedIds.has(galleryIdFor(image))"
                     type="button"
                     class="mini-action"
@@ -203,6 +213,17 @@
                   </button>
                 </div>
                 <div v-else-if="image.failed" class="flex shrink-0 items-center gap-1">
+                  <button
+                    v-if="image.prompt"
+                    type="button"
+                    class="image-failure-copy"
+                    data-testid="copy-failed-prompt"
+                    title="复制提示词"
+                    @click="copyImagePrompt(image)"
+                  >
+                    <Icon name="copy" size="sm" />
+                    <span>复制提示词</span>
+                  </button>
                   <button
                     type="button"
                     class="image-failure-retry"
@@ -3542,6 +3563,12 @@ async function copyComposerPrompt() {
   const text = prompt.value.trim()
   if (!text) return
   await copyToClipboard(text, '提示词已复制')
+}
+
+function copyImagePrompt(image: GeneratedImage) {
+  const text = String(image.prompt || '').trim()
+  if (!text) return
+  void copyToClipboard(text, '提示词已复制')
 }
 
 async function pasteComposerPrompt() {

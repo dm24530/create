@@ -2425,7 +2425,8 @@ describe('ImageStudioView gallery', () => {
     const wrapper = mountImageStudio()
     await flushPromises()
     await flushPromises()
-    await wrapper.get('[data-testid="image-prompt-input"]').setValue('一只趴在桌上的橙色小猫，柔和窗边自然光，电影感，极简背景')
+    const failedPrompt = '一只趴在桌上的橙色小猫，柔和窗边自然光，电影感，极简背景'
+    await wrapper.get('[data-testid="image-prompt-input"]').setValue(failedPrompt)
     await wrapper.get('form').trigger('submit')
     await flushPromises()
 
@@ -2435,6 +2436,8 @@ describe('ImageStudioView gallery', () => {
     expect(syncCalls).toBe(1)
     expect(wrapper.findAll('[data-testid="image-generation-failure"]')).toHaveLength(1)
     expect(wrapper.findAll('img[alt^="生成结果"]')).toHaveLength(0)
+    await wrapper.get('[data-testid="copy-failed-prompt"]').trigger('click')
+    expect(copyToClipboard).toHaveBeenCalledWith(failedPrompt, '提示词已复制')
   })
 
   it('manual retry reuses the failed request and keeps the original failure card', async () => {
@@ -3447,6 +3450,8 @@ describe('ImageStudioView gallery', () => {
       saved: false,
     }))
     expect(saveGallery).not.toHaveBeenCalled()
+    await wrapper.get('[data-testid="copy-generated-prompt"]').trigger('click')
+    expect(copyToClipboard).toHaveBeenCalledWith('test image prompt', '提示词已复制')
 
     const generatedButton = wrapper.findAll('button').find((button) =>
       button.find('img[alt="生成结果 1"]').exists(),
