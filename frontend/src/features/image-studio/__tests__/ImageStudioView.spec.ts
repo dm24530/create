@@ -158,6 +158,7 @@ function mountImageStudio(options: { isAdmin?: boolean; userId?: number; prompt?
 }
 
 afterEach(() => {
+  vi.restoreAllMocks()
   for (const wrapper of mountedWrappers) {
     try {
       wrapper.unmount()
@@ -3137,6 +3138,8 @@ describe('ImageStudioView gallery', () => {
   })
 
   it('shows a ready preview before the original image has been persisted', async () => {
+    let now = 1_000_000
+    vi.spyOn(Date, 'now').mockImplementation(() => now)
     listKeys.mockResolvedValue({
       items: [{ id: 1, name: 'dd', key: 'sk-local', status: 'active', group_id: 2 }],
     })
@@ -3164,6 +3167,7 @@ describe('ImageStudioView gallery', () => {
       if (url.endsWith('/images/tasks/imgtask_preview_ready')) {
         pollCalls += 1
         if (pollCalls === 1) {
+          now += 51_000
           return {
             ok: true,
             json: async () => ({
@@ -3173,6 +3177,7 @@ describe('ImageStudioView gallery', () => {
             }),
           } as Response
         }
+        now += 8_000
         return {
           ok: true,
           json: async () => ({
@@ -3201,6 +3206,7 @@ describe('ImageStudioView gallery', () => {
     await wrapper.get('.image-result-card__media').trigger('click')
     expect(wrapper.get('.image-detail-dialog__media img').attributes('src'))
       .toBe('data:image/jpeg;base64,cHJldmlldw==')
+    expect(wrapper.get('[data-testid="image-generation-duration"]').text()).toBe('51 秒')
     expect(wrapper.get('[data-testid="save-preview-to-gallery"]').attributes('disabled')).toBeDefined()
 
     await vi.waitFor(() => {

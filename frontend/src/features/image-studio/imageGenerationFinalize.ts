@@ -171,6 +171,7 @@ export function createImageGenerationFinalizer(options: GenerationFinalizeOption
     const requestedFormat = firstPending?.format || options.format.value
     const requestedSize = firstPending?.size || options.size.value
     const completedAtMs = Date.now()
+    const visibleDurationMs = Number(firstPending?.durationMs || 0)
     const fallbackDurationMs = Number(firstPending?.startedAt || 0) > 0
       ? Math.max(1, completedAtMs - Number(firstPending.startedAt))
       : undefined
@@ -189,9 +190,9 @@ export function createImageGenerationFinalizer(options: GenerationFinalizeOption
       const remoteSrc = options.resolveImageAssetURL(
         String(item.display_url || item.url || ''),
       )
-      const rawSrc = previewDataURL || (b64
+      const rawSrc = (b64
         ? `data:${mime};base64,${b64}`
-        : remoteSrc)
+        : remoteSrc) || previewDataURL
       if (!rawSrc) continue
       const previewSrc = String(item.preview_data_url || '')
       const actualFormat = options.imageFormatFromResult(item, rawSrc, requestedFormat)
@@ -212,7 +213,11 @@ export function createImageGenerationFinalizer(options: GenerationFinalizeOption
         customSizeRequested: firstPending?.customSizeRequested,
         meta: `${actualFormat.toUpperCase()} · ${requestedSize} · ${currentModel}`,
         createdAt: Math.floor((itemCompletedAt > 0 ? itemCompletedAt : completedAtMs) / 1000),
-        durationMs: itemDurationMs > 0 ? itemDurationMs : fallbackDurationMs,
+        durationMs: visibleDurationMs > 0
+          ? visibleDurationMs
+          : itemDurationMs > 0
+            ? itemDurationMs
+            : fallbackDurationMs,
         taskId: firstPending?.taskId,
         gatewayTaskId: firstPending?.gatewayTaskId,
         gatewayPollUrl: firstPending?.gatewayPollUrl,

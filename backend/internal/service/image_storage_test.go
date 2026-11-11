@@ -17,7 +17,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"testing"
 	"time"
 
@@ -258,7 +257,7 @@ func TestImageResultUploaderUsesOpaqueUserStorageKey(t *testing.T) {
 	)
 }
 
-func TestImageResultUploaderPublishesPreviewBeforeOriginal(t *testing.T) {
+func TestImageResultUploaderDoesNotGenerateThumbnailBeforeRemoteUpload(t *testing.T) {
 	storage := &fakeImageStorage{}
 	uploader := NewImageResultUploader(storage, "images/", 0, nil)
 	validPNG, err := base64.StdEncoding.DecodeString(
@@ -268,35 +267,23 @@ func TestImageResultUploaderPublishesPreviewBeforeOriginal(t *testing.T) {
 	result := json.RawMessage(`{"data":[{"b64_json":"` +
 		base64.StdEncoding.EncodeToString(validPNG) + `","mime_type":"image/png"}]}`)
 
-	var preview json.RawMessage
 	out, err := uploader.RewriteWithPreview(context.Background(), 42, "imgtask_preview", result, func(value json.RawMessage) error {
-		preview = append(json.RawMessage(nil), value...)
+		t.Fatalf("unexpected generated preview: %s", value)
 		return nil
 	})
 	require.NoError(t, err)
-	require.NotEmpty(t, preview)
 	require.Len(t, storage.saved, 1)
 	require.Equal(t, "images/users/42/imgtask_preview-0.png", storage.saved[0].key)
 
-	var parsedPreview struct {
-		Data []struct {
-			URL string `json:"url"`
-		} `json:"data"`
-	}
-	require.NoError(t, json.Unmarshal(preview, &parsedPreview))
-	require.Len(t, parsedPreview.Data, 1)
-	require.True(t, strings.HasPrefix(parsedPreview.Data[0].URL, "data:image/jpeg;base64,"))
-
 	var parsedFinal struct {
 		Data []struct {
-			URL            string `json:"url"`
-			PreviewDataURL string `json:"preview_data_url"`
+			URL string `json:"url"`
 		} `json:"data"`
 	}
 	require.NoError(t, json.Unmarshal(out, &parsedFinal))
 	require.Len(t, parsedFinal.Data, 1)
 	require.Equal(t, "https://cdn.test/images/users/42/imgtask_preview-0.png", parsedFinal.Data[0].URL)
-	require.True(t, strings.HasPrefix(parsedFinal.Data[0].PreviewDataURL, "data:image/jpeg;base64,"))
+	require.NotContains(t, string(out), "preview_data_url")
 }
 
 func TestImageResultUploaderStagesOriginalLocallyBeforeRemoteUpload(t *testing.T) {
@@ -328,7 +315,7 @@ func TestImageResultUploaderStagesOriginalLocallyBeforeRemoteUpload(t *testing.T
 	require.Equal(t, LocalImageAssetURLPrefix+parsed.Data[0].LocalAssetID, parsed.Data[0].URL)
 	require.Equal(t, "images/users/42/imgtask_local-0.png", parsed.Data[0].ObjectKey)
 	require.Equal(t, "image/png", parsed.Data[0].MIMEType)
-	require.Contains(t, string(out), `"preview_data_url":"data:image/jpeg;base64,`)
+	require.NotContains(t, string(out), "preview_data_url")
 
 	meta, data, err := local.Read(parsed.Data[0].LocalAssetID)
 	require.NoError(t, err)
@@ -336,7 +323,7 @@ func TestImageResultUploaderStagesOriginalLocallyBeforeRemoteUpload(t *testing.T
 	require.Equal(t, validPNG, data)
 }
 
-func TestImageResultUploaderPublishesSafePreviewWithLocalOriginal(t *testing.T) {
+func TestImageResultUploaderPublishesSafeLocalOriginalPreview(t *testing.T) {
 	validPNG, err := base64.StdEncoding.DecodeString(
 		"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
 	)
@@ -362,11 +349,49 @@ func TestImageResultUploaderPublishesSafePreviewWithLocalOriginal(t *testing.T) 
 	)
 	require.NoError(t, err)
 	require.NotEmpty(t, preview)
-	require.Contains(t, string(preview), "data:image/jpeg;base64,")
+	require.Contains(t, string(preview), `/api/v1/public/image-assets/`)
 	require.NotContains(t, string(preview), "127.0.0.1")
 	require.NotContains(t, string(preview), "local_asset_id")
 	require.NotContains(t, string(preview), "object_key")
 	require.NotContains(t, string(preview), "b64_json")
+}
+
+func TestImageResultUploaderUsesLocalOriginalWithoutGeneratedThumbnail(t *testing.T) {
+	validPNG, err := base64.StdEncoding.DecodeString(
+		"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+	)
+	require.NoError(t, err)
+	storage := &fakeImageStorage{}
+	local := NewLocalImageAssetStore(t.TempDir())
+	uploader := NewImageResultUploader(storage, "images/", 0, nil)
+	uploader.SetLocalAssets(local)
+	result := json.RawMessage(`{"data":[{"b64_json":"` +
+		base64.StdEncoding.EncodeToString(validPNG) + `","mime_type":"image/png"}]}`)
+
+	var previews []json.RawMessage
+	out, err := uploader.RewriteWithPreview(
+		context.Background(),
+		42,
+		"imgtask_original_only",
+		result,
+		func(value json.RawMessage) error {
+			previews = append(previews, append(json.RawMessage(nil), value...))
+			return nil
+		},
+	)
+	require.NoError(t, err)
+	require.Len(t, previews, 1)
+	require.Contains(t, string(previews[0]), `"preview_url":"/api/v1/public/image-assets/`)
+	require.NotContains(t, string(out), "preview_data_url")
+
+	var parsed struct {
+		Data []struct {
+			URL string `json:"url"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(out, &parsed))
+	require.Len(t, parsed.Data, 1)
+	require.Contains(t, parsed.Data[0].URL, "/api/v1/public/image-assets/")
 }
 
 func TestUpstreamPreviewItemsUsesOnlySafePublicURLs(t *testing.T) {
@@ -425,10 +450,9 @@ func TestImageResultUploaderPublishesUpstreamURLBeforeDownloadCompletes(t *testi
 		},
 	)
 	require.NoError(t, err)
-	require.Len(t, previews, 2)
+	require.Len(t, previews, 1)
 	require.Contains(t, string(previews[0]), `"url":"https://cdn.example.test/image.png"`)
 	require.NotContains(t, string(previews[0]), "b64_json")
-	require.Contains(t, string(previews[1]), "data:image/jpeg;base64,")
 	require.Len(t, storage.saved, 1)
 }
 
@@ -624,53 +648,6 @@ func TestImageTaskServiceCompleteOffloadsToStorage(t *testing.T) {
 	require.Len(t, storage.saved, 1)
 }
 
-func TestImageTaskServicePublishesPreviewBeforeOriginalUpload(t *testing.T) {
-	store := &imageTaskMemoryStore{}
-	storage := &fakeImageStorage{
-		saveStarted: make(chan struct{}),
-		release:     make(chan struct{}),
-	}
-	uploader := NewImageResultUploader(storage, "images/", 0, nil)
-	svc := NewImageTaskServiceWithUploader(store, uploader, time.Hour, time.Minute)
-
-	owner := ImageTaskOwner{UserID: 1, APIKeyID: 2}
-	created, err := svc.Create(context.Background(), owner)
-	require.NoError(t, err)
-
-	validPNG, err := base64.StdEncoding.DecodeString(
-		"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
-	)
-	require.NoError(t, err)
-	result := json.RawMessage(`{"data":[{"b64_json":"` +
-		base64.StdEncoding.EncodeToString(validPNG) + `","mime_type":"image/png"}]}`)
-	completeDone := make(chan error, 1)
-	go func() {
-		completeDone <- svc.Complete(context.Background(), created.ID, http.StatusOK, result)
-	}()
-
-	select {
-	case <-storage.saveStarted:
-	case <-time.After(2 * time.Second):
-		t.Fatal("original image upload did not start")
-	}
-
-	preview, err := svc.Get(context.Background(), owner, created.ID)
-	require.NoError(t, err)
-	require.Equal(t, ImageTaskStatusPreviewReady, preview.Status)
-	require.Nil(t, preview.CompletedAt)
-	require.Contains(t, string(preview.Result), "data:image/jpeg;base64,")
-	require.NotContains(t, string(preview.Result), "b64_json")
-
-	close(storage.release)
-	require.NoError(t, <-completeDone)
-
-	final, err := svc.Get(context.Background(), owner, created.ID)
-	require.NoError(t, err)
-	require.Equal(t, ImageTaskStatusCompleted, final.Status)
-	require.NotNil(t, final.CompletedAt)
-	require.Equal(t, "https://cdn.test/images/users/1/"+created.ID+"-0.png", final.ImageURL)
-}
-
 func TestImageTaskServiceFinalizesPreviewWithoutReRunningUpstream(t *testing.T) {
 	store := &imageTaskMemoryStore{}
 	storage := &fakeImageStorage{}
@@ -723,14 +700,14 @@ func TestImageTaskServiceCompletesWithLocalOriginalBeforeRemoteUpload(t *testing
 	got, err := svc.Get(context.Background(), owner, created.ID)
 	require.NoError(t, err)
 	require.Equal(t, ImageTaskStatusReady, got.Status)
-	require.Empty(t, got.ImageURL)
+	require.Contains(t, got.ImageURL, LocalImageAssetURLPrefix)
 	require.Contains(t, string(got.Result), `"original_ready":true`)
-	require.Contains(t, string(got.Result), `"preview_data_url":"data:image/jpeg;base64,`)
+	require.NotContains(t, string(got.Result), "preview_data_url")
 	require.NotContains(t, string(got.Result), "b64_json")
 	require.NotContains(t, string(got.Result), `"local_asset_id"`)
 }
 
-func TestImageTaskServiceHidesPublicURLUntilLocalAssetUploaded(t *testing.T) {
+func TestImageTaskServiceExposesLocalOriginalURLWhileRemoteUploadPending(t *testing.T) {
 	store := &imageTaskMemoryStore{}
 	remote := &fakeImageStorage{}
 	local := NewLocalImageAssetStore(t.TempDir())
@@ -757,16 +734,15 @@ func TestImageTaskServiceHidesPublicURLUntilLocalAssetUploaded(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(pending.Result, &pendingResult))
 	require.Len(t, pendingResult.Data, 1)
-	_, hasURL := pendingResult.Data[0]["url"]
-	require.False(t, hasURL, "the public R2 URL must stay hidden while upload is pending")
-	_, hasDisplayURL := pendingResult.Data[0]["display_url"]
-	require.False(t, hasDisplayURL, "local display addresses must not be returned to API clients")
+	require.Contains(t, string(pendingResult.Data[0]["url"]), LocalImageAssetURLPrefix)
+	require.Contains(t, string(pendingResult.Data[0]["display_url"]), LocalImageAssetURLPrefix)
 	_, hasLocalAssetID := pendingResult.Data[0]["local_asset_id"]
 	require.False(t, hasLocalAssetID, "local asset identifiers must not be exposed")
 	require.JSONEq(t, `"pending"`, string(pendingResult.Data[0]["upload_status"]))
 	require.JSONEq(t, `true`, string(pendingResult.Data[0]["original_ready"]))
-	require.Contains(t, string(pendingResult.Data[0]["preview_data_url"]), `data:image/jpeg;base64,`)
-	require.Empty(t, pending.ImageURL)
+	_, hasPreviewDataURL := pendingResult.Data[0]["preview_data_url"]
+	require.False(t, hasPreviewDataURL)
+	require.Contains(t, pending.ImageURL, LocalImageAssetURLPrefix)
 
 	pendingAssets, err := local.ListPending(10)
 	require.NoError(t, err)

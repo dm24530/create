@@ -3299,15 +3299,18 @@ function applyGatewayPreview(image: GeneratedImage, items: any[]) {
   const mime = String(preview.mimeType || preview.mime_type || 'image/png')
   const b64 = String(preview.b64_json || preview.data || '')
   const src = String(
-    preview.preview_data_url
-    || preview.preview_url
-    || (b64 ? `data:${mime};base64,${b64}` : '')
-    || preview.display_url
+    preview.display_url
     || preview.url
+    || preview.preview_url
+    || preview.preview_data_url
+    || (b64 ? `data:${mime};base64,${b64}` : '')
     || '',
   )
   if (!src) return
   image.previewSrc = src
+  if (!Number(image.durationMs || 0) && Number(image.startedAt || 0) > 0) {
+    image.durationMs = Math.max(1, Date.now() - Number(image.startedAt))
+  }
   images.value = [...images.value]
   persistPendingImages()
 }

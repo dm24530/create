@@ -857,17 +857,19 @@ func publicImageTaskResult(result json.RawMessage, localAssets *LocalImageAssetS
 		if assetID == "" {
 			continue
 		}
-		delete(item, "url")
-		delete(item, "display_url")
 		delete(item, "local_asset_id")
 		item["original_ready"] = encodedJSON(true)
 		item["upload_status"] = encodedJSON("pending")
 		if localAssets == nil {
 			continue
 		}
+		localURL := localAssets.URL(assetID)
+		item["url"] = encodedJSON(localURL)
+		item["display_url"] = encodedJSON(localURL)
 		meta, err := localAssets.Get(assetID)
 		if err == nil && meta.Uploaded && strings.TrimSpace(meta.RemoteURL) != "" {
 			item["url"] = encodedJSON(strings.TrimSpace(meta.RemoteURL))
+			item["display_url"] = encodedJSON(strings.TrimSpace(meta.RemoteURL))
 			item["upload_status"] = encodedJSON("uploaded")
 		}
 	}
