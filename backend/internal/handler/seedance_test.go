@@ -4,6 +4,7 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -94,6 +95,71 @@ func TestSeedanceHandlerLifecycleAndOwnership(t *testing.T) {
 		}
 	}
 	require.Len(t, bindings.billed, 1)
+}
+
+func TestCompositeSeedanceVideoLookupUsesCreateSnapshot(t *testing.T) {
+	h, slots, bindings, upstream := newGrokMediaSlotHandler(t, false, false, service.PlatformOpenAI)
+	upstream.call = func(req *http.Request, id int64) (*http.Response, error) {
+		require.Equal(t, int64(1), id)
+		body := `{"id":"task-video","status":"queued"}`
+		if req.Method == http.MethodGet {
+			body = `{"id":"task-video","status":"completed","video":{"url":"https://cdn.example/video.mp4","duration":5}}`
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(body)),
+		}, nil
+	}
+
+	createCtx, createWriter := grokMediaSlotContext(context.Background(), true)
+	createKey, _ := middleware.GetAPIKeyFromContext(createCtx)
+	createKey.Group.Platform = service.PlatformComposite
+	createCtx.Request = httptest.NewRequest(
+		http.MethodPost,
+		"/v1/video/generations",
+		strings.NewReader(`{"model":"seedance-2.5","prompt":"waves","duration":5,"resolution":"720p"}`),
+	)
+	createCtx.Request.Header.Set("Content-Type", "application/json")
+	h.SeedanceVideoGeneration(createCtx)
+	require.Equal(t, http.StatusOK, createWriter.Code, createWriter.Body.String())
+	slots.assertReleased(t)
+
+	var pending service.GrokVideoPendingBilling
+	require.NoError(t, json.Unmarshal(bindings.pending["10:20:task-video"], &pending))
+	require.Equal(t, "seedance_video", pending.Provider)
+	require.Equal(t, service.PlatformOpenAI, pending.Platform)
+
+	statusCtx, statusWriter := grokMediaSlotContext(context.Background(), false)
+	statusKey, _ := middleware.GetAPIKeyFromContext(statusCtx)
+	statusKey.Group.Platform = service.PlatformComposite
+	statusCtx.Params = gin.Params{{Key: "request_id", Value: "task-video"}}
+	require.Equal(t, "seedance_video", h.ResolveCompositeVideoLookupRoute(statusCtx, "task-video"))
+	h.SeedanceVideoStatus(statusCtx)
+	require.Equal(t, http.StatusOK, statusWriter.Code, statusWriter.Body.String())
+	slots.assertReleased(t)
+	require.Equal(t, 2, upstream.calls)
+}
+
+func TestCompositeSeedanceVideoLookupFallsBackToModel(t *testing.T) {
+	h, _, _, _ := newGrokMediaSlotHandler(t, false, false, service.PlatformOpenAI)
+	c, _ := grokMediaSlotContext(context.Background(), false)
+	key, _ := middleware.GetAPIKeyFromContext(c)
+	key.Group.Platform = service.PlatformComposite
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/videos/missing?model=seedance-2.5", nil)
+	require.Equal(t, "seedance_video", h.ResolveCompositeVideoLookupRoute(c, "missing"))
+}
+
+func TestCompositeSeedanceVideoLookupUsesLegacySnapshotModel(t *testing.T) {
+	h, _, bindings, _ := newGrokMediaSlotHandler(t, false, false, service.PlatformOpenAI)
+	bindings.pending = map[string][]byte{
+		"10:20:legacy": []byte(`{"model":"seedance-2.5"}`),
+	}
+	c, _ := grokMediaSlotContext(context.Background(), false)
+	key, _ := middleware.GetAPIKeyFromContext(c)
+	key.Group.Platform = service.PlatformComposite
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/videos/legacy", nil)
+	require.Equal(t, "seedance_video", h.ResolveCompositeVideoLookupRoute(c, "legacy"))
 }
 
 func TestSeedancePerSecondBillingUsesCreateSnapshot(t *testing.T) {

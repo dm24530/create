@@ -669,7 +669,7 @@ async function loadVideo(record: VideoWorkRecord) {
   if (!record.requestId) return
   errorMessage.value = ''
   try {
-    const snapshot = await fetchVideoTask(contextFor(key), record.provider, record.requestId)
+    const snapshot = await fetchVideoTask(contextFor(key), record.provider, record.requestId, record.model)
     if (snapshot.status !== 'succeeded') {
       updateRecord(record, snapshot.status, snapshot.errorMessage)
       return
@@ -679,6 +679,7 @@ async function loadVideo(record: VideoWorkRecord) {
       record.provider,
       record.requestId,
       snapshot.videoUrl,
+      record.model,
     )
     playable.value = { ...playable.value, [record.id]: result.url }
     if (snapshot.videoUrl && snapshot.videoUrl !== record.videoUrl) {

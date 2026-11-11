@@ -662,7 +662,7 @@ describe('VideoStudioView Seedance model controls', () => {
       if (url.endsWith('/video/generations') && init?.method === 'POST') {
         return jsonResponse({ id: 'task-seedance', task_id: 'task-seedance', status: 'queued' })
       }
-      if (url.endsWith('/videos/task-seedance')) {
+      if (url.endsWith('/videos/task-seedance?model=seedance-2.5')) {
         return jsonResponse({
           id: 'task-seedance',
           status: 'completed',
@@ -670,7 +670,7 @@ describe('VideoStudioView Seedance model controls', () => {
           metadata: { url: '/v1/videos/task-seedance/content' },
         })
       }
-      if (url.endsWith('/videos/task-seedance/content')) {
+      if (url.endsWith('/videos/task-seedance/content?model=seedance-2.5')) {
         return { ok: true, status: 200, statusText: 'OK', blob: async () => new Blob(['video']) } as unknown as Response
       }
       throw new Error(`Unexpected request: ${url}`)
@@ -828,14 +828,14 @@ describe('VideoStudioView Seedance model controls', () => {
       if (url.endsWith('/video/generations') && init?.method === 'POST') {
         return jsonResponse({ id: 'task-momo-archive', task_id: 'task-momo-archive', status: 'queued' })
       }
-      if (url.endsWith('/videos/task-momo-archive')) {
+      if (url.endsWith('/videos/task-momo-archive?model=seedance-2.5')) {
         return jsonResponse({
           id: 'task-momo-archive',
           status: 'completed',
           metadata: { url: '/v1/videos/task-momo-archive/content' },
         })
       }
-      if (url.endsWith('/videos/task-momo-archive/content')) {
+      if (url.endsWith('/videos/task-momo-archive/content?model=seedance-2.5')) {
         return { ok: true, status: 200, statusText: 'OK', blob: async () => new Blob(['video']) } as unknown as Response
       }
       if (url === 'blob:seedance-video') {
@@ -894,14 +894,14 @@ describe('VideoStudioView Seedance model controls', () => {
     fetchMock.mockImplementation(async (input) => {
       const url = String(input)
       if (url.endsWith('/models')) return jsonResponse({ data: [{ id: 'seedance-2.5' }] })
-      if (url.endsWith('/videos/task-refresh-momo')) {
+      if (url.endsWith('/videos/task-refresh-momo?model=seedance-2.5')) {
         return jsonResponse({
           id: 'task-refresh-momo',
           status: 'completed',
           metadata: { url: '/v1/videos/task-refresh-momo/content' },
         })
       }
-      if (url.endsWith('/videos/task-refresh-momo/content')) {
+      if (url.endsWith('/videos/task-refresh-momo/content?model=seedance-2.5')) {
         return { ok: true, status: 200, statusText: 'OK', blob: async () => new Blob(['video']) } as unknown as Response
       }
       if (url === 'blob:seedance-video') {

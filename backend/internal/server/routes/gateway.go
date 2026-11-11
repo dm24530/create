@@ -144,8 +144,22 @@ func RegisterGatewayRoutes(
 	videoStatusHandler := func(c *gin.Context) {
 		// Video status requests do not carry a model, so composite groups cannot
 		// be resolved by compositeTargetPlatformMiddleware. Route them through
-		// the Grok handler and let scheduler/account selection enforce capacity.
+		// the create-time provider snapshot first, then fall back to the legacy
+		// platform branches below.
 		groupPlatform := getGroupPlatform(c)
+		if groupPlatform == service.PlatformComposite {
+			switch h.OpenAIGateway.ResolveCompositeVideoLookupRoute(c, c.Param("request_id")) {
+			case "seedance", "seedance_video":
+				h.OpenAIGateway.SeedanceVideoStatus(c)
+				return
+			case "openai_video":
+				h.OpenAIGateway.OpenAIVideoStatus(c)
+				return
+			case "grok":
+				h.OpenAIGateway.GrokVideoStatus(c)
+				return
+			}
+		}
 		if groupPlatform == service.PlatformMiniMax || groupPlatform == service.PlatformMuse ||
 			(groupPlatform == service.PlatformOpenAI && c.Query("model") != "") ||
 			(groupPlatform == service.PlatformComposite && c.Query("model") != "") {
@@ -171,8 +185,22 @@ func RegisterGatewayRoutes(
 	videoContentHandler := func(c *gin.Context) {
 		// Video content requests do not carry a model, so composite groups cannot
 		// be resolved by compositeTargetPlatformMiddleware. Route them through
-		// the Grok handler just like video status lookups.
+		// the create-time provider snapshot first, then fall back to the legacy
+		// platform branches below.
 		groupPlatform := getGroupPlatform(c)
+		if groupPlatform == service.PlatformComposite {
+			switch h.OpenAIGateway.ResolveCompositeVideoLookupRoute(c, c.Param("request_id")) {
+			case "seedance", "seedance_video":
+				h.OpenAIGateway.SeedanceVideoContent(c)
+				return
+			case "openai_video":
+				h.OpenAIGateway.OpenAIVideoContent(c)
+				return
+			case "grok":
+				h.OpenAIGateway.GrokVideoContent(c)
+				return
+			}
+		}
 		if groupPlatform == service.PlatformMiniMax || groupPlatform == service.PlatformMuse ||
 			(groupPlatform == service.PlatformOpenAI && c.Query("model") != "") ||
 			(groupPlatform == service.PlatformComposite && c.Query("model") != "") {

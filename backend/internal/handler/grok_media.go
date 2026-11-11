@@ -552,6 +552,8 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 				VideoResolution:      result.VideoResolution,
 				VideoDurationSeconds: result.VideoDurationSeconds,
 				OriginalModel:        clientRequestedModel(c, requestModel),
+				Provider:             grokMediaVideoProvider(endpoint),
+				Platform:             account.Platform,
 				// Wall-clock start for usage duration_ms: create accepted → first done discovery.
 				CreatedAt: videoCreateStartedAt,
 			}
@@ -646,6 +648,79 @@ func isGrokVideoCreateEndpoint(endpoint service.GrokMediaEndpoint) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+func grokMediaVideoProvider(endpoint service.GrokMediaEndpoint) string {
+	switch endpoint {
+	case service.SeedanceEndpointCreate:
+		return "seedance"
+	case service.SeedanceVideoEndpointCreate:
+		return "seedance_video"
+	case service.OpenAIVideoEndpointCreate:
+		return "openai_video"
+	case service.GrokMediaEndpointVideosGenerations,
+		service.GrokMediaEndpointVideosEdits,
+		service.GrokMediaEndpointVideosExtensions:
+		return "grok"
+	default:
+		return ""
+	}
+}
+
+// ResolveCompositeVideoLookupRoute restores the create-time provider for
+// Composite video status/content requests. Without this, a task created through
+// the Seedance video endpoint falls through to the Grok lookup handler.
+func (h *OpenAIGatewayHandler) ResolveCompositeVideoLookupRoute(c *gin.Context, requestID string) string {
+	if h == nil || h.gatewayService == nil || c == nil || c.Request == nil {
+		return ""
+	}
+	apiKey, ok := middleware2.GetAPIKeyFromContext(c)
+	if !ok || apiKey == nil || apiKey.Group == nil || apiKey.Group.Platform != service.PlatformComposite {
+		return ""
+	}
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		return ""
+	}
+	if pending, err := h.gatewayService.LoadGrokVideoPendingBilling(
+		c.Request.Context(), requestID, subject.UserID, apiKey.ID,
+	); err == nil && pending != nil {
+		if platform := strings.TrimSpace(pending.Platform); platform != "" {
+			c.Request = c.Request.WithContext(service.WithResolvedTargetPlatform(c.Request.Context(), platform))
+		}
+		if provider := strings.TrimSpace(pending.Provider); provider != "" {
+			return provider
+		}
+		if route := h.resolveCompositeVideoLookupModelRoute(c, firstNonEmptyString(
+			pending.OriginalModel,
+			pending.Model,
+			pending.BillingModel,
+			pending.UpstreamModel,
+		)); route != "" {
+			return route
+		}
+	}
+	return h.resolveCompositeVideoLookupModelRoute(c, c.Query("model"))
+}
+
+func (h *OpenAIGatewayHandler) resolveCompositeVideoLookupModelRoute(c *gin.Context, model string) string {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return ""
+	}
+	if service.IsSeedanceVideoModel(model) {
+		c.Request = c.Request.WithContext(service.WithResolvedTargetPlatform(c.Request.Context(), service.PlatformOpenAI))
+		return "seedance_video"
+	}
+	switch platform, _ := service.DetectModelPlatform(model); platform {
+	case service.PlatformGrok:
+		return "grok"
+	case service.PlatformOpenAI, service.PlatformMiniMax, service.PlatformMuse:
+		c.Request = c.Request.WithContext(service.WithResolvedTargetPlatform(c.Request.Context(), platform))
+		return "openai_video"
+	default:
+		return ""
 	}
 }
 

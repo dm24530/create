@@ -654,35 +654,44 @@ export function parseVideoTaskSnapshot(provider: VideoProvider, payload: any): V
   }
 }
 
-export function videoTaskPath(provider: VideoProvider, requestId: string): string {
+export function videoTaskPath(provider: VideoProvider, requestId: string, model = ''): string {
   const id = encodeURIComponent(requestId)
+  const modelHint = provider === 'seedance_video' && model.trim()
+    ? `?model=${encodeURIComponent(model.trim())}`
+    : ''
   if (provider === 'video_tasks') {
     return `/videos/${id}?model=MiniMax-H3`
   }
   if (provider === 'muse_video') {
     return `/videos/${id}?model=muse-video`
   }
-  return provider === 'grok' || provider === 'seedance_video'
-    ? `/videos/${id}`
-    : `/contents/generations/tasks/${id}`
+  if (provider === 'grok') return `/videos/${id}`
+  if (provider === 'seedance_video') return `/videos/${id}${modelHint}`
+  return `/contents/generations/tasks/${id}`
 }
 
-function videoContentPath(provider: VideoProvider, requestId: string): string {
+function videoContentPath(provider: VideoProvider, requestId: string, model = ''): string {
+  const id = encodeURIComponent(requestId)
   if (provider === 'video_tasks') {
-    return `/videos/${encodeURIComponent(requestId)}/content?model=MiniMax-H3`
+    return `/videos/${id}/content?model=MiniMax-H3`
   }
   if (provider === 'muse_video') {
-    return `/videos/${encodeURIComponent(requestId)}/content?model=muse-video`
+    return `/videos/${id}/content?model=muse-video`
   }
-  return `${videoTaskPath(provider, requestId)}/content`
+  if (provider === 'seedance_video') {
+    const modelHint = model.trim() ? `?model=${encodeURIComponent(model.trim())}` : ''
+    return `/videos/${id}/content${modelHint}`
+  }
+  return `${videoTaskPath(provider, requestId, model)}/content`
 }
 
 export async function fetchVideoTask(
   context: VideoGatewayContext,
   provider: VideoProvider,
   requestId: string,
+  model = '',
 ): Promise<VideoTaskSnapshot> {
-  const response = await fetch(joinUrl(context.baseUrl, videoTaskPath(provider, requestId)), {
+  const response = await fetch(joinUrl(context.baseUrl, videoTaskPath(provider, requestId, model)), {
     headers: authHeaders(context.apiKey),
   })
   const payload = await response.json().catch(() => null)
@@ -706,12 +715,13 @@ export async function fetchVideoPlayableUrl(
   provider: VideoProvider,
   requestId: string,
   videoUrl: string,
+  model = '',
 ): Promise<{ url: string; revoke: boolean }> {
   if (provider === 'seedance' && videoUrl) {
     return { url: videoUrl, revoke: false }
   }
   const response = await fetch(
-    joinUrl(context.baseUrl, videoContentPath(provider, requestId)),
+    joinUrl(context.baseUrl, videoContentPath(provider, requestId, model)),
     { headers: authHeaders(context.apiKey) },
   )
   if (!response.ok) throw new Error(await readError(response) || '下载视频内容失败')
@@ -737,6 +747,7 @@ export async function pollVideoTask(
   provider: VideoProvider,
   requestId: string,
   options: {
+    model?: string
     intervalMs?: number
     timeoutMs?: number
     retryBaseMs?: number
@@ -761,7 +772,7 @@ export async function pollVideoTask(
   for (;;) {
     if (options.isCancelled?.()) return last
     try {
-      last = await fetchVideoTask(context, provider, requestId)
+      last = await fetchVideoTask(context, provider, requestId, options.model)
       retryAttempt = 0
     } catch (error) {
       if (!isRetryableVideoPollingError(error)) throw error

@@ -378,9 +378,9 @@ func (s *OpenAIGatewayService) SelectMediaVideoRequestAccount(
 	return selection, decision, nil
 }
 
-// GrokVideoPendingBilling is the create-time snapshot used when status polling
-// first observes a completed video URL. Status may omit model/duration; we fall
-// back to this snapshot, then defaults.
+// GrokVideoPendingBilling is the create-time snapshot used to route Composite
+// video lookups and to price the first completed status/content observation.
+// Status may omit model/duration; we fall back to this snapshot, then defaults.
 type GrokVideoPendingBilling struct {
 	Model                string `json:"model"`
 	BillingModel         string `json:"billing_model,omitempty"`
@@ -388,6 +388,8 @@ type GrokVideoPendingBilling struct {
 	VideoResolution      string `json:"video_resolution,omitempty"`
 	VideoDurationSeconds int    `json:"video_duration_seconds,omitempty"`
 	OriginalModel        string `json:"original_model,omitempty"`
+	Provider             string `json:"provider,omitempty"`
+	Platform             string `json:"platform,omitempty"`
 	// CreatedAt is when the gateway accepted the async create (RFC3339Nano UTC).
 	// duration_ms for deferred billing is measured from this instant until the
 	// first official done+video.url observation (status poll or content download),
@@ -464,6 +466,8 @@ func (s *OpenAIGatewayService) StoreGrokVideoPendingBilling(
 	pending.BillingModel = strings.TrimSpace(pending.BillingModel)
 	pending.UpstreamModel = strings.TrimSpace(pending.UpstreamModel)
 	pending.OriginalModel = strings.TrimSpace(pending.OriginalModel)
+	pending.Provider = strings.TrimSpace(pending.Provider)
+	pending.Platform = strings.TrimSpace(pending.Platform)
 	if pending.VideoResolution != "" {
 		pending.VideoResolution = NormalizeVideoBillingResolutionOrDefault(pending.VideoResolution)
 	}

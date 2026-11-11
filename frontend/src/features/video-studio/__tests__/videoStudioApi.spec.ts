@@ -341,6 +341,11 @@ describe('Seedance video request mapping', () => {
     expect(videoTaskPath('muse_video', 'task/muse')).toBe('/videos/task%2Fmuse?model=muse-video')
   })
 
+  it('routes Seedance video lookups with a model hint for composite keys', () => {
+    expect(videoTaskPath('seedance_video', 'task/seedance', 'seedance-2.5'))
+      .toBe('/videos/task%2Fseedance?model=seedance-2.5')
+  })
+
   it('builds the unified Seedance video body with reference fields', () => {
     const request = buildVideoRequest('seedance_video', {
       ...base,

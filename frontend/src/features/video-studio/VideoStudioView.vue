@@ -2000,6 +2000,7 @@ async function runTask(
     }
 
     const snapshot = await pollVideoTask(context, task.provider, task.requestId, {
+      model: task.model,
       isCancelled: () => cancelledTasks.has(task.localId),
       onProgress: (progress) => {
         task.status = progress.status
@@ -2018,7 +2019,7 @@ async function runTask(
     }
 
     if (snapshot.status === 'succeeded') {
-      const playable = await fetchVideoPlayableUrl(context, task.provider, task.requestId, snapshot.videoUrl)
+      const playable = await fetchVideoPlayableUrl(context, task.provider, task.requestId, snapshot.videoUrl, task.model)
       task.videoUrl = playable.url
       task.revokeUrl = playable.revoke
       task.status = 'succeeded'
