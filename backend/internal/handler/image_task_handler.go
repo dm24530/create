@@ -974,6 +974,21 @@ func (h *AsyncImageHandler) run(taskID, platform string, taskCtx *gin.Context, r
 		return
 	}
 	usageRequestID := imageTaskUsageRequestID(taskCtx.Request.Context())
+	if platform == service.PlatformOpenAI {
+		taskCtx.Writer = newImageTaskSSEPreviewWriter(taskCtx.Writer, func(preview json.RawMessage) error {
+			if leaseLost.Load() || taskCtx.Request.Context().Err() != nil {
+				return nil
+			}
+			err := h.tasks.PublishPreview(context.Background(), taskID, http.StatusOK, preview)
+			if err != nil {
+				logger.L().Warn("image_task.preview_publish_failed",
+					zap.String("task_id", taskID),
+					zap.Error(err),
+				)
+			}
+			return err
+		})
+	}
 	h.execute(platform, taskCtx)
 	attemptCtxErr := taskCtx.Request.Context().Err()
 	if leaseLost.Load() {

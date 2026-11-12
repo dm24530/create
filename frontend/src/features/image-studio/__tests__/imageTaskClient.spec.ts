@@ -146,6 +146,40 @@ describe('image task client', () => {
     expect(items).toEqual([{ url: 'https://cdn.example.com/original.png' }])
   })
 
+  it('keeps polling at the fast interval after the preview has been delivered', async () => {
+    let now = 1_000
+    const waits: number[] = []
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        task_id: 'task-1',
+        status: 'preview_ready',
+        result: { data: [{ preview_url: 'https://cdn.example.com/preview.png' }] },
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        task_id: 'task-1',
+        status: 'completed',
+        result: { data: [{ url: 'https://cdn.example.com/original.png' }] },
+      }), { status: 200 }))
+
+    await pollGatewayImageTask(
+      '/images/tasks/task-1',
+      {},
+      {
+        apiBaseUrl: 'https://api.example.com/v1',
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        extractImages: (payload) => payload?.data || [],
+        onPreview: () => undefined,
+        now: () => now,
+        wait: async (delay) => {
+          waits.push(delay)
+          now += delay
+        },
+      },
+    )
+
+    expect(waits).toEqual([250])
+  })
+
   it('retries a transient poll without surfacing an error', async () => {
     const fetchImpl = vi.fn()
       .mockResolvedValueOnce(new Response('', { status: 503 }))

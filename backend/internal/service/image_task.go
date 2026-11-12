@@ -687,6 +687,20 @@ func (s *ImageTaskService) Complete(ctx context.Context, id string, statusCode i
 	return s.finish(ctx, id, status, statusCode, result, nil)
 }
 
+// PublishPreview makes an upstream partial image available to pollers before
+// the full upstream response has finished. Complete replaces it later.
+func (s *ImageTaskService) PublishPreview(
+	ctx context.Context,
+	id string,
+	statusCode int,
+	result json.RawMessage,
+) error {
+	if len(result) == 0 || !json.Valid(result) {
+		return errors.New("image task preview is not valid JSON")
+	}
+	return s.saveState(ctx, id, ImageTaskStatusPreviewReady, statusCode, result, nil, false)
+}
+
 // FinalizePreview completes a task from its already-published preview without
 // re-running the upstream request. This is the recovery path after a process
 // restart between preview publication and full-size persistence.

@@ -30,9 +30,10 @@ describe('imageTaskRetryDelay', () => {
 })
 
 describe('imageTaskNextPollDelay', () => {
-  it('uses the fast finalize interval after a preview is visible', () => {
+  it('keeps polling fast before and after a preview is visible', () => {
     expect(imageTaskNextPollDelay(0, true)).toBe(250)
     expect(imageTaskNextPollDelay(60_000, true)).toBe(250)
     expect(imageTaskNextPollDelay(0, false)).toBe(250)
+    expect(imageTaskNextPollDelay(60_000, false)).toBe(250)
   })
 })

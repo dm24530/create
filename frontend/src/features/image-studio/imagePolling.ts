@@ -17,8 +17,8 @@ export function imageTaskRetryDelay(_elapsedMs: number): number {
 }
 
 /**
- * Once a preview is visible, the user is waiting only for the durable original
- * to replace it. Poll quickly so that transition does not add another long wait.
+ * Keep polling quickly after the preview appears so the durable original
+ * replaces it as soon as it is ready.
  */
 export function imageTaskNextPollDelay(elapsedMs: number, previewReady: boolean): number {
   return previewReady ? MIN_POLL_DELAY_MS : imageTaskPollInterval(elapsedMs)
