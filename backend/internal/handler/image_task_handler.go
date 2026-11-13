@@ -824,6 +824,7 @@ func (h *AsyncImageHandler) executeGemini(c *gin.Context, platform string) {
 		imageTaskJSONError(c, http.StatusBadRequest, "invalid_request_error", "model is required")
 		return
 	}
+	c.Request = c.Request.WithContext(service.WithResolvedTargetPlatform(c.Request.Context(), platform))
 	prefix := "/v1beta"
 	if platform == service.PlatformAntigravity {
 		prefix = "/antigravity/v1beta"
@@ -962,6 +963,12 @@ func newImageTaskContext(
 	base.Request = request
 	base.Set(string(middleware2.ContextKeyAPIKey), apiKey)
 	base.Set(string(middleware2.ContextKeyUser), middleware2.AuthSubject{UserID: apiKey.UserID})
+	if task.Execution.Platform == service.PlatformGemini {
+		base.Request = base.Request.WithContext(service.WithResolvedTargetPlatform(
+			base.Request.Context(),
+			service.PlatformGemini,
+		))
+	}
 	if task.Execution.Platform == service.PlatformAntigravity {
 		base.Set(string(middleware2.ContextKeyForcePlatform), service.PlatformAntigravity)
 		base.Request = base.Request.WithContext(context.WithValue(

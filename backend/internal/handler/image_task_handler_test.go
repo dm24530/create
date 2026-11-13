@@ -616,6 +616,34 @@ func TestNormalizeGeminiImageTaskResultRejectsMissingImage(t *testing.T) {
 	require.ErrorIs(t, err, errGeminiImageOutputMissing)
 }
 
+func TestNewImageTaskContextSetsGeminiTargetPlatform(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	task := &service.ImageTaskRecord{
+		ID:       "imgtask_gemini_platform",
+		UserID:   7,
+		APIKeyID: 9,
+		Execution: &service.ImageTaskExecution{
+			Platform:       service.PlatformGemini,
+			RequestPath:    "/v1/images/generations",
+			GeminiModel:    "gemini-3-pro-image",
+			CompressedBody: []byte(`{"contents":[{"parts":[{"text":"test"}]}]}`),
+			ContentType:    "application/json",
+		},
+	}
+	apiKey := &service.APIKey{
+		ID:     9,
+		UserID: 7,
+		Key:    "test-key",
+	}
+
+	ctx, _, cancel, err := newImageTaskContext(task, apiKey, context.Background(), func() {})
+	require.NoError(t, err)
+	defer cancel()
+	platform, ok := service.ResolvedTargetPlatformFromContext(ctx.Request.Context())
+	require.True(t, ok)
+	require.Equal(t, service.PlatformGemini, platform)
+}
+
 func TestAsyncImageHandlerReportsGeminiNonJSONResponse(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	body := []byte(`{"contents":[{"parts":[{"text":"cat"}]}]}`)
