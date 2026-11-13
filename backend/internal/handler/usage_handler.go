@@ -140,7 +140,7 @@ func (h *UsageHandler) ImageLink(c *gin.Context) {
 	}
 	imageURL := strings.TrimSpace(link.ImageURL)
 	if strings.HasPrefix(imageURL, "http://") || strings.HasPrefix(imageURL, "https://") {
-		c.Redirect(http.StatusFound, imageURL)
+		servedUsageRemoteImage(c, h.imageStorage, imageURL)
 		return
 	}
 	if strings.HasPrefix(imageURL, "data:image/") {
@@ -269,13 +269,11 @@ func (h *UsageHandler) OpenImageLink(c *gin.Context) {
 			response.ErrorFrom(c, urlErr)
 			return
 		}
-		c.Header("Cache-Control", "private, max-age=300")
-		c.Redirect(http.StatusFound, url)
+		servedUsageRemoteImage(c, h.imageStorage, url)
 		return
 	}
 	if strings.HasPrefix(imageURL, "http://") || strings.HasPrefix(imageURL, "https://") {
-		c.Header("Cache-Control", "private, max-age=300")
-		c.Redirect(http.StatusFound, imageURL)
+		servedUsageRemoteImage(c, h.imageStorage, imageURL)
 		return
 	}
 	if strings.HasPrefix(imageURL, "data:image/") {
@@ -283,6 +281,24 @@ func (h *UsageHandler) OpenImageLink(c *gin.Context) {
 		return
 	}
 	writeExpiredUsageImage(c)
+}
+
+func servedUsageRemoteImage(c *gin.Context, storage usageImageStorage, rawURL string) {
+	if c == nil || storage == nil || strings.TrimSpace(rawURL) == "" {
+		writeExpiredUsageImage(c)
+		return
+	}
+	data, contentType, err := storage.FetchImageURL(c.Request.Context(), rawURL)
+	if err != nil || len(data) == 0 {
+		writeExpiredUsageImage(c)
+		return
+	}
+	if !strings.HasPrefix(strings.ToLower(contentType), "image/") {
+		contentType = http.DetectContentType(data)
+	}
+	c.Header("Cache-Control", "private, max-age=300")
+	c.Header("Content-Disposition", "inline")
+	c.Data(http.StatusOK, contentType, data)
 }
 
 func (h *UsageHandler) serveLocalUsageImage(c *gin.Context, link *service.UsageLogImageLink) bool {

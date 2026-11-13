@@ -26,6 +26,7 @@ describe('custom feature routes', () => {
       '/playground',
       '/image-studio',
       '/canvas',
+      '/canvas/:id',
       '/video-studio',
       '/video-inspiration',
       '/image-inspiration',
@@ -38,6 +39,12 @@ describe('custom feature routes', () => {
       '/docs/api',
       '/models',
     ])
+  })
+
+  it('keeps API documentation public for external integrators', () => {
+    const docsRoute = userCustomFeatureRoutesAfterAvailableChannels.find((route) => route.path === '/docs/api')
+
+    expect(docsRoute?.meta?.requiresAuth).toBe(false)
   })
 
   it('keeps admin custom routes registered at stable insertion points', () => {

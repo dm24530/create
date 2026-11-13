@@ -12,6 +12,7 @@ import (
 	"mime"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"os"
 	"sort"
 	"strings"
@@ -40,27 +41,33 @@ var (
 	ErrImageTaskUnavailable     = infraerrors.New(http.StatusServiceUnavailable, "IMAGE_TASK_UNAVAILABLE", "image task storage is unavailable")
 	ErrImageTaskConflict        = infraerrors.New(http.StatusConflict, "IMAGE_TASK_IDEMPOTENCY_CONFLICT", "idempotency key reused with a different image request")
 	ErrImageTaskContentNotFound = infraerrors.New(http.StatusNotFound, "IMAGE_TASK_CONTENT_NOT_FOUND", "image task original content is unavailable")
+	ErrImageTaskPreviewNotFound = infraerrors.New(http.StatusNotFound, "IMAGE_TASK_PREVIEW_NOT_FOUND", "image task preview is unavailable")
 )
+
+const ImageTaskPreviewURLPrefix = "/api/v1/public/image-task-previews/"
+const ImageTaskMediaURLPrefix = "/api/v1/public/image-task-media/"
 
 // ImageTaskRecord is the private Redis representation of an asynchronous image
 // request. Ownership fields are intentionally omitted from the public view.
 type ImageTaskRecord struct {
-	ID           string              `json:"id"`
-	UserID       int64               `json:"user_id"`
-	APIKeyID     int64               `json:"api_key_id"`
-	Status       string              `json:"status"`
-	HTTPStatus   int                 `json:"http_status,omitempty"`
-	Result       json.RawMessage     `json:"result,omitempty"`
-	Error        json.RawMessage     `json:"error,omitempty"`
-	CreatedAt    int64               `json:"created_at"`
-	StartedAt    int64               `json:"started_at,omitempty"`
-	CompletedAt  *int64              `json:"completed_at,omitempty"`
-	ExpiresAt    int64               `json:"expires_at"`
-	Execution    *ImageTaskExecution `json:"execution,omitempty"`
-	RequestHash  string              `json:"request_hash,omitempty"`
-	RefundStatus string              `json:"refund_status,omitempty"`
-	RefundAmount float64             `json:"refund_amount,omitempty"`
-	RefundedAt   *int64              `json:"refunded_at,omitempty"`
+	ID                string              `json:"id"`
+	UserID            int64               `json:"user_id"`
+	APIKeyID          int64               `json:"api_key_id"`
+	Status            string              `json:"status"`
+	HTTPStatus        int                 `json:"http_status,omitempty"`
+	Result            json.RawMessage     `json:"result,omitempty"`
+	Error             json.RawMessage     `json:"error,omitempty"`
+	PreviewRemoteURLs []string            `json:"preview_remote_urls,omitempty"`
+	MediaRemoteURLs   []string            `json:"media_remote_urls,omitempty"`
+	CreatedAt         int64               `json:"created_at"`
+	StartedAt         int64               `json:"started_at,omitempty"`
+	CompletedAt       *int64              `json:"completed_at,omitempty"`
+	ExpiresAt         int64               `json:"expires_at"`
+	Execution         *ImageTaskExecution `json:"execution,omitempty"`
+	RequestHash       string              `json:"request_hash,omitempty"`
+	RefundStatus      string              `json:"refund_status,omitempty"`
+	RefundAmount      float64             `json:"refund_amount,omitempty"`
+	RefundedAt        *int64              `json:"refunded_at,omitempty"`
 }
 
 type ImageTaskExecution struct {
@@ -701,6 +708,98 @@ func (s *ImageTaskService) PublishPreview(
 	return s.saveState(ctx, id, ImageTaskStatusPreviewReady, statusCode, result, nil, false)
 }
 
+// OpenPreviewStream resolves the private upstream preview URL and streams it
+// without redirecting the caller to that URL.
+func (s *ImageTaskService) OpenPreviewStream(
+	ctx context.Context,
+	id string,
+	index int,
+) (io.ReadCloser, string, error) {
+	if s == nil || s.store == nil {
+		return nil, "", ErrImageTaskUnavailable
+	}
+	record, err := s.store.Get(ctx, strings.TrimSpace(id))
+	if err != nil {
+		if errors.Is(err, ErrImageTaskNotFound) {
+			return nil, "", ErrImageTaskPreviewNotFound
+		}
+		return nil, "", ErrImageTaskUnavailable.WithCause(err)
+	}
+	if record.Status != ImageTaskStatusPreviewReady {
+		return nil, "", ErrImageTaskPreviewNotFound
+	}
+	remoteURLs := record.PreviewRemoteURLs
+	if len(remoteURLs) == 0 {
+		_, remoteURLs, err = sanitizeImageTaskPreviewResult(record.ID, record.Result)
+		if err != nil {
+			return nil, "", ErrImageTaskPreviewNotFound.WithCause(err)
+		}
+	}
+	if index < 0 || index >= len(remoteURLs) {
+		return nil, "", ErrImageTaskPreviewNotFound
+	}
+	remoteURL := strings.TrimSpace(remoteURLs[index])
+	if remoteURL == "" {
+		return nil, "", ErrImageTaskPreviewNotFound
+	}
+	uploader, _ := s.current()
+	if uploader == nil {
+		// Preview proxying only needs the SSRF-safe HTTP client, not storage.
+		uploader = NewImageResultUploader(nil, "", 0, nil)
+	}
+	body, contentType, err := uploader.OpenImageStream(ctx, remoteURL)
+	if err != nil {
+		return nil, "", ErrImageTaskPreviewNotFound.WithCause(err)
+	}
+	return body, contentType, nil
+}
+
+// OpenTaskMediaStream serves a completed or ready image through an opaque
+// public task URL. Local originals use LocalImageAssetURLPrefix directly and do
+// not reach this method.
+func (s *ImageTaskService) OpenTaskMediaStream(
+	ctx context.Context,
+	id string,
+	index int,
+) (io.ReadCloser, string, error) {
+	if s == nil || s.store == nil {
+		return nil, "", ErrImageTaskUnavailable
+	}
+	record, err := s.store.Get(ctx, strings.TrimSpace(id))
+	if err != nil {
+		if errors.Is(err, ErrImageTaskNotFound) {
+			return nil, "", ErrImageTaskContentNotFound
+		}
+		return nil, "", ErrImageTaskUnavailable.WithCause(err)
+	}
+	if record.Status != ImageTaskStatusReady && record.Status != ImageTaskStatusCompleted {
+		return nil, "", ErrImageTaskContentNotFound
+	}
+	remoteURLs := record.MediaRemoteURLs
+	if len(remoteURLs) == 0 {
+		_, remoteURLs, err = sanitizeCompletedImageTaskResult(record.ID, record.Result)
+		if err != nil {
+			return nil, "", ErrImageTaskContentNotFound.WithCause(err)
+		}
+	}
+	if index < 0 || index >= len(remoteURLs) {
+		return nil, "", ErrImageTaskContentNotFound
+	}
+	remoteURL := strings.TrimSpace(remoteURLs[index])
+	if remoteURL == "" {
+		return nil, "", ErrImageTaskContentNotFound
+	}
+	uploader, _ := s.current()
+	if uploader == nil {
+		uploader = NewImageResultUploader(nil, "", 0, nil)
+	}
+	body, contentType, err := uploader.OpenMediaStream(ctx, remoteURL)
+	if err != nil {
+		return nil, "", ErrImageTaskContentNotFound.WithCause(err)
+	}
+	return body, contentType, nil
+}
+
 // FinalizePreview completes a task from its already-published preview without
 // re-running the upstream request. This is the recovery path after a process
 // restart between preview publication and full-size persistence.
@@ -719,7 +818,14 @@ func (s *ImageTaskService) FinalizePreview(ctx context.Context, id string) (bool
 	if !enabled || uploader == nil {
 		return false, ErrImageTaskUnavailable
 	}
-	result, err := uploader.PersistPreviewResult(ctx, record.UserID, record.ID, record.Result)
+	previewResult := record.Result
+	if len(record.PreviewRemoteURLs) > 0 {
+		previewResult, err = imagePreviewResultWithPrivateURLs(record.Result, record.PreviewRemoteURLs)
+		if err != nil {
+			return false, err
+		}
+	}
+	result, err := uploader.PersistPreviewResult(ctx, record.UserID, record.ID, previewResult)
 	if err != nil {
 		return false, err
 	}
@@ -760,7 +866,27 @@ func (s *ImageTaskService) saveState(
 	now := time.Now().UTC()
 	task.Status = status
 	task.HTTPStatus = statusCode
-	task.Result = result
+	if status == ImageTaskStatusPreviewReady {
+		sanitized, remoteURLs, err := sanitizeImageTaskPreviewResult(task.ID, result)
+		if err != nil {
+			return fmt.Errorf("sanitize image task preview: %w", err)
+		}
+		task.Result = sanitized
+		task.PreviewRemoteURLs = remoteURLs
+		task.MediaRemoteURLs = nil
+	} else if terminal && (status == ImageTaskStatusReady || status == ImageTaskStatusCompleted) {
+		sanitized, remoteURLs, err := sanitizeCompletedImageTaskResult(task.ID, result)
+		if err != nil {
+			return fmt.Errorf("sanitize image task result: %w", err)
+		}
+		task.Result = sanitized
+		task.MediaRemoteURLs = remoteURLs
+		task.PreviewRemoteURLs = nil
+	} else {
+		task.Result = result
+		task.PreviewRemoteURLs = nil
+		task.MediaRemoteURLs = nil
+	}
 	task.Error = taskErr
 	if terminal {
 		completedAt := now.Unix()
@@ -779,6 +905,31 @@ func (s *ImageTaskService) imageTaskToPublic(task *ImageTaskRecord) *ImageTask {
 	public := imageTaskToPublic(task)
 	if public == nil || len(public.Result) == 0 {
 		return public
+	}
+	if task.Status == ImageTaskStatusPreviewReady {
+		sanitized, _, err := sanitizeImageTaskPreviewResult(task.ID, public.Result)
+		if err != nil {
+			logger.L().Warn("image_task.public_preview_projection_failed",
+				zap.String("task_id", task.ID),
+				zap.Error(err))
+			public.Result = nil
+			public.ImageURL = ""
+			return public
+		}
+		public.Result = sanitized
+		public.ImageURL = firstImageTaskURL(public.Result)
+	} else if task.Status == ImageTaskStatusReady || task.Status == ImageTaskStatusCompleted {
+		sanitized, _, err := sanitizeCompletedImageTaskResult(task.ID, public.Result)
+		if err != nil {
+			logger.L().Warn("image_task.public_completed_projection_failed",
+				zap.String("task_id", task.ID),
+				zap.Error(err))
+			public.Result = nil
+			public.ImageURL = ""
+			return public
+		}
+		public.Result = sanitized
+		public.ImageURL = firstImageTaskURL(public.Result)
 	}
 	uploader, _ := s.current()
 	var localAssets *LocalImageAssetStore
@@ -799,6 +950,228 @@ func (s *ImageTaskService) imageTaskToPublic(task *ImageTaskRecord) *ImageTask {
 		public.Status = ImageTaskStatusCompleted
 	}
 	return public
+}
+
+func sanitizeImageTaskPreviewResult(
+	taskID string,
+	result json.RawMessage,
+) (json.RawMessage, []string, error) {
+	var root map[string]any
+	if len(result) == 0 || json.Unmarshal(result, &root) != nil {
+		return nil, nil, errors.New("image task preview is not valid JSON")
+	}
+	rawData, ok := root["data"].([]any)
+	if !ok {
+		return json.RawMessage(`{"data":[]}`), nil, nil
+	}
+	remoteURLs := make([]string, len(rawData))
+	sanitizedItems := make([]map[string]any, 0, len(rawData))
+	for index, rawItem := range rawData {
+		item, ok := rawItem.(map[string]any)
+		if !ok {
+			continue
+		}
+		proxyURL := imageTaskPreviewURL(taskID, index)
+		if remoteURL := imagePreviewRemoteURL(item); remoteURL != "" {
+			remoteURLs[index] = remoteURL
+		}
+		sanitizedItems = append(sanitizedItems, sanitizeImagePreviewItem(item, proxyURL))
+	}
+	sanitized := map[string]any{"data": sanitizedItems}
+	if created, ok := root["created"]; ok {
+		sanitized["created"] = created
+	}
+	payload, err := json.Marshal(sanitized)
+	if err != nil {
+		return nil, nil, err
+	}
+	return payload, remoteURLs, nil
+}
+
+func sanitizeCompletedImageTaskResult(
+	taskID string,
+	result json.RawMessage,
+) (json.RawMessage, []string, error) {
+	var root map[string]any
+	if len(result) == 0 || json.Unmarshal(result, &root) != nil {
+		return nil, nil, errors.New("image task result is not valid JSON")
+	}
+	rawData, ok := root["data"].([]any)
+	if !ok {
+		return json.RawMessage(`{"data":[]}`), nil, nil
+	}
+	remoteURLs := make([]string, len(rawData))
+	items := make([]map[string]any, 0, len(rawData))
+	for index, rawItem := range rawData {
+		item, ok := rawItem.(map[string]any)
+		if !ok {
+			continue
+		}
+		sanitized := make(map[string]any, 12)
+		for _, key := range []string{
+			"local_asset_id",
+			"object_key",
+			"upload_status",
+			"preview_fallback",
+			"b64_json",
+			"mime_type",
+			"mimeType",
+			"width",
+			"height",
+		} {
+			if value, exists := item[key]; exists {
+				sanitized[key] = value
+			}
+		}
+		remoteURL := imagePreviewRemoteURL(item)
+		if remoteURL != "" {
+			remoteURLs[index] = remoteURL
+		}
+		localAssetID, _ := item["local_asset_id"].(string)
+		localAssetID = strings.TrimSpace(localAssetID)
+		mediaURL := ""
+		switch {
+		case localAssetID != "":
+			mediaURL = LocalImageAssetURLPrefix + url.PathEscape(localAssetID)
+		case remoteURL != "":
+			mediaURL = imageTaskMediaURL(taskID, index)
+		default:
+			existing, _ := item["url"].(string)
+			if isCreateMediaPath(existing) {
+				mediaURL = strings.TrimSpace(existing)
+			}
+		}
+		if mediaURL != "" {
+			sanitized["url"] = mediaURL
+		}
+		if preview := imagePreviewDataURL(item); preview != "" {
+			sanitized["preview_data_url"] = preview
+			sanitized["preview_url"] = preview
+			sanitized["display_url"] = preview
+		} else if mediaURL != "" {
+			sanitized["preview_url"] = mediaURL
+			sanitized["display_url"] = mediaURL
+		}
+		items = append(items, sanitized)
+	}
+	sanitized := map[string]any{"data": items}
+	for _, key := range []string{"created", "usage"} {
+		if value, ok := root[key]; ok {
+			sanitized[key] = value
+		}
+	}
+	payload, err := json.Marshal(sanitized)
+	if err != nil {
+		return nil, nil, err
+	}
+	return payload, remoteURLs, nil
+}
+
+func imageTaskPreviewURL(taskID string, index int) string {
+	return ImageTaskPreviewURLPrefix + url.PathEscape(strings.TrimSpace(taskID)) + "/" + fmt.Sprintf("%d", index)
+}
+
+func imageTaskMediaURL(taskID string, index int) string {
+	return ImageTaskMediaURLPrefix + url.PathEscape(strings.TrimSpace(taskID)) + "/" + fmt.Sprintf("%d", index)
+}
+
+func isCreateMediaPath(raw string) bool {
+	raw = strings.TrimSpace(raw)
+	return strings.HasPrefix(raw, LocalImageAssetURLPrefix) ||
+		strings.HasPrefix(raw, ImageTaskPreviewURLPrefix) ||
+		strings.HasPrefix(raw, ImageTaskMediaURLPrefix) ||
+		strings.HasPrefix(raw, "/api/v1/public/")
+}
+
+func imagePreviewRemoteURL(item map[string]any) string {
+	for _, key := range []string{
+		"url",
+		"preview_url",
+		"preview_data_url",
+		"display_url",
+		"image_url",
+		"download_url",
+	} {
+		value, ok := item[key].(string)
+		if !ok {
+			continue
+		}
+		if safeURL := safeBrowserPreviewURL(value); safeURL != "" {
+			return safeURL
+		}
+	}
+	return ""
+}
+
+func imagePreviewResultWithPrivateURLs(
+	result json.RawMessage,
+	remoteURLs []string,
+) (json.RawMessage, error) {
+	var root map[string]any
+	if err := json.Unmarshal(result, &root); err != nil {
+		return nil, err
+	}
+	items, ok := root["data"].([]any)
+	if !ok {
+		return nil, errors.New("image task preview has no data array")
+	}
+	for index, rawItem := range items {
+		if index >= len(remoteURLs) || strings.TrimSpace(remoteURLs[index]) == "" {
+			continue
+		}
+		item, ok := rawItem.(map[string]any)
+		if !ok {
+			continue
+		}
+		item["url"] = remoteURLs[index]
+		delete(item, "preview_url")
+		delete(item, "preview_data_url")
+		delete(item, "display_url")
+	}
+	return json.Marshal(root)
+}
+
+func sanitizeImagePreviewItem(item map[string]any, proxyURL string) map[string]any {
+	sanitized := make(map[string]any, 8)
+	for _, key := range []string{
+		"b64_json",
+		"mime_type",
+		"mimeType",
+		"width",
+		"height",
+	} {
+		if value, ok := item[key]; ok {
+			sanitized[key] = value
+		}
+	}
+	if proxyURL != "" {
+		sanitized["url"] = proxyURL
+		sanitized["preview_url"] = proxyURL
+		sanitized["preview_data_url"] = proxyURL
+		sanitized["display_url"] = proxyURL
+		return sanitized
+	}
+	if dataURL := imagePreviewDataURL(item); dataURL != "" {
+		sanitized["url"] = dataURL
+		sanitized["preview_data_url"] = dataURL
+		sanitized["display_url"] = dataURL
+	}
+	return sanitized
+}
+
+func imagePreviewDataURL(item map[string]any) string {
+	for _, key := range []string{"preview_data_url", "url", "display_url"} {
+		value, ok := item[key].(string)
+		if !ok {
+			continue
+		}
+		value = strings.TrimSpace(value)
+		if strings.HasPrefix(strings.ToLower(value), "data:image/") ||
+			strings.HasPrefix(value, "/api/v1/public/image-") {
+			return value
+		}
+	}
+	return ""
 }
 
 func imageResultHasLocalAsset(result json.RawMessage) bool {
@@ -859,6 +1232,7 @@ func publicImageTaskResult(result json.RawMessage, localAssets *LocalImageAssetS
 		return nil, err
 	}
 	for _, item := range items {
+		delete(item, "object_key")
 		rawAssetID, ok := item["local_asset_id"]
 		if !ok {
 			continue
@@ -884,10 +1258,6 @@ func publicImageTaskResult(result json.RawMessage, localAssets *LocalImageAssetS
 		}
 		meta, err := localAssets.Get(assetID)
 		if err == nil && meta.Uploaded && strings.TrimSpace(meta.RemoteURL) != "" {
-			item["url"] = encodedJSON(strings.TrimSpace(meta.RemoteURL))
-			if _, ok := item["preview_data_url"]; !ok {
-				item["display_url"] = encodedJSON(strings.TrimSpace(meta.RemoteURL))
-			}
 			item["upload_status"] = encodedJSON("uploaded")
 		}
 	}

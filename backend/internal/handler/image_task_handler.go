@@ -11,6 +11,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -58,6 +59,7 @@ const geminiAsyncImageMaxSingleInlineBytes = 8 << 20
 
 var errGeminiImageOutputMissing = errors.New("gemini response contained no image output")
 var errImageTaskRequestBodyEmpty = errors.New("image task request body is empty")
+var imageTaskErrorURLPattern = regexp.MustCompile(`(?i)https?://[^\s"'<>]+`)
 
 type asyncGeminiTaskEnvelope struct {
 	Model        string          `json:"model"`
@@ -541,6 +543,67 @@ func (h *AsyncImageHandler) Content(c *gin.Context) {
 	c.Header("Cache-Control", "private, no-store")
 	c.Header("Content-Disposition", "inline")
 	http.ServeContent(c.Writer, c.Request, meta.FileName, time.Unix(meta.CreatedAt, 0), file)
+}
+
+// PreviewContent serves an opaque preview URL backed by private task state.
+// It intentionally streams instead of redirecting so the browser never learns
+// the upstream media host or signed query string.
+func (h *AsyncImageHandler) PreviewContent(c *gin.Context) {
+	c.Header("Cache-Control", "private, no-store")
+	c.Header("X-Content-Type-Options", "nosniff")
+	if h == nil || h.tasks == nil {
+		imageTaskJSONError(c, http.StatusNotFound, "not_found_error", "image preview is unavailable")
+		return
+	}
+	index, err := strconv.Atoi(strings.TrimSpace(c.Param("index")))
+	if err != nil || index < 0 {
+		imageTaskJSONError(c, http.StatusBadRequest, "invalid_request_error", "image preview index is invalid")
+		return
+	}
+	stream, contentType, err := h.tasks.OpenPreviewStream(
+		c.Request.Context(),
+		c.Param("task_id"),
+		index,
+	)
+	if err != nil {
+		imageTaskJSONError(c, http.StatusNotFound, "not_found_error", "image preview is unavailable")
+		return
+	}
+	defer func() { _ = stream.Close() }()
+	c.Header("Content-Type", contentType)
+	c.Header("Content-Disposition", "inline")
+	c.Status(http.StatusOK)
+	_, _ = io.Copy(c.Writer, stream)
+}
+
+// MediaContent serves the final original through an opaque task URL so object
+// storage and upstream media hosts never appear in public task payloads.
+func (h *AsyncImageHandler) MediaContent(c *gin.Context) {
+	c.Header("Cache-Control", "private, no-store")
+	c.Header("X-Content-Type-Options", "nosniff")
+	if h == nil || h.tasks == nil {
+		imageTaskJSONError(c, http.StatusNotFound, "not_found_error", "image content is unavailable")
+		return
+	}
+	index, err := strconv.Atoi(strings.TrimSpace(c.Param("index")))
+	if err != nil || index < 0 {
+		imageTaskJSONError(c, http.StatusBadRequest, "invalid_request_error", "image index is invalid")
+		return
+	}
+	stream, contentType, err := h.tasks.OpenTaskMediaStream(
+		c.Request.Context(),
+		c.Param("task_id"),
+		index,
+	)
+	if err != nil {
+		imageTaskJSONError(c, http.StatusNotFound, "not_found_error", "image content is unavailable")
+		return
+	}
+	defer func() { _ = stream.Close() }()
+	c.Header("Content-Type", contentType)
+	c.Header("Content-Disposition", "inline")
+	c.Status(http.StatusOK)
+	_, _ = io.Copy(c.Writer, stream)
 }
 
 // GetByIdempotency recovers a task whose submit response was lost.
@@ -1185,7 +1248,7 @@ func firstImageTaskResultPreviewURL(result json.RawMessage) string {
 	}
 	for _, candidate := range candidates {
 		if value := strings.TrimSpace(candidate); strings.HasPrefix(value, "data:image/") ||
-			strings.HasPrefix(value, "http://") || strings.HasPrefix(value, "https://") {
+			strings.HasPrefix(value, service.ImageTaskPreviewURLPrefix) {
 			return value
 		}
 	}
@@ -1408,10 +1471,8 @@ func normalizeGeminiImageTaskResult(body []byte) ([]byte, error) {
 		item := map[string]string{"mime_type": output.MIMEType}
 		if output.Base64 != "" {
 			item["b64_json"] = output.Base64
-		} else if output.URL != "" {
-			item["url"] = output.URL
+			items = append(items, item)
 		}
-		items = append(items, item)
 	}
 	if len(items) == 0 {
 		return nil, errGeminiImageOutputMissing
@@ -1671,16 +1732,48 @@ func imageTaskPollURL(submitPath, taskID string) string {
 }
 
 func extractImageTaskError(body []byte) json.RawMessage {
-	if json.Valid(body) {
-		var envelope struct {
-			Error json.RawMessage `json:"error"`
-		}
-		if json.Unmarshal(body, &envelope) == nil && len(envelope.Error) > 0 && json.Valid(envelope.Error) {
-			return envelope.Error
-		}
-		return json.RawMessage(body)
+	if !json.Valid(body) {
+		return imageTaskErrorPayload("api_error", "image generation failed")
 	}
-	return imageTaskErrorPayload("api_error", "image generation failed")
+	var payload struct {
+		Error   json.RawMessage `json:"error"`
+		Type    string          `json:"type"`
+		Code    string          `json:"code"`
+		Message string          `json:"message"`
+	}
+	if json.Unmarshal(body, &payload) != nil {
+		return imageTaskErrorPayload("api_error", "image generation failed")
+	}
+	if len(payload.Error) > 0 && json.Valid(payload.Error) {
+		var nested struct {
+			Type    string `json:"type"`
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		}
+		if json.Unmarshal(payload.Error, &nested) == nil {
+			if strings.TrimSpace(nested.Type) != "" {
+				payload.Type = nested.Type
+			}
+			if strings.TrimSpace(nested.Code) != "" {
+				payload.Code = nested.Code
+			}
+			if strings.TrimSpace(nested.Message) != "" {
+				payload.Message = nested.Message
+			}
+		} else {
+			var message string
+			if json.Unmarshal(payload.Error, &message) == nil {
+				payload.Message = message
+			}
+		}
+	}
+	errorType := firstNonEmpty(payload.Type, payload.Code, "api_error")
+	message := strings.TrimSpace(payload.Message)
+	if message == "" {
+		message = "image generation failed"
+	}
+	message = imageTaskErrorURLPattern.ReplaceAllString(message, "[redacted-url]")
+	return imageTaskErrorPayload(errorType, message)
 }
 
 func imageTaskErrorPayload(errorType, message string) json.RawMessage {

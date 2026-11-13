@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/base64"
@@ -317,6 +318,87 @@ func validateImageDownloadURL(target *url.URL) error {
 	return nil
 }
 
+// OpenImageStream proxies an upstream image without exposing its URL to the
+// caller. The response body is returned as-is so previews and downloads can
+// start before the complete image has been buffered by the API server.
+func (u *ImageResultUploader) OpenImageStream(
+	ctx context.Context,
+	rawURL string,
+) (io.ReadCloser, string, error) {
+	body, contentType, err := u.OpenMediaStream(ctx, rawURL)
+	if err != nil {
+		return nil, "", err
+	}
+	if strings.HasPrefix(strings.ToLower(contentType), "image/") {
+		return body, contentType, nil
+	}
+	_ = body.Close()
+	return nil, "", errors.New("upstream response is not an image")
+}
+
+// OpenMediaStream proxies image, audio, or video bytes through the API server.
+// The caller must only pass URLs that were resolved from private server state.
+func (u *ImageResultUploader) OpenMediaStream(
+	ctx context.Context,
+	rawURL string,
+) (io.ReadCloser, string, error) {
+	if u == nil || u.httpClient == nil {
+		return nil, "", errors.New("image download client is unavailable")
+	}
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return nil, "", errors.New("image download URL is invalid")
+	}
+	if err := validateImageDownloadURL(parsed); err != nil {
+		return nil, "", err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, parsed.String(), nil)
+	if err != nil {
+		return nil, "", errors.New("build image download request")
+	}
+	req.Header.Set("Accept", "image/*,video/*,audio/*,*/*;q=0.8")
+	resp, err := u.httpClient.Do(req)
+	if err != nil {
+		return nil, "", errors.New("image download failed")
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		_ = resp.Body.Close()
+		return nil, "", fmt.Errorf("image download returned status %d", resp.StatusCode)
+	}
+
+	contentType := strings.ToLower(strings.TrimSpace(strings.Split(resp.Header.Get("Content-Type"), ";")[0]))
+	if contentType == "image/svg+xml" || contentType == "image/svg" || contentType == "text/html" {
+		_ = resp.Body.Close()
+		return nil, "", errors.New("upstream media format is not supported for proxying")
+	}
+	var body io.Reader = resp.Body
+	if contentType == "" || contentType == "application/octet-stream" {
+		buffered := bufio.NewReader(resp.Body)
+		header, _ := buffered.Peek(512)
+		detected := http.DetectContentType(header)
+		if !strings.HasPrefix(detected, "image/") &&
+			!strings.HasPrefix(detected, "video/") &&
+			!strings.HasPrefix(detected, "audio/") {
+			_ = resp.Body.Close()
+			return nil, "", errors.New("upstream response is not media")
+		}
+		contentType = detected
+		body = buffered
+	}
+	if !strings.HasPrefix(contentType, "image/") &&
+		!strings.HasPrefix(contentType, "video/") &&
+		!strings.HasPrefix(contentType, "audio/") {
+		_ = resp.Body.Close()
+		return nil, "", errors.New("upstream response is not media")
+	}
+	return &imageStreamReadCloser{Reader: body, Closer: resp.Body}, contentType, nil
+}
+
+type imageStreamReadCloser struct {
+	io.Reader
+	io.Closer
+}
+
 // Rewrite 将 result（上游生图响应 JSON）里的每张图片转存到对象存储，
 // 返回改写后的紧凑结果（data[i].url 指向对象存储，b64_json 被移除）。
 // 任一图片转存失败即返回 error（调用方据此将任务标记为失败，绝不把大 blob 落 Redis）。
@@ -371,14 +453,14 @@ func (u *ImageResultUploader) PersistPreviewResult(
 			if saveErr != nil {
 				return nil, fmt.Errorf("preview image %d: stage local: %w", i, saveErr)
 			}
-			item["url"] = encodedJSON(u.localAssets.URL(meta.ID))
+			setImageItemPublicURLs(item, u.localAssets.URL(meta.ID), "")
 			item["local_asset_id"] = encodedJSON(meta.ID)
 		} else {
 			url, saveErr := u.storage.Save(ctx, key, contentType, data)
 			if saveErr != nil {
 				return nil, fmt.Errorf("preview image %d: upload: %w", i, saveErr)
 			}
-			item["url"] = encodedJSON(url)
+			setImageItemPublicURLs(item, url, "")
 		}
 		item["object_key"] = encodedJSON(key)
 		item["mime_type"] = encodedJSON(contentType)
@@ -386,6 +468,7 @@ func (u *ImageResultUploader) PersistPreviewResult(
 		delete(item, "b64_json")
 		items[i] = item
 	}
+	sanitizeImageResultTopLevel(top)
 	return imageResultWithItems(top, items)
 }
 
@@ -544,12 +627,10 @@ func (u *ImageResultUploader) RewriteWithPreview(
 				stageErr = fmt.Errorf("image %d: prepare local result: %w", i, cloneErr)
 				break
 			}
-			item["url"] = encodedJSON(u.localAssets.URL(meta.ID))
+			setImageItemPublicURLs(item, u.localAssets.URL(meta.ID), prepared[i].previewDataURL)
 			displayURL := u.localAssets.URL(meta.ID)
 			if prepared[i].previewDataURL != "" {
 				displayURL = prepared[i].previewDataURL
-				item["preview_data_url"] = encodedJSON(prepared[i].previewDataURL)
-				item["preview_url"] = encodedJSON(prepared[i].previewDataURL)
 			}
 			item["display_url"] = encodedJSON(displayURL)
 			item["local_asset_id"] = encodedJSON(meta.ID)
@@ -630,11 +711,9 @@ func (u *ImageResultUploader) RewriteWithPreview(
 					errMu.Unlock()
 					continue
 				}
-				item["url"] = encodedJSON(url)
+				setImageItemPublicURLs(item, url, prepared[index].previewDataURL)
 				if prepared[index].previewDataURL != "" {
 					item["display_url"] = encodedJSON(prepared[index].previewDataURL)
-					item["preview_url"] = encodedJSON(prepared[index].previewDataURL)
-					item["preview_data_url"] = encodedJSON(prepared[index].previewDataURL)
 				}
 				item["object_key"] = encodedJSON(prepared[index].key)
 				item["mime_type"] = encodedJSON(prepared[index].contentType)
@@ -652,7 +731,58 @@ func (u *ImageResultUploader) RewriteWithPreview(
 		return nil, firstErr
 	}
 
+	sanitizeImageResultTopLevel(top)
 	return imageResultWithItems(top, items)
+}
+
+func sanitizeImageResultTopLevel(top map[string]json.RawMessage) {
+	for _, key := range []string{
+		"url",
+		"preview_url",
+		"preview_data_url",
+		"display_url",
+		"image_url",
+		"download_url",
+		"thumb_url",
+		"thumbnail_url",
+		"source_url",
+	} {
+		delete(top, key)
+	}
+}
+
+func setImageItemPublicURLs(
+	item map[string]json.RawMessage,
+	publicURL string,
+	previewDataURL string,
+) {
+	if item == nil {
+		return
+	}
+	for _, key := range []string{
+		"url",
+		"preview_url",
+		"preview_data_url",
+		"display_url",
+		"image_url",
+		"download_url",
+		"thumb_url",
+		"thumbnail_url",
+		"source_url",
+	} {
+		delete(item, key)
+	}
+	publicURL = strings.TrimSpace(publicURL)
+	previewDataURL = strings.TrimSpace(previewDataURL)
+	if publicURL != "" {
+		item["url"] = encodedJSON(publicURL)
+		item["display_url"] = encodedJSON(publicURL)
+	}
+	if previewDataURL != "" {
+		item["preview_url"] = encodedJSON(previewDataURL)
+		item["preview_data_url"] = encodedJSON(previewDataURL)
+		item["display_url"] = encodedJSON(previewDataURL)
+	}
 }
 
 func imageResultWithItems(top map[string]json.RawMessage, items []map[string]json.RawMessage) (json.RawMessage, error) {

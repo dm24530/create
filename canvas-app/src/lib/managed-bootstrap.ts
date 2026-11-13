@@ -43,6 +43,16 @@ type ManagedReadyPayload = {
     type: "create-canvas-ready";
 };
 
+type ManagedRoutePayload = {
+    type: "create-canvas-route";
+    path: string;
+};
+
+type ManagedNavigatePayload = {
+    type: "create-canvas-navigate";
+    path: string;
+};
+
 function applyManagedTheme(theme?: ThemeName) {
     if (theme === "light" || theme === "dark") {
         useThemeStore.getState().setTheme(theme);
@@ -156,14 +166,30 @@ export function listenManagedCloudSessionFromParent() {
 
 export function notifyManagedCanvasReady() {
     if (window.parent === window) return;
-    let targetOrigin = "*";
-    try {
-        if (document.referrer) targetOrigin = new URL(document.referrer).origin;
-    } catch {
-        // The ready signal contains no credentials and is safe as a wildcard fallback.
-    }
     const payload: ManagedReadyPayload = { type: "create-canvas-ready" };
-    window.parent.postMessage(payload, targetOrigin);
+    window.parent.postMessage(payload, managedParentOrigin());
+}
+
+export function notifyManagedCanvasRoute(pathname: string, search = "", hash = "") {
+    if (window.parent === window) return;
+    const params = new URLSearchParams(search);
+    for (const key of ["embed", "user", "scope"]) params.delete(key);
+    const query = params.toString();
+    const path = `${pathname}${query ? `?${query}` : ""}${hash}`;
+    const payload: ManagedRoutePayload = { type: "create-canvas-route", path };
+    window.parent.postMessage(payload, managedParentOrigin());
+}
+
+export function listenManagedCanvasNavigationFromParent(
+    navigate: (path: string) => void,
+) {
+    window.addEventListener("message", (event: MessageEvent<ManagedNavigatePayload>) => {
+        if (event.source !== window.parent) return;
+        if (event.data?.type !== "create-canvas-navigate") return;
+        const path = normalizeManagedCanvasPath(event.data.path);
+        if (!path) return;
+        navigate(path);
+    });
 }
 
 export function bootstrapManagedConfigFromParent() {
@@ -183,4 +209,23 @@ export function bootstrapManagedConfigFromParent() {
         window.addEventListener("message", handleMessage);
         window.setTimeout(finish, 10_000);
     });
+}
+
+function managedParentOrigin() {
+    try {
+        if (document.referrer) return new URL(document.referrer).origin;
+    } catch {
+        // The route and ready payloads contain no credentials and are safe as a
+        // wildcard fallback when the browser omits the referrer.
+    }
+    return "*";
+}
+
+function normalizeManagedCanvasPath(raw: string) {
+    const value = String(raw || "").trim();
+    if (!value.startsWith("/canvas")) return "";
+    const parsed = new URL(value, "https://canvas-route.invalid");
+    if (parsed.origin !== "https://canvas-route.invalid") return "";
+    if (parsed.pathname !== "/canvas" && !parsed.pathname.startsWith("/canvas/")) return "";
+    return `${parsed.pathname}${parsed.search}${parsed.hash}`;
 }

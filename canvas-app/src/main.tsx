@@ -11,6 +11,7 @@ import { initAnalytics } from "@/lib/analytics";
 import { setManagedMode } from "@/lib/managed-mode";
 import {
     bootstrapManagedConfigFromParent,
+    listenManagedCanvasNavigationFromParent,
     listenManagedCloudSessionFromParent,
     listenManagedLocaleFromParent,
     listenManagedThemeFromParent,
@@ -22,6 +23,9 @@ initAnalytics();
 listenManagedThemeFromParent();
 listenManagedLocaleFromParent();
 listenManagedCloudSessionFromParent();
+listenManagedCanvasNavigationFromParent((path) => {
+    void router.navigate(path);
+});
 
 document.body.style.fontFamily = '"SF Pro Display","SF Pro Text","PingFang SC","Microsoft YaHei","Helvetica Neue",sans-serif';
 

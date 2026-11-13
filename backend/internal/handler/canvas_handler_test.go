@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"encoding/json"
+	"io"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -109,6 +110,10 @@ func (s *canvasStorageStub) FetchImageURL(_ context.Context, _ string) ([]byte, 
 	return []byte("remote-image"), "image/png", nil
 }
 
+func (s *canvasStorageStub) OpenMediaURL(_ context.Context, _ string) (io.ReadCloser, string, error) {
+	return io.NopCloser(strings.NewReader("remote-image")), "image/png", nil
+}
+
 func TestCanvasProxyImageStreamsRemoteImage(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	handler := &CanvasHandler{storage: &canvasStorageStub{}}
@@ -119,7 +124,7 @@ func TestCanvasProxyImageStreamsRemoteImage(t *testing.T) {
 	c.Request = httptest.NewRequest(
 		http.MethodGet,
 		"/api/v1/canvas/image-proxy?url="+
-			"https%3A%2F%2Fr2.example.test%2Fimage.png",
+			"%2Fapi%2Fv1%2Fpublic%2Fimage-assets%2Flocal-asset",
 		nil,
 	)
 	c.Set(string(middleware2.ContextKeyUser), middleware2.AuthSubject{UserID: userID})
@@ -129,6 +134,43 @@ func TestCanvasProxyImageStreamsRemoteImage(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 	require.Equal(t, "image/png", w.Header().Get("Content-Type"))
 	require.Equal(t, "remote-image", w.Body.String())
+}
+
+func TestCanvasProxyImageRejectsUpstreamURL(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler := &CanvasHandler{storage: &canvasStorageStub{}}
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/canvas/image-proxy?url="+
+			"https%3A%2F%2Fupstream.example%2Fimage.png",
+		nil,
+	)
+	c.Set(string(middleware2.ContextKeyUser), middleware2.AuthSubject{UserID: 101})
+	handler.ProxyImage(c)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	require.NotContains(t, w.Body.String(), "upstream.example")
+}
+
+func TestSanitizeCanvasGraphURLsRemovesExternalMediaURLs(t *testing.T) {
+	raw := json.RawMessage(`{
+		"nodes":[{
+			"metadata":{
+				"content":"https://upstream.example/image.png?token=secret",
+				"cloudURL":"https://r2.example/image.png?X-Amz-Signature=secret",
+				"cloudPreviewURL":"/api/v1/public/canvas-assets/asset-1/thumb",
+				"prompt":"keep this prompt"
+			}
+		}]
+	}`)
+
+	sanitized := string(sanitizeCanvasGraphURLs(raw))
+	require.NotContains(t, sanitized, "upstream.example")
+	require.NotContains(t, sanitized, "r2.example")
+	require.Contains(t, sanitized, "/api/v1/public/canvas-assets/asset-1/thumb")
+	require.Contains(t, sanitized, "keep this prompt")
 }
 
 type canvasObjectKeyMatcher struct {
@@ -484,7 +526,7 @@ func TestCanvasCompleteAssetVerifiesUploadedObjectAndRegisters(t *testing.T) {
 
 	require.Equal(t, http.StatusCreated, w.Code, "body=%s", w.Body.String())
 	require.Contains(t, w.Body.String(), `"id":"asset-direct"`)
-	require.Contains(t, w.Body.String(), `"url":"https://r2.example.test/canvas/key101/project-a/assets/asset-direct.png"`)
+	require.Contains(t, w.Body.String(), `"url":"/api/v1/public/canvas-assets/asset-direct/content"`)
 	require.Contains(t, storage.deletedKeys, objectKey)
 	require.Contains(t, storage.deletedKeys, thumbKey)
 	require.NoError(t, mock.ExpectationsWereMet())

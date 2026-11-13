@@ -61,7 +61,7 @@ func TestSeedanceStatusAndDelete(t *testing.T) {
 			c, w := grokMediaContentTestContext(http.MethodGet, "/api/v3/contents/generations/tasks/task-1", nil)
 			result, err := svc.ForwardSeedance(context.Background(), c, seedanceTestAccount(), SeedanceEndpointStatus, "seedance:task-1", nil)
 			require.NoError(t, err)
-			require.JSONEq(t, body, w.Body.String())
+			require.JSONEq(t, `{"id":"task-1","status":"`+status+`","model":"ep-seedance","content":{"video_url":"/videos/seedance:task-1/content"},"usage":{"completion_tokens":12345}}`, w.Body.String())
 			require.Equal(t, "/api/v3/contents/generations/tasks/task-1", upstream.request.URL.Path)
 			if status == "succeeded" {
 				require.Equal(t, 12345, result.Usage.OutputTokens)
@@ -141,7 +141,7 @@ func TestSeedanceMomoCompatibilityTranslatesLegacyStatus(t *testing.T) {
 	require.Equal(t, "seedance:task-1", result.ResponseID)
 	require.Equal(t, "succeeded", gjson.GetBytes(w.Body.Bytes(), "status").String())
 	require.Equal(t, "task-1", gjson.GetBytes(w.Body.Bytes(), "id").String())
-	require.Equal(t, "https://momoapi.xin/v1/videos/task-1/content", gjson.GetBytes(w.Body.Bytes(), "content.video_url").String())
+	require.Equal(t, "/videos/task-1/content", gjson.GetBytes(w.Body.Bytes(), "content.video_url").String())
 }
 
 func gjsonArrayStrings(value gjson.Result) []string {

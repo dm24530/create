@@ -29,6 +29,7 @@ const (
 	// server-side ceiling for large originals while avoiding an unbounded bucket
 	// write endpoint.
 	MaxVideoReferenceAssetBytes int64 = 512 << 20
+	VideoReferencePublicPrefix        = "/api/v1/public/video-reference-assets/"
 )
 
 var (
@@ -105,6 +106,10 @@ type VideoStudioGalleryStore interface {
 	Delete(ctx context.Context, userID int64, id string) error
 }
 
+type VideoStudioGalleryPublicReader interface {
+	GetPublic(ctx context.Context, id string) (*VideoStudioGalleryEntry, error)
+}
+
 // VideoStudioMediaSaver 由对象存储设置服务实现（与图片共用同一份配置）。
 type VideoStudioMediaSaver interface {
 	SaveVideo(ctx context.Context, key, contentType string, data []byte) (string, error)
@@ -113,6 +118,7 @@ type VideoStudioMediaSaver interface {
 	// StudioWorksQuota 是后台配置的作品配额上限（图片 + 视频合计）。
 	StudioWorksQuota() int
 	FetchVideoURL(ctx context.Context, rawURL string) ([]byte, string, error)
+	OpenMediaURL(ctx context.Context, rawURL string) (io.ReadCloser, string, error)
 	VideoRetention() time.Duration
 }
 
@@ -200,15 +206,16 @@ func (s *VideoStudioGalleryService) UploadReferenceAsset(
 			return "", ErrVideoStudioGalleryUnavailable
 		}
 		key := storageKey + "/video-references/" + id + extensionForContentType(contentType)
-		url, _, err := saver.SaveImageWithKey(ctx, key, contentType, data)
-		return url, err
+		_, storedKey, err := saver.SaveImageWithKey(ctx, key, contentType, data)
+		return videoReferencePublicURL(firstNonEmpty(storedKey, key)), err
 	case "video":
 		normalizedType := normalizeVideoContentType(contentType, data)
 		if normalizedType == "" {
 			return "", ErrVideoStudioUnsupportedType
 		}
 		key := storageKey + "/video-references/" + id + videoExtensionForContentType(normalizedType)
-		return s.storage.SaveVideo(ctx, key, normalizedType, data)
+		_, err := s.storage.SaveVideo(ctx, key, normalizedType, data)
+		return videoReferencePublicURL(key), err
 	case "audio":
 		saver, ok := s.storage.(videoStudioReferenceAudioSaver)
 		if !ok {
@@ -219,10 +226,38 @@ func (s *VideoStudioGalleryService) UploadReferenceAsset(
 			return "", ErrVideoStudioUnsupportedType
 		}
 		key := storageKey + "/video-references/" + id + audioExtensionForContentType(normalizedType)
-		return saver.SaveVideoReferenceAudio(ctx, key, normalizedType, data)
+		_, err := saver.SaveVideoReferenceAudio(ctx, key, normalizedType, data)
+		return videoReferencePublicURL(key), err
 	default:
 		return "", ErrVideoStudioUnsupportedType
 	}
+}
+
+func videoReferencePublicURL(objectKey string) string {
+	return VideoReferencePublicPrefix + base64.RawURLEncoding.EncodeToString([]byte(strings.TrimSpace(objectKey)))
+}
+
+func (s *VideoStudioGalleryService) OpenPublicReference(
+	ctx context.Context,
+	token string,
+) (io.ReadCloser, string, error) {
+	decoded, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(token))
+	if err != nil {
+		return nil, "", ErrStudioWorkNotFound
+	}
+	objectKey := strings.Trim(string(decoded), "/")
+	if objectKey == "" || strings.Contains(objectKey, "..") || !strings.Contains(objectKey, "/video-references/") {
+		return nil, "", ErrStudioWorkNotFound
+	}
+	resolver, ok := s.storage.(ImageStudioObjectURLResolver)
+	if !ok {
+		return nil, "", ErrVideoStudioGalleryUnavailable
+	}
+	target, err := resolver.PresignImageObject(ctx, objectKey)
+	if err != nil || strings.TrimSpace(target) == "" {
+		return nil, "", ErrVideoStudioGalleryUnavailable
+	}
+	return s.storage.OpenMediaURL(ctx, target)
 }
 
 // PresignReferenceAsset creates a browser-to-object-storage upload URL. The
@@ -634,6 +669,32 @@ func (s *VideoStudioGalleryService) List(
 		}
 	}
 	return visible, nil
+}
+
+func (s *VideoStudioGalleryService) OpenPublicVideo(
+	ctx context.Context,
+	id string,
+) (io.ReadCloser, string, error) {
+	if s == nil || s.store == nil || s.storage == nil {
+		return nil, "", ErrVideoStudioGalleryUnavailable
+	}
+	reader, ok := s.store.(VideoStudioGalleryPublicReader)
+	if !ok {
+		return nil, "", ErrStudioWorkNotFound
+	}
+	entry, err := reader.GetPublic(ctx, strings.TrimSpace(id))
+	if err != nil {
+		return nil, "", err
+	}
+	resolver, ok := s.storage.(ImageStudioObjectURLResolver)
+	if !ok {
+		return nil, "", ErrVideoStudioGalleryUnavailable
+	}
+	target, err := resolver.PresignImageObject(ctx, entry.ObjectKey)
+	if err != nil || strings.TrimSpace(target) == "" {
+		return nil, "", ErrVideoStudioGalleryUnavailable
+	}
+	return s.storage.OpenMediaURL(ctx, target)
 }
 
 // Pin 把一条临时视频转成「我的作品」里的长期内容（计入配额）。

@@ -8,6 +8,21 @@ import CanvasHostView from '../CanvasHostView.vue'
 import { useAuthStore } from '@/stores/auth'
 import { notifyCreatorKeyChanged } from '@/utils/creatorKeyEvents'
 
+const routerHarness = vi.hoisted(() => ({
+  route: {
+    path: '/canvas',
+    params: {} as Record<string, string>,
+    query: {} as Record<string, string>,
+    hash: '',
+  },
+  push: vi.fn(),
+}))
+
+vi.mock('vue-router', () => ({
+  useRoute: () => routerHarness.route,
+  useRouter: () => ({ push: routerHarness.push }),
+}))
+
 const { getPublicSettings, listKeys } = vi.hoisted(() => ({
   getPublicSettings: vi.fn(),
   listKeys: vi.fn(),
@@ -51,6 +66,7 @@ const keys = [
 ]
 
 const postMessage = vi.fn()
+let contentWindowStub: { postMessage: typeof postMessage }
 
 function mountHost(options: { role?: 'user' | 'admin' } = {}) {
   const pinia = createPinia()
@@ -89,9 +105,17 @@ describe('CanvasHostView account switching', () => {
     listKeys.mockResolvedValue({ items: keys })
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true } as Response))
     postMessage.mockReset()
+    routerHarness.route = {
+      path: '/canvas',
+      params: {},
+      query: {},
+      hash: '',
+    }
+    routerHarness.push.mockReset()
+    contentWindowStub = { postMessage }
     Object.defineProperty(HTMLIFrameElement.prototype, 'contentWindow', {
       configurable: true,
-      get: () => ({ postMessage }),
+      get: () => contentWindowStub,
     })
   })
 
@@ -150,8 +174,44 @@ describe('CanvasHostView account switching', () => {
     await flushPromises()
 
     const src = wrapper.get('iframe').attributes('src') || ''
-    expect(src).toContain('/canvas-app/canvas?embed=1')
+    const url = new URL(src, 'https://create.test')
+    expect(url.pathname).toBe('/canvas-app/canvas')
+    expect(url.searchParams.get('embed')).toBe('1')
     expect(src).not.toContain('localhost:3001')
+  })
+
+  it('opens the iframe at the project encoded in the host URL', async () => {
+    routerHarness.route = {
+      path: '/canvas/project-1',
+      params: { id: 'project-1' },
+      query: { mode: 'recent' },
+      hash: '#agent',
+    }
+
+    const wrapper = mountHost()
+    await flushPromises()
+
+    const src = wrapper.get('iframe').attributes('src') || ''
+    const url = new URL(src, 'https://create.test')
+    expect(url.pathname).toBe('/canvas-app/canvas/project-1')
+    expect(url.searchParams.get('mode')).toBe('recent')
+    expect(url.searchParams.get('embed')).toBe('1')
+    expect(url.hash).toBe('#agent')
+  })
+
+  it('mirrors iframe project navigation into the host URL', async () => {
+    const wrapper = mountHost()
+    await flushPromises()
+    const frameWindow = wrapper.get('iframe').element.contentWindow
+    const event = new MessageEvent('message', {
+      data: { type: 'create-canvas-route', path: '/canvas/project-2' },
+    })
+    Object.defineProperty(event, 'source', { value: frameWindow })
+
+    window.dispatchEvent(event)
+    await flushPromises()
+
+    expect(routerHarness.push).toHaveBeenCalledWith('/canvas/project-2')
   })
 
   it('reloads canvas credentials when the image studio changes its API key', async () => {

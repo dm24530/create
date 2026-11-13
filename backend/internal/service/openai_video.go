@@ -152,7 +152,7 @@ func (s *OpenAIGatewayService) ForwardOpenAIVideo(
 		return nil, err
 	}
 	if resp.StatusCode >= 300 {
-		writeGrokMediaResponse(c, resp, responseBody, s.responseHeaderFilter)
+		writeGrokMediaResponse(c, resp, sanitizeMediaStatusResponseForClient(responseBody, ""), s.responseHeaderFilter)
 		return nil, fmt.Errorf("video upstream status %d", resp.StatusCode)
 	}
 
@@ -179,6 +179,12 @@ func (s *OpenAIGatewayService) ForwardOpenAIVideo(
 			result.VideoCount = 1
 			result.VideoDurationSeconds = int(gjson.GetBytes(responseBody, "duration").Int())
 		}
+	}
+	if endpoint == OpenAIVideoEndpointStatus {
+		responseBody = sanitizeMediaStatusResponseForClient(
+			responseBody,
+			grokMediaContentProxyURL(c, taskID),
+		)
 	}
 	writeGrokMediaResponse(c, resp, responseBody, s.responseHeaderFilter)
 	return result, nil

@@ -1320,7 +1320,7 @@ func TestHandleGeminiStreamingResponse_NormalComplete(t *testing.T) {
 		fmt.Fprintln(pw, "")
 	}()
 
-	result, err := svc.handleGeminiStreamingResponse(c, resp, time.Now())
+	result, err := svc.handleGeminiStreamingResponse(c, resp, time.Now(), nil)
 	_ = pr.Close()
 
 	require.NoError(t, err)
@@ -1340,6 +1340,76 @@ func TestHandleGeminiStreamingResponse_NormalComplete(t *testing.T) {
 	require.Contains(t, body, "world")
 	// 不应包含错误事件
 	require.NotContains(t, body, "event: error")
+}
+
+func TestHandleGeminiStreamingResponse_InlinesRemoteFileData(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := newAntigravityTestService(&config.Config{
+		Gateway: config.GatewayConfig{MaxLineSize: defaultMaxLineSize},
+	})
+	svc.httpUpstream = &httpUpstreamStub{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"image/png"}},
+		Body:       io.NopCloser(strings.NewReader("image-bytes")),
+	}}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+
+	pr, pw := io.Pipe()
+	resp := &http.Response{StatusCode: http.StatusOK, Body: pr, Header: http.Header{}}
+	go func() {
+		defer func() { _ = pw.Close() }()
+		fmt.Fprintln(pw, `data: {"response":{"candidates":[{"content":{"parts":[{"fileData":{"mimeType":"image/png","fileUri":"https://storage.googleapis.com/generated.png"}}]}}]}}`)
+		fmt.Fprintln(pw, "")
+	}()
+
+	result, err := svc.handleGeminiStreamingResponse(c, resp, time.Now(), &Account{ID: 1})
+	_ = pr.Close()
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	body := rec.Body.String()
+	require.NotContains(t, body, "storage.googleapis.com")
+	require.NotContains(t, body, "fileUri")
+	require.Contains(t, body, `"inlineData"`)
+	require.Contains(t, body, "aW1hZ2UtYnl0ZXM=")
+}
+
+func TestHandleGeminiStreamToNonStreaming_InlinesRemoteFileData(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := newAntigravityTestService(&config.Config{
+		Gateway: config.GatewayConfig{MaxLineSize: defaultMaxLineSize},
+	})
+	svc.httpUpstream = &httpUpstreamStub{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"image/png"}},
+		Body:       io.NopCloser(strings.NewReader("image-bytes")),
+	}}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+
+	pr, pw := io.Pipe()
+	resp := &http.Response{StatusCode: http.StatusOK, Body: pr, Header: http.Header{}}
+	go func() {
+		defer func() { _ = pw.Close() }()
+		fmt.Fprintln(pw, `data: {"response":{"candidates":[{"content":{"parts":[{"fileData":{"mimeType":"image/png","fileUri":"https://storage.googleapis.com/generated.png"}}]}}]}}`)
+		fmt.Fprintln(pw, "")
+	}()
+
+	result, err := svc.handleGeminiStreamToNonStreaming(c, resp, time.Now(), &Account{ID: 1})
+	_ = pr.Close()
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	body := rec.Body.String()
+	require.NotContains(t, body, "storage.googleapis.com")
+	require.NotContains(t, body, "fileUri")
+	require.Contains(t, body, `"inlineData"`)
+	require.Contains(t, body, "aW1hZ2UtYnl0ZXM=")
 }
 
 // TestHandleClaudeStreamingResponse_NormalComplete
@@ -1413,7 +1483,7 @@ func TestHandleGeminiStreamingResponse_EventSeparatorIsExactlyOneBlankLine(t *te
 		fmt.Fprintf(pw, "data: %s\r\n\r\n", second)
 	}()
 
-	result, err := svc.handleGeminiStreamingResponse(c, resp, time.Now())
+	result, err := svc.handleGeminiStreamingResponse(c, resp, time.Now(), nil)
 	_ = pr.Close()
 
 	require.NoError(t, err)
@@ -1451,7 +1521,7 @@ func TestHandleGeminiStreamingResponse_ThoughtsTokenCount(t *testing.T) {
 		fmt.Fprintln(pw, "")
 	}()
 
-	result, err := svc.handleGeminiStreamingResponse(c, resp, time.Now())
+	result, err := svc.handleGeminiStreamingResponse(c, resp, time.Now(), nil)
 	_ = pr.Close()
 
 	require.NoError(t, err)
@@ -1632,7 +1702,7 @@ func TestHandleGeminiStreamingResponse_ClientDisconnect(t *testing.T) {
 		fmt.Fprintln(pw, "")
 	}()
 
-	result, err := svc.handleGeminiStreamingResponse(c, resp, time.Now())
+	result, err := svc.handleGeminiStreamingResponse(c, resp, time.Now(), nil)
 	_ = pr.Close()
 
 	require.NoError(t, err)
@@ -1657,7 +1727,7 @@ func TestHandleGeminiStreamingResponse_ContextCanceled(t *testing.T) {
 
 	resp := &http.Response{StatusCode: http.StatusOK, Body: cancelReadCloser{}, Header: http.Header{}}
 
-	result, err := svc.handleGeminiStreamingResponse(c, resp, time.Now())
+	result, err := svc.handleGeminiStreamingResponse(c, resp, time.Now(), nil)
 
 	require.NoError(t, err)
 	require.NotNil(t, result)

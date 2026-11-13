@@ -5,6 +5,7 @@ import { nanoid } from "nanoid";
 import i18n from "@/i18n";
 import { localForageStorage } from "@/lib/localforage-storage";
 import { legacyCanvasStorageKeys, scopedCanvasStorageKey } from "@/lib/canvas-storage-scope";
+import { sanitizeCanvasMediaValue } from "@/lib/canvas/canvas-media-url";
 import type { CanvasBackgroundMode } from "@/lib/canvas-theme";
 import type { CanvasAssistantSession, CanvasConnection, CanvasNodeData, ViewportTransform } from "@/types/canvas";
 
@@ -227,6 +228,21 @@ export const useCanvasStore = create<CanvasStore>()(
                     projects: state.projects,
                     deletedProjects: state.deletedProjects,
                 }) as StorageValue<CanvasStore>["state"],
+            merge: (persisted, current) => {
+                const state = (persisted || {}) as Partial<CanvasStore>;
+                return {
+                    ...current,
+                    ...state,
+                    projects: Array.isArray(state.projects)
+                        ? state.projects.map((project) => ({
+                            ...project,
+                            nodes: Array.isArray(project.nodes)
+                                ? project.nodes.map((node) => sanitizeCanvasMediaValue(node) as CanvasNodeData)
+                                : project.nodes,
+                        }))
+                        : current.projects,
+                };
+            },
             onRehydrateStorage: () => () => {
                 useCanvasStore.setState({ hydrated: true });
             },

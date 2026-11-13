@@ -769,11 +769,15 @@ func (s *OpenAIGatewayService) ForwardGrokMedia(
 				ResponseHeaders: resp.Header.Clone(),
 			}
 		}
+		respBody, err = s.inlineOpenAIImagesURLs(ctx, account, respBody)
+		if err != nil {
+			return nil, err
+		}
+		respBody = sanitizeMediaStatusResponseForClient(respBody, "")
 	}
 	if endpoint == GrokMediaEndpointVideoStatus {
-		respBody = rewriteGrokMediaVideoContentURLs(
+		respBody = sanitizeMediaStatusResponseForClient(
 			respBody,
-			requestID,
 			grokMediaContentProxyURL(c, requestID),
 		)
 	}

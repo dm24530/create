@@ -647,7 +647,7 @@ export function parseVideoTaskSnapshot(provider: VideoProvider, payload: any): V
   return {
     status,
     progress: Number.isFinite(progressValue) ? Math.min(100, Math.max(0, progressValue)) : 0,
-    videoUrl: videoUrl.trim(),
+    videoUrl: safeVideoMediaURL(videoUrl),
     durationSeconds: Number.isFinite(duration) ? duration : 0,
     rawStatus: rawStatus.trim(),
     errorMessage: errorMessage.trim(),
@@ -679,6 +679,10 @@ function videoContentPath(provider: VideoProvider, requestId: string, model = ''
     return `/videos/${id}/content?model=muse-video`
   }
   if (provider === 'seedance_video') {
+    const modelHint = model.trim() ? `?model=${encodeURIComponent(model.trim())}` : ''
+    return `/videos/${id}/content${modelHint}`
+  }
+  if (provider === 'seedance') {
     const modelHint = model.trim() ? `?model=${encodeURIComponent(model.trim())}` : ''
     return `/videos/${id}/content${modelHint}`
   }
@@ -714,12 +718,9 @@ export async function fetchVideoPlayableUrl(
   context: VideoGatewayContext,
   provider: VideoProvider,
   requestId: string,
-  videoUrl: string,
+  _videoUrl: string,
   model = '',
 ): Promise<{ url: string; revoke: boolean }> {
-  if (provider === 'seedance' && videoUrl) {
-    return { url: videoUrl, revoke: false }
-  }
   const response = await fetch(
     joinUrl(context.baseUrl, videoContentPath(provider, requestId, model)),
     { headers: authHeaders(context.apiKey) },
@@ -727,6 +728,18 @@ export async function fetchVideoPlayableUrl(
   if (!response.ok) throw new Error(await readError(response) || '下载视频内容失败')
   const blob = await response.blob()
   return { url: URL.createObjectURL(blob), revoke: true }
+}
+
+function safeVideoMediaURL(raw: string) {
+  const value = raw.trim()
+  if (!value) return ''
+  if (value.startsWith('/')) return value
+  if (typeof window === 'undefined') return ''
+  try {
+    return new URL(value, window.location.origin).origin === window.location.origin ? value : ''
+  } catch {
+    return ''
+  }
 }
 
 export async function cancelVideoTask(

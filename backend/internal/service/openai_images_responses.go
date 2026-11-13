@@ -1136,6 +1136,7 @@ func writeOpenAIImagesUpstreamErrorResponse(c *gin.Context, err *OpenAIImagesUps
 }
 
 func (s *OpenAIGatewayService) writeOpenAIImagesStreamEvent(c *gin.Context, flusher http.Flusher, eventName string, payload []byte) error {
+	payload = sanitizeMediaStatusResponseForClient(payload, "")
 	if strings.TrimSpace(eventName) != "" {
 		if _, err := fmt.Fprintf(c.Writer, "event: %s\n", eventName); err != nil {
 			return err
@@ -1388,6 +1389,10 @@ func (s *OpenAIGatewayService) handleOpenAIImagesOAuthNonStreamingResponse(
 	}
 
 	responseBody, err := buildOpenAIImagesAPIResponse(results, createdAt, usageRaw, firstMeta, responseFormat)
+	if err != nil {
+		return OpenAIUsage{}, 0, nil, nil, err
+	}
+	responseBody, err = s.inlineOpenAIImagesURLs(c.Request.Context(), nil, responseBody)
 	if err != nil {
 		return OpenAIUsage{}, 0, nil, nil, err
 	}

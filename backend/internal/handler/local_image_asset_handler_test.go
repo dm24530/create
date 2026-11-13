@@ -94,8 +94,8 @@ func TestLocalImageAssetHandlerRedirectsAfterRemoteUpload(t *testing.T) {
 		"/api/v1/public/image-assets/"+meta.ID,
 		nil,
 	))
-	require.Equal(t, http.StatusFound, recorder.Code)
-	require.Equal(t, "https://cdn.example.com/image.png", recorder.Header().Get("Location"))
+	require.NotEqual(t, http.StatusFound, recorder.Code)
+	require.Empty(t, recorder.Header().Get("Location"))
 }
 
 func TestLocalImageAssetHandlerRejectsExpiredAssetAndRemovesIt(t *testing.T) {

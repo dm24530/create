@@ -577,6 +577,107 @@ func TestGeminiHandleNativeNonStreamingResponse_DebugDisabledDoesNotEmitHeaderLo
 	require.False(t, logSink.ContainsMessage("[GeminiAPI]"), "debug 关闭时不应输出 Gemini 响应头日志")
 }
 
+func TestGeminiHandleNativeNonStreamingResponse_InlinesRemoteFileData(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	downloadStub := &geminiCompatHTTPUpstreamStub{
+		response: &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"image/png"}},
+			Body:       io.NopCloser(strings.NewReader("image-bytes")),
+		},
+	}
+	svc := &GeminiMessagesCompatService{
+		httpUpstream: downloadStub,
+		cfg:          &config.Config{},
+	}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1beta/models/gemini-image:generateContent", nil)
+
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body: io.NopCloser(strings.NewReader(`{
+			"candidates":[{"content":{"parts":[
+				{"text":"preview: https://storage.googleapis.com/text.png source: https://example.com/article"},
+				{"fileData":{"mimeType":"image/png","fileUri":"https://storage.googleapis.com/generated.png"}}
+			]}}]
+		}`)),
+	}
+
+	_, err := svc.handleNativeNonStreamingResponse(c, resp, false, &Account{ID: 1}, "")
+	require.NoError(t, err)
+	require.Equal(t, 2, downloadStub.calls)
+	require.NotContains(t, rec.Body.String(), "storage.googleapis.com")
+	require.NotContains(t, rec.Body.String(), "fileUri")
+	require.Contains(t, rec.Body.String(), "https://example.com/article")
+	require.Contains(t, rec.Body.String(), `"inlineData"`)
+	require.Contains(t, rec.Body.String(), "aW1hZ2UtYnl0ZXM=")
+}
+
+func TestGeminiHandleNativeStreamingResponse_InlinesRemoteFileData(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	downloadStub := &geminiCompatHTTPUpstreamStub{
+		response: &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"image/png"}},
+			Body:       io.NopCloser(strings.NewReader("image-bytes")),
+		},
+	}
+	svc := &GeminiMessagesCompatService{
+		httpUpstream: downloadStub,
+		cfg:          &config.Config{},
+	}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1beta/models/gemini-image:streamGenerateContent?alt=sse", nil)
+
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body: io.NopCloser(strings.NewReader(
+			"data: {\"candidates\":[{\"content\":{\"parts\":[{\"fileData\":{\"mimeType\":\"image/png\",\"fileUri\":\"https://storage.googleapis.com/generated.png\"}}]}}]}\n\n",
+		)),
+	}
+
+	_, err := svc.handleNativeStreamingResponse(c, resp, time.Now(), false, &Account{ID: 1}, "")
+	require.NoError(t, err)
+	require.Equal(t, 1, downloadStub.calls)
+	require.NotContains(t, rec.Body.String(), "storage.googleapis.com")
+	require.NotContains(t, rec.Body.String(), "fileUri")
+	require.Contains(t, rec.Body.String(), `"inlineData"`)
+	require.Contains(t, rec.Body.String(), "aW1hZ2UtYnl0ZXM=")
+}
+
+func TestGeminiHandleNativeStreamingResponse_RedactsMalformedFileURI(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	svc := &GeminiMessagesCompatService{
+		httpUpstream: &geminiCompatHTTPUpstreamStub{},
+		cfg:          &config.Config{},
+	}
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1beta/models/gemini-image:streamGenerateContent?alt=sse", nil)
+
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body: io.NopCloser(strings.NewReader(
+			"data: {\"candidates\":[{\"content\":{\"parts\":[{\"fileData\":{\"fileUri\":\"https://storage.googleapis.com/generated.png\"}}]}]}\n\n",
+		)),
+	}
+
+	_, err := svc.handleNativeStreamingResponse(c, resp, time.Now(), false, &Account{ID: 1}, "")
+	require.NoError(t, err)
+	require.NotContains(t, rec.Body.String(), "storage.googleapis.com")
+	require.Contains(t, rec.Body.String(), `"fileUri":""`)
+}
+
 func TestGeminiMessagesCompatServiceForward_PreservesRequestedModelAndMappedUpstreamModel(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()

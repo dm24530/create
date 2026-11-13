@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -192,6 +193,10 @@ func (s *videoMediaSaverStub) FetchVideoURL(context.Context, string) ([]byte, st
 	return mp4Bytes(), "video/mp4", nil
 }
 
+func (s *videoMediaSaverStub) OpenMediaURL(context.Context, string) (io.ReadCloser, string, error) {
+	return io.NopCloser(strings.NewReader("video")), "video/mp4", nil
+}
+
 func (s *videoMediaSaverStub) PresignImageObjects(
 	_ context.Context,
 	keys []string,
@@ -304,22 +309,31 @@ func TestVideoStudioGalleryUploadReferenceAssetSkipsGalleryRows(t *testing.T) {
 
 	imageURL, err := svc.UploadReferenceAsset(ctx, 42, "image", "image/png", pngBytes)
 	require.NoError(t, err)
-	require.Contains(t, imageURL, "/video-references/")
+	require.Contains(t, decodedVideoReferenceObjectKey(t, imageURL), "/video-references/")
 	require.Len(t, saver.imageKeys, 1)
 	require.Equal(t, "image/png", saver.imageTypes[0])
 
 	videoURL, err := svc.UploadReferenceAsset(ctx, 42, "video", "video/mp4", mp4Bytes())
 	require.NoError(t, err)
-	require.Contains(t, videoURL, "/video-references/")
+	require.Contains(t, decodedVideoReferenceObjectKey(t, videoURL), "/video-references/")
 	require.Len(t, saver.keys, 1)
 
 	audioURL, err := svc.UploadReferenceAsset(ctx, 42, "audio", "audio/mpeg", []byte("fake-mp3"))
 	require.NoError(t, err)
-	require.Contains(t, audioURL, "/video-references/")
+	require.Contains(t, decodedVideoReferenceObjectKey(t, audioURL), "/video-references/")
 	require.Len(t, saver.audioKeys, 1)
 	require.Equal(t, "audio/mpeg", saver.audioTypes[0])
 
 	require.Empty(t, store.saved, "temporary reference assets must not create studio works")
+}
+
+func decodedVideoReferenceObjectKey(t *testing.T, rawURL string) string {
+	t.Helper()
+	token := strings.TrimPrefix(rawURL, VideoReferencePublicPrefix)
+	require.NotEqual(t, rawURL, token)
+	decoded, err := base64.RawURLEncoding.DecodeString(token)
+	require.NoError(t, err)
+	return string(decoded)
 }
 
 func TestVideoStudioGalleryDirectReferenceUploadPresignAndComplete(t *testing.T) {

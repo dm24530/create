@@ -7,6 +7,7 @@ import {
     scopedCanvasStorageKey,
     unscopedCanvasStorageKey,
 } from "@/lib/canvas-storage-scope";
+import { safeCanvasMediaSource } from "@/lib/canvas/canvas-media-url";
 
 export type UploadedFile = { url: string; storageKey: string; bytes: number; mimeType: string; width?: number; height?: number; durationMs?: number };
 
@@ -14,7 +15,9 @@ const store = localforage.createInstance({ name: "infinite-canvas", storeName: "
 const objectUrls = new Map<string, string>();
 
 export async function uploadMediaFile(input: string | Blob, prefix = "file"): Promise<UploadedFile> {
-    const blob = typeof input === "string" ? await (await fetch(withLocalProxy(input))).blob() : input;
+    const source = typeof input === "string" ? safeCanvasMediaSource(input) : "";
+    if (typeof input === "string" && !source) throw new Error("unsupported media source");
+    const blob = typeof input === "string" ? await (await fetch(withLocalProxy(source))).blob() : input;
     const storageKey = `${prefix}:${nanoid()}`;
     await store.setItem(scopedCanvasStorageKey(storageKey), blob);
     const url = URL.createObjectURL(blob);

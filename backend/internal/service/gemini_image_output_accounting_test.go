@@ -73,7 +73,7 @@ func TestCountGeminiImageOutputs(t *testing.T) {
 			want:    1,
 		},
 		{
-			name: "inline image wins over duplicate file and text references",
+			name: "URL wins over duplicate inline and text references",
 			payload: geminiImageResponse(`{"inlineData":{"mimeType":"image/jpeg","data":"` + geminiTestPNG + `"}},` +
 				`{"fileData":{"mimeType":"image/jpeg","fileUri":"https://img.example.test/generated.jpg"}},` +
 				`{"text":"https://img.example.test/generated.jpg"}`),
@@ -110,6 +110,17 @@ func TestCountGeminiImageOutputs(t *testing.T) {
 			require.Equal(t, tc.want, len(ExtractGeminiImageOutputs([]byte(tc.payload))))
 		})
 	}
+}
+
+func TestExtractGeminiImageOutputsPrefersURLOverInlineData(t *testing.T) {
+	payload := []byte(geminiImageResponse(`{"inlineData":{"mimeType":"image/jpeg","data":"` + geminiTestPNG + `"}},` +
+		`{"fileData":{"mimeType":"image/jpeg","fileUri":"https://img.example.test/generated.jpg"}}`))
+
+	outputs := ExtractGeminiImageOutputs(payload)
+
+	require.Len(t, outputs, 1)
+	require.Equal(t, "https://img.example.test/generated.jpg", outputs[0].URL)
+	require.Empty(t, outputs[0].Base64)
 }
 
 // 累积式 SSE 会把同一张图在后续 chunk 里整段重发，逐 chunk 累加会重复计费。

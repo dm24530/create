@@ -68,13 +68,16 @@ func (s *usageImageStorageStub) FetchImageURL(context.Context, string) ([]byte, 
 	return s.data, s.contentType, s.fetchErr
 }
 
-func TestUsageHandlerImageLinkRedirectsOwnedFallbackURL(t *testing.T) {
+func TestUsageHandlerImageLinkStreamsOwnedFallbackURL(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	handler := NewUsageHandler(nil, nil, nil, nil)
-	handler.SetImageLinkDeps(&usageImageLinkStoreStub{link: &service.UsageLogImageLink{
-		UserID:   7,
-		ImageURL: "https://cdn.example.test/image.png",
-	}}, nil)
+	handler.SetImageLinkDeps(
+		&usageImageLinkStoreStub{link: &service.UsageLogImageLink{
+			UserID:   7,
+			ImageURL: "https://cdn.example.test/image.png",
+		}},
+		&usageImageStorageStub{data: []byte("image-bytes"), contentType: "image/png"},
+	)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
 		c.Set(string(middleware2.ContextKeyUser), middleware2.AuthSubject{UserID: 7})
@@ -85,8 +88,9 @@ func TestUsageHandlerImageLinkRedirectsOwnedFallbackURL(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/usage/image-links/token", nil))
 
-	require.Equal(t, http.StatusFound, recorder.Code)
-	require.Equal(t, "https://cdn.example.test/image.png", recorder.Header().Get("Location"))
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Equal(t, "image-bytes", recorder.Body.String())
+	require.Empty(t, recorder.Header().Get("Location"))
 }
 
 func TestUsageHandlerImageLinkStreamsInlineDataURL(t *testing.T) {
@@ -196,7 +200,9 @@ func TestUsageHandlerOpenImageLinkRedirectsObjectToPresignedURL(t *testing.T) {
 			ObjectKey: "images/result.png",
 		}},
 		&usageImageStorageStub{
-			presignURL: "https://storage.example.test/result.png",
+			presignURL:  "https://storage.example.test/result.png",
+			data:        []byte("image-bytes"),
+			contentType: "image/png",
 		},
 	)
 	router := gin.New()
@@ -205,8 +211,9 @@ func TestUsageHandlerOpenImageLinkRedirectsObjectToPresignedURL(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/usage-images/token", nil))
 
-	require.Equal(t, http.StatusFound, recorder.Code)
-	require.Equal(t, "https://storage.example.test/result.png", recorder.Header().Get("Location"))
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Equal(t, "image-bytes", recorder.Body.String())
+	require.Empty(t, recorder.Header().Get("Location"))
 }
 
 func TestUsageHandlerOpenImageLinkServesStoredPreviewBeforeOriginal(t *testing.T) {
@@ -219,7 +226,9 @@ func TestUsageHandlerOpenImageLinkServesStoredPreviewBeforeOriginal(t *testing.T
 			ImageURL:  "data:image/jpeg;base64,cHJldmlldw==",
 		}},
 		&usageImageStorageStub{
-			presignURL: "https://storage.example.test/result.png",
+			presignURL:  "https://storage.example.test/result.png",
+			data:        []byte("original"),
+			contentType: "image/png",
 		},
 	)
 	router := gin.New()
@@ -235,8 +244,9 @@ func TestUsageHandlerOpenImageLinkServesStoredPreviewBeforeOriginal(t *testing.T
 
 	originalRecorder := httptest.NewRecorder()
 	router.ServeHTTP(originalRecorder, httptest.NewRequest(http.MethodGet, "/usage-images/token?full=1", nil))
-	require.Equal(t, http.StatusFound, originalRecorder.Code)
-	require.Equal(t, "https://storage.example.test/result.png", originalRecorder.Header().Get("Location"))
+	require.Equal(t, http.StatusOK, originalRecorder.Code)
+	require.Equal(t, "original", originalRecorder.Body.String())
+	require.Empty(t, originalRecorder.Header().Get("Location"))
 }
 
 func TestUsageHandlerOpenImageLinkServesOriginalGIFByObjectKeyBeforeStaticPreview(t *testing.T) {

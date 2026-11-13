@@ -12,6 +12,7 @@ import { useNavigationLoadingState } from '@/composables/useNavigationLoading'
 import { useRoutePrefetch } from '@/composables/useRoutePrefetch'
 import { getSetupStatus } from '@/api/setup'
 import { FeatureFlags, isFeatureFlagEnabled } from '@/utils/featureFlags'
+import { isCanvasRoutePath } from '@/features/infinite-canvas/canvasRouteSync'
 import { resolveCompletedSetupRedirectPath } from './setupRedirect'
 import { resolveRouteDocumentTitle } from './title'
 import {
@@ -796,7 +797,7 @@ let authInitialized = false
 const navigationLoading = useNavigationLoadingState()
 // 延迟初始化预加载，传入 router 实例
 let routePrefetch: ReturnType<typeof useRoutePrefetch> | null = null
-const BACKEND_MODE_ALLOWED_PATHS = ['/login', '/key-usage', '/setup', '/payment/result', '/payment/airwallex', '/legal']
+const BACKEND_MODE_ALLOWED_PATHS = ['/login', '/key-usage', '/setup', '/payment/result', '/payment/airwallex', '/legal', '/docs']
 const BACKEND_MODE_CALLBACK_PATHS = [
   '/auth/callback',
   '/auth/linuxdo/callback',
@@ -934,7 +935,7 @@ router.beforeEach(async (to, _from, next) => {
     return
   }
 
-  if (to.path === '/canvas' && !authStore.isAdmin) {
+  if (isCanvasRoutePath(to.path) && !authStore.isAdmin) {
     if (!appStore.publicSettingsLoaded) {
       try {
         await appStore.fetchPublicSettings()

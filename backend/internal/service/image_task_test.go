@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"io"
 	"mime/multipart"
 	"net/http"
 	"testing"
@@ -29,6 +30,8 @@ func (s *imageTaskMemoryStore) Save(_ context.Context, task *ImageTaskRecord, tt
 		return s.saveErr
 	}
 	copy := *task
+	copy.PreviewRemoteURLs = append([]string(nil), task.PreviewRemoteURLs...)
+	copy.MediaRemoteURLs = append([]string(nil), task.MediaRemoteURLs...)
 	s.task = &copy
 	s.ttl = ttl
 	return nil
@@ -42,6 +45,8 @@ func (s *imageTaskMemoryStore) Get(_ context.Context, _ string) (*ImageTaskRecor
 		return nil, ErrImageTaskNotFound
 	}
 	copy := *s.task
+	copy.PreviewRemoteURLs = append([]string(nil), s.task.PreviewRemoteURLs...)
+	copy.MediaRemoteURLs = append([]string(nil), s.task.MediaRemoteURLs...)
 	return &copy, nil
 }
 
@@ -50,6 +55,8 @@ func (s *imageTaskMemoryStore) ListPending(context.Context, int) ([]*ImageTaskRe
 		return nil, nil
 	}
 	copy := *s.task
+	copy.PreviewRemoteURLs = append([]string(nil), s.task.PreviewRemoteURLs...)
+	copy.MediaRemoteURLs = append([]string(nil), s.task.MediaRemoteURLs...)
 	return []*ImageTaskRecord{&copy}, nil
 }
 
@@ -118,8 +125,8 @@ func TestImageTaskServiceLifecycleAndOwnership(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, ImageTaskStatusCompleted, completed.Status)
 	require.Equal(t, http.StatusOK, completed.HTTPStatus)
-	require.Equal(t, "https://example.test/image.png", completed.ImageURL)
-	require.JSONEq(t, string(result), string(completed.Result))
+	require.Equal(t, "/api/v1/public/image-task-media/"+created.ID+"/0", completed.ImageURL)
+	require.NotContains(t, string(completed.Result), "example.test")
 	require.NotNil(t, completed.CompletedAt)
 }
 
@@ -215,6 +222,110 @@ func TestImageTaskServiceCompleteTranscodesUsingPersistedOutputFormat(t *testing
 	require.NoError(t, err)
 	require.Equal(t, "jpeg", format)
 	require.Equal(t, ImageTaskStatusCompleted, store.task.Status)
+}
+
+func TestImageTaskServicePreviewKeepsUpstreamURLPrivate(t *testing.T) {
+	store := &imageTaskMemoryStore{task: &ImageTaskRecord{
+		ID:         "imgtask_preview_private",
+		UserID:     7,
+		APIKeyID:   9,
+		Status:     ImageTaskStatusProcessing,
+		HTTPStatus: http.StatusOK,
+	}}
+	svc := NewImageTaskServiceWithUploader(store, nil, time.Hour, time.Minute)
+	result := json.RawMessage(`{
+		"created":1,
+		"debug_url":"https://upstream.example/private/debug",
+		"data":[{
+			"url":"https://cdn.example/signed/image.png?token=secret",
+			"mime_type":"image/png",
+			"source_page":"https://upstream.example/jobs/1"
+		}]
+	}`)
+
+	require.NoError(t, svc.PublishPreview(
+		context.Background(),
+		store.task.ID,
+		http.StatusOK,
+		result,
+	))
+
+	require.Equal(t, []string{
+		"https://cdn.example/signed/image.png?token=secret",
+	}, store.task.PreviewRemoteURLs)
+	require.NotContains(t, string(store.task.Result), "upstream.example")
+	require.NotContains(t, string(store.task.Result), "cdn.example")
+	require.Contains(t, string(store.task.Result), "/api/v1/public/image-task-previews/imgtask_preview_private/0")
+
+	public, err := svc.Get(
+		context.Background(),
+		ImageTaskOwner{UserID: 7, APIKeyID: 9},
+		store.task.ID,
+	)
+	require.NoError(t, err)
+	require.NotContains(t, string(public.Result), "upstream.example")
+	require.NotContains(t, string(public.Result), "cdn.example")
+}
+
+func TestImageTaskServiceSanitizesLegacyPreviewOnRead(t *testing.T) {
+	store := &imageTaskMemoryStore{task: &ImageTaskRecord{
+		ID:         "imgtask_legacy_preview",
+		UserID:     7,
+		APIKeyID:   9,
+		Status:     ImageTaskStatusPreviewReady,
+		HTTPStatus: http.StatusOK,
+		Result: json.RawMessage(`{
+			"data":[{
+				"url":"https://cdn.upstream.example/legacy.png?token=secret",
+				"mime_type":"image/png"
+			}]
+		}`),
+	}}
+	svc := NewImageTaskServiceWithUploader(store, nil, time.Hour, time.Minute)
+
+	public, err := svc.Get(
+		context.Background(),
+		ImageTaskOwner{UserID: 7, APIKeyID: 9},
+		store.task.ID,
+	)
+	require.NoError(t, err)
+	require.NotContains(t, string(public.Result), "cdn.upstream.example")
+	require.Contains(t, string(public.Result), "/api/v1/public/image-task-previews/imgtask_legacy_preview/0")
+}
+
+func TestImageTaskServiceFinalizePreviewUsesPrivateRemoteURL(t *testing.T) {
+	const upstreamURL = "https://cdn.upstream.example/private-preview.png?token=secret"
+	requested := false
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requested = true
+		require.Equal(t, upstreamURL, req.URL.String())
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"image/png"}},
+			Body:       io.NopCloser(bytes.NewReader(pngBytes)),
+			Request:    req,
+		}, nil
+	})}
+	store := &imageTaskMemoryStore{}
+	storage := &fakeImageStorage{}
+	uploader := NewImageResultUploader(storage, "images/", 0, client)
+	svc := NewImageTaskServiceWithUploader(store, uploader, time.Hour, time.Minute)
+	require.NoError(t, store.Save(context.Background(), &ImageTaskRecord{
+		ID:                "imgtask_private_preview_recovery",
+		UserID:            1,
+		APIKeyID:          2,
+		Status:            ImageTaskStatusPreviewReady,
+		HTTPStatus:        http.StatusOK,
+		PreviewRemoteURLs: []string{upstreamURL},
+		Result:            json.RawMessage(`{"data":[{"url":"/api/v1/public/image-task-previews/imgtask_private_preview_recovery/0","mime_type":"image/png"}]}`),
+	}, time.Hour))
+
+	finalized, err := svc.FinalizePreview(context.Background(), "imgtask_private_preview_recovery")
+	require.NoError(t, err)
+	require.True(t, finalized)
+	require.True(t, requested)
+	require.Len(t, storage.saved, 1)
+	require.NotContains(t, string(store.task.Result), "cdn.upstream.example")
 }
 
 func TestImageTaskServiceMapsStoreFailures(t *testing.T) {

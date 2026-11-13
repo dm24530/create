@@ -65,7 +65,7 @@ func runAntigravityGeminiStreamWithIdle(t *testing.T, userAgent string, idle tim
 	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: reader}
 	done := make(chan error, 1)
 	go func() {
-		_, err := svc.handleGeminiStreamingResponse(c, resp, time.Now())
+		_, err := svc.handleGeminiStreamingResponse(c, resp, time.Now(), nil)
 		done <- err
 	}()
 	_, err := io.WriteString(

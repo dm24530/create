@@ -166,7 +166,7 @@ func (s *OpenAIGatewayService) forwardSeedanceVideo(
 		return nil, err
 	}
 	if resp.StatusCode >= 300 {
-		writeGrokMediaResponse(c, resp, responseBody, s.responseHeaderFilter)
+		writeGrokMediaResponse(c, resp, sanitizeMediaStatusResponseForClient(responseBody, ""), s.responseHeaderFilter)
 		return nil, fmt.Errorf("video upstream status %d", resp.StatusCode)
 	}
 
@@ -204,6 +204,12 @@ func (s *OpenAIGatewayService) forwardSeedanceVideo(
 	clientBody := responseBody
 	if legacyArkResponse {
 		clientBody = normalizeSeedanceVideoResponseForArk(base, endpoint, responseBody)
+	}
+	if endpoint == SeedanceVideoEndpointStatus {
+		clientBody = sanitizeMediaStatusResponseForClient(
+			clientBody,
+			grokMediaContentProxyURL(c, taskID),
+		)
 	}
 	writeGrokMediaResponse(c, resp, clientBody, s.responseHeaderFilter)
 	return result, nil

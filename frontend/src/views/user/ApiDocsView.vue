@@ -33,6 +33,7 @@
           <p>
             使用 API 生成图片、编辑图片、创建视频任务并下载结果。文档中的 Base URL、
             请求结构、异步任务流程和错误格式可以直接用于后端服务与自动化脚本。
+            本文档无需登录即可阅读；实际调用接口仍需要有效的 API Key。
           </p>
         </div>
         <div class="docs-base">
@@ -65,8 +66,9 @@
             <p class="doc-section__eyebrow">Overview</p>
             <h2>接口概览</h2>
             <p>
-              Create 的图片使用 OpenAI Images 兼容接口；视频使用 Grok Video 或 Seedance
-              异步任务接口。图片可以同步返回，视频需要先创建任务，再轮询状态并下载内容。
+              Create 的图片统一使用 OpenAI Images 兼容入口，平台可以是 OpenAI、Gemini、
+              Grok 或 Composite；视频使用 Grok Video 或 Seedance 异步任务接口。长图片任务
+              建议使用异步接口，视频必须先创建任务，再轮询状态并下载内容。
             </p>
             <div class="docs-callout">
               <strong>先确认三件事</strong>
@@ -81,13 +83,39 @@
               <div class="docs-mini">
                 <span>数据格式</span>
                 <strong>JSON + 异步任务</strong>
-                <p>图片通常直接返回结果；视频通过 request_id 轮询。</p>
+                <p>图片可能返回 URL 或 base64；视频通过 request_id/task_id 轮询。</p>
               </div>
               <div class="docs-mini">
                 <span>计费方式</span>
                 <strong>按实际请求结算</strong>
                 <p>详见使用记录中的 Token、单价和实际费用。</p>
               </div>
+            </div>
+            <div class="docs-table-wrap">
+              <table class="docs-table">
+                <thead>
+                  <tr>
+                    <th>分组平台</th>
+                    <th>图片入口</th>
+                    <th>常见返回</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>OpenAI / Grok / Composite</td>
+                    <td><code>/images/generations</code>、<code>/images/edits</code></td>
+                    <td><code>url</code> 或 <code>b64_json</code>，以实际模型为准。</td>
+                  </tr>
+                  <tr>
+                    <td>Gemini</td>
+                    <td><code>/images/generations</code>，或原生 <code>/v1beta/models/{model}:generateContent</code></td>
+                    <td>
+                      响应同时包含 URL 和 <code>inlineData</code> 时优先 URL；只有
+                      <code>inlineData</code> 时返回 <code>b64_json</code>。
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
             </div>
           </section>
 
@@ -142,7 +170,7 @@
           <section id="authentication" class="doc-section">
             <p class="doc-section__eyebrow">Authentication</p>
             <h2>认证与请求头</h2>
-            <p>图片和视频接口都需要创作 API Key，推荐统一使用 Bearer 请求头。</p>
+            <p>图片、视频、模型和计费接口都需要创作 API Key，推荐统一使用 Bearer 请求头。</p>
             <div class="docs-table-wrap">
               <table class="docs-table">
                 <thead>
@@ -162,6 +190,16 @@
                     <td><code>Content-Type</code></td>
                     <td><code>application/json</code></td>
                     <td>除文件上传和多段表单外，JSON 接口都需要。</td>
+                  </tr>
+                  <tr>
+                    <td><code>x-api-key</code></td>
+                    <td><code>sk-...</code></td>
+                    <td>兼容部分客户端；与 Bearer 二选一。</td>
+                  </tr>
+                  <tr>
+                    <td><code>x-goog-api-key</code></td>
+                    <td><code>sk-...</code></td>
+                    <td>Gemini 原生 SDK/CLI 兼容方式。</td>
                   </tr>
                 </tbody>
               </table>
@@ -247,7 +285,8 @@
             <h2>文本生成图片</h2>
             <p>
               <code>POST /images/generations</code> 用于文生图。图片接口按 API Key
-              所属平台开放，OpenAI 与 Grok 分组支持同步生成；高并发任务可以使用异步接口。
+              所属平台开放，OpenAI、Gemini、Grok 和 Composite 分组均可根据模型能力使用；
+              长任务或高并发任务建议使用异步接口。
             </p>
             <div class="docs-table-wrap">
               <table class="docs-table">
@@ -284,12 +323,25 @@
                   </tr>
                   <tr>
                     <td><code>response_format</code></td>
-                    <td>可填 b64_json 或 url；上游可能根据模型能力调整返回形式。</td>
+                    <td>
+                      OpenAI/Grok 等原生图片模型可尝试 b64_json 或 url；Gemini
+                      响应有 URL 时优先保留 URL，没有 URL 时使用 b64_json/inlineData；
+                      response_format=url 不保证让 Google 强制返回 URL。
+                    </td>
                   </tr>
                 </tbody>
               </table>
             </div>
+            <div class="docs-callout docs-callout--warning">
+              <strong>客户端必须同时处理 URL 和 base64</strong>
+              <span>
+                不要假设 response_format=url 一定会返回 URL。若响应只有
+                <code>b64_json</code>，请由客户端解码后保存；若只有 <code>url</code>，请立即下载，
+                临时链接可能会过期。
+              </span>
+            </div>
             <DocCodeBlock title="Generate an image" language="bash" :code="snippets.imagesCurl" />
+            <DocCodeBlock title="Image response" language="json" :code="snippets.imagesResponse" />
           </section>
 
           <section id="image-edits" class="doc-section">
@@ -306,7 +358,46 @@
               <span>
                 长任务可提交到 <code>/images/generations/async</code> 或
                 <code>/images/edits/async</code>，再查询 <code>/images/tasks/:task_id</code>。
-                批量任务使用 <code>/images/batches</code>，任务列表和结果也由同一组接口提供。
+                原图可通过 <code>/images/tasks/:task_id/content</code> 下载；批量任务使用
+                <code>/images/batches</code>，再查询任务、条目和下载接口。异步图片依赖站点对象存储，
+                未开启时端点可能返回 404。
+              </span>
+            </div>
+            <div class="docs-table-wrap">
+              <table class="docs-table">
+                <thead>
+                  <tr>
+                    <th>状态</th>
+                    <th>客户端处理</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><code>processing</code></td>
+                    <td>继续轮询；不要立即重复提交。</td>
+                  </tr>
+                  <tr>
+                    <td><code>preview_ready</code></td>
+                    <td>可以先展示低清预览，同时继续轮询最终原图。</td>
+                  </tr>
+                  <tr>
+                    <td><code>ready</code> / <code>completed</code></td>
+                    <td>读取 result；原图可通过 result 中的 URL 或任务 content 端点获取。</td>
+                  </tr>
+                  <tr>
+                    <td><code>failed</code></td>
+                    <td>停止轮询并读取 error；不要无限重试同一个失败任务。</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <DocCodeBlock title="Async image task" language="bash" :code="snippets.imageAsyncCurl" />
+            <DocCodeBlock title="Task response" language="json" :code="snippets.imageTaskResponse" />
+            <div class="docs-callout">
+              <strong>幂等提交</strong>
+              <span>
+                异步图片请求可以携带 <code>Idempotency-Key</code>。网络中断后可用
+                <code>GET /images/tasks/by-idempotency/:key</code> 找回任务，避免重复扣费。
               </span>
             </div>
           </section>
@@ -319,6 +410,8 @@
               <code>POST /videos/generations</code>；Seedance 使用
               <code>POST /contents/generations/tasks</code>。创建成功后保存返回的
               <code>request_id</code> 或 <code>task_id</code>，再轮询任务状态。
+              参考图/视频字段要求使用服务端可访问的 URL；Create 当前没有面向外部客户的通用媒体上传端点，
+              本地素材请先上传到你自己的对象存储或公网文件服务。
             </p>
             <div class="docs-table-wrap">
               <table class="docs-table">
@@ -478,7 +571,12 @@ const endpoints = [
   { method: 'POST', path: '/images/generations/async', description: '提交异步图片生成任务。' },
   { method: 'POST', path: '/images/edits/async', description: '提交异步图片编辑任务。' },
   { method: 'GET', path: '/images/tasks/:task_id', description: '查询异步图片任务。' },
+  { method: 'GET', path: '/images/tasks/:task_id/content?index=0', description: '下载异步图片任务的原图。' },
+  { method: 'GET', path: '/images/tasks/by-idempotency/:key', description: '用 Idempotency-Key 找回图片任务。' },
   { method: 'POST', path: '/images/batches', description: '提交批量图片任务。' },
+  { method: 'GET', path: '/images/batches/:id', description: '查询批量图片任务。' },
+  { method: 'GET', path: '/images/batches/:id/items', description: '查询批量图片任务条目。' },
+  { method: 'GET', path: '/images/batches/:id/download', description: '下载批量图片结果压缩包。' },
   { method: 'POST', path: '/videos/generations', description: '创建视频生成任务，平台能力受限。' },
   { method: 'POST', path: '/contents/generations/tasks', description: '创建 Seedance 视频任务。' },
   { method: 'GET', path: '/videos/:request_id', description: '查询视频任务状态。' },
@@ -528,6 +626,18 @@ Content-Type: application/json`,
     "n": 1,
     "response_format": "b64_json"
   }'`,
+    imagesResponse: `{
+  "created": 1794473204,
+  "data": [
+    {
+      "url": "https://your-site.example/api/v1/public/image-assets/...",
+      "preview_url": "data:image/jpeg;base64,...",
+      "mime_type": "image/jpeg",
+      "width": 1024,
+      "height": 1024
+    }
+  ]
+}`,
     imageEditCurl: `curl "${base}/images/edits" \\
   -H "Authorization: Bearer $CREATE_API_KEY" \\
   -F "model=your-image-model" \\
@@ -535,6 +645,32 @@ Content-Type: application/json`,
   -F "image=@reference.png" \\
   -F "size=1024x1024" \\
   -F "n=1"`,
+    imageAsyncCurl: `curl "${base}/images/generations/async" \\
+  -H "Authorization: Bearer $CREATE_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -H "Idempotency-Key: order-20261112-001" \\
+  -d '{
+    "model": "your-image-model",
+    "prompt": "一只白色陶瓷杯放在木质桌面上",
+    "size": "1024x1024",
+    "quality": "high",
+    "n": 1
+  }'
+
+curl "${base}/images/tasks/TASK_ID" \\
+  -H "Authorization: Bearer $CREATE_API_KEY"`,
+    imageTaskResponse: `{
+  "task_id": "imgtask_...",
+  "status": "preview_ready",
+  "result": {
+    "data": [
+      {
+        "url": "data:image/jpeg;base64,...",
+        "preview_url": "data:image/jpeg;base64,..."
+      }
+    ]
+  }
+}`,
     grokVideoCurl: `curl "${base}/videos/generations" \\
   -H "Authorization: Bearer $CREATE_API_KEY" \\
   -H "Content-Type: application/json" \\

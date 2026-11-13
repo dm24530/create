@@ -200,7 +200,7 @@ function resetCommonMocks() {
   deleteGallery.mockResolvedValue(undefined)
   downloadGallery.mockResolvedValue(new Blob(['image'], { type: 'image/png' }))
   downloadURLGallery.mockResolvedValue({
-    url: 'https://cdn.example.com/image-download-url',
+    url: '/api/v1/public/studio-works/image-download-url',
     filename: 'image-download.png',
   })
   thumbnailGallery.mockResolvedValue(new Blob(['thumb'], { type: 'image/jpeg' }))
@@ -231,7 +231,7 @@ function resetCommonMocks() {
   createReferenceImagePreview.mockResolvedValue('data:image/jpeg;base64,preview')
   saveGallery.mockResolvedValue({
     id: 'gallery-1',
-    url: 'https://cdn.example.com/gallery-1.png',
+    url: '/api/v1/public/studio-works/gallery-1.png',
     prompt: '',
     model: '',
     size: '',
@@ -241,7 +241,7 @@ function resetCommonMocks() {
   })
   saveGalleryFromTask.mockResolvedValue({
     id: 'gallery-task-1',
-    url: 'https://cdn.example.com/gallery-task-1.png',
+    url: '/api/v1/public/studio-works/gallery-task-1.png',
     prompt: '',
     model: '',
     size: '',
@@ -368,7 +368,6 @@ describe('ImageStudioView image model loading', () => {
       }
       throw new Error(`Unexpected request: ${url}`)
     })
-
     const firstWrapper = mountImageStudio()
     await flushPromises()
     await flushPromises()
@@ -446,8 +445,8 @@ describe('ImageStudioView image model loading', () => {
     getPublicSettings.mockResolvedValue({ api_base_url: '/v1' })
     saveGallery.mockResolvedValue({
       id: 'gallery-gif',
-      url: 'https://cdn.example.com/generated.gif',
-      thumb_url: 'https://cdn.example.com/generated-thumb.jpg',
+      url: '/api/v1/public/studio-works/generated.gif',
+      thumb_url: '/api/v1/public/studio-works/generated-thumb.jpg',
       prompt: '',
       model: 'gpt-image-2-6',
       size: '1024x1024',
@@ -499,7 +498,7 @@ describe('ImageStudioView image model loading', () => {
       expect(wrapper.find('img[alt^="生成结果"]').exists()).toBe(true)
     })
     expect(wrapper.get('img[alt^="生成结果"]').attributes('src'))
-      .toBe('https://cdn.example.com/generated.gif')
+      .toBe('/api/v1/public/studio-works/generated.gif')
     expect(wrapper.find('[data-testid="image-thumbnail-badge"]').exists()).toBe(false)
   })
 
@@ -938,7 +937,7 @@ describe('ImageStudioView gallery', () => {
     listGallery.mockResolvedValue([
       {
         id: 'gallery-1',
-        url: 'https://cdn.example.com/gallery-1.png',
+        url: '/api/v1/public/studio-works/gallery-1.png',
         prompt: 'a cat',
         model: 'gpt-image-1',
         size: '1024x1024',
@@ -953,7 +952,7 @@ describe('ImageStudioView gallery', () => {
     await flushPromises()
 
     expect(wrapper.text()).not.toContain('历史图片 1')
-    const image = wrapper.get('img[src="https://cdn.example.com/gallery-1.png"]')
+    const image = wrapper.get('img[src="/api/v1/public/studio-works/gallery-1.png"]')
     expect(image.exists()).toBe(true)
     expect(image.attributes('loading')).toBe('lazy')
     expect(wrapper.get('article').text()).not.toContain('a cat')
@@ -969,8 +968,8 @@ describe('ImageStudioView gallery', () => {
         {
           id: 'gallery-signed-refresh',
           title: '旧签名缩略图',
-          src: 'https://cdn.example.com/work.png?X-Amz-Date=old&X-Amz-Signature=expired',
-          thumbSrc: 'https://cdn.example.com/work-thumb.jpg?X-Amz-Date=old&X-Amz-Signature=expired',
+          src: '/api/v1/public/studio-works/gallery-signed-refresh/content',
+          thumbSrc: '/api/v1/public/studio-works/gallery-signed-refresh/thumb',
           saved: true,
           expiresAt: 0,
           displayOrder: 2,
@@ -978,7 +977,7 @@ describe('ImageStudioView gallery', () => {
         {
           id: 'gallery-signed-original',
           title: '旧签名原图',
-          src: 'https://cdn.example.com/original.png?X-Amz-Date=old&X-Amz-Signature=expired',
+          src: '/api/v1/public/studio-works/gallery-signed-original/content',
           saved: true,
           expiresAt: 0,
           displayOrder: 1,
@@ -988,8 +987,8 @@ describe('ImageStudioView gallery', () => {
     listGallery.mockResolvedValue([
       {
         id: 'gallery-signed-refresh',
-        url: 'https://cdn.example.com/work.png?X-Amz-Date=new&X-Amz-Signature=fresh',
-        thumb_url: 'https://cdn.example.com/work-thumb.jpg?X-Amz-Date=new&X-Amz-Signature=fresh',
+        url: '/api/v1/public/studio-works/gallery-signed-refresh/content',
+        thumb_url: '/api/v1/public/studio-works/gallery-signed-refresh/thumb',
         prompt: 'a cat',
         model: 'gpt-image-1',
         size: '1024x1024',
@@ -1000,7 +999,7 @@ describe('ImageStudioView gallery', () => {
       },
       {
         id: 'gallery-signed-original',
-        url: 'https://cdn.example.com/original.png?X-Amz-Date=new&X-Amz-Signature=fresh',
+        url: '/api/v1/public/studio-works/gallery-signed-original/content',
         prompt: 'a dog',
         model: 'gpt-image-1',
         size: '1024x1024',
@@ -1015,15 +1014,15 @@ describe('ImageStudioView gallery', () => {
     await flushPromises()
 
     expect(wrapper.get('img[alt="旧签名缩略图"]').attributes('src'))
-      .toBe('https://cdn.example.com/work-thumb.jpg?X-Amz-Date=old&X-Amz-Signature=expired')
+      .toBe('/api/v1/public/studio-works/gallery-signed-refresh/thumb')
     expect(wrapper.get('img[alt="旧签名原图"]').attributes('src'))
-      .toBe('https://cdn.example.com/original.png?X-Amz-Date=old&X-Amz-Signature=expired')
+      .toBe('/api/v1/public/studio-works/gallery-signed-original/content')
   })
 
   it('refreshes gallery URLs when the page becomes visible again', async () => {
     listGallery.mockResolvedValue([{
       id: 'gallery-visibility-refresh',
-      url: 'https://cdn.example.com/visibility.png',
+      url: '/api/v1/public/studio-works/visibility.png',
       prompt: 'a cat',
       model: 'gpt-image-1',
       size: '1024x1024',
@@ -1046,7 +1045,7 @@ describe('ImageStudioView gallery', () => {
   it('limits fallback thumbnail downloads to four at a time', async () => {
     listGallery.mockResolvedValue(Array.from({ length: 10 }, (_, index) => ({
       id: `gallery-${index + 1}`,
-      url: `https://cdn.example.com/gallery-${index + 1}.png`,
+      url: `/api/v1/public/studio-works/gallery-${index + 1}.png`,
       prompt: `image ${index + 1}`,
       model: 'gpt-image-1',
       size: '1024x1024',
@@ -1073,8 +1072,8 @@ describe('ImageStudioView gallery', () => {
     })
     listGallery.mockResolvedValue([{
       id: 'gallery-download',
-      url: 'https://cdn.example.com/gallery-download.png',
-      thumb_url: 'https://cdn.example.com/gallery-download-thumb.jpg',
+      url: '/api/v1/public/studio-works/gallery-download.png',
+      thumb_url: '/api/v1/public/studio-works/gallery-download-thumb.jpg',
       prompt: 'a cat',
       model: 'gpt-image-1',
       size: '3840x3840',
@@ -1098,9 +1097,9 @@ describe('ImageStudioView gallery', () => {
     expect(downloadURLGallery).toHaveBeenCalledWith('gallery-download')
     expect(fetch).not.toHaveBeenCalled()
 
-    resolveDownloadURL({ url: 'https://cdn.example.com/image-download-url', filename: 'image-download.jpg' })
+    resolveDownloadURL({ url: '/api/v1/public/studio-works/image-download-url', filename: 'image-download.jpg' })
     await flushPromises()
-    expect(clickedHref).toBe('https://cdn.example.com/image-download-url')
+    expect(clickedHref).toBe('http://localhost:3000/api/v1/public/studio-works/image-download-url')
     expect(clickedTarget).toBe('')
     expect(downloadGallery).not.toHaveBeenCalled()
   })
@@ -1148,7 +1147,7 @@ describe('ImageStudioView gallery', () => {
 
     resolveSave({
       id: 'gallery-new',
-      url: 'https://cdn.example.com/gallery-new.png',
+      url: '/api/v1/public/studio-works/gallery-new.png',
       prompt: '',
       model: 'gpt-image-1',
       size: '1024x1024',
@@ -1161,7 +1160,7 @@ describe('ImageStudioView gallery', () => {
     })
     await flushPromises()
 
-    expect(clickedHref).toBe('https://cdn.example.com/image-download-url')
+    expect(clickedHref).toBe('http://localhost:3000/api/v1/public/studio-works/image-download-url')
     expect(fetch).not.toHaveBeenCalled()
     expect(downloadGallery).not.toHaveBeenCalled()
   })
@@ -1180,8 +1179,8 @@ describe('ImageStudioView gallery', () => {
     vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
     listGallery.mockResolvedValue([{
       id: 'gallery-signed-download',
-      url: 'https://cdn.example.com/gallery-signed.png',
-      thumb_url: 'https://cdn.example.com/gallery-signed-thumb.jpg',
+      url: '/api/v1/public/studio-works/gallery-signed.png',
+      thumb_url: '/api/v1/public/studio-works/gallery-signed-thumb.jpg',
       prompt: 'a cat',
       model: 'gpt-image-1',
       size: '3840x3840',
@@ -1204,7 +1203,7 @@ describe('ImageStudioView gallery', () => {
 
       expect(downloadURLGallery).toHaveBeenCalledWith('gallery-signed-download')
       expect(fetch).toHaveBeenCalledWith(
-        'https://cdn.example.com/gallery-signed.png',
+        '/api/v1/public/studio-works/gallery-signed.png',
         expect.objectContaining({ credentials: 'omit' }),
       )
       expect(URL.createObjectURL).toHaveBeenCalled()
@@ -1232,8 +1231,8 @@ describe('ImageStudioView gallery', () => {
     } as Response)
     listGallery.mockResolvedValue([{
       id: 'gallery-1',
-      url: 'https://cdn.example.com/gallery-1.png',
-      thumb_url: 'https://cdn.example.com/gallery-1-thumb.jpg',
+      url: '/api/v1/public/studio-works/gallery-1/content',
+      thumb_url: '/api/v1/public/studio-works/gallery-1/thumb',
       prompt: 'a room',
       model: 'gpt-image-1',
       size: '1024x1024',
@@ -1245,7 +1244,7 @@ describe('ImageStudioView gallery', () => {
     const firstWrapper = mountImageStudio()
     await flushPromises()
     await flushPromises()
-    expect(firstWrapper.find('img[src="https://cdn.example.com/gallery-1-thumb.jpg"]').exists()).toBe(true)
+    expect(firstWrapper.find('img[src="/api/v1/public/studio-works/gallery-1/thumb"]').exists()).toBe(true)
     expect(thumbnailGallery).not.toHaveBeenCalledWith('gallery-1')
     firstWrapper.unmount()
 
@@ -1254,7 +1253,7 @@ describe('ImageStudioView gallery', () => {
     fetchMock.mockClear()
     const secondWrapper = mountImageStudio()
 
-    expect(secondWrapper.find('img[src="https://cdn.example.com/gallery-1-thumb.jpg"]').exists()).toBe(true)
+    expect(secondWrapper.find('img[src="/api/v1/public/studio-works/gallery-1/thumb"]').exists()).toBe(true)
     await vi.waitFor(() => {
       expect(secondWrapper.get('[data-testid="api-key-select"]').text()).toContain('dd')
     })
@@ -1301,7 +1300,7 @@ describe('ImageStudioView gallery', () => {
     } as Response)
     listGallery.mockResolvedValue([{
       id: 'gallery-user-101',
-      url: 'https://cdn.example.com/user-101-private.png',
+      url: '/api/v1/public/studio-works/user-101-private.png',
       prompt: 'private prompt',
       model: 'gpt-image-1',
       size: '1024x1024',
@@ -1313,12 +1312,12 @@ describe('ImageStudioView gallery', () => {
     const firstWrapper = mountImageStudio({ userId: 101 })
     await flushPromises()
     await flushPromises()
-    expect(firstWrapper.find('img[src="https://cdn.example.com/user-101-private.png"]').exists()).toBe(true)
+    expect(firstWrapper.find('img[src="/api/v1/public/studio-works/user-101-private.png"]').exists()).toBe(true)
     firstWrapper.unmount()
 
     listGallery.mockReturnValue(new Promise(() => {}))
     const secondWrapper = mountImageStudio({ userId: 102 })
-    expect(secondWrapper.find('img[src="https://cdn.example.com/user-101-private.png"]').exists()).toBe(false)
+    expect(secondWrapper.find('img[src="/api/v1/public/studio-works/user-101-private.png"]').exists()).toBe(false)
   })
 
   it('clears the current gallery immediately when the authenticated user changes', async () => {
@@ -1328,7 +1327,7 @@ describe('ImageStudioView gallery', () => {
     getPublicSettings.mockResolvedValue({ api_base_url: '/v1' })
     listGallery.mockResolvedValueOnce([{
       id: 'gallery-user-101',
-      url: 'https://cdn.example.com/user-101-private.png',
+      url: '/api/v1/public/studio-works/user-101-private.png',
       prompt: 'first user',
       model: 'gpt-image-1',
       size: '1024x1024',
@@ -1339,12 +1338,12 @@ describe('ImageStudioView gallery', () => {
 
     const wrapper = mountImageStudio({ userId: 101 })
     await flushPromises()
-    expect(wrapper.find('img[src="https://cdn.example.com/user-101-private.png"]').exists()).toBe(true)
+    expect(wrapper.find('img[src="/api/v1/public/studio-works/user-101-private.png"]').exists()).toBe(true)
 
     const authStore = useAuthStore()
     authStore.user = null
     await flushPromises()
-    expect(wrapper.find('img[src="https://cdn.example.com/user-101-private.png"]').exists()).toBe(false)
+    expect(wrapper.find('img[src="/api/v1/public/studio-works/user-101-private.png"]').exists()).toBe(false)
 
     let resolveSecondUser: (value: any[]) => void = () => undefined
     listGallery.mockReturnValueOnce(new Promise((resolve) => {
@@ -1357,11 +1356,11 @@ describe('ImageStudioView gallery', () => {
     } as any
     await flushPromises()
 
-    expect(wrapper.find('img[src="https://cdn.example.com/user-101-private.png"]').exists()).toBe(false)
+    expect(wrapper.find('img[src="/api/v1/public/studio-works/user-101-private.png"]').exists()).toBe(false)
 
     resolveSecondUser([{
       id: 'gallery-user-102',
-      url: 'https://cdn.example.com/user-102-private.png',
+      url: '/api/v1/public/studio-works/user-102-private.png',
       prompt: 'second user',
       model: 'gpt-image-1',
       size: '1024x1024',
@@ -1370,7 +1369,7 @@ describe('ImageStudioView gallery', () => {
       expires_at: 9999999999,
     }])
     await flushPromises()
-    expect(wrapper.find('img[src="https://cdn.example.com/user-102-private.png"]').exists()).toBe(true)
+    expect(wrapper.find('img[src="/api/v1/public/studio-works/user-102-private.png"]').exists()).toBe(true)
   })
 
   it('ignores a previous user gallery response that resolves after logout', async () => {
@@ -1402,7 +1401,7 @@ describe('ImageStudioView gallery', () => {
 
     resolveFirstUser([{
       id: 'gallery-stale-user-101',
-      url: 'https://cdn.example.com/stale-user-101.png',
+      url: '/api/v1/public/studio-works/stale-user-101.png',
       prompt: 'stale',
       model: 'gpt-image-1',
       size: '1024x1024',
@@ -1411,11 +1410,11 @@ describe('ImageStudioView gallery', () => {
       expires_at: 9999999999,
     }])
     await flushPromises()
-    expect(wrapper.find('img[src="https://cdn.example.com/stale-user-101.png"]').exists()).toBe(false)
+    expect(wrapper.find('img[src="/api/v1/public/studio-works/stale-user-101.png"]').exists()).toBe(false)
 
     resolveSecondUser([{
       id: 'gallery-user-102',
-      url: 'https://cdn.example.com/user-102-fresh.png',
+      url: '/api/v1/public/studio-works/user-102-fresh.png',
       prompt: 'fresh',
       model: 'gpt-image-1',
       size: '1024x1024',
@@ -1425,7 +1424,7 @@ describe('ImageStudioView gallery', () => {
     }])
     await flushPromises()
     await vi.waitFor(() => {
-      expect(wrapper.find('img[src="https://cdn.example.com/user-102-fresh.png"]').exists()).toBe(true)
+      expect(wrapper.find('img[src="/api/v1/public/studio-works/user-102-fresh.png"]').exists()).toBe(true)
     })
   })
 
@@ -1437,7 +1436,7 @@ describe('ImageStudioView gallery', () => {
     let phase = 1
     const galleryEntry = {
       id: 'gallery-1',
-      url: 'https://cdn.example.com/gallery-1.png',
+      url: '/api/v1/public/studio-works/gallery-1/content',
       prompt: 'a cat',
       model: 'gpt-image-1',
       size: '1024x1024',
@@ -1476,7 +1475,7 @@ describe('ImageStudioView gallery', () => {
     await flushPromises()
     await flushPromises()
 
-    expect(secondWrapper.findAll('img[src="https://cdn.example.com/gallery-1.png"]')).toHaveLength(1)
+    expect(secondWrapper.findAll('img[src="/api/v1/public/studio-works/gallery-1/content"]')).toHaveLength(1)
   })
 
   it('keeps one generated work after remount when the saved and gallery URLs differ', async () => {
@@ -1490,7 +1489,7 @@ describe('ImageStudioView gallery', () => {
     let savedModel = ''
     const galleryEntry = {
       id: 'gallery-1',
-      url: 'https://cdn.example.com/gallery-1.png',
+      url: '/api/v1/public/studio-works/gallery-1.png',
       prompt: 'a cat',
       model: 'gpt-image-1',
       size: '1024x1024',
@@ -1517,7 +1516,7 @@ describe('ImageStudioView gallery', () => {
       savedModel = String(request.model || '')
       return {
         ...galleryEntry,
-        url: 'https://task-storage.example.com/generated-1.png',
+        url: '/api/v1/public/studio-works/generated-1.png',
         prompt: savedPrompt,
         model: savedModel,
         sort_order: savedSortOrder,
@@ -1537,7 +1536,6 @@ describe('ImageStudioView gallery', () => {
       }
       throw new Error(`Unexpected request: ${url}`)
     })
-
     const firstWrapper = mountImageStudio()
     await flushPromises()
     await flushPromises()
@@ -1584,6 +1582,20 @@ describe('ImageStudioView gallery', () => {
       }
       throw new Error(`Unexpected request: ${url}`)
     })
+    sessionStorage.setItem('sub2api:image-studio:snapshot-v1:2', JSON.stringify({
+      keys: [],
+      selectedKeyId: '',
+      imageModels: ['gpt-image-1'],
+      imageModel: 'gpt-image-1',
+      images: [{
+        id: 7,
+        title: 'snapshot image',
+        src: '/api/v1/public/studio-works/snapshot/content',
+        saved: true,
+        createdAt: 1,
+        displayOrder: 1,
+      }],
+    }))
 
     const firstWrapper = mountImageStudio()
     await flushPromises()
@@ -1601,15 +1613,15 @@ describe('ImageStudioView gallery', () => {
 
     const pending = JSON.parse(localStorage.getItem(imageStudioPendingStorageKey()) || '[]')
     expect(pending).toHaveLength(1)
-    expect(Number(pending[0].id)).toBeGreaterThan(1)
+    expect(Number(pending[0].id)).toBeGreaterThan(7)
   })
 
   it('renders gallery images in a uniform grid', async () => {
     listGallery.mockResolvedValue([
       {
         id: 'gallery-1',
-        url: 'https://cdn.example.com/gallery-1.png',
-        thumb_url: 'https://cdn.example.com/gallery-1-thumb.jpg',
+        url: '/api/v1/public/studio-works/gallery-1/content',
+        thumb_url: '/api/v1/public/studio-works/gallery-1/thumb',
         prompt: 'a wide room',
         model: 'gpt-image-1',
         size: '1536x1024',
@@ -1636,7 +1648,7 @@ describe('ImageStudioView gallery', () => {
     await media.trigger('click')
     await flushPromises()
     expect(wrapper.get('.image-detail-dialog__media img').attributes('src')).toBe(
-      'https://cdn.example.com/gallery-1-thumb.jpg',
+      '/api/v1/public/studio-works/gallery-1/thumb',
     )
   })
 
@@ -1644,8 +1656,8 @@ describe('ImageStudioView gallery', () => {
     const linkClick = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined)
     listGallery.mockResolvedValue([{
       id: 'gallery-thumbnail',
-      url: 'https://cdn.example.com/gallery-original.png',
-      thumb_url: 'https://cdn.example.com/gallery-thumbnail.jpg',
+      url: '/api/v1/public/studio-works/gallery-original.png',
+      thumb_url: '/api/v1/public/studio-works/gallery-thumbnail.jpg',
       prompt: 'a cat',
       model: 'gpt-image-1',
       size: '3840x3840',
@@ -1677,7 +1689,7 @@ describe('ImageStudioView gallery', () => {
     listGallery.mockResolvedValue(
       Array.from({ length: 4 }, (_, index) => ({
         id: `gallery-${index + 1}`,
-        url: `https://cdn.example.com/gallery-${index + 1}.png`,
+        url: `/api/v1/public/studio-works/gallery-${index + 1}.png`,
         prompt: `image ${index + 1}`,
         model: 'gpt-image-1',
         size: '1024x1024',
@@ -1704,7 +1716,7 @@ describe('ImageStudioView gallery', () => {
     const entries = [
       {
         id: 'newest',
-        url: 'https://cdn.example.com/newest.png',
+        url: '/api/v1/public/studio-works/newest.png',
         prompt: 'newest',
         model: 'gpt-image-1',
         size: '1024x1024',
@@ -1716,7 +1728,7 @@ describe('ImageStudioView gallery', () => {
       },
       {
         id: 'saved-middle',
-        url: 'https://cdn.example.com/saved-middle.png',
+        url: '/api/v1/public/studio-works/saved-middle.png',
         prompt: 'saved middle',
         model: 'gpt-image-1',
         size: '1024x1024',
@@ -1728,7 +1740,7 @@ describe('ImageStudioView gallery', () => {
       },
       {
         id: 'oldest',
-        url: 'https://cdn.example.com/oldest.png',
+        url: '/api/v1/public/studio-works/oldest.png',
         prompt: 'oldest',
         model: 'gpt-image-1',
         size: '1024x1024',
@@ -1750,9 +1762,9 @@ describe('ImageStudioView gallery', () => {
       .map((image) => image.attributes('src'))
     const before = imageSources()
     expect(before).toEqual([
-      'https://cdn.example.com/newest.png',
-      'https://cdn.example.com/saved-middle.png',
-      'https://cdn.example.com/oldest.png',
+      '/api/v1/public/studio-works/newest.png',
+      '/api/v1/public/studio-works/saved-middle.png',
+      '/api/v1/public/studio-works/oldest.png',
     ])
 
     listGallery.mockResolvedValue([
@@ -1776,7 +1788,7 @@ describe('ImageStudioView gallery', () => {
         {
           id: 'saved-old',
           title: 'saved old',
-          src: 'https://cdn.example.com/saved-old.png',
+          src: '/api/v1/public/studio-works/saved-old/content',
           saved: true,
           createdAt: 1,
           displayOrder: 1_700_000_000_000,
@@ -1784,7 +1796,7 @@ describe('ImageStudioView gallery', () => {
         {
           id: 'newest',
           title: 'newest',
-          src: 'https://cdn.example.com/newest.png',
+          src: '/api/v1/public/studio-works/newest/content',
           saved: false,
           createdAt: 3,
           displayOrder: 1_900_000_000_000_000,
@@ -1802,8 +1814,8 @@ describe('ImageStudioView gallery', () => {
         .findAll('article img')
         .map((image) => image.attributes('src')),
     ).toEqual([
-      'https://cdn.example.com/newest.png',
-      'https://cdn.example.com/saved-old.png',
+      '/api/v1/public/studio-works/newest/content',
+      '/api/v1/public/studio-works/saved-old/content',
     ])
   })
 
@@ -1811,7 +1823,7 @@ describe('ImageStudioView gallery', () => {
     listGallery.mockResolvedValue([
       {
         id: 'gallery-1',
-        url: 'https://cdn.example.com/gallery-1.png',
+        url: '/api/v1/public/studio-works/gallery-1.png',
         prompt: 'a cat',
         model: 'gpt-image-1',
         size: '1024x1024',
@@ -1840,7 +1852,7 @@ describe('ImageStudioView gallery', () => {
     listGallery.mockResolvedValue([
       {
         id: 'gallery-temp',
-        url: 'https://cdn.example.com/gallery-temp.png',
+        url: '/api/v1/public/studio-works/gallery-temp.png',
         prompt: 'a cat',
         model: 'gpt-image-1',
         size: '1024x1024',
@@ -1855,7 +1867,7 @@ describe('ImageStudioView gallery', () => {
     await flushPromises()
 
     const imageButton = wrapper.findAll('button').find((button) =>
-      button.find('img[src="https://cdn.example.com/gallery-temp.png"]').exists(),
+      button.find('img[src="/api/v1/public/studio-works/gallery-temp.png"]').exists(),
     )
     await imageButton!.trigger('click')
 
@@ -1872,7 +1884,7 @@ describe('ImageStudioView gallery', () => {
   it('shows the save action again after a saved gallery image is unpinned', async () => {
     const galleryEntry = {
       id: 'gallery-repin',
-      url: 'https://cdn.example.com/gallery-repin.png',
+      url: '/api/v1/public/studio-works/gallery-repin.png',
       prompt: 'a dog',
       model: 'gemini-3.1-flash-image-preview',
       size: '3840x3840',
@@ -1887,7 +1899,7 @@ describe('ImageStudioView gallery', () => {
     await flushPromises()
 
     const imageButton = wrapper.findAll('button').find((button) =>
-      button.find('img[src="https://cdn.example.com/gallery-repin.png"]').exists(),
+      button.find('img[src="/api/v1/public/studio-works/gallery-repin.png"]').exists(),
     )
     await imageButton!.trigger('click')
     expect(wrapper.get('[data-testid="preview-saved-state"]').text()).toContain('已保存到我的作品')
@@ -1913,7 +1925,7 @@ describe('ImageStudioView gallery', () => {
     listGallery.mockResolvedValue([
       {
         id: 'gallery-1',
-        url: 'https://cdn.example.com/gallery-1.png',
+        url: '/api/v1/public/studio-works/gallery-1.png',
         prompt: 'a cat wearing a spacesuit',
         model: 'gpt-image-1',
         size: '1024x1024',
@@ -1928,7 +1940,7 @@ describe('ImageStudioView gallery', () => {
     await flushPromises()
 
     const imageButton = wrapper.findAll('button').find((button) =>
-      button.find('img[src="https://cdn.example.com/gallery-1.png"]').exists(),
+      button.find('img[src="/api/v1/public/studio-works/gallery-1.png"]').exists(),
     )
     expect(imageButton).toBeDefined()
     await imageButton!.trigger('click')
@@ -1949,7 +1961,7 @@ describe('ImageStudioView gallery', () => {
     listGallery.mockResolvedValue([
       {
         id: 'gallery-1',
-        url: 'https://cdn.example.com/gallery-1.png',
+        url: '/api/v1/public/studio-works/gallery-1.png',
         prompt: 'a cat',
         model: 'gpt-image-1',
         size: '1024x1024',
@@ -1963,7 +1975,7 @@ describe('ImageStudioView gallery', () => {
     await flushPromises()
 
     const imageButton = wrapper.findAll('button').find((button) =>
-      button.find('img[src="https://cdn.example.com/gallery-1.png"]').exists(),
+      button.find('img[src="/api/v1/public/studio-works/gallery-1.png"]').exists(),
     )
     await imageButton!.trigger('click')
     expect((wrapper.get('[data-testid="edit-image-prompt"]').element as HTMLTextAreaElement).value)
@@ -2817,7 +2829,7 @@ describe('ImageStudioView gallery', () => {
             status: 'completed',
             result: {
               data: [{
-                url: 'https://cdn.example.com/full-size.png',
+                url: '/api/v1/public/studio-works/full-size.png',
                 preview_data_url: 'data:image/jpeg;base64,cHJldmlldw==',
               }],
             },
@@ -2887,7 +2899,7 @@ describe('ImageStudioView gallery', () => {
             status: 'completed',
             result: {
               data: [{
-                url: 'https://cdn.example.com/display-first.png',
+                url: '/api/v1/public/studio-works/display-first.png',
                 preview_data_url: 'data:image/jpeg;base64,cHJldmlldw==',
               }],
             },
@@ -2968,7 +2980,7 @@ describe('ImageStudioView gallery', () => {
             status: 'completed',
             result: {
               data: [{
-                url: `https://cdn.example.com/parallel-${task}.png`,
+                url: `/api/v1/public/studio-works/parallel-${task}.png`,
                 preview_data_url: `data:image/jpeg;base64,cHJldmlldy0${task}=`,
               }],
             },
@@ -3217,8 +3229,11 @@ describe('ImageStudioView gallery', () => {
     }, { timeout: 4000, interval: 50 })
     await wrapper.get('img[alt="生成结果 1"]').trigger('load')
     expect(reportDisplay).toHaveBeenCalledTimes(1)
+    await wrapper.get('.image-result-card__media').trigger('click')
+    expect(wrapper.get('[data-testid="image-generation-duration"]').text()).toBe('59 秒')
     expect(saveGalleryFromTask).toHaveBeenCalledWith(expect.objectContaining({
       task_id: 'imgtask_preview_ready',
+      duration_ms: 59_000,
     }))
   })
 
@@ -3493,14 +3508,14 @@ describe('ImageStudioView gallery', () => {
             status: 'completed',
             result: {
               data: [{
-                url: 'https://cdn.example.com/generated.png',
+                url: '/api/v1/public/studio-works/generated.png',
                 mime_type: 'image/png',
               }],
             },
           }),
         } as Response
       }
-      if (url === 'https://cdn.example.com/generated.png') {
+      if (url === '/api/v1/public/studio-works/generated.png') {
         return {
           ok: true,
           blob: async () => new Blob([new Uint8Array([1, 2, 3])], { type: 'image/png' }),
@@ -3515,7 +3530,7 @@ describe('ImageStudioView gallery', () => {
     await wrapper.get('form').trigger('submit')
     await flushPromises()
 
-    expect(fetchMock).not.toHaveBeenCalledWith('https://cdn.example.com/generated.png')
+    expect(fetchMock).not.toHaveBeenCalledWith('/api/v1/public/studio-works/generated.png')
   })
 
   it('keeps already submitted async tasks when a later submission loses the network', async () => {
@@ -3702,7 +3717,7 @@ describe('ImageStudioView gallery', () => {
     listGallery.mockResolvedValue([
       {
         id: 'gallery-1',
-        url: 'https://cdn.example.com/gallery-1.png',
+        url: '/api/v1/public/studio-works/gallery-1.png',
         prompt: 'a cat',
         model: 'gpt-image-1',
         size: '1024x1024',
@@ -3752,7 +3767,7 @@ describe('ImageStudioView gallery', () => {
       getPublicSettings.mockResolvedValue({ api_base_url: '/v1' })
       const galleryEntry = {
         id: 'gallery-1',
-        url: 'https://cdn.example.com/gallery-1.png',
+        url: '/api/v1/public/studio-works/gallery-1.png',
         thumb_url: '',
         prompt: 'a cat',
         model: 'gpt-image-1',
@@ -3807,7 +3822,7 @@ describe('ImageStudioView gallery', () => {
     getPublicSettings.mockResolvedValue({ api_base_url: '/v1' })
     const savedEntry = {
       id: 'gallery-1',
-      url: 'https://cdn.example.com/gallery-1.png',
+      url: '/api/v1/public/studio-works/gallery-1.png',
       thumb_url: '',
       prompt: 'a cat',
       model: 'gpt-image-1',
@@ -3819,7 +3834,7 @@ describe('ImageStudioView gallery', () => {
     }
     const refreshedEntry = {
       ...savedEntry,
-      thumb_url: 'https://cdn.example.com/gallery-1-thumb.jpg',
+      thumb_url: '/api/v1/public/studio-works/gallery-1/thumb',
     }
     listGallery.mockResolvedValueOnce([]).mockResolvedValue([refreshedEntry])
     saveGallery.mockResolvedValue(savedEntry)
@@ -3845,7 +3860,7 @@ describe('ImageStudioView gallery', () => {
     await flushPromises()
     await flushPromises()
 
-    expect(wrapper.get('img[alt="生成结果 1"]').attributes('src')).toBe('https://cdn.example.com/gallery-1-thumb.jpg')
+    expect(wrapper.get('img[alt="生成结果 1"]').attributes('src')).toBe('/api/v1/public/studio-works/gallery-1/thumb')
     expect(thumbnailGallery).not.toHaveBeenCalledWith('gallery-1')
   })
 
@@ -3856,8 +3871,8 @@ describe('ImageStudioView gallery', () => {
     getPublicSettings.mockResolvedValue({ api_base_url: '/v1' })
     const savedEntry = {
       id: 'gallery-inline-preview',
-      url: 'https://cdn.example.com/gallery-inline.png',
-      thumb_url: 'https://cdn.example.com/gallery-inline-thumb.jpg',
+      url: '/api/v1/public/studio-works/gallery-inline.png',
+      thumb_url: '/api/v1/public/studio-works/gallery-inline-thumb.jpg',
       prompt: 'a cat',
       model: 'gpt-image-1',
       size: '1024x1024',
@@ -3906,7 +3921,7 @@ describe('ImageStudioView gallery', () => {
   it('shows image loading and failure states instead of a blank card', async () => {
     listGallery.mockResolvedValue([{
       id: 'gallery-broken',
-      url: 'https://cdn.example.com/broken.png',
+      url: '/api/v1/public/studio-works/broken.png',
       prompt: 'a cat',
       model: 'gpt-image-1',
       size: '1024x1024',
@@ -3926,8 +3941,8 @@ describe('ImageStudioView gallery', () => {
   it('removes loading overlays after the card and preview image load', async () => {
     listGallery.mockResolvedValue([{
       id: 'gallery-loading',
-      url: 'https://cdn.example.com/loading.png',
-      thumb_url: 'https://cdn.example.com/loading-thumb.jpg',
+      url: '/api/v1/public/studio-works/loading.png',
+      thumb_url: '/api/v1/public/studio-works/loading-thumb.jpg',
       prompt: 'a cat',
       model: 'gpt-image-1',
       size: '1024x1024',
@@ -3944,7 +3959,7 @@ describe('ImageStudioView gallery', () => {
     await card.trigger('click')
     expect(wrapper.find('[data-testid="preview-image-loading"]').exists()).toBe(true)
     const preview = wrapper.get('.image-detail-dialog__media img')
-    expect(preview.attributes('src')).toBe('https://cdn.example.com/loading-thumb.jpg')
+    expect(preview.attributes('src')).toBe('/api/v1/public/studio-works/loading-thumb.jpg')
     expect(preview.classes()).not.toContain('opacity-0')
     expect(wrapper.get('[data-testid="preview-image-loading"]').text()).toContain('已显示预览')
 
@@ -3958,8 +3973,8 @@ describe('ImageStudioView gallery', () => {
     thumbnailGallery.mockRejectedValueOnce(new Error('thumbnail unavailable'))
     listGallery.mockResolvedValue([{
       id: 'gallery-fallback',
-      url: 'https://cdn.example.com/original.png',
-      thumb_url: 'https://cdn.example.com/broken-thumb.jpg',
+      url: '/api/v1/public/studio-works/gallery-fallback/content',
+      thumb_url: '/api/v1/public/studio-works/gallery-fallback/broken-thumb',
       prompt: 'a cat',
       model: 'gpt-image-1',
       size: '1024x1024',
@@ -3974,15 +3989,15 @@ describe('ImageStudioView gallery', () => {
     await wrapper.get('img[alt="历史图片 1"]').trigger('error')
     await flushPromises()
 
-    expect(wrapper.get('img[alt="历史图片 1"]').attributes('src')).toBe('https://cdn.example.com/original.png')
+    expect(wrapper.get('img[alt="历史图片 1"]').attributes('src')).toBe('/api/v1/public/studio-works/gallery-fallback/content')
     expect(wrapper.find('[data-testid="image-media-error"]').exists()).toBe(false)
   })
 
   it('recovers a failed remote thumbnail through the backend thumbnail endpoint', async () => {
     listGallery.mockResolvedValue([{
       id: 'gallery-recover',
-      url: 'https://cdn.example.com/original.png',
-      thumb_url: 'https://cdn.example.com/temporarily-missing-thumb.jpg',
+      url: '/api/v1/public/studio-works/gallery-recover/content',
+      thumb_url: '/api/v1/public/studio-works/gallery-recover/temporarily-missing-thumb',
       prompt: 'a cat',
       model: 'gpt-image-1',
       size: '1024x1024',
@@ -3995,7 +4010,7 @@ describe('ImageStudioView gallery', () => {
     await flushPromises()
 
     expect(wrapper.get('img[alt="历史图片 1"]').attributes('src'))
-      .toBe('https://cdn.example.com/temporarily-missing-thumb.jpg')
+      .toBe('/api/v1/public/studio-works/gallery-recover/temporarily-missing-thumb')
 
     await wrapper.get('img[alt="历史图片 1"]').trigger('error')
     await flushPromises()
@@ -4012,8 +4027,8 @@ describe('ImageStudioView gallery', () => {
     try {
       listGallery.mockResolvedValue([{
         id: 'gallery-stalled',
-        url: 'https://cdn.example.com/original.png',
-        thumb_url: 'https://cdn.example.com/stalled-thumb.jpg',
+        url: '/api/v1/public/studio-works/original.png',
+        thumb_url: '/api/v1/public/studio-works/stalled-thumb.jpg',
         prompt: 'a cat',
         model: 'gpt-image-1',
         size: '1024x1024',
@@ -4043,8 +4058,8 @@ describe('ImageStudioView gallery', () => {
     thumbnailGallery.mockRejectedValueOnce(new Error('thumbnail unavailable'))
     listGallery.mockResolvedValue([{
       id: 'gallery-slow',
-      url: 'https://cdn.example.com/slow-original.png',
-      thumb_url: 'https://cdn.example.com/slow-thumb.jpg',
+      url: '/api/v1/public/studio-works/gallery-slow/content',
+      thumb_url: '/api/v1/public/studio-works/gallery-slow/thumb',
       prompt: 'a cat',
       model: 'gpt-image-1',
       size: '1024x1024',
@@ -4060,7 +4075,7 @@ describe('ImageStudioView gallery', () => {
       await vi.advanceTimersByTimeAsync(10_000)
       await flushPromises()
       expect(wrapper.get('img[alt="历史图片 1"]').attributes('src')).toBe(
-        'https://cdn.example.com/slow-original.png',
+        '/api/v1/public/studio-works/gallery-slow/content',
       )
 
       await vi.advanceTimersByTimeAsync(10_000)
@@ -4289,7 +4304,7 @@ describe('ImageStudioView gallery', () => {
             status: 'completed',
             result: {
               data: [{
-                url: 'https://cdn.example.com/original.png',
+                url: '/api/v1/public/studio-works/original.png',
                 preview_data_url: 'data:image/png;base64,b3JpZ2luYWw=',
               }],
             },
@@ -4426,10 +4441,10 @@ describe('ImageStudioView gallery', () => {
     await wrapper.get('form').trigger('submit')
     await flushPromises()
     await vi.waitFor(() => {
-      expect(wrapper.get('img[alt="生成结果 1"]').attributes('src')).toBe('https://cdn.example.com/gallery-1.png')
+      expect(wrapper.get('img[alt="生成结果 1"]').attributes('src')).toBe('/api/v1/public/studio-works/gallery-1.png')
     })
 
-    expect(wrapper.get('img[alt="生成结果 1"]').attributes('src')).toBe('https://cdn.example.com/gallery-1.png')
+    expect(wrapper.get('img[alt="生成结果 1"]').attributes('src')).toBe('/api/v1/public/studio-works/gallery-1.png')
     expect(wrapper.html()).not.toContain('upstream.example.com')
   })
 
@@ -4466,7 +4481,7 @@ describe('ImageStudioView gallery', () => {
       }))
     })
     await vi.waitFor(() => {
-      expect(wrapper.get('img[alt="生成结果 1"]').attributes('src')).toBe('https://cdn.example.com/gallery-1.png')
+      expect(wrapper.get('img[alt="生成结果 1"]').attributes('src')).toBe('/api/v1/public/studio-works/gallery-1.png')
     })
   })
 
@@ -4597,7 +4612,7 @@ describe('ImageStudioView gallery', () => {
     let savedIndex = 0
     saveGallery.mockImplementation(async () => ({
       id: `gallery-slot-${++savedIndex}`,
-      url: `https://cdn.example.com/gallery-slot-${savedIndex}.png`,
+      url: `/api/v1/public/studio-works/gallery-slot-${savedIndex}.png`,
       prompt: '',
       model: 'gpt-image-1',
       size: '1024x1024',

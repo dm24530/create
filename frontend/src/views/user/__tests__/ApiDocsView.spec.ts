@@ -63,6 +63,11 @@ describe('ApiDocsView', () => {
     expect(wrapper.text()).not.toContain('/responses')
     expect(wrapper.text()).not.toContain('/messages')
     expect(wrapper.text()).not.toContain('/embeddings')
+    expect(wrapper.text()).toContain('响应同时包含 URL 和 inlineData 时优先 URL')
+    expect(wrapper.text()).toContain('response_format=url 不保证让 Google 强制返回 URL')
+    expect(wrapper.text()).toContain('Idempotency-Key')
+    expect(wrapper.text()).toContain('/images/tasks/:task_id/content')
+    expect(wrapper.text()).toContain('/v1beta/models/{model}:generateContent')
     expect(wrapper.findAll('[data-testid="doc-code"]').length).toBeGreaterThan(8)
   })
 

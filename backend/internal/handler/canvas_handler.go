@@ -12,6 +12,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -39,6 +40,7 @@ const (
 	canvasAssetBytesQuota   = int64(2 << 30)
 	canvasUploadIntentLimit = 32
 	canvasUploadIntentTTL   = 20 * time.Minute
+	canvasPublicAssetPrefix = "/api/v1/public/canvas-assets/"
 )
 
 var canvasIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
@@ -57,6 +59,7 @@ type CanvasAssetStorage interface {
 	ReadImageObjectPrefix(ctx context.Context, objectKey string, length int64) ([]byte, error)
 	CopyImageObject(ctx context.Context, sourceKey, targetKey, contentType string) error
 	FetchImageURL(ctx context.Context, rawURL string) ([]byte, string, error)
+	OpenMediaURL(ctx context.Context, rawURL string) (io.ReadCloser, string, error)
 }
 
 type canvasQueryRower interface {
@@ -184,9 +187,7 @@ func (h *CanvasHandler) ProxyImage(c *gin.Context) {
 		response.BadRequest(c, "缺少图片地址")
 		return
 	}
-	if !strings.HasPrefix(rawURL, "http://") &&
-		!strings.HasPrefix(rawURL, "https://") &&
-		!strings.HasPrefix(rawURL, service.LocalImageAssetURLPrefix) {
+	if !strings.HasPrefix(rawURL, service.LocalImageAssetURLPrefix) {
 		response.BadRequest(c, "不支持的图片地址")
 		return
 	}
@@ -205,6 +206,63 @@ func (h *CanvasHandler) ProxyImage(c *gin.Context) {
 	}
 	c.Header("Cache-Control", "private, max-age=300")
 	c.Data(http.StatusOK, contentType, data)
+}
+
+// PublicAssetContent serves a canvas asset through an opaque asset ID. The
+// object-storage address is resolved and fetched server-side only.
+func (h *CanvasHandler) PublicAssetContent(c *gin.Context) {
+	assetID := strings.TrimSpace(c.Param("asset_id"))
+	if !canvasIDPattern.MatchString(assetID) {
+		response.NotFound(c, "画布资产不存在")
+		return
+	}
+	variant := strings.ToLower(strings.TrimSpace(c.Param("variant")))
+	if variant != "content" && variant != "thumb" {
+		response.NotFound(c, "画布资产不存在")
+		return
+	}
+	var objectKey, thumbKey, mimeType string
+	err := h.db.QueryRowContext(c.Request.Context(), `
+		SELECT object_key, thumb_object_key, mime_type
+		FROM canvas_assets
+		WHERE id = $1
+	`, assetID).Scan(&objectKey, &thumbKey, &mimeType)
+	if errors.Is(err, sql.ErrNoRows) {
+		response.NotFound(c, "画布资产不存在")
+		return
+	}
+	if err != nil {
+		response.InternalError(c, "读取画布资产失败")
+		return
+	}
+	if variant == "thumb" {
+		objectKey = thumbKey
+		mimeType = "image/jpeg"
+	}
+	if strings.TrimSpace(objectKey) == "" {
+		response.NotFound(c, "画布资产不存在")
+		return
+	}
+	target, err := h.storage.PresignImageObject(c.Request.Context(), objectKey)
+	if err != nil || strings.TrimSpace(target) == "" {
+		response.Error(c, http.StatusBadGateway, "画布资产暂时不可用")
+		return
+	}
+	stream, contentType, err := h.storage.OpenMediaURL(c.Request.Context(), target)
+	if err != nil {
+		response.Error(c, http.StatusBadGateway, "画布资产暂时不可用")
+		return
+	}
+	defer func() { _ = stream.Close() }()
+	if strings.TrimSpace(contentType) == "" {
+		contentType = mimeType
+	}
+	c.Header("Cache-Control", "private, max-age=3600")
+	c.Header("Content-Type", contentType)
+	c.Header("Content-Disposition", "inline")
+	c.Header("X-Content-Type-Options", "nosniff")
+	c.Status(http.StatusOK)
+	_, _ = io.Copy(c.Writer, stream)
 }
 
 func (h *CanvasHandler) ListProjects(c *gin.Context) {
@@ -282,6 +340,7 @@ func (h *CanvasHandler) ListProjectsFull(c *gin.Context) {
 			response.InternalError(c, "读取画布项目失败")
 			return
 		}
+		item.Graph = sanitizeCanvasGraphURLs(item.Graph)
 		items = append(items, item)
 		byID[item.ID] = item
 	}
@@ -324,13 +383,9 @@ func (h *CanvasHandler) ListProjectsFull(c *gin.Context) {
 		if project == nil {
 			continue
 		}
-		if resolved, resolveErr := h.storage.PresignImageObject(c.Request.Context(), objectKey); resolveErr == nil {
-			item.URL = resolved
-		}
+		item.URL = canvasPublicAssetURL(item.ID, "content")
 		if thumbKey != "" {
-			if resolved, resolveErr := h.storage.PresignImageObject(c.Request.Context(), thumbKey); resolveErr == nil {
-				item.ThumbURL = resolved
-			}
+			item.ThumbURL = canvasPublicAssetURL(item.ID, "thumb")
 		}
 		project.Assets = append(project.Assets, item)
 	}
@@ -400,6 +455,7 @@ func (h *CanvasHandler) PutProject(c *gin.Context) {
 		response.BadRequest(c, "画布节点数据无效或过大")
 		return
 	}
+	request.Graph = sanitizeCanvasGraphURLs(request.Graph)
 	title := strings.TrimSpace(request.Title)
 	title = truncateCanvasTitle(title, 200)
 	ctx := c.Request.Context()
@@ -1068,6 +1124,10 @@ func (h *CanvasHandler) UploadAsset(c *gin.Context) {
 			response.BadRequest(c, "缺少画布资产文件")
 			return
 		}
+		if !strings.HasPrefix(sourceURL, service.LocalImageAssetURLPrefix) {
+			response.BadRequest(c, "画布资产来源必须是本站媒体地址")
+			return
+		}
 		data, contentType, err = h.storage.FetchImageURL(c.Request.Context(), sourceURL)
 		if err != nil || len(data) == 0 || len(data) > maxCanvasAssetBytes {
 			response.BadRequest(c, "拉取画布资产失败或文件过大")
@@ -1101,12 +1161,11 @@ func (h *CanvasHandler) UploadAsset(c *gin.Context) {
 		return
 	}
 	objectKey := canvasAssetObjectKey(storageKey, projectID, assetID, extension)
-	url, storedKey, err := h.storage.SaveImageWithFullKey(c.Request.Context(), objectKey, contentType, data)
+	_, storedKey, err := h.storage.SaveImageWithFullKey(c.Request.Context(), objectKey, contentType, data)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
-	thumbURL := ""
 	storedThumbKey := ""
 	if thumbFile, thumbHeader, thumbErr := c.Request.FormFile("thumbnail"); thumbErr == nil {
 		thumbData, readErr := io.ReadAll(io.LimitReader(thumbFile, maxCanvasThumbBytes+1))
@@ -1122,7 +1181,7 @@ func (h *CanvasHandler) UploadAsset(c *gin.Context) {
 			}
 			thumbExtension := canvasFileExtension("", thumbType)
 			thumbKey := canvasAssetThumbKey(storageKey, projectID, assetID, thumbExtension)
-			thumbURL, storedThumbKey, _ = h.storage.SaveImageWithFullKey(c.Request.Context(), thumbKey, thumbType, thumbData)
+			_, storedThumbKey, _ = h.storage.SaveImageWithFullKey(c.Request.Context(), thumbKey, thumbType, thumbData)
 		}
 	}
 	tx, err := h.db.BeginTx(c.Request.Context(), nil)
@@ -1180,8 +1239,8 @@ func (h *CanvasHandler) UploadAsset(c *gin.Context) {
 		ProjectID: projectID,
 		NodeID:    nodeID,
 		Kind:      kind,
-		URL:       url,
-		ThumbURL:  thumbURL,
+		URL:       canvasPublicAssetURL(assetID, "content"),
+		ThumbURL:  canvasPublicAssetThumbURL(assetID, storedThumbKey),
 		Width:     parseCanvasInt(c.PostForm("width")),
 		Height:    parseCanvasInt(c.PostForm("height")),
 		Bytes:     int64(len(data)),
@@ -1265,13 +1324,61 @@ func (h *CanvasHandler) populateCanvasAssetURLs(ctx context.Context, asset *Canv
 	if asset == nil {
 		return
 	}
-	if resolved, err := h.storage.PresignImageObject(ctx, asset.objectKey); err == nil {
-		asset.URL = resolved
+	asset.URL = canvasPublicAssetURL(asset.ID, "content")
+	asset.ThumbURL = canvasPublicAssetThumbURL(asset.ID, asset.thumbKey)
+}
+
+func canvasPublicAssetURL(assetID, variant string) string {
+	return canvasPublicAssetPrefix + url.PathEscape(strings.TrimSpace(assetID)) + "/" + variant
+}
+
+func canvasPublicAssetThumbURL(assetID, thumbKey string) string {
+	if strings.TrimSpace(thumbKey) == "" {
+		return ""
 	}
-	if asset.thumbKey != "" {
-		if resolved, err := h.storage.PresignImageObject(ctx, asset.thumbKey); err == nil {
-			asset.ThumbURL = resolved
+	return canvasPublicAssetURL(assetID, "thumb")
+}
+
+func sanitizeCanvasGraphURLs(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 || !json.Valid(raw) {
+		return raw
+	}
+	var value any
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if decoder.Decode(&value) != nil {
+		return raw
+	}
+	sanitized, err := json.Marshal(sanitizeCanvasGraphValue(value))
+	if err != nil {
+		return raw
+	}
+	return sanitized
+}
+
+func sanitizeCanvasGraphValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, child := range typed {
+			typed[key] = sanitizeCanvasGraphValue(child)
 		}
+		return typed
+	case []any:
+		for index := range typed {
+			typed[index] = sanitizeCanvasGraphValue(typed[index])
+		}
+		return typed
+	case string:
+		trimmed := strings.TrimSpace(typed)
+		lower := strings.ToLower(trimmed)
+		if strings.HasPrefix(lower, "http://") ||
+			strings.HasPrefix(lower, "https://") ||
+			strings.HasPrefix(lower, "blob:") {
+			return ""
+		}
+		return typed
+	default:
+		return value
 	}
 }
 
@@ -1338,13 +1445,9 @@ func (h *CanvasHandler) listProjectAssets(ctx context.Context, userID int64, pro
 		}
 		item.objectKey = objectKey
 		item.thumbKey = thumbKey
-		if resolved, resolveErr := h.storage.PresignImageObject(ctx, objectKey); resolveErr == nil {
-			item.URL = resolved
-		}
+		item.URL = canvasPublicAssetURL(item.ID, "content")
 		if thumbKey != "" {
-			if resolved, resolveErr := h.storage.PresignImageObject(ctx, thumbKey); resolveErr == nil {
-				item.ThumbURL = resolved
-			}
+			item.ThumbURL = canvasPublicAssetURL(item.ID, "thumb")
 		}
 		items = append(items, item)
 	}
@@ -1638,13 +1741,9 @@ func findCanvasAssetByHashIn(
 	if err != nil {
 		return nil
 	}
-	if resolved, resolveErr := storage.PresignImageObject(ctx, objectKey); resolveErr == nil {
-		item.URL = resolved
-	}
+	item.URL = canvasPublicAssetURL(item.ID, "content")
 	if thumbKey != "" {
-		if resolved, resolveErr := storage.PresignImageObject(ctx, thumbKey); resolveErr == nil {
-			item.ThumbURL = resolved
-		}
+		item.ThumbURL = canvasPublicAssetURL(item.ID, "thumb")
 	}
 	return &item
 }

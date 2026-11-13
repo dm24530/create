@@ -40,6 +40,18 @@ export const userCustomFeatureRoutesAfterKeys: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/canvas/:id',
+    name: 'CanvasProject',
+    component: () => import('@/features/infinite-canvas/CanvasRoutePlaceholder.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      title: 'Infinite Canvas',
+      titleKey: 'nav.canvas',
+      immersive: true,
+    }
+  },
+  {
     path: '/video-studio',
     name: 'VideoStudio',
     component: () => import('@/features/video-studio/VideoStudioView.vue'),
@@ -137,7 +149,7 @@ export const userCustomFeatureRoutesAfterAvailableChannels: RouteRecordRaw[] = [
     name: 'ApiDocs',
     component: () => import('@/views/user/ApiDocsView.vue'),
     meta: {
-      requiresAuth: true,
+      requiresAuth: false,
       requiresAdmin: false,
       title: 'API Docs',
       titleKey: 'nav.apiDocs'

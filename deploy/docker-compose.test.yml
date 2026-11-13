@@ -1,0 +1,80 @@
+name: create-test
+
+services:
+  create:
+    image: ${CREATE_TEST_IMAGE:-create-local-src-create:latest}
+    container_name: create-test
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      - "127.0.0.1:${CREATE_TEST_PORT:-9896}:8080"
+    env_file:
+      - ./create-test.env
+    volumes:
+      - ./test-data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - create-test-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -T 5 -O /dev/null http://localhost:8080/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  postgres:
+    image: postgres:18-alpine
+    container_name: create-test-postgres
+    restart: unless-stopped
+    command:
+      - postgres
+      - -c
+      - max_connections=500
+      - -c
+      - shared_buffers=512MB
+      - -c
+      - effective_cache_size=4GB
+      - -c
+      - maintenance_work_mem=128MB
+    env_file:
+      - ./create-test.env
+    volumes:
+      - ./test-postgres-data-v2:/var/lib/postgresql
+    networks:
+      - create-test-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  redis:
+    image: redis:8-alpine
+    container_name: create-test-redis
+    restart: unless-stopped
+    volumes:
+      - ./test-redis-data:/data
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+    networks:
+      - create-test-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+networks:
+  create-test-network:
+    driver: bridge

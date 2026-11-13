@@ -11,6 +11,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+const publicVideoWorkPrefix = "/api/v1/public/video-works/"
+
 type VideoStudioGalleryHandler struct {
 	gallery *service.VideoStudioGalleryService
 }
@@ -247,6 +249,7 @@ func (h *VideoStudioGalleryHandler) Save(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
+	publicizeVideoWorkURLs(entry)
 	response.Success(c, entry)
 }
 
@@ -262,7 +265,53 @@ func (h *VideoStudioGalleryHandler) List(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
+	for _, entry := range entries {
+		publicizeVideoWorkURLs(entry)
+	}
 	response.Success(c, entries)
+}
+
+func publicizeVideoWorkURLs(entry *service.VideoStudioGalleryEntry) {
+	if entry == nil || strings.TrimSpace(entry.ID) == "" {
+		return
+	}
+	entry.URL = publicVideoWorkPrefix + entry.ID + "/content"
+}
+
+func (h *VideoStudioGalleryHandler) PublicContent(c *gin.Context) {
+	stream, contentType, err := h.gallery.OpenPublicVideo(
+		c.Request.Context(),
+		strings.TrimSpace(c.Param("id")),
+	)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	defer func() { _ = stream.Close() }()
+	c.Header("Cache-Control", "private, max-age=3600")
+	c.Header("Content-Type", contentType)
+	c.Header("Content-Disposition", "inline")
+	c.Header("X-Content-Type-Options", "nosniff")
+	c.Status(http.StatusOK)
+	_, _ = io.Copy(c.Writer, stream)
+}
+
+func (h *VideoStudioGalleryHandler) PublicReferenceContent(c *gin.Context) {
+	stream, contentType, err := h.gallery.OpenPublicReference(
+		c.Request.Context(),
+		strings.TrimSpace(c.Param("token")),
+	)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	defer func() { _ = stream.Close() }()
+	c.Header("Cache-Control", "private, max-age=3600")
+	c.Header("Content-Type", contentType)
+	c.Header("Content-Disposition", "inline")
+	c.Header("X-Content-Type-Options", "nosniff")
+	c.Status(http.StatusOK)
+	_, _ = io.Copy(c.Writer, stream)
 }
 
 // Pin 把一条临时视频存进「我的作品」（长期有效、计入配额）。

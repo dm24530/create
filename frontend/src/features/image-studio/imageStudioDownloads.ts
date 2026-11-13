@@ -1,7 +1,7 @@
 import type { Ref } from 'vue'
 import { imageStudioGalleryAPI } from '@/api'
 import type { GeneratedImage } from './imageStudioTypes'
-import { imageDownloadURL, resolveImageAssetURL } from './imageDownload'
+import { imageDownloadURL, isSafeImagePreviewSource, resolveImageAssetURL } from './imageDownload'
 
 export function imageDownloadFilename(image: GeneratedImage) {
   return `${image.title}.${image.format || 'png'}`
@@ -19,6 +19,11 @@ export function imageDownloadMenuPosition(
     x: Math.max(8, Math.min(clientX, viewportWidth - width - 8)),
     y: Math.max(8, Math.min(clientY, viewportHeight - height - 8)),
   }
+}
+
+export function canDownloadImage(image: GeneratedImage) {
+  if (image.failed) return false
+  return !image.pending || Boolean(String(image.previewSrc || '').trim())
 }
 
 interface ImageStudioDownloadOptions {
@@ -71,6 +76,21 @@ export function createImageStudioDownloads(options: ImageStudioDownloadOptions) 
           console.warn('Gateway task original download failed; falling back to gallery stream', error)
         }
       }
+      const previewSource = String(image.previewSrc || '').trim()
+      if (previewSource && isSafeImagePreviewSource(previewSource)) {
+        try {
+          const response = await fetch(resolveImageAssetURL(previewSource), {
+            credentials: 'omit',
+            cache: 'no-store',
+            signal: AbortSignal.timeout(2 * 60 * 1000),
+          })
+          if (!response.ok) throw new Error(`preview download failed: ${response.status}`)
+          saveBlob(await response.blob(), filename)
+          return
+        } catch (error) {
+          console.warn('Task preview download failed; falling back to gallery stream', error)
+        }
+      }
       const source = resolveImageAssetURL(image.originalSrc || image.src)
       if (!image.gatewayTaskId) try {
         const response = await fetch(source, {
@@ -110,7 +130,7 @@ export function createImageStudioDownloads(options: ImageStudioDownloadOptions) 
   }
 
   function openImageDownloadMenu(event: MouseEvent, image: GeneratedImage) {
-    if (image.pending || image.failed) return
+    if (!canDownloadImage(image)) return
     const position = imageDownloadMenuPosition(
       event.clientX,
       event.clientY,

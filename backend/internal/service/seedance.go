@@ -329,7 +329,7 @@ func (s *OpenAIGatewayService) ForwardSeedance(ctx context.Context, c *gin.Conte
 	// Do not retry ambiguous asynchronous creates: the upstream may already have
 	// accepted a billable job. Preserve native error codes and response bodies.
 	if resp.StatusCode >= 300 {
-		writeGrokMediaResponse(c, resp, responseBody, s.responseHeaderFilter)
+		writeGrokMediaResponse(c, resp, sanitizeMediaStatusResponseForClient(responseBody, ""), s.responseHeaderFilter)
 		return nil, fmt.Errorf("seedance upstream status %d", resp.StatusCode)
 	}
 	result := &OpenAIForwardResult{Model: model, BillingModel: model, UpstreamModel: upstreamModel, Duration: time.Since(started), ResponseHeaders: resp.Header.Clone()}
@@ -348,6 +348,12 @@ func (s *OpenAIGatewayService) ForwardSeedance(ctx context.Context, c *gin.Conte
 		if gjson.GetBytes(responseBody, "status").String() == "succeeded" {
 			result.Usage.OutputTokens = max(0, int(gjson.GetBytes(responseBody, "usage.completion_tokens").Int()))
 		}
+	}
+	if endpoint == SeedanceEndpointStatus {
+		responseBody = sanitizeMediaStatusResponseForClient(
+			responseBody,
+			grokMediaContentProxyURL(c, taskID),
+		)
 	}
 	writeGrokMediaResponse(c, resp, responseBody, s.responseHeaderFilter)
 	return result, nil

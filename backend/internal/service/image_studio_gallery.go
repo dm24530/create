@@ -118,6 +118,10 @@ type ImageStudioGalleryStore interface {
 	Delete(ctx context.Context, userID int64, id string) error
 }
 
+type ImageStudioGalleryPublicReader interface {
+	GetPublic(ctx context.Context, id string) (*ImageStudioGalleryEntry, error)
+}
+
 type ImageStudioImageSaver interface {
 	// SaveImageWithKey 返回访问 URL 和最终的对象键（含配置的 Key 前缀）。
 	// 记录里必须存后者，删除作品时才能定位到同一个对象。
@@ -807,6 +811,51 @@ func (s *ImageStudioGalleryService) ReadImage(ctx context.Context, userID int64,
 		return nil, nil, "", err
 	}
 	return entry, data, contentType, nil
+}
+
+func (s *ImageStudioGalleryService) ReadPublicImage(
+	ctx context.Context,
+	id string,
+) (*ImageStudioGalleryEntry, []byte, string, error) {
+	if s == nil || s.storage == nil {
+		return nil, nil, "", ErrImageStudioGalleryUnavailable
+	}
+	reader, ok := s.store.(ImageStudioGalleryPublicReader)
+	if !ok {
+		return nil, nil, "", ErrStudioWorkNotFound
+	}
+	entry, err := reader.GetPublic(ctx, strings.TrimSpace(id))
+	if err != nil {
+		return nil, nil, "", err
+	}
+	data, contentType, err := s.fetchEntryImage(ctx, entry, entry.ObjectKey, entry.URL)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	return entry, data, contentType, nil
+}
+
+func (s *ImageStudioGalleryService) ThumbnailPublic(
+	ctx context.Context,
+	id string,
+	maxEdge int,
+) ([]byte, error) {
+	entry, err := s.publicEntry(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return s.Thumbnail(ctx, entry.UserID, id, maxEdge)
+}
+
+func (s *ImageStudioGalleryService) publicEntry(
+	ctx context.Context,
+	id string,
+) (*ImageStudioGalleryEntry, error) {
+	reader, ok := s.store.(ImageStudioGalleryPublicReader)
+	if !ok {
+		return nil, ErrStudioWorkNotFound
+	}
+	return reader.GetPublic(ctx, strings.TrimSpace(id))
 }
 
 func (s *ImageStudioGalleryService) DownloadURL(

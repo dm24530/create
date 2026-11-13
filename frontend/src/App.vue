@@ -12,6 +12,7 @@ import { getSetupStatus } from '@/api/setup'
 import { updateFavicon } from '@/utils/branding'
 import { FeatureFlags, isFeatureFlagEnabled } from '@/utils/featureFlags'
 import { resolveSiteBillingMode } from '@/utils/siteBillingMode'
+import { isCanvasRoutePath } from '@/features/infinite-canvas/canvasRouteSync'
 
 const router = useRouter()
 const route = useRoute()
@@ -22,8 +23,8 @@ const announcementStore = useAnnouncementStore()
 const adminComplianceStore = useAdminComplianceStore()
 const adminSettingsStore = useAdminSettingsStore()
 const CanvasHostView = defineAsyncComponent(() => import('@/features/infinite-canvas/CanvasHostView.vue'))
-const canvasMounted = ref(route.path === '/canvas')
-const isCanvasRoute = computed(() => route.path === '/canvas')
+const canvasMounted = ref(isCanvasRoutePath(route.path))
+const isCanvasRoute = computed(() => isCanvasRoutePath(route.path))
 
 function updateDocumentTitle() {
   const customMenuItems = [
@@ -74,7 +75,7 @@ watch(
 watch(
   () => route.path,
   (path) => {
-    if (path === '/canvas') canvasMounted.value = true
+    if (isCanvasRoutePath(path)) canvasMounted.value = true
   },
   { immediate: true },
 )

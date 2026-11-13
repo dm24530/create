@@ -146,13 +146,9 @@ export async function uploadCloudCanvasAsset(input: {
   height?: number;
   sourceObjectKey?: string;
 }) {
-  try {
-    return await uploadCloudCanvasAssetDirect(input);
-  } catch (error) {
-    if (!shouldFallbackCanvasDirectUpload(error) || !input.file) throw error;
-    console.warn("Canvas direct upload unavailable; falling back to the legacy upload endpoint.", error);
-    return uploadCloudCanvasAssetLegacy({ ...input, file: input.file });
-  }
+  if (input.sourceObjectKey) return uploadCloudCanvasAssetDirect(input);
+  if (!input.file) throw new CanvasDirectUploadError("Canvas upload file is unavailable");
+  return uploadCloudCanvasAssetLegacy({ ...input, file: input.file });
 }
 
 type CanvasPresignResponse = {
@@ -362,11 +358,15 @@ export async function uploadCloudCanvasAssetFromURL(input: {
   width?: number;
   height?: number;
 }) {
+  const sourceUrl = input.sourceUrl.trim();
+  if (!sourceUrl.startsWith("/api/v1/public/")) {
+    throw new Error("Canvas source URL must be a Create media path");
+  }
   const form = new FormData();
   form.append("project_id", input.projectId);
   form.append("node_id", input.nodeId);
   form.append("kind", input.kind);
-  form.append("source_url", input.sourceUrl);
+  form.append("source_url", sourceUrl);
   form.append("width", String(input.width || 0));
   form.append("height", String(input.height || 0));
   return cloudRequest<CloudCanvasAsset>("/assets", {
@@ -391,7 +391,7 @@ export async function uploadPendingCanvasAssets(
   onUploaded: (result: CanvasAssetUploadResult) => void,
 ) {
   const tasks: Array<() => Promise<void>> = [];
-  const isRemoteURL = (value?: string) => Boolean(value && /^https?:\/\//i.test(value));
+  const isRemoteURL = (value?: string) => Boolean(value && value.startsWith("/api/v1/public/"));
   for (const node of nodes) {
     const metadata = node.metadata;
     if (!metadata) continue;

@@ -28,6 +28,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useRoute, useRouter } from 'vue-router'
 import { authAPI, keysAPI } from '@/api'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import { useTheme } from '@/composables/useTheme'
@@ -39,6 +40,11 @@ import {
   selectCanvasCreatorKey,
   selectCanvasVideoCreatorKey,
 } from './creatorKeySelection'
+import {
+  canvasPathFromVueRoute,
+  isCanvasRoutePath,
+  normalizeCanvasRoutePath,
+} from './canvasRouteSync'
 
 const loading = ref(true)
 const error = ref('')
@@ -60,9 +66,12 @@ const bootstrapTimers: number[] = []
 let frameReadyFallbackTimer: number | undefined
 let canvasContextRequestID = 0
 let unsubscribeCreatorKeyChanged: (() => void) | undefined
+let lastFrameCanvasPath = ''
 const { isDark } = useTheme()
 const { locale } = useI18n()
 const authStore = useAuthStore()
+const route = useRoute()
+const router = useRouter()
 watch(
   () => authStore.user?.id,
   (userID, previousUserID) => {
@@ -80,11 +89,15 @@ watch(
 const frameURL = computed(() => {
   const userID = String(authStore.user?.id || '').trim()
   if (!frameBaseURL.value || !userID) return frameBaseURL.value
-  const separator = frameBaseURL.value.includes('?') ? '&' : '?'
-  const scope = frameStorageScope.value
-    ? `&scope=${encodeURIComponent(frameStorageScope.value)}`
-    : ''
-  return `${frameBaseURL.value}${separator}user=${encodeURIComponent(userID)}${scope}`
+  const url = new URL(frameBaseURL.value, window.location.origin)
+  url.searchParams.set('user', userID)
+  if (frameStorageScope.value) {
+    url.searchParams.set('scope', frameStorageScope.value)
+  }
+  if (url.origin === window.location.origin) {
+    return `${url.pathname}${url.search}${url.hash}`
+  }
+  return url.toString()
 })
 const canvasLocale = computed<'zh-CN' | 'en-US'>(() => (
   locale.value.startsWith('zh') ? 'zh-CN' : 'en-US'
@@ -119,9 +132,13 @@ async function resolveFrameURL() {
   // The parent Vite server already serves the built canvas at /canvas-app and
   // falls back to its SPA entry. Only use the separate canvas dev server when
   // explicitly requested, otherwise port 3001 may belong to another app.
-  frameBaseURL.value = import.meta.env.DEV && import.meta.env.VITE_CANVAS_SOURCE_DEV === '1'
-    ? 'http://localhost:3001/canvas?embed=1'
-    : '/canvas-app/canvas?embed=1'
+  const canvasPath = currentCanvasPath() || '/canvas'
+  const baseURL = import.meta.env.DEV && import.meta.env.VITE_CANVAS_SOURCE_DEV === '1'
+    ? 'http://localhost:3001'
+    : '/canvas-app'
+  const url = new URL(`${baseURL}${canvasPath}`, window.location.origin)
+  url.searchParams.set('embed', '1')
+  frameBaseURL.value = url.toString()
 }
 
 async function loadContext(options: { preserveFrame?: boolean } = {}) {
@@ -220,6 +237,14 @@ function postLocale() {
   }, frameOrigin.value)
 }
 
+function postCanvasNavigate(path: string) {
+  if (!frameRef.value?.contentWindow || !path) return
+  frameRef.value.contentWindow.postMessage({
+    type: 'create-canvas-navigate',
+    path,
+  }, frameOrigin.value)
+}
+
 function sendBootstrap() {
   if (!frameLoaded.value || !bootstrapPayload.value || !frameRef.value?.contentWindow) return
   const payload = {
@@ -246,11 +271,22 @@ function handleFrameLoad() {
   sendBootstrap()
 }
 
-function handleFrameMessage(event: MessageEvent<{ type?: string }>) {
+function currentCanvasPath() {
+  return canvasPathFromVueRoute(route.path, route.params.id, route.query, route.hash)
+}
+
+function handleFrameMessage(event: MessageEvent<{ type?: string; path?: string }>) {
   if (event.source !== frameRef.value?.contentWindow) return
-  if (event.data?.type !== 'create-canvas-ready') return
-  if (frameReadyFallbackTimer) window.clearTimeout(frameReadyFallbackTimer)
-  frameReady.value = true
+  if (event.data?.type === 'create-canvas-ready') {
+    if (frameReadyFallbackTimer) window.clearTimeout(frameReadyFallbackTimer)
+    frameReady.value = true
+    return
+  }
+  if (event.data?.type !== 'create-canvas-route') return
+  const path = normalizeCanvasRoutePath(String(event.data.path || ''))
+  if (!path) return
+  lastFrameCanvasPath = path
+  if (path !== currentCanvasPath()) void router.push(path)
 }
 
 onMounted(() => {
@@ -269,6 +305,14 @@ onUnmounted(() => {
 watch(isDark, postTheme)
 watch(canvasLocale, postLocale)
 watch(bootstrapPayload, sendBootstrap)
+watch(
+  () => currentCanvasPath(),
+  (path) => {
+    if (!path || !isCanvasRoutePath(route.path) || !frameLoaded.value) return
+    if (path === lastFrameCanvasPath) return
+    postCanvasNavigate(path)
+  },
+)
 watch(() => authStore.token, (token) => {
   if (!bootstrapPayload.value || !token) return
   bootstrapPayload.value = {

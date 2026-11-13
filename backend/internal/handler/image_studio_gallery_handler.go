@@ -18,6 +18,7 @@ import (
 )
 
 const maxImageStudioGalleryBytes = 32 << 20
+const publicStudioWorkPrefix = "/api/v1/public/studio-works/"
 
 type ImageStudioGalleryHandler struct {
 	gallery    *service.ImageStudioGalleryService
@@ -123,6 +124,7 @@ func (h *ImageStudioGalleryHandler) Save(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
+	publicizeStudioWorkURLs(entry)
 	response.Success(c, entry)
 }
 
@@ -210,6 +212,7 @@ func (h *ImageStudioGalleryHandler) SaveFromTask(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
+	publicizeStudioWorkURLs(entry)
 	response.Success(c, entry)
 }
 
@@ -256,7 +259,76 @@ func (h *ImageStudioGalleryHandler) List(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
+	for _, item := range items {
+		publicizeStudioWorkURLs(item)
+	}
 	response.Success(c, items)
+}
+
+func publicizeStudioWorkURLs(entry *service.ImageStudioGalleryEntry) {
+	if entry == nil {
+		return
+	}
+	id := strings.TrimSpace(entry.ID)
+	if id == "" {
+		return
+	}
+	entry.URL = publicStudioWorkPrefix + id + "/content"
+	entry.ThumbURL = publicStudioWorkPrefix + id + "/thumb"
+}
+
+func (h *ImageStudioGalleryHandler) PublicContent(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	variant := strings.ToLower(strings.TrimSpace(c.Param("variant")))
+	if id == "" {
+		response.NotFound(c, "Work not found")
+		return
+	}
+	c.Header("Cache-Control", "private, max-age=3600")
+	c.Header("X-Content-Type-Options", "nosniff")
+	if variant == "thumb" {
+		data, err := h.gallery.ThumbnailPublic(c.Request.Context(), id, 720)
+		if err != nil {
+			response.ErrorFrom(c, err)
+			return
+		}
+		c.Data(http.StatusOK, "image/jpeg", data)
+		return
+	}
+	if variant != "content" {
+		response.NotFound(c, "Work not found")
+		return
+	}
+	_, data, contentType, err := h.gallery.ReadPublicImage(c.Request.Context(), id)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	if strings.TrimSpace(contentType) == "" {
+		contentType = "application/octet-stream"
+	}
+	if strings.EqualFold(strings.TrimSpace(c.Query("download")), "1") ||
+		strings.EqualFold(strings.TrimSpace(c.Query("download")), "true") {
+		entry := &service.ImageStudioGalleryEntry{
+			ID:     id,
+			Format: contentTypeToExtension(contentType),
+		}
+		c.Header("Content-Disposition", `attachment; filename="`+imageStudioDownloadFilename(entry)+`"`)
+	}
+	c.Data(http.StatusOK, contentType, data)
+}
+
+func contentTypeToExtension(contentType string) string {
+	switch strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0])) {
+	case "image/jpeg":
+		return "jpg"
+	case "image/webp":
+		return "webp"
+	case "image/gif":
+		return "gif"
+	default:
+		return "png"
+	}
 }
 
 // Download streams one owned image as an attachment. Fetching through the
@@ -297,11 +369,7 @@ func (h *ImageStudioGalleryHandler) DownloadURL(c *gin.Context) {
 		return
 	}
 	filename := imageStudioDownloadFilename(entry)
-	_, url, err := h.gallery.DownloadURL(c.Request.Context(), subject.UserID, projectID, filename)
-	if err != nil || strings.TrimSpace(url) == "" {
-		response.Error(c, http.StatusServiceUnavailable, "直接下载地址暂时不可用")
-		return
-	}
+	url := publicStudioWorkPrefix + projectID + "/content?download=1"
 	response.Success(c, gin.H{"url": url, "filename": filename})
 }
 

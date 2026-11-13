@@ -517,6 +517,47 @@ func (s *imageStudioGalleryStore) List(
 	return entries, nil
 }
 
+func (s *imageStudioGalleryStore) GetPublic(
+	ctx context.Context,
+	id string,
+) (*service.ImageStudioGalleryEntry, error) {
+	row := &studioWorkRow{}
+	err := s.db.QueryRowContext(ctx, `
+		SELECT`+studioWorksColumns+`
+		FROM studio_works
+		WHERE id = $1 AND kind = 'image'
+		  AND (saved = TRUE OR expires_at IS NULL OR expires_at > NOW())
+	`, strings.TrimSpace(id)).Scan(
+		&row.ID, &row.UserID, &row.Kind, &row.SourceID, &row.ObjectKey, &row.URL, &row.ThumbURL, &row.ThumbObjectKey, &row.Prompt,
+		&row.Model, &row.Format, &row.Size, &row.DurationSeconds, &row.DurationMs, &row.Saved, &row.SortOrder,
+		&row.CreatedAt, &row.ExpiresAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, service.ErrStudioWorkNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get public studio work: %w", err)
+	}
+	return &service.ImageStudioGalleryEntry{
+		ID:             row.ID,
+		UserID:         row.UserID,
+		SourceID:       row.SourceID,
+		ObjectKey:      row.ObjectKey,
+		URL:            row.URL,
+		ThumbURL:       row.ThumbURL,
+		ThumbObjectKey: row.ThumbObjectKey,
+		Prompt:         row.Prompt,
+		Model:          row.Model,
+		Size:           row.Size,
+		Format:         row.Format,
+		DurationMs:     int(row.DurationMs.Int64),
+		Saved:          row.Saved,
+		SortOrder:      row.SortOrder,
+		ExpiresAt:      row.ExpiresAt,
+		CreatedAt:      row.CreatedAt,
+	}, nil
+}
+
 func (s *imageStudioGalleryStore) Count(ctx context.Context, userID int64) (int64, error) {
 	return s.count(ctx, userID)
 }
@@ -659,6 +700,44 @@ func (s *videoStudioGalleryStore) List(
 		})
 	}
 	return entries, nil
+}
+
+func (s *videoStudioGalleryStore) GetPublic(
+	ctx context.Context,
+	id string,
+) (*service.VideoStudioGalleryEntry, error) {
+	row := &studioWorkRow{}
+	err := s.db.QueryRowContext(ctx, `
+		SELECT`+studioWorksColumns+`
+		FROM studio_works
+		WHERE id = $1 AND kind = 'video'
+		  AND (saved = TRUE OR expires_at IS NULL OR expires_at > NOW())
+	`, strings.TrimSpace(id)).Scan(
+		&row.ID, &row.UserID, &row.Kind, &row.SourceID, &row.ObjectKey, &row.URL, &row.ThumbURL, &row.ThumbObjectKey, &row.Prompt,
+		&row.Model, &row.Format, &row.Size, &row.DurationSeconds, &row.DurationMs, &row.Saved, &row.SortOrder,
+		&row.CreatedAt, &row.ExpiresAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, service.ErrStudioWorkNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get public video work: %w", err)
+	}
+	return &service.VideoStudioGalleryEntry{
+		ID:              row.ID,
+		UserID:          row.UserID,
+		SourceID:        row.SourceID,
+		ObjectKey:       row.ObjectKey,
+		URL:             row.URL,
+		Prompt:          row.Prompt,
+		Model:           row.Model,
+		Format:          row.Format,
+		DurationSeconds: row.DurationSeconds,
+		Saved:           row.Saved,
+		SortOrder:       row.SortOrder,
+		ExpiresAt:       row.ExpiresAt,
+		CreatedAt:       row.CreatedAt,
+	}, nil
 }
 
 func (s *videoStudioGalleryStore) Count(ctx context.Context, userID int64) (int64, error) {

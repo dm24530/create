@@ -106,7 +106,24 @@ function jsonResponse(body: unknown, ok = true): Response {
   } as unknown as Response
 }
 
+function blobResponse(body: Blob, ok = true): Response {
+  return {
+    ok,
+    status: ok ? 200 : 400,
+    statusText: ok ? 'OK' : 'Bad Request',
+    blob: async () => body,
+  } as unknown as Response
+}
+
 function resetMocks() {
+  Object.defineProperty(window.URL, 'createObjectURL', {
+    configurable: true,
+    value: vi.fn(() => `blob:test-${Date.now()}`),
+  })
+  Object.defineProperty(window.URL, 'revokeObjectURL', {
+    configurable: true,
+    value: vi.fn(),
+  })
   resetVideoStudioDraft()
   listKeys.mockReset()
   getPublicSettings.mockReset()
@@ -327,7 +344,7 @@ describe('VideoStudioView model loading', () => {
   it('loads archived videos into the results grid with playback controls', async () => {
     listArchivedVideos.mockResolvedValue([{
       id: 'archived-result-1',
-      url: 'https://cdn.example.com/archived-result.mp4',
+      url: '/api/v1/public/video-works/archived-result-1/content',
       prompt: '已归档的测试视频',
       model: 'seedance-2-720p',
       format: 'mp4',
@@ -349,7 +366,7 @@ describe('VideoStudioView model loading', () => {
     expect(listArchivedVideos).toHaveBeenCalledWith('temp')
     expect(wrapper.text()).toContain('已归档的测试视频')
     const video = wrapper.get('[data-testid="video-result-player"]')
-    expect(video.attributes('src')).toBe('https://cdn.example.com/archived-result.mp4')
+    expect(video.attributes('src')).toBe('/api/v1/public/video-works/archived-result-1/content')
     expect(video.attributes('controls')).toBeDefined()
   })
 
@@ -449,9 +466,10 @@ describe('VideoStudioView seedance generation', () => {
         return jsonResponse({
           id: 'task-1',
           status: 'succeeded',
-          content: { video_url: 'https://cdn.example.com/out.mp4' },
+          content: { video_url: '/videos/task-1/content' },
         })
       }
+      if (url.includes('/videos/task-1/content')) return blobResponse(new Blob(['video'], { type: 'video/mp4' }))
       throw new Error(`Unexpected request: ${url}`)
     })
 
@@ -476,7 +494,7 @@ describe('VideoStudioView seedance generation', () => {
     expect(payload.ratio).toBe('16:9')
 
     const video = wrapper.get('video')
-    expect(video.attributes('src')).toBe('https://cdn.example.com/out.mp4')
+    expect(video.attributes('src')).toMatch(/^blob:/)
   })
 
   it('submits the selected number of independent video tasks', async () => {
@@ -503,9 +521,11 @@ describe('VideoStudioView seedance generation', () => {
         return jsonResponse({
           id: task,
           status: 'succeeded',
-          content: { video_url: `https://cdn.example.com/${task}.mp4` },
+          content: { video_url: `/videos/${task}/content` },
         })
       }
+      const contentTask = url.match(/\/videos\/(task-\d+)\/content(?:\?|$)/)?.[1]
+      if (contentTask) return blobResponse(new Blob([contentTask], { type: 'video/mp4' }))
       throw new Error(`Unexpected request: ${url}`)
     })
 
@@ -530,8 +550,8 @@ describe('VideoStudioView seedance generation', () => {
     const failedRecord = JSON.parse(localStorage.getItem('sub2api:video-studio:works') || '[]')
       .find((record: { status?: string }) => record.status === 'failed')
     expect(failedRecord?.expiresAt).toBeGreaterThan(Math.floor(Date.now() / 1000))
-    expect(cards[1].get('video').attributes('src')).toBe('https://cdn.example.com/task-2.mp4')
-    expect(cards[2].get('video').attributes('src')).toBe('https://cdn.example.com/task-3.mp4')
+    expect(cards[1].get('video').attributes('src')).toMatch(/^blob:/)
+    expect(cards[2].get('video').attributes('src')).toMatch(/^blob:/)
   })
 
   it('keeps the duration parameter inside the range the upstream accepts', async () => {
@@ -590,7 +610,7 @@ describe('VideoStudioView seedance generation', () => {
     const expiresAt = Math.floor(Date.now() / 1000) + 86_400
     archiveVideo.mockResolvedValue({
       id: 'arch-1',
-      url: 'https://cdn.example.com/archived.mp4',
+      url: '/api/v1/public/video-works/arch-1/content',
       prompt: '',
       model: '',
       format: 'mp4',
@@ -607,8 +627,10 @@ describe('VideoStudioView seedance generation', () => {
         return jsonResponse({ id: 'task-9' })
       }
       if (url.endsWith('/contents/generations/tasks/task-9')) {
-        return jsonResponse({ status: 'succeeded', content: { video_url: 'https://cdn.example.com/out.mp4' } })
+        return jsonResponse({ status: 'succeeded', content: { video_url: '/videos/task-9/content' } })
       }
+      if (url.includes('/videos/task-9/content')) return blobResponse(new Blob(['archive-video'], { type: 'video/mp4' }))
+      if (url.startsWith('blob:')) return blobResponse(new Blob(['archive-video'], { type: 'video/mp4' }))
       throw new Error(`Unexpected request: ${url}`)
     })
 
@@ -621,17 +643,19 @@ describe('VideoStudioView seedance generation', () => {
     await flushPromises()
     await flushPromises()
 
-    // 公开直链交给服务端抓取归档，浏览器不用下载再上传。
-    expect(archiveVideo).toHaveBeenCalledWith(
-      expect.objectContaining({
-        video_url: 'https://cdn.example.com/out.mp4',
-        model: 'seedance-2-720p',
-        created_at: expect.any(Number),
-        sort_order: expect.any(Number),
-      }),
-    )
+    // 视频字节先由浏览器通过本站内容接口取回，再作为 data URL 归档。
     await vi.waitFor(() => {
-      expect(wrapper.get('video').attributes('src')).toBe('https://cdn.example.com/archived.mp4')
+      expect(archiveVideo).toHaveBeenCalledWith(
+        expect.objectContaining({
+          video_data_url: expect.stringContaining('data:video/mp4;base64,'),
+          model: 'seedance-2-720p',
+          created_at: expect.any(Number),
+          sort_order: expect.any(Number),
+        }),
+      )
+    })
+    await vi.waitFor(() => {
+      expect(wrapper.get('video').attributes('src')).toBe('/api/v1/public/video-works/arch-1/content')
       expect(wrapper.text()).toContain('临时内容 · 还剩 1 天')
     })
     await wrapper.get('[data-testid="video-archive-pin"]').trigger('click')
@@ -1052,8 +1076,9 @@ describe('VideoStudioView references', () => {
         return jsonResponse({ id: 'task-2' })
       }
       if (url.endsWith('/contents/generations/tasks/task-2')) {
-        return jsonResponse({ status: 'succeeded', content: { video_url: 'https://cdn.example.com/x.mp4' } })
+        return jsonResponse({ status: 'succeeded', content: { video_url: '/videos/task-2/content' } })
       }
+      if (url.includes('/videos/task-2/content')) return blobResponse(new Blob(['video'], { type: 'video/mp4' }))
       throw new Error(`Unexpected request: ${url}`)
     })
 
@@ -1345,8 +1370,9 @@ describe('VideoStudioView custom provider', () => {
         return jsonResponse({ id: 'task-c1' })
       }
       if (url.endsWith('/contents/generations/tasks/task-c1')) {
-        return jsonResponse({ status: 'succeeded', content: { video_url: 'https://cdn.example.com/c.mp4' } })
+        return jsonResponse({ status: 'succeeded', content: { video_url: '/videos/task-c1/content' } })
       }
+      if (url.includes('/videos/task-c1/content')) return blobResponse(new Blob(['custom-video'], { type: 'video/mp4' }))
       throw new Error(`Unexpected request: ${url}`)
     })
 
@@ -1369,7 +1395,7 @@ describe('VideoStudioView custom provider', () => {
     )
     expect(createCall).toBeDefined()
     expect((createCall?.[1]?.headers as Record<string, string>).Authorization).toBe('Bearer third-key')
-    expect(wrapper.get('video').attributes('src')).toBe('https://cdn.example.com/c.mp4')
+    expect(wrapper.get('video').attributes('src')).toMatch(/^blob:/)
   })
 
   it('pulls the model list from the custom endpoint with the custom key', async () => {
@@ -1708,8 +1734,11 @@ describe('VideoStudioView unfinished work resumption', () => {
         return jsonResponse({
           id: 'task-duplicate-archive',
           status: 'completed',
-          content: { video_url: 'https://upstream.example.com/task-duplicate-archive.mp4' },
+          content: { video_url: '/videos/task-duplicate-archive/content' },
         })
+      }
+      if (url.includes('/videos/task-duplicate-archive/content')) {
+        return blobResponse(new Blob(['duplicate-video'], { type: 'video/mp4' }))
       }
       throw new Error(`Unexpected request: ${url}`)
     })

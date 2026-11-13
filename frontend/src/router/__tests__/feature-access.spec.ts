@@ -242,6 +242,15 @@ describe('infinite canvas administrator preview guard', () => {
     expect(next).toHaveBeenCalledWith()
   })
 
+  it('applies the administrator preview guard to project URLs', async () => {
+    appStore.cachedPublicSettings = { canvas_admin_only: true }
+
+    const { navigation, next } = runGuard({}, '/canvas/project-1')
+    await navigation
+
+    expect(next).toHaveBeenCalledWith('/image-studio')
+  })
+
   it('always allows administrators during preview', async () => {
     authStore.isAdmin = true
     appStore.cachedPublicSettings = { canvas_admin_only: true }

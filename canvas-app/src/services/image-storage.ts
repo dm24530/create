@@ -18,7 +18,7 @@ import {
     createImageThumbnail,
     type ImageRequestPolicy,
 } from "@/lib/image-thumbnail";
-import { getCanvasAccessToken } from "@/services/canvas-auth";
+import { safeCanvasMediaSource } from "@/lib/canvas/canvas-media-url";
 
 export type UploadedImage = {
     url: string;
@@ -80,10 +80,8 @@ export async function uploadImage(input: string | Blob, options?: ImageReadOptio
     try {
         blob = await fetchImageBlob(input, options);
     } catch (error) {
-        if (options?.signal?.aborted || isNamedError(error, IMAGE_RESPONSE_ERROR) || isNamedError(error, IMAGE_TIMEOUT_ERROR) || !/^https?:\/\//i.test(input)) throw error;
-        const meta = await loadImageMeta(input, options, IMAGE_REMOTE_LOAD_TIMEOUT_MS);
-        if (!meta) throw error;
-        return { url: input, width: meta.width, height: meta.height, bytes: 0, mimeType: "" };
+        if (options?.signal?.aborted || isNamedError(error, IMAGE_RESPONSE_ERROR) || isNamedError(error, IMAGE_TIMEOUT_ERROR)) throw error;
+        throw error;
     }
     return storeImage(blob, options);
 }
@@ -119,18 +117,9 @@ async function fetchImageBlob(url: string, options?: ImageReadOptions) {
         controller.abort();
     }, IMAGE_DOWNLOAD_TIMEOUT_MS);
     try {
-        let response: Response | undefined;
-        let directError: unknown;
-        try {
-            response = await fetch(withLocalProxy(url), { signal: controller.signal });
-        } catch (error) {
-            directError = error;
-        }
-        if (!response?.ok && canProxyCanvasImage(url) && !controller.signal.aborted) {
-            response = await fetchCanvasImageProxy(url, controller.signal);
-            directError = undefined;
-        }
-        if (!response) throw directError;
+        const safeURL = safeCanvasMediaSource(url);
+        if (!safeURL) throw new TypeError("unsupported media source");
+        const response = await fetch(withLocalProxy(safeURL), { signal: controller.signal });
         if (!response.ok) throw namedError(IMAGE_RESPONSE_ERROR);
         return await response.blob();
     } catch (error) {
@@ -141,19 +130,6 @@ async function fetchImageBlob(url: string, options?: ImageReadOptions) {
         window.clearTimeout(timer);
         options?.signal?.removeEventListener("abort", abort);
     }
-}
-
-function canProxyCanvasImage(url: string) {
-    return /^https?:\/\//i.test(url) || url.startsWith("/api/v1/public/image-assets/");
-}
-
-function fetchCanvasImageProxy(url: string, signal: AbortSignal) {
-    const token = getCanvasAccessToken();
-    if (!token) throw new TypeError("Canvas session is unavailable");
-    return fetch(`/api/v1/canvas/image-proxy?url=${encodeURIComponent(url)}`, {
-        headers: { Authorization: `Bearer ${token}` },
-        signal,
-    });
 }
 
 function loadImageMeta(url: string, options?: ImageReadOptions, timeoutMs = IMAGE_DECODE_TIMEOUT_MS) {
@@ -380,8 +356,13 @@ export async function prepareImageRequestDataUrls(images: readonly ImageReferenc
 }
 
 function remoteImageReferenceURL(image: ImageReferenceSource) {
-    const url = image.url || "";
-    return /^https?:\/\//i.test(url) ? url : "";
+    const url = safeCanvasMediaSource(image.url || "");
+    if (!url || url.toLowerCase().startsWith("blob:") || url.toLowerCase().startsWith("data:")) return "";
+    try {
+        return new URL(url, window.location.origin).toString();
+    } catch {
+        return "";
+    }
 }
 
 export async function deleteStoredImages(keys: Iterable<string>) {

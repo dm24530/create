@@ -1620,6 +1620,7 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 			}
 			s.finalizeGeminiSSESignal(c, account, false, requestID, best, stats.dataEvents > 0, stats.fallback)
 			b, _ := json.Marshal(collected)
+			b = sanitizeGeminiResponseFileDataForAccount(c.Request.Context(), s.httpUpstream, account, b)
 			upstreamResponseModelObserverFromContext(c).ObserveGemini(b)
 			observeGeminiImageOutputs(c, b)
 			c.Data(http.StatusOK, "application/json", b)
@@ -1785,6 +1786,7 @@ func (s *GeminiMessagesCompatService) writeGeminiCustomCodeSkippedError(c *gin.C
 // 并记录 ops 错误事件。状态码保真：下游据此区分请求级错误与可重试的链路故障。
 func (s *GeminiMessagesCompatService) writeGeminiNativeUpstreamError(c *gin.Context, account *Account, resp *http.Response, respBody []byte, requestID string, isOAuth bool) error {
 	respBody = unwrapIfNeeded(isOAuth, respBody)
+	respBody = sanitizeGeminiResponseFileDataForAccount(c.Request.Context(), s.httpUpstream, account, respBody)
 	upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(respBody))
 	upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
 	upstreamDetail := s.upstreamErrorDetail(respBody)
@@ -2719,6 +2721,7 @@ func (s *GeminiMessagesCompatService) handleNativeNonStreamingResponse(c *gin.Co
 			respBody = unwrappedBody
 		}
 	}
+	respBody = sanitizeGeminiResponseFileDataForAccount(c.Request.Context(), s.httpUpstream, account, respBody)
 	observer := upstreamResponseModelObserverFromContext(c)
 	if observer == nil {
 		observer = beginUpstreamResponseModelObservation(c)
@@ -2812,6 +2815,16 @@ func (s *GeminiMessagesCompatService) handleNativeStreamingResponse(c *gin.Conte
 						rawBytes = []byte(payload)
 					}
 
+					sanitizedBytes, changed, _ := sanitizeGeminiResponseFileData(
+						c.Request.Context(),
+						rawBytes,
+						geminiResponseFileFetcherForAccount(s.httpUpstream, account),
+					)
+					if changed {
+						rawBytes = sanitizedBytes
+						rawToWrite = string(sanitizedBytes)
+					}
+
 					sawDataEvent = true
 					if sig, ok := detectGeminiResponseSignal(rawBytes); ok && sig.Kind > best.Kind {
 						best = sig
@@ -2830,6 +2843,9 @@ func (s *GeminiMessagesCompatService) handleNativeStreamingResponse(c *gin.Conte
 					if isOAuth {
 						// SSE format requires double newline (\n\n) to separate events
 						_, _ = fmt.Fprintf(c.Writer, "data: %s\n\n", rawToWrite)
+					} else if changed {
+						// Preserve the upstream blank separator line for AI Studio SSE.
+						_, _ = fmt.Fprintf(c.Writer, "data: %s\n", rawToWrite)
 					} else {
 						// Pass-through for AI Studio responses.
 						_, _ = io.WriteString(c.Writer, line)

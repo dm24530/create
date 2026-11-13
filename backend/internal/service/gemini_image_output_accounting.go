@@ -132,11 +132,10 @@ func hasGeminiCandidates(payload []byte) bool {
 	return candidates.IsArray()
 }
 
-// extractGeminiImageOutputs normalizes every image representation Gemini-
+// ExtractGeminiImageOutputs normalizes every image representation Gemini-
 // compatible providers commonly return: inlineData, inline_data, fileData and
-// image URLs embedded in text. One candidate normally represents one generated
-// image, so inline data wins over duplicate file/text references for that
-// candidate.
+// image URLs embedded in text. URL outputs are preferred because they avoid
+// transferring large base64 payloads; inline data is the fallback.
 func ExtractGeminiImageOutputs(payload []byte) []GeminiImageOutput {
 	if len(payload) == 0 || !gjson.ValidBytes(payload) {
 		return nil
@@ -174,12 +173,9 @@ func ExtractGeminiImageOutputs(payload []byte) []GeminiImageOutput {
 			return true
 		})
 
-		candidateOutputs := inline
+		candidateOutputs := append(files, urls...)
 		if len(candidateOutputs) == 0 {
-			candidateOutputs = files
-		}
-		if len(candidateOutputs) == 0 {
-			candidateOutputs = urls
+			candidateOutputs = inline
 		}
 		seenURLs := make(map[string]struct{})
 		for _, output := range candidateOutputs {

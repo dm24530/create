@@ -46,5 +46,12 @@ func TestOpenAIVideoCompletedStatusIsBillableForMuse(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, result.VideoCount)
 	require.Equal(t, "muse-video", result.Model)
-	require.JSONEq(t, body, w.Body.String())
+	require.JSONEq(t, `{
+		"id":"task-muse",
+		"task_id":"task-muse",
+		"model":"muse-video",
+		"status":"completed",
+		"progress":100,
+		"metadata":{"url":"/v1/videos/task-muse/content"}
+	}`, w.Body.String())
 }

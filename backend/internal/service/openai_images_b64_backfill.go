@@ -91,6 +91,56 @@ func (s *OpenAIGatewayService) backfillOpenAIImagesB64JSON(
 	return body
 }
 
+// inlineOpenAIImagesURLs removes upstream media URLs from non-streaming image
+// responses. URL outputs are downloaded server-side and returned as b64_json.
+func (s *OpenAIGatewayService) inlineOpenAIImagesURLs(
+	ctx context.Context,
+	account *Account,
+	body []byte,
+) ([]byte, error) {
+	if len(body) == 0 || !gjson.ValidBytes(body) {
+		return body, nil
+	}
+	items := gjson.GetBytes(body, "data")
+	if !items.IsArray() {
+		return body, nil
+	}
+	for index, item := range items.Array() {
+		if !item.IsObject() {
+			continue
+		}
+		rawURL := strings.TrimSpace(item.Get("url").String())
+		encoded := strings.TrimSpace(item.Get("b64_json").String())
+		downloaded := false
+		if encoded == "" && rawURL != "" {
+			var err error
+			encoded, err = s.fetchOpenAIImageURLBase64(ctx, account, rawURL)
+			if err != nil {
+				return nil, fmt.Errorf("inline image %d: %w", index, err)
+			}
+			downloaded = true
+		}
+		if encoded != "" {
+			body, _ = sjson.SetBytes(body, fmt.Sprintf("data.%d.b64_json", index), encoded)
+			if mimeType := openAIImageMIMEFromBase64(encoded); downloaded && mimeType != "" {
+				body, _ = sjson.SetBytes(body, fmt.Sprintf("data.%d.mime_type", index), mimeType)
+			}
+		}
+		body, _ = sjson.DeleteBytes(body, fmt.Sprintf("data.%d.url", index))
+		body, _ = sjson.DeleteBytes(body, fmt.Sprintf("data.%d.display_url", index))
+		body, _ = sjson.DeleteBytes(body, fmt.Sprintf("data.%d.image_url", index))
+	}
+	return body, nil
+}
+
+func openAIImageMIMEFromBase64(encoded string) string {
+	data, err := base64.StdEncoding.DecodeString(strings.TrimSpace(encoded))
+	if err != nil {
+		return ""
+	}
+	return detectedImageContentType(data)
+}
+
 // fetchOpenAIImageURLBase64 取得图片 url 内容的标准 base64 编码。
 // data: 形式的 url 直接取其 base64 载荷；其余 url 先沿用 base_url 的出站 URL 策略校验，
 // 再无条件拒绝回环、私网、链路本地等目的地（含重定向的每一跳），经账户代理下载，
@@ -120,10 +170,16 @@ func (s *OpenAIGatewayService) fetchOpenAIImageURLBase64(ctx context.Context, ac
 	}
 	req.Header.Set("Accept", "image/*,*/*;q=0.8")
 	proxyURL := ""
-	if account.ProxyID != nil && account.Proxy != nil {
-		proxyURL = account.Proxy.URL()
+	accountID := int64(0)
+	accountConcurrency := 0
+	if account != nil {
+		accountID = account.ID
+		accountConcurrency = account.Concurrency
+		if account.ProxyID != nil && account.Proxy != nil {
+			proxyURL = account.Proxy.URL()
+		}
 	}
-	resp, err := s.httpUpstream.Do(req, proxyURL, account.ID, account.Concurrency)
+	resp, err := s.httpUpstream.Do(req, proxyURL, accountID, accountConcurrency)
 	if err != nil {
 		return "", fmt.Errorf("download image: %w", err)
 	}

@@ -14,6 +14,7 @@ import { extractImages } from './imageRequestBuilder'
 import {
   IMAGE_CONSTRAINTS,
 } from './imageSizeConstraints'
+import { isSafeImagePreviewSource } from './imageDownload'
 
 interface GenerationFinalizeOptions {
   images: Ref<GeneratedImage[]>
@@ -194,7 +195,8 @@ export function createImageGenerationFinalizer(options: GenerationFinalizeOption
         ? `data:${mime};base64,${b64}`
         : remoteSrc) || previewDataURL
       if (!rawSrc) continue
-      const previewSrc = String(item.preview_data_url || '')
+      const previewCandidate = String(item.preview_data_url || '')
+      const previewSrc = isSafeImagePreviewSource(previewCandidate) ? previewCandidate : ''
       const actualFormat = options.imageFormatFromResult(item, rawSrc, requestedFormat)
       const itemCompletedAt = Number(item.__imageTaskCompletedAt || 0)
       const itemDurationMs = Number(item.__imageTaskDurationMs || 0)
@@ -213,11 +215,9 @@ export function createImageGenerationFinalizer(options: GenerationFinalizeOption
         customSizeRequested: firstPending?.customSizeRequested,
         meta: `${actualFormat.toUpperCase()} · ${requestedSize} · ${currentModel}`,
         createdAt: Math.floor((itemCompletedAt > 0 ? itemCompletedAt : completedAtMs) / 1000),
-        durationMs: visibleDurationMs > 0
-          ? visibleDurationMs
-          : itemDurationMs > 0
-            ? itemDurationMs
-            : fallbackDurationMs,
+        durationMs: itemDurationMs > 0
+          ? itemDurationMs
+          : fallbackDurationMs || visibleDurationMs,
         taskId: firstPending?.taskId,
         gatewayTaskId: firstPending?.gatewayTaskId,
         gatewayPollUrl: firstPending?.gatewayPollUrl,

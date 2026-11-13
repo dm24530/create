@@ -16,7 +16,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -672,7 +671,7 @@ func TestImageTaskServiceCompleteOffloadsToStorage(t *testing.T) {
 	got, err := svc.Get(context.Background(), owner, created.ID)
 	require.NoError(t, err)
 	require.Equal(t, ImageTaskStatusCompleted, got.Status)
-	require.Equal(t, "https://cdn.test/images/users/1/"+created.ID+"-0.png", got.ImageURL)
+	require.Equal(t, "/api/v1/public/image-task-media/"+created.ID+"/0", got.ImageURL)
 	require.NotContains(t, string(got.Result), "b64_json", "large base64 must not be persisted to Redis")
 	require.Len(t, storage.saved, 1)
 }
@@ -805,9 +804,9 @@ func TestImageTaskServiceExposesLocalOriginalURLWhileRemoteUploadPending(t *test
 	}
 	require.NoError(t, json.Unmarshal(uploaded.Result, &uploadedResult))
 	require.Len(t, uploadedResult.Data, 1)
-	require.JSONEq(t, strconv.Quote(remoteURL), string(uploadedResult.Data[0]["url"]))
+	require.Contains(t, string(uploadedResult.Data[0]["url"]), "/api/v1/public/image-assets/")
 	require.JSONEq(t, `"uploaded"`, string(uploadedResult.Data[0]["upload_status"]))
-	require.Equal(t, remoteURL, uploaded.ImageURL)
+	require.Contains(t, uploaded.ImageURL, "/api/v1/public/image-assets/")
 }
 
 func TestImageTaskServiceCompleteOffloadFailureMarksFailed(t *testing.T) {

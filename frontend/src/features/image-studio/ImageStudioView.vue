@@ -781,7 +781,7 @@ import {
 } from '@/utils/imageReferenceCompression'
 import { resolveGeminiImageModelPolicy, type GeminiImageQuality } from './geminiImageModelPolicy'
 import { createReferenceImagePreview } from './referenceImagePreview'
-import { resolveImageAssetURL } from './imageDownload'
+import { isSafeImagePreviewSource, resolveImageAssetURL } from './imageDownload'
 import {
   buildEditForm,
   buildGeminiPayload,
@@ -1029,10 +1029,19 @@ function restoreStudioSnapshot(userId?: number | string) {
   selectedKeyId.value = snapshot.selectedKeyId
   imageModels.value = snapshot.imageModels
   imageModel.value = snapshot.imageModel
-  images.value = sortStudioItemsByDisplayOrder(snapshot.images.map((image) => ({
-    ...image,
-    restoredFromSnapshot: true,
-  })))
+  images.value = sortStudioItemsByDisplayOrder(snapshot.images
+    .map((image) => ({
+      ...image,
+      src: isSafeImagePreviewSource(String(image.src || '')) ? image.src : '',
+      previewSrc: isSafeImagePreviewSource(String(image.previewSrc || ''))
+        ? image.previewSrc
+        : undefined,
+      thumbSrc: isSafeImagePreviewSource(String(image.thumbSrc || ''))
+        ? image.thumbSrc
+        : undefined,
+      restoredFromSnapshot: true,
+    }))
+    .filter((image) => Boolean(image.src || image.thumbSrc || image.previewSrc)))
   const numericIds = images.value
     .map((image) => Number(image.id))
     .filter((id) => Number.isFinite(id) && id > 0)
@@ -1055,6 +1064,7 @@ function writeStudioSnapshot(userId: number | string | null | undefined = authSt
       imageModel: imageModel.value,
       images: images.value
         .filter((image) => !image.pending && image.src && !image.src.startsWith('data:'))
+        .filter((image) => isSafeImagePreviewSource(image.src))
         .slice(0, 48)
         .map((image, index) => ({
           ...image,
@@ -1062,9 +1072,11 @@ function writeStudioSnapshot(userId: number | string | null | undefined = authSt
           thumbSrcSet: undefined,
           // Inline previews keep recent cards instant after a refresh. Bound
           // how many are persisted so sessionStorage quota is not exhausted.
-          thumbSrc: isInlineImageSource(image.thumbSrc)
-            ? (index < 6 ? image.thumbSrc : undefined)
-            : image.thumbSrc,
+          thumbSrc: !isSafeImagePreviewSource(String(image.thumbSrc || ''))
+            ? undefined
+            : isInlineImageSource(image.thumbSrc)
+              ? (index < 6 ? image.thumbSrc : undefined)
+              : image.thumbSrc,
         })),
     }
     writeStoredStudioSnapshot(sessionStorage, userId, snapshot)
@@ -1887,7 +1899,7 @@ async function loadGalleryThumbnail(id: string, forceServer = false) {
   }
   // The object store already serves a 720px thumbnail. Use it directly instead
   // of asking the backend to download and resize the original image.
-  if (!forceServer && /^https?:\/\//i.test(image.thumbSrc || '')) {
+  if (!forceServer && isSafeImagePreviewSource(String(image.thumbSrc || ''))) {
     resetImageMediaState(image)
     armImageMediaTimeout(image)
     return
@@ -1956,13 +1968,15 @@ function blobToDataURL(blob: Blob): Promise<string> {
 }
 
 function galleryEntryToImage(entry: GalleryMergeEntry, index: number): GeneratedImage {
+  const source = String(entry.url || '')
+  const thumbnail = String(entry.thumb_url || '')
   return {
     id: entry.id,
     galleryId: entry.id,
     gallerySourceId: entry.source_id,
     title: `历史图片 ${index + 1}`,
-    src: resolveImageAssetURL(entry.url || ''),
-    thumbSrc: entry.thumb_url || '',
+    src: isSafeImagePreviewSource(source) ? resolveImageAssetURL(source) : '',
+    thumbSrc: isSafeImagePreviewSource(thumbnail) ? thumbnail : '',
     thumbSrcSet: '',
     prompt: entry.prompt,
     model: entry.model,
@@ -2007,10 +2021,17 @@ function restorePendingImages() {
       .map((item) => {
         const startedAt = Number(item.startedAt) > 0 ? Number(item.startedAt) : Date.now()
         const timedOut = Date.now() - startedAt >= IMAGE_GENERATION_TIMEOUT_MS
+        const previewSrc = isSafeImagePreviewSource(String(item.previewSrc || ''))
+          ? item.previewSrc
+          : undefined
         return {
           ...item,
           title: timedOut ? '生成失败' : '正在生成',
           src: '',
+          previewSrc,
+          thumbSrc: previewSrc || (
+            isSafeImagePreviewSource(String(item.thumbSrc || '')) ? item.thumbSrc : undefined
+          ),
           pending: !timedOut,
           failed: timedOut,
           error: timedOut ? IMAGE_GENERATION_TIMEOUT_MESSAGE : undefined,
@@ -2551,7 +2572,8 @@ function handleImageMediaError(image: GeneratedImage) {
     const galleryID = galleryIdFor(image)
     const mediaID = imageMediaId(image)
     if (
-      /^https?:\/\//i.test(image.thumbSrc)
+      !isInlineImageSource(image.thumbSrc)
+      && isSafeImagePreviewSource(image.thumbSrc)
       && galleryID
       && galleryBackedIds.value.has(galleryID)
       && !galleryThumbnailRecoveryIds.has(mediaID)
@@ -3300,6 +3322,7 @@ function applyGatewayPreview(image: GeneratedImage, items: any[]) {
     || '',
   )
   if (!src) return
+  if (!isSafeImagePreviewSource(src)) return
   image.previewSrc = src
   if (!Number(image.durationMs || 0) && Number(image.startedAt || 0) > 0) {
     image.durationMs = Math.max(1, Date.now() - Number(image.startedAt))

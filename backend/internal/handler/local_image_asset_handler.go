@@ -58,16 +58,8 @@ func (h *LocalImageAssetHandler) Serve(c *gin.Context) {
 
 	download := localAssetDownloadRequested(c)
 	if meta.Uploaded {
-		if download {
-			h.serveUploadedDownload(c, assetID)
-			return
-		}
-		target := h.uploadedAssetURL(c, meta)
-		if target != "" {
-			c.Header("Cache-Control", "private, max-age=60")
-			c.Redirect(http.StatusFound, target)
-			return
-		}
+		h.serveUploadedDownload(c, assetID)
+		return
 	}
 
 	meta, file, err := h.assets.Open(assetID)
@@ -75,11 +67,8 @@ func (h *LocalImageAssetHandler) Serve(c *gin.Context) {
 		if errors.Is(err, service.ErrLocalImageAssetNotFound) {
 			latest, latestErr := h.assets.Get(assetID)
 			if latestErr == nil && latest.Uploaded {
-				if target := h.uploadedAssetURL(c, latest); target != "" {
-					c.Header("Cache-Control", "private, max-age=60")
-					c.Redirect(http.StatusFound, target)
-					return
-				}
+				h.serveUploadedDownload(c, assetID)
+				return
 			}
 			http.NotFound(c.Writer, c.Request)
 			return

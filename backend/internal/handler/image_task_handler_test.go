@@ -90,6 +90,8 @@ func (s *asyncImageMemoryStore) Save(_ context.Context, task *service.ImageTaskR
 	copy := *task
 	copy.Result = append(json.RawMessage(nil), task.Result...)
 	copy.Error = append(json.RawMessage(nil), task.Error...)
+	copy.PreviewRemoteURLs = append([]string(nil), task.PreviewRemoteURLs...)
+	copy.MediaRemoteURLs = append([]string(nil), task.MediaRemoteURLs...)
 	s.tasks[task.ID] = &copy
 	return nil
 }
@@ -104,6 +106,8 @@ func (s *asyncImageMemoryStore) Get(_ context.Context, id string) (*service.Imag
 	copy := *task
 	copy.Result = append(json.RawMessage(nil), task.Result...)
 	copy.Error = append(json.RawMessage(nil), task.Error...)
+	copy.PreviewRemoteURLs = append([]string(nil), task.PreviewRemoteURLs...)
+	copy.MediaRemoteURLs = append([]string(nil), task.MediaRemoteURLs...)
 	return &copy, nil
 }
 
@@ -228,7 +232,7 @@ func TestAsyncImageHandlerSubmitAndPoll(t *testing.T) {
 	require.Equal(t, http.StatusOK, pollWriter.Code)
 	require.Equal(t, "no-store", pollWriter.Header().Get("Cache-Control"))
 	require.Empty(t, pollWriter.Header().Get("Retry-After"))
-	require.Contains(t, pollWriter.Body.String(), "https://example.test/image.png")
+	require.Contains(t, pollWriter.Body.String(), "/api/v1/public/image-task-media/")
 }
 
 func TestAsyncImageHandlerServesOwnedLocalOriginal(t *testing.T) {
@@ -534,7 +538,7 @@ func TestAsyncImageHandlerAcceptsGeminiEnvelope(t *testing.T) {
 	require.Contains(t, string(got.Result), `"b64_json":"aGVsbG8="`)
 }
 
-func TestNormalizeGeminiImageTaskResultSupportsFileAndSnakeCaseResults(t *testing.T) {
+func TestNormalizeGeminiImageTaskResultSupportsSnakeCaseAndRejectsRawURLs(t *testing.T) {
 	inline, err := normalizeGeminiImageTaskResult([]byte(`{
 		"candidates":[{"content":{"parts":[
 			{"inline_data":{"mime_type":"image/webp","data":"YWJj"}}
@@ -544,14 +548,12 @@ func TestNormalizeGeminiImageTaskResultSupportsFileAndSnakeCaseResults(t *testin
 	require.JSONEq(t, `{"created":0,"data":[{"b64_json":"YWJj","mime_type":"image/webp"}]}`,
 		replaceNormalizedTimestamp(t, inline))
 
-	fileURL, err := normalizeGeminiImageTaskResult([]byte(`{
+	_, err = normalizeGeminiImageTaskResult([]byte(`{
 		"candidates":[{"content":{"parts":[
 			{"fileData":{"mimeType":"image/jpeg","fileUri":"https://img.example.test/a.jpg"}}
 		]}}]
 	}`))
-	require.NoError(t, err)
-	require.JSONEq(t, `{"created":0,"data":[{"mime_type":"image/jpeg","url":"https://img.example.test/a.jpg"}]}`,
-		replaceNormalizedTimestamp(t, fileURL))
+	require.ErrorIs(t, err, errGeminiImageOutputMissing)
 }
 
 func TestInspectGeminiImageRequestSupportsInlineAndFileImages(t *testing.T) {
@@ -926,7 +928,7 @@ func TestAsyncImageHandlerRecordsGeneratedImageLinkByUsageRequestID(t *testing.T
 
 	require.NotNil(t, links.link)
 	require.Equal(t, "client:req-image-1", links.link.RequestID)
-	require.Equal(t, "https://cdn.example.test/generated.png", links.link.ImageURL)
+	require.Contains(t, links.link.ImageURL, "/api/v1/public/image-task-media/")
 }
 
 func TestAsyncImageHandlerPrefersGeneratedPreviewForUsageImageLink(t *testing.T) {
@@ -1018,7 +1020,7 @@ func TestAsyncImageHandlerRecoveryRestoresExecutionAndCompletesTask(t *testing.T
 	}, time.Second, 10*time.Millisecond)
 	got, err := tasks.Get(context.Background(), service.ImageTaskOwner{UserID: 7, APIKeyID: 9}, "imgtask_restore")
 	require.NoError(t, err)
-	require.Equal(t, "https://example.test/restored.png", got.ImageURL)
+	require.Equal(t, "/api/v1/public/image-task-media/imgtask_restore/0", got.ImageURL)
 }
 
 func TestAsyncImageHandlerFailsTransientUpstreamFailureImmediately(t *testing.T) {

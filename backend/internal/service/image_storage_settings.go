@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"path"
 	"strings"
@@ -546,6 +547,23 @@ func (s *ImageStorageSettingService) FetchImageURL(ctx context.Context, rawURL s
 		return nil, "", ErrImageStorageIncomplete
 	}
 	return uploader.download(ctx, rawURL)
+}
+
+// OpenMediaURL streams an object URL through the API server without exposing
+// the presigned object-storage address to the browser.
+func (s *ImageStorageSettingService) OpenMediaURL(
+	ctx context.Context,
+	rawURL string,
+) (io.ReadCloser, string, error) {
+	rawURL = strings.TrimSpace(rawURL)
+	if s == nil || rawURL == "" {
+		return nil, "", ErrImageStorageIncomplete
+	}
+	uploader, enabled := s.resolve()
+	if !enabled || uploader == nil {
+		uploader = NewImageResultUploader(nil, "", s.maxDownloadBytes(), nil)
+	}
+	return uploader.OpenMediaStream(ctx, rawURL)
 }
 
 func (s *ImageStorageSettingService) maxDownloadBytes() int64 {

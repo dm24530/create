@@ -2,6 +2,7 @@ import { lazy, Suspense } from "react";
 import { createBrowserRouter, Outlet } from "react-router-dom";
 
 import { AnalyticsTracker } from "@/components/layout/analytics-tracker";
+import { ManagedRouteBridge } from "@/components/layout/managed-route-bridge";
 import UserLayout from "@/layouts/user-layout";
 import { isManagedMode } from "@/lib/managed-mode";
 import RouteErrorPage from "@/pages/route-error";
@@ -34,6 +35,7 @@ export const router = createBrowserRouter([
         element: (
             <UserLayout>
                 <AnalyticsTracker />
+                <ManagedRouteBridge />
                 <Suspense fallback={<RouteLoading />}>
                     <Outlet />
                 </Suspense>

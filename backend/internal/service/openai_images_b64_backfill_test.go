@@ -337,12 +337,12 @@ func TestOpenAIGatewayServiceForwardImages_APIKeyBackfillsB64JSONFromURL(t *test
 	require.Equal(t, http.StatusOK, rec.Code)
 	wantB64 := base64.StdEncoding.EncodeToString(b64BackfillPNGBytes)
 	require.Equal(t, wantB64, gjson.Get(rec.Body.String(), "data.0.b64_json").String())
-	require.Equal(t, "https://cdn.example.com/cat.png", gjson.Get(rec.Body.String(), "data.0.url").String())
+	require.Empty(t, gjson.Get(rec.Body.String(), "data.0.url").String())
 	require.Equal(t, "a cat", gjson.Get(rec.Body.String(), "data.0.revised_prompt").String())
 	require.Equal(t, int64(1710000000), gjson.Get(rec.Body.String(), "created").Int())
 }
 
-func TestOpenAIGatewayServiceForwardImages_APIKeyLeavesURLOnlyResponseWhenDisabled(t *testing.T) {
+func TestOpenAIGatewayServiceForwardImages_APIKeyInlinesURLWhenBackfillDisabled(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	body := []byte(`{"model":"gpt-image-2","prompt":"draw a cat","size":"1024x1024"}`)
 
@@ -375,7 +375,9 @@ func TestOpenAIGatewayServiceForwardImages_APIKeyLeavesURLOnlyResponseWhenDisabl
 	require.NotNil(t, result)
 	require.Equal(t, 1, result.ImageCount)
 
-	require.Len(t, upstream.requests, 1)
+	require.Len(t, upstream.requests, 2)
 	require.Equal(t, http.StatusOK, rec.Code)
-	require.Equal(t, upstreamBody, rec.Body.String())
+	wantB64 := base64.StdEncoding.EncodeToString(b64BackfillPNGBytes)
+	require.Equal(t, wantB64, gjson.Get(rec.Body.String(), "data.0.b64_json").String())
+	require.Empty(t, gjson.Get(rec.Body.String(), "data.0.url").String())
 }

@@ -2052,7 +2052,7 @@ async function runTask(
       task.error = ''
       persistTask(task, 'succeeded', '')
       // 归档到对象存储（失败不影响本次结果，本地记录仍然可用）。
-      void archiveTaskVideo(task, snapshot.videoUrl)
+      void archiveTaskVideo(task)
       return
     }
 
@@ -2090,7 +2090,7 @@ async function refreshTask(task: StudioTask) {
 // 归档成对象存储的长期地址：换浏览器/清缓存后「我的作品」还能播放。
 // 只有公开可抓的 Seedance 直链交给服务端；需要 Bearer Key 的 Momo/Grok
 // 内容接口先在浏览器下载字节，再上传归档。
-async function archiveTaskVideo(task: StudioTask, upstreamUrl: string) {
+async function archiveTaskVideo(task: StudioTask) {
   archiveHint.value = ''
   try {
     const sourceId = task.sourceId || taskArchiveSourceID(task)
@@ -2105,17 +2105,12 @@ async function archiveTaskVideo(task: StudioTask, upstreamUrl: string) {
       // 工作台的内容先进临时档（到期自动删）；用户到「我的作品」里点保存才转永久。
       saved: false,
     }
-    let entry: ArchivedVideoEntry
-    if (task.provider === 'seedance' && /^https?:\/\//i.test(upstreamUrl)) {
-      entry = await archiveVideo({ ...request, video_url: upstreamUrl })
-    } else {
-      const dataURL = await blobUrlToDataURL(task.videoUrl)
-      if (!dataURL) {
-        archiveHint.value = '视频较大，未自动归档；可在「我的作品」里手动下载保留。'
-        return
-      }
-      entry = await archiveVideo({ ...request, video_data_url: dataURL })
+    const dataURL = await blobUrlToDataURL(task.videoUrl)
+    if (!dataURL) {
+      archiveHint.value = '视频较大，未自动归档；可在「我的作品」里手动下载保留。'
+      return
     }
+    const entry: ArchivedVideoEntry = await archiveVideo({ ...request, video_data_url: dataURL })
     if (!entry?.url) return
     // 旧 blob 先留着：DOM 还指着它，立即撤销会让正在播放的视频黑掉。
     if (task.revokeUrl && task.videoUrl) retiredObjectURLs.push(task.videoUrl)

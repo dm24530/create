@@ -185,7 +185,7 @@ function hasPendingCloudAsset(node: CanvasNodeData) {
     const metadata = node.metadata;
     if (!metadata) return false;
     const mediaNode = node.type === CanvasNodeType.Image || node.type === CanvasNodeType.Video || node.type === CanvasNodeType.Audio;
-    const isRemoteURL = (value?: string) => Boolean(value && /^https?:\/\//i.test(value));
+    const isRemoteURL = (value?: string) => Boolean(value && value.startsWith("/api/v1/public/"));
     const hasImageEntries = Boolean(metadata.images?.length);
     if (
         mediaNode &&
@@ -950,7 +950,7 @@ function InfiniteCanvasPage() {
                 if (!isCanvasCloudReady()) return;
                 const candidates = nodes.filter(hasPendingCloudAsset);
                 if (!candidates.length) return;
-                const isRemoteURL = (value?: string) => Boolean(value && /^https?:\/\//i.test(value));
+                const isRemoteURL = (value?: string) => Boolean(value && value.startsWith("/api/v1/public/"));
                 for (const node of candidates) {
                     pendingCloudAssetsRef.current.add(`${node.id}:primary`);
                     for (const image of node.metadata?.images || []) {

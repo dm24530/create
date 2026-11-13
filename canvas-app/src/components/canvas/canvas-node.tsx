@@ -10,6 +10,7 @@ import { getNodeDefinition } from "@/lib/canvas/node-registry";
 import { buildNodeContext } from "@/lib/canvas/plugin-node-context";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasResourceMentionTextarea } from "./canvas-resource-mention-textarea";
+import { safeCanvasMediaSource } from "@/lib/canvas/canvas-media-url";
 import { CanvasNodeType, type CanvasNodeData, type CanvasNodeImage, type CanvasNodeText, type Position } from "@/types/canvas";
 import type { CanvasNodeContext, CanvasPluginHost } from "@/types/canvas-plugin";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
@@ -755,7 +756,7 @@ function VideoNodeContent({ node, theme }: NodeContentRendererProps) {
                 <span className="text-sm">{t("canvas.node.emptyVideo")}</span>
             </div>
         );
-    return <video src={node.metadata.content} controls className="h-full w-full rounded-[18px] bg-black object-contain" data-canvas-video={node.id} data-canvas-no-zoom />;
+    return <video src={safeCanvasMediaSource(node.metadata.content)} controls className="h-full w-full rounded-[18px] bg-black object-contain" data-canvas-video={node.id} data-canvas-no-zoom />;
 }
 
 function AudioNodeContent({ node, theme }: NodeContentRendererProps) {
@@ -773,7 +774,7 @@ function AudioNodeContent({ node, theme }: NodeContentRendererProps) {
                 <Music2 className="size-4 shrink-0" />
                 <span className="truncate">{t("canvas.node.audio")}</span>
             </div>
-            <audio src={node.metadata.content} controls className="w-full" data-canvas-no-zoom />
+            <audio src={safeCanvasMediaSource(node.metadata.content)} controls className="w-full" data-canvas-no-zoom />
         </div>
     );
 }
@@ -982,7 +983,7 @@ function ExpandedImageCard({ node, image, index, scale, onView, onSetPrimary, on
 }
 
 function uniqueImageSources(sources: Array<string | undefined>) {
-    return Array.from(new Set(sources.filter((source): source is string => Boolean(source))));
+    return Array.from(new Set(sources.map(safeCanvasMediaSource).filter((source): source is string => Boolean(source))));
 }
 
 function ImageWithFallback({

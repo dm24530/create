@@ -306,11 +306,11 @@ describe('Seedance video request mapping', () => {
     expect(parseVideoTaskSnapshot('seedance', { status: 'in_progress' }).status).toBe('running')
     const completed = parseVideoTaskSnapshot('seedance', {
       status: 'completed',
-      content: { video_url: 'https://cdn.example.com/out.mp4', duration: 12 },
+      content: { video_url: '/videos/task-1/content', duration: 12 },
     })
     expect(completed.status).toBe('succeeded')
     expect(completed.durationSeconds).toBe(12)
-    expect(completed.videoUrl).toBe('https://cdn.example.com/out.mp4')
+    expect(completed.videoUrl).toBe('/videos/task-1/content')
   })
 
   it('normalizes completed Muse status responses with a content URL', () => {
@@ -583,7 +583,7 @@ describe('pollVideoTask network recovery', () => {
         ok: true,
         json: async () => ({
           status: 'succeeded',
-          content: { video_url: 'https://cdn.example.com/out.mp4' },
+          content: { video_url: '/videos/task-1/content' },
         }),
       })
     vi.stubGlobal('fetch', fetchMock)
@@ -597,7 +597,7 @@ describe('pollVideoTask network recovery', () => {
     })
 
     expect(snapshot.status).toBe('succeeded')
-    expect(snapshot.videoUrl).toBe('https://cdn.example.com/out.mp4')
+    expect(snapshot.videoUrl).toBe('/videos/task-1/content')
     expect(fetchMock).toHaveBeenCalledTimes(2)
     expect(onRetry).toHaveBeenCalledTimes(1)
   })

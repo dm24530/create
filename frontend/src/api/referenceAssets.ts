@@ -1,23 +1,6 @@
-import { apiClient, buildApiUrl } from '@/api/client'
+import { buildApiUrl } from '@/api/client'
 
 export type ReferenceAssetKind = 'image' | 'video' | 'audio'
-
-interface PresignReferenceAssetRequest {
-  kind: ReferenceAssetKind
-  content_type: string
-  bytes: number
-}
-
-interface PresignReferenceAssetResult {
-  object_key: string
-  upload_url: string
-  upload_headers: Record<string, string>
-  content_type: string
-}
-
-interface CompleteReferenceAssetResult {
-  url: string
-}
 
 export async function uploadReferenceAssetBlob(
   kind: ReferenceAssetKind,
@@ -26,58 +9,7 @@ export async function uploadReferenceAssetBlob(
 ): Promise<string> {
   if (!blob.size) throw new Error('参考素材为空')
   if (!contentType) throw new Error('参考素材缺少 MIME 类型')
-
-  try {
-    return await uploadReferenceAssetBlobDirect(kind, blob, contentType)
-  } catch {
-    return uploadReferenceAssetBlobMultipart(kind, blob, contentType)
-  }
-}
-
-async function uploadReferenceAssetBlobDirect(
-  kind: ReferenceAssetKind,
-  blob: Blob,
-  contentType: string,
-): Promise<string> {
-  const { data: presign } = await apiClient.post<PresignReferenceAssetResult>(
-    '/video-studio/reference-assets/presign',
-    {
-      kind,
-      content_type: contentType,
-      bytes: blob.size,
-    } satisfies PresignReferenceAssetRequest,
-    { timeout: 30_000 },
-  )
-
-  const controller = new AbortController()
-  const timeout = window.setTimeout(() => controller.abort(), 10 * 60 * 1000)
-  try {
-    const response = await fetch(presign.upload_url, {
-      method: 'PUT',
-      headers: presign.upload_headers,
-      body: blob,
-      cache: 'no-store',
-      signal: controller.signal,
-    })
-    if (!response.ok) {
-      throw new Error(`参考素材直传失败（HTTP ${response.status}）`)
-    }
-  } finally {
-    window.clearTimeout(timeout)
-  }
-
-  const { data: completed } = await apiClient.post<CompleteReferenceAssetResult>(
-    '/video-studio/reference-assets/complete',
-    {
-      kind,
-      content_type: presign.content_type || contentType,
-      object_key: presign.object_key,
-      bytes: blob.size,
-    },
-    { timeout: 60_000 },
-  )
-  if (!completed.url) throw new Error('参考素材完成后没有返回访问地址')
-  return completed.url
+  return uploadReferenceAssetBlobMultipart(kind, blob, contentType)
 }
 
 async function uploadReferenceAssetBlobMultipart(
@@ -101,7 +33,7 @@ async function uploadReferenceAssetBlobMultipart(
   }
   const url = String(payload?.data?.url || '')
   if (!url) throw new Error('参考素材上传后没有返回访问地址')
-  return url
+  return new URL(buildApiUrl(url), window.location.origin).toString()
 }
 
 function referenceFileName(kind: ReferenceAssetKind, contentType: string) {
