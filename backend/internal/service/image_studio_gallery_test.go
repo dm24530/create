@@ -1137,6 +1137,16 @@ func TestImageStudioGallerySweepDeletesObjects(t *testing.T) {
 	require.Equal(t, []string{"images/a.png", "videos/b.mp4"}, saver.deletedObject)
 }
 
+func TestImageStudioGallerySweepDropsRowsWhenStorageUnconfigured(t *testing.T) {
+	store := &galleryStoreStub{swept: []string{"images/a.png", "videos/b.mp4"}}
+	saver := &gallerySaverStub{deleteErr: ErrImageStorageIncomplete}
+	svc := NewImageStudioGalleryService(store, saver)
+
+	n, err := svc.SweepExpired(context.Background(), 10)
+	require.NoError(t, err)
+	require.Equal(t, 2, n)
+}
+
 func TestImageStudioGalleryDownloadURLFallsBackForPendingLocalAsset(t *testing.T) {
 	local := NewLocalImageAssetStore(t.TempDir())
 	meta, err := local.Save(

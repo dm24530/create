@@ -1225,6 +1225,13 @@ func (s *ImageStudioGalleryService) SweepExpired(ctx context.Context, batch int)
 				continue
 			}
 			if err := s.storage.DeleteObject(ctx, key); err != nil {
+				if isStorageNotConfigured(err) {
+					// Unconfigured storage cannot hold a retrievable object. Keep
+					// the expired row from blocking the sweep forever.
+					logger.L().Warn("studio_work.sweep_object_delete_skipped",
+						zap.String("object_key", key), zap.Error(err))
+					continue
+				}
 				logger.L().Warn("studio_work.sweep_object_delete_failed",
 					zap.String("object_key", key), zap.Error(err))
 				failed = true

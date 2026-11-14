@@ -33,6 +33,8 @@ const (
 	maxCanvasProjectBytes   = 12 << 20
 	maxCanvasAssetBytes     = 128 << 20
 	maxCanvasThumbBytes     = 4 << 20
+	canvasMaintenanceBatch  = 200
+	canvasMaintenancePeriod = 30 * time.Minute
 	canvasProjectPageSize   = 50
 	canvasProjectMaxPage    = 100
 	canvasProjectQuota      = 100
@@ -1534,11 +1536,23 @@ func (h *CanvasHandler) cleanupUnreferencedAssets(
 	}
 	for _, item := range orphans {
 		if err := h.storage.DeleteObject(ctx, item.object); err != nil {
-			return err
+			if !canvasStorageNotConfigured(err) {
+				return err
+			}
+			logger.L().Warn("canvas.asset_cleanup_skipped",
+				zap.String("asset_id", item.id),
+				zap.String("object_key", item.object),
+				zap.Error(err))
 		}
 		if item.thumbnail != "" {
 			if err := h.storage.DeleteObject(ctx, item.thumbnail); err != nil {
-				return err
+				if !canvasStorageNotConfigured(err) {
+					return err
+				}
+				logger.L().Warn("canvas.asset_thumbnail_cleanup_skipped",
+					zap.String("asset_id", item.id),
+					zap.String("object_key", item.thumbnail),
+					zap.Error(err))
 			}
 		}
 		if _, err := h.db.ExecContext(ctx, `
@@ -1548,6 +1562,232 @@ func (h *CanvasHandler) cleanupUnreferencedAssets(
 		}
 	}
 	return nil
+}
+
+func canvasStorageNotConfigured(err error) bool {
+	return errors.Is(err, service.ErrImageStorageDisabled) ||
+		errors.Is(err, service.ErrImageStorageIncomplete)
+}
+
+// StartMaintenance removes abandoned presigned-upload intents even when the
+// user never starts another upload. The intent row reserves quota and can
+// retain a pending object key, so relying on the next upload is not enough.
+func (h *CanvasHandler) StartMaintenance(ctx context.Context, interval time.Duration) {
+	if h == nil || h.db == nil || interval <= 0 {
+		return
+	}
+	go func() {
+		h.sweepExpiredUploadIntents(ctx)
+		h.sweepUnreferencedAssets(ctx)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				h.sweepExpiredUploadIntents(ctx)
+				h.sweepUnreferencedAssets(ctx)
+			}
+		}
+	}()
+}
+
+func (h *CanvasHandler) sweepExpiredUploadIntents(ctx context.Context) {
+	if h == nil || h.db == nil {
+		return
+	}
+	for {
+		n, err := h.cleanupExpiredUploadIntents(ctx, canvasMaintenanceBatch)
+		if err != nil {
+			logger.L().Warn("canvas.upload_intent_cleanup_failed", zap.Error(err))
+			return
+		}
+		if n < canvasMaintenanceBatch {
+			return
+		}
+	}
+}
+
+func (h *CanvasHandler) sweepUnreferencedAssets(ctx context.Context) {
+	if h == nil || h.db == nil {
+		return
+	}
+	for {
+		scanned, deleted, err := h.cleanupAllUnreferencedAssets(ctx, canvasMaintenanceBatch)
+		if err != nil {
+			logger.L().Warn("canvas.asset_global_cleanup_failed", zap.Error(err))
+			return
+		}
+		if deleted > 0 {
+			logger.L().Info("canvas.asset_global_cleanup",
+				zap.Int("deleted", deleted))
+		}
+		if scanned < canvasMaintenanceBatch {
+			return
+		}
+	}
+}
+
+func (h *CanvasHandler) cleanupAllUnreferencedAssets(ctx context.Context, limit int) (int, int, error) {
+	if limit <= 0 {
+		limit = canvasMaintenanceBatch
+	}
+	rows, err := h.db.QueryContext(ctx, `
+		SELECT a.id, a.object_key, a.thumb_object_key
+		FROM canvas_assets a
+		JOIN canvas_projects p ON p.id = a.project_id AND p.user_id = a.user_id
+		WHERE a.created_at < NOW() - INTERVAL '1 hour'
+		  AND NOT jsonb_path_exists(
+			p.graph,
+			'$.** ? (@.cloudAssetId == $target)',
+			jsonb_build_object('target', a.id)
+		  )
+		ORDER BY a.created_at ASC
+		LIMIT $1
+	`, limit)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	type orphan struct {
+		id     string
+		object string
+		thumb  string
+	}
+	items := make([]orphan, 0, limit)
+	for rows.Next() {
+		var item orphan
+		if err := rows.Scan(&item.id, &item.object, &item.thumb); err != nil {
+			return 0, 0, err
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, 0, err
+	}
+
+	deletable := make([]string, 0, len(items))
+	for _, item := range items {
+		failed := false
+		for _, key := range []string{item.object, item.thumb} {
+			key = strings.TrimSpace(key)
+			if key == "" || h.storage == nil {
+				continue
+			}
+			if err := h.storage.DeleteObject(ctx, key); err != nil {
+				if canvasStorageNotConfigured(err) {
+					logger.L().Warn("canvas.asset_global_cleanup_skipped",
+						zap.String("asset_id", item.id),
+						zap.String("object_key", key),
+						zap.Error(err))
+					continue
+				}
+				logger.L().Warn("canvas.asset_global_object_delete_failed",
+					zap.String("asset_id", item.id),
+					zap.String("object_key", key),
+					zap.Error(err))
+				failed = true
+				break
+			}
+		}
+		if !failed {
+			deletable = append(deletable, item.id)
+		}
+	}
+	if len(deletable) == 0 {
+		return len(items), 0, nil
+	}
+	result, err := h.db.ExecContext(ctx, `
+		DELETE FROM canvas_assets WHERE id = ANY($1)
+	`, pq.Array(deletable))
+	if err != nil {
+		return len(items), 0, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return len(items), 0, err
+	}
+	return len(items), int(affected), nil
+}
+
+func (h *CanvasHandler) cleanupExpiredUploadIntents(ctx context.Context, limit int) (int, error) {
+	if limit <= 0 {
+		limit = canvasMaintenanceBatch
+	}
+	rows, err := h.db.QueryContext(ctx, `
+		SELECT asset_id, object_key, thumb_object_key
+		FROM canvas_upload_intents
+		WHERE expires_at <= NOW()
+		ORDER BY expires_at ASC
+		LIMIT $1
+	`, limit)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	type expiredIntent struct {
+		assetID string
+		object  string
+		thumb   string
+	}
+	items := make([]expiredIntent, 0, limit)
+	for rows.Next() {
+		var item expiredIntent
+		if err := rows.Scan(&item.assetID, &item.object, &item.thumb); err != nil {
+			return 0, err
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+
+	deletable := make([]string, 0, len(items))
+	for _, item := range items {
+		failed := false
+		for _, key := range []string{item.object, item.thumb} {
+			key = strings.TrimSpace(key)
+			if key == "" || h.storage == nil {
+				continue
+			}
+			if err := h.storage.DeleteObject(ctx, key); err != nil {
+				if canvasStorageNotConfigured(err) {
+					logger.L().Warn("canvas.upload_intent_object_cleanup_skipped",
+						zap.String("asset_id", item.assetID),
+						zap.String("object_key", key),
+						zap.Error(err))
+					continue
+				}
+				logger.L().Warn("canvas.upload_intent_object_delete_failed",
+					zap.String("asset_id", item.assetID),
+					zap.String("object_key", key),
+					zap.Error(err))
+				failed = true
+				break
+			}
+		}
+		if !failed {
+			deletable = append(deletable, item.assetID)
+		}
+	}
+	if len(deletable) == 0 {
+		return 0, nil
+	}
+	result, err := h.db.ExecContext(ctx, `
+		DELETE FROM canvas_upload_intents
+		WHERE asset_id = ANY($1) AND expires_at <= NOW()
+	`, pq.Array(deletable))
+	if err != nil {
+		return 0, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return int(affected), nil
 }
 
 func canvasCloudAssetReferences(graph json.RawMessage) map[string]struct{} {
@@ -1585,12 +1825,6 @@ func (h *CanvasHandler) reserveCanvasUploadIntent(ctx context.Context, intent ca
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, `
-		DELETE FROM canvas_upload_intents
-		WHERE user_id = $1 AND expires_at <= NOW()
-	`, intent.UserID); err != nil {
-		return err
-	}
 	if err := lockCanvasQuota(ctx, tx, "canvas-uploads", intent.UserID); err != nil {
 		return err
 	}

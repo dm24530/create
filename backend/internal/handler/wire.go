@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"database/sql"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -174,7 +175,9 @@ func ProvideCanvasHandler(
 	storage *service.ImageStorageSettingService,
 	identities service.UserStorageIdentityResolver,
 ) *CanvasHandler {
-	return NewCanvasHandler(db, storage, identities)
+	h := NewCanvasHandler(db, storage, identities)
+	h.StartMaintenance(context.Background(), canvasMaintenancePeriod)
+	return h
 }
 
 // ProvideSystemHandler creates admin.SystemHandler with UpdateService

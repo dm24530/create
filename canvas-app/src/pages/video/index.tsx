@@ -13,7 +13,7 @@ import { VideoSettingsPanel, normalizeVideoResolutionValue, normalizeVideoSizeVa
 import { canvasThemes } from "@/lib/canvas-theme";
 import { clampVideoSeconds } from "@/lib/media-size";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
-import { deleteStoredMedia, resolveMediaUrl } from "@/services/file-storage";
+import { resolveMediaUrl } from "@/services/file-storage";
 import { resolveImageUrl, ensureImagePreview, getImagePreviewRevision, previewUrlFor, subscribeImagePreviews, uploadImage } from "@/services/image-storage";
 import { createVideoGenerationTask, pollVideoGenerationTask, storeGeneratedVideo, type VideoGenerationTask } from "@/services/api/video";
 import { useAssetStore } from "@/stores/use-asset-store";
@@ -65,6 +65,7 @@ type GenerationLogConfig = Pick<AiConfig, "model" | "videoModel" | "size" | "vqu
 type UpdateAiConfig = <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => void;
 
 const LOG_STORE_KEY = "infinite-canvas:video_generation_logs";
+const MAX_WORKBENCH_LOGS = 100;
 const logStore = localforage.createInstance({ name: "infinite-canvas", storeName: "video_generation_logs" });
 
 export default function VideoPage() {
@@ -80,6 +81,7 @@ export default function VideoPage() {
     const isAiConfigReady = useConfigStore((state) => state.isAiConfigReady);
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
     const addAsset = useAssetStore((state) => state.addAsset);
+    const cleanupAssets = useAssetStore((state) => state.cleanupImages);
     const [prompt, setPrompt] = useState("");
     const [references, setReferences] = useState<ReferenceImage[]>([]);
     const [results, setResults] = useState<GenerationResult[]>([]);
@@ -112,8 +114,12 @@ export default function VideoPage() {
     }, [running, startedAt]);
 
     useEffect(() => {
-        void refreshLogs();
-    }, []);
+        void (async () => {
+            const pruned = await pruneStoredLogs();
+            await refreshLogs();
+            if (pruned) cleanupAssets();
+        })();
+    }, [cleanupAssets]);
 
     const addReferences = async (files?: FileList | null) => {
         const selectedFiles = Array.from(files || []);
@@ -276,11 +282,10 @@ export default function VideoPage() {
     };
 
     const deleteSelectedLogs = () => {
-        const mediaKeys = logs
-            .filter((log) => selectedLogIds.includes(log.id))
-            .map((log) => log.video?.storageKey)
-            .filter((key): key is string => Boolean(key));
-        void Promise.all([deleteStoredMedia(mediaKeys), ...selectedLogIds.map((id) => logStore.removeItem(id))]).then(() => refreshLogs());
+        void Promise.all(selectedLogIds.map((id) => logStore.removeItem(id))).then(async () => {
+            await refreshLogs();
+            cleanupAssets();
+        });
         if (previewLog && selectedLogIds.includes(previewLog.id)) {
             setPreviewLog(null);
             setResults([]);
@@ -291,7 +296,9 @@ export default function VideoPage() {
 
     const saveLog = async (log: GenerationLog, resumePending = true) => {
         await logStore.setItem(log.id, serializeLog(log));
+        const pruned = await pruneStoredLogs();
         await refreshLogs(resumePending);
+        if (pruned) cleanupAssets();
     };
 
     const refreshLogs = async (resumePending = true) => {
@@ -669,6 +676,21 @@ async function readStoredLogs() {
     } catch {
         return [];
     }
+}
+
+async function pruneStoredLogs() {
+    const logs: GenerationLog[] = [];
+    await logStore.iterate<GenerationLog, void>((value) => {
+        if (value && typeof value === "object") logs.push(value);
+    });
+    if (logs.length <= MAX_WORKBENCH_LOGS) return false;
+    const removable = logs
+        .filter((log) => log.status !== "pending")
+        .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))
+        .slice(0, logs.length - MAX_WORKBENCH_LOGS);
+    if (!removable.length) return false;
+    await Promise.all(removable.map((log) => logStore.removeItem(log.id)));
+    return true;
 }
 
 async function normalizeLog(log: Partial<GenerationLog>): Promise<GenerationLog> {

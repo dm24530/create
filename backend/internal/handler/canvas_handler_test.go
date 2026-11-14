@@ -114,6 +114,76 @@ func (s *canvasStorageStub) OpenMediaURL(_ context.Context, _ string) (io.ReadCl
 	return io.NopCloser(strings.NewReader("remote-image")), "image/png", nil
 }
 
+func TestCanvasCleanupUnreferencedAssetsDropsRowsWhenStorageUnconfigured(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	mock.ExpectQuery("SELECT id, object_key, thumb_object_key FROM canvas_assets").
+		WithArgs(int64(7), "project-1").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "object_key", "thumb_object_key"}).
+			AddRow("asset-1", "canvas/7/project-1/assets/a.png", ""))
+	mock.ExpectExec("DELETE FROM canvas_assets WHERE id = \\$1 AND user_id = \\$2").
+		WithArgs("asset-1", int64(7)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	storage := &canvasStorageStub{deleteErr: service.ErrImageStorageIncomplete}
+	h := &CanvasHandler{db: db, storage: storage}
+	err = h.cleanupUnreferencedAssets(context.Background(), 7, "project-1", map[string]struct{}{})
+	require.NoError(t, err)
+	require.Equal(t, []string{"canvas/7/project-1/assets/a.png"}, storage.deletedKeys)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestCanvasCleanupExpiredUploadIntentsDropsRowsWhenStorageUnconfigured(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	mock.ExpectQuery("SELECT asset_id, object_key, thumb_object_key FROM canvas_upload_intents").
+		WithArgs(200).
+		WillReturnRows(sqlmock.NewRows([]string{"asset_id", "object_key", "thumb_object_key"}).
+			AddRow("asset-1", "canvas-pending/7/project-1/a.png", "").
+			AddRow("asset-2", "", ""))
+	mock.ExpectExec("DELETE FROM canvas_upload_intents").
+		WithArgs(sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 2))
+
+	storage := &canvasStorageStub{deleteErr: service.ErrImageStorageIncomplete}
+	h := &CanvasHandler{db: db, storage: storage}
+	n, err := h.cleanupExpiredUploadIntents(context.Background(), 200)
+	require.NoError(t, err)
+	require.Equal(t, 2, n)
+	require.Equal(t, []string{"canvas-pending/7/project-1/a.png"}, storage.deletedKeys)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestCanvasCleanupAllUnreferencedAssetsDropsRowsWhenStorageUnconfigured(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	mock.ExpectQuery("jsonb_path_exists").
+		WithArgs(200).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "object_key", "thumb_object_key"}).
+			AddRow("asset-1", "canvas/7/project-1/assets/a.png", "canvas/7/project-1/thumbs/a.webp"))
+	mock.ExpectExec("DELETE FROM canvas_assets WHERE id = ANY").
+		WithArgs(sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	storage := &canvasStorageStub{deleteErr: service.ErrImageStorageIncomplete}
+	h := &CanvasHandler{db: db, storage: storage}
+	scanned, deleted, err := h.cleanupAllUnreferencedAssets(context.Background(), 200)
+	require.NoError(t, err)
+	require.Equal(t, 1, scanned)
+	require.Equal(t, 1, deleted)
+	require.Equal(t, []string{
+		"canvas/7/project-1/assets/a.png",
+		"canvas/7/project-1/thumbs/a.webp",
+	}, storage.deletedKeys)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestCanvasProxyImageStreamsRemoteImage(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	handler := &CanvasHandler{storage: &canvasStorageStub{}}
@@ -333,12 +403,6 @@ func TestCanvasPresignAssetUsesAuthenticatedUsersObjectPrefix(t *testing.T) {
 		WithArgs(projectID, userID).
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(1))
 	mock.ExpectBegin()
-	mock.ExpectExec(regexp.QuoteMeta(`
-		DELETE FROM canvas_upload_intents
-		WHERE user_id = $1 AND expires_at <= NOW()
-	`)).
-		WithArgs(userID).
-		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`SELECT pg_advisory_xact_lock\(hashtextextended\(\$1, 0\)\)`).
 		WithArgs("canvas-uploads:101").
 		WillReturnResult(sqlmock.NewResult(0, 0))

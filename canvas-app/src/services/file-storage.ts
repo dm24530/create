@@ -5,6 +5,7 @@ import { withLocalProxy } from "@/stores/use-config-store";
 import {
     legacyCanvasStorageKeys,
     scopedCanvasStorageKey,
+    scopedCanvasStoreName,
     unscopedCanvasStorageKey,
 } from "@/lib/canvas-storage-scope";
 import { safeCanvasMediaSource } from "@/lib/canvas/canvas-media-url";
@@ -12,6 +13,8 @@ import { safeCanvasMediaSource } from "@/lib/canvas/canvas-media-url";
 export type UploadedFile = { url: string; storageKey: string; bytes: number; mimeType: string; width?: number; height?: number; durationMs?: number };
 
 const store = localforage.createInstance({ name: "infinite-canvas", storeName: "media_files" });
+const imageLogStore = localforage.createInstance({ name: "infinite-canvas", storeName: scopedCanvasStoreName("image_generation_logs") });
+const videoLogStore = localforage.createInstance({ name: "infinite-canvas", storeName: scopedCanvasStoreName("video_generation_logs") });
 const objectUrls = new Map<string, string>();
 
 export async function uploadMediaFile(input: string | Blob, prefix = "file"): Promise<UploadedFile> {
@@ -61,6 +64,14 @@ export async function deleteStoredMedia(keys: Iterable<string>) {
 
 export async function cleanupUnusedMedia(usedData: unknown) {
     const usedKeys = collectMediaStorageKeys(usedData);
+    await Promise.all([
+        imageLogStore.iterate((value) => {
+            collectMediaStorageKeys(value, usedKeys);
+        }),
+        videoLogStore.iterate((value) => {
+            collectMediaStorageKeys(value, usedKeys);
+        }),
+    ]);
     const unused: string[] = [];
     await store.iterate((_value, key) => {
         const storageKey = unscopedCanvasStorageKey(key);

@@ -162,19 +162,28 @@ func (h *AsyncImageHandler) cleanupUsageImageLinksLoop() {
 				if objectKey != "" {
 					if h.gateway == nil || h.gateway.imageStorage == nil {
 						logger.L().Warn(
-							"usage_log_image_link.object_cleanup_deferred",
+							"usage_log_image_link.object_cleanup_skipped",
 							zap.String("object_key", objectKey),
 							zap.String("reason", "image storage unavailable"),
 						)
-						continue
-					}
-					if err := h.gateway.imageStorage.DeleteObject(ctx, objectKey); err != nil {
-						logger.L().Warn(
-							"usage_log_image_link.object_delete_failed",
-							zap.String("object_key", objectKey),
-							zap.Error(err),
-						)
-						continue
+					} else {
+						if err := h.gateway.imageStorage.DeleteObject(ctx, objectKey); err != nil {
+							if errors.Is(err, service.ErrImageStorageDisabled) ||
+								errors.Is(err, service.ErrImageStorageIncomplete) {
+								logger.L().Warn(
+									"usage_log_image_link.object_cleanup_skipped",
+									zap.String("object_key", objectKey),
+									zap.Error(err),
+								)
+							} else {
+								logger.L().Warn(
+									"usage_log_image_link.object_delete_failed",
+									zap.String("object_key", objectKey),
+									zap.Error(err),
+								)
+								continue
+							}
+						}
 					}
 				}
 				deletableTokens = append(deletableTokens, link.LinkToken)
