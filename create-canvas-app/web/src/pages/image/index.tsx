@@ -599,29 +599,24 @@ export default function ImagePage() {
                             </button>
                         </div>
 
-                        <div className="mt-3 flex min-h-11 items-center gap-3 rounded-xl border border-stone-200 bg-stone-50 px-3 py-1.5 dark:border-stone-700 dark:bg-stone-900/60">
-                            <span className="shrink-0 text-xs font-medium text-stone-500 dark:text-stone-400">模型</span>
-                            <ModelPicker
-                                config={effectiveConfig}
-                                value={model}
-                                onChange={(value) => updateConfig("imageModel", value)}
-                                capability="image"
-                                fullWidth
-                                className="!h-8 !rounded-lg !border-transparent !bg-transparent !px-2 !text-stone-800 dark:!text-stone-100"
-                                onMissingConfig={() => openConfigDialog(false)}
-                            />
-                        </div>
-
-                        <div className="mt-3 overflow-hidden rounded-2xl border border-stone-200 bg-stone-50 dark:border-stone-800 dark:bg-stone-900/70">
+                        <div className="mt-3 flex flex-col overflow-hidden rounded-2xl border border-stone-200 bg-stone-50 dark:border-stone-800 dark:bg-stone-900/70">
                             <textarea
-                                className="block w-full resize-none bg-transparent px-4 py-4 text-[15px] leading-6 text-stone-900 outline-none placeholder:text-stone-500 dark:text-stone-100"
+                                className="block w-full flex-none resize-none bg-transparent px-4 py-4 text-[15px] leading-6 text-stone-900 outline-none placeholder:text-stone-500 dark:text-stone-100"
                                 style={{ height: 236, minHeight: 236 }}
                                 value={prompt}
                                 onChange={(event) => setPrompt(event.target.value)}
                                 onPaste={handleComposerPaste}
                                 placeholder={t("imageWorkbench.promptPlaceholder")}
                             />
-                            <div className="flex min-h-11 items-center justify-end gap-2 px-2.5 pb-2.5">
+                            <div className="flex min-h-11 items-center justify-between gap-2 px-2.5 pb-2.5">
+                                <ModelPicker
+                                    config={effectiveConfig}
+                                    value={model}
+                                    onChange={(value) => updateConfig("imageModel", value)}
+                                    capability="image"
+                                    className="!h-9 !max-w-[220px] !rounded-xl !border-stone-200 !bg-stone-100 !px-3 !text-stone-700 dark:!border-stone-700 dark:!bg-stone-800/80 dark:!text-stone-100"
+                                    onMissingConfig={() => openConfigDialog(false)}
+                                />
                                 <div className="flex shrink-0 items-center gap-0.5">
                                     <button
                                         type="button"
