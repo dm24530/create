@@ -14,7 +14,8 @@
     "test:smoke": "node test/smoke.js",
     "test:packaged": "node test/packaged-smoke.js",
     "test:mock-login": "node test/mock-login-smoke.js",
-    "test:mock-account": "node test/mock-account-smoke.js"
+    "test:mock-account": "node test/mock-account-smoke.js",
+    "test:local-billing": "node test/local-billing-smoke.js"
   },
   "devDependencies": {
     "electron": "^45.3.2",

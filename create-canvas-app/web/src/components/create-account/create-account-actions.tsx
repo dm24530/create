@@ -1,10 +1,12 @@
 import { App, Button, Dropdown, Tooltip } from "antd";
-import { BarChart3, KeyRound, LogOut, UserRound } from "lucide-react";
+import { BarChart3, Grid3X3, KeyRound, LogOut, UserRound } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { AnimatedThemeToggler } from "@/components/ui/animated-theme-toggler";
 import { CreateApiKeysModal } from "@/components/create-account/create-api-keys-modal";
 import { CreateUsageModal } from "@/components/create-account/create-usage-modal";
+import { CreateModelPlazaModal } from "@/components/create-account/create-model-plaza-modal";
+import { CreateRechargeModal } from "@/components/create-account/create-recharge-modal";
 import { createLogout } from "@/services/create-auth";
 import { listCreateManagedKeys, type CreateManagedKey } from "@/services/create-managed-channel";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -21,6 +23,8 @@ export function CreateAccountActions() {
     const [keysLoading, setKeysLoading] = useState(false);
     const [keysOpen, setKeysOpen] = useState(false);
     const [usageOpen, setUsageOpen] = useState(false);
+    const [modelPlazaOpen, setModelPlazaOpen] = useState(false);
+    const [rechargeOpen, setRechargeOpen] = useState(false);
 
     const refreshKeys = async () => {
         if (!session) return;
@@ -60,7 +64,7 @@ export function CreateAccountActions() {
     return (
         <>
             <div className="inline-flex shrink-0 items-center gap-1">
-                {user ? <button type="button" className="rounded-md px-2 py-1 text-sm font-medium tabular-nums text-emerald-600 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-950/30" title="可用余额" onClick={() => setUsageOpen(true)}>${Number(user.balance || 0).toFixed(2)}</button> : null}
+                {user ? <button type="button" className="rounded-md px-2 py-1 text-sm font-medium tabular-nums text-emerald-600 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-950/30" title="充值" onClick={() => setRechargeOpen(true)}>${Number(user.balance || 0).toFixed(2)}</button> : null}
                 <Tooltip title="API 密钥">
                     <button type="button" className={iconClass} aria-label="API 密钥" onClick={() => { setKeysOpen(true); void refreshKeys(); }}>
                         <KeyRound className="size-4" />
@@ -71,6 +75,11 @@ export function CreateAccountActions() {
                         <BarChart3 className="size-4" />
                     </button>
                 </Tooltip>
+                <Tooltip title="模型广场">
+                    <button type="button" className={iconClass} aria-label="模型广场" onClick={() => setModelPlazaOpen(true)}>
+                        <Grid3X3 className="size-4" />
+                    </button>
+                </Tooltip>
                 <AnimatedThemeToggler theme={theme} onThemeChange={setTheme} className={iconClass} aria-label={theme === "dark" ? "切换到浅色主题" : "切换到深色主题"} title={theme === "dark" ? "切换到浅色主题" : "切换到深色主题"} />
                 <Dropdown
                     trigger={["click"]}
@@ -79,6 +88,8 @@ export function CreateAccountActions() {
                         onClick: ({ key }) => {
                             if (key === "keys") { setKeysOpen(true); void refreshKeys(); }
                             if (key === "usage") setUsageOpen(true);
+                            if (key === "models") setModelPlazaOpen(true);
+                            if (key === "recharge") setRechargeOpen(true);
                             if (key === "logout") logout();
                         },
                     }}
@@ -90,6 +101,9 @@ export function CreateAccountActions() {
             </div>
             <CreateApiKeysModal open={keysOpen} onClose={() => setKeysOpen(false)} session={session} keys={keys} loading={keysLoading} onRefresh={refreshKeys} />
             <CreateUsageModal open={usageOpen} onClose={() => setUsageOpen(false)} session={session} keys={keys} />
+            <CreateModelPlazaModal open={modelPlazaOpen} onClose={() => setModelPlazaOpen(false)} session={session} />
+            <CreateRechargeModal open={rechargeOpen} onClose={() => setRechargeOpen(false)} session={session} />
         </>
     );
 }
+

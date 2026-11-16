@@ -73,3 +73,87 @@ export function getCreateUsageStats(session: CreateSession, query: CreateUsageQu
         accessToken: session.accessToken,
     });
 }
+export type CreateModelPlazaModel = {
+    name: string;
+    platform: string;
+    pricing?: {
+        billing_mode?: string;
+        input_price?: number;
+        output_price?: number;
+        image_input_price?: number;
+        image_output_price?: number;
+        per_request_price?: number;
+    } | null;
+    official_pricing?: Record<string, unknown> | null;
+};
+
+export type CreateModelPlazaGroup = {
+    id: number;
+    name: string;
+    description?: string;
+    platform: string;
+    rate_multiplier: number;
+    user_rate_multiplier?: number;
+    models: CreateModelPlazaModel[];
+};
+
+export type CreateModelPlaza = {
+    description?: string;
+    groups: CreateModelPlazaGroup[];
+};
+
+export type CreatePaymentMethod = {
+    payment_type: string;
+    currency: string;
+    fee_rate: number;
+    daily_limit: number;
+    single_min: number;
+    single_max: number;
+};
+
+export type CreateCheckoutInfo = {
+    methods: Record<string, CreatePaymentMethod>;
+    global_min: number;
+    global_max: number;
+    balance_disabled: boolean;
+    balance_recharge_multiplier: number;
+    recharge_fee_rate: number;
+    recharge_bonus_notice?: string;
+    recharge_card_enabled?: boolean;
+    recharge_card_products?: Array<{ id: string; name: string; amount: number; price?: number; currency?: string }>;
+};
+
+export type CreatePaymentOrderResult = {
+    order_id: number;
+    amount: number;
+    pay_amount: number;
+    pay_url?: string;
+    qr_code?: string;
+    expires_at: string;
+    payment_type?: string;
+    out_trade_no?: string;
+};
+
+export async function getCreateModelPlaza(session: CreateSession) {
+    return createRequest<CreateModelPlaza>("/model-plaza", { accessToken: session.accessToken });
+}
+
+export async function getCreateCheckoutInfo(session: CreateSession) {
+    return createRequest<CreateCheckoutInfo>("/payment/checkout-info", { accessToken: session.accessToken });
+}
+
+export async function createCreatePaymentOrder(
+    session: CreateSession,
+    input: { amount: number; paymentType: string; orderType?: string },
+) {
+    return createRequest<CreatePaymentOrderResult>("/payment/orders", {
+        method: "POST",
+        accessToken: session.accessToken,
+        body: JSON.stringify({
+            amount: input.amount,
+            payment_type: input.paymentType,
+            order_type: input.orderType || "balance",
+        }),
+    });
+}
+
