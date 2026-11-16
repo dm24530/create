@@ -479,7 +479,7 @@
 
 @media (min-width: 1024px) {
     .workbench-main-grid {
-        grid-template-columns: clamp(240px, var(--log-panel-width, 300px), 28vw) 8px minmax(0, 1fr);
+        grid-template-columns: clamp(280px, var(--log-panel-width, 300px), 28vw) 8px minmax(0, 1fr);
     }
 }
 
