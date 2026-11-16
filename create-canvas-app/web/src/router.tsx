@@ -9,8 +9,6 @@ import { isCreateProductMode } from "@/lib/create-product";
 import RouteErrorPage from "@/pages/route-error";
 
 const AssetsPage = lazy(() => import("@/pages/assets"));
-const CanvasPage = lazy(() => import("@/pages/canvas"));
-const CanvasProjectPage = lazy(() => import("@/pages/canvas/project"));
 const ConfigPage = lazy(() => import("@/pages/config"));
 const HomePage = lazy(() => import("@/pages/home"));
 const ImagePage = lazy(() => import("@/pages/image"));
@@ -50,8 +48,8 @@ export const router = createBrowserRouter([
             { path: "/video", element: <VideoPage /> },
             { path: "/assets", element: <AssetsPage /> },
             { path: "/prompts", element: <PromptsPage /> },
-            { path: "/canvas", element: <CanvasPage /> },
-            { path: "/canvas/:id", element: <CanvasProjectPage /> },
+            { path: "/canvas", element: <Navigate to="/image" replace /> },
+            { path: "/canvas/:id", element: <Navigate to="/image" replace /> },
             { path: "/config", element: <ConfigRoute /> },
         ],
     },

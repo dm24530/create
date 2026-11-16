@@ -1,7 +1,7 @@
 export default {
     meta: {
-        title: "Infinite Canvas",
-        description: "An infinite canvas creation tool",
+        title: "Create",
+        description: "Create AI creative workbench",
     },
     theme: { toggle: "Toggle theme" },
     common: {
@@ -217,7 +217,7 @@ export default {
     canvas: {
         defaultTitle: "Infinite Canvas {{count}}",
         library: "Canvas library",
-        title: "Infinite Canvas",
+        title: "Create",
         imported: "Imported {{count}} canvases",
         importFailed: "Import failed. Select a valid canvas package.",
         opening: "Opening canvas...",
@@ -327,7 +327,6 @@ export default {
         },
     },
     navigation: {
-        canvas: "My Canvases",
         image: "Image Studio",
         video: "Video Studio",
         prompts: "Prompt Library",
@@ -349,9 +348,8 @@ export default {
     },
     home: {
         promptError: "Failed to load prompts",
-        description: "Generate, connect, and reshape <content>images, text, and graphics</content> in <canvas>Infinite Canvas</canvas>, turning one-off generations into a continuous creative process.",
+        description: "Create and manage <content>images and videos</content> in one workbench, connecting generation, assets, and reuse.",
         start: "Get started",
-        openCanvas: "Open canvas",
         showcaseTitle: "Keep every great result",
         showcaseDescription: "Save reliable prompts, visual references, and generated images so your next creation starts from proven ideas.",
         viewPrompts: "View prompt library",

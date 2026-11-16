@@ -52,9 +52,6 @@ export default function IndexPage() {
                         <Button type="primary" size="large" onClick={() => navigate(`/${primaryTool.slug}`)} icon={<ArrowRight className="size-4" />} iconPlacement="end">
                             {t("home.start")}
                         </Button>
-                        <Button size="large" onClick={() => navigate("/canvas")}>
-                            {t("home.openCanvas")}
-                        </Button>
                     </div>
                 </div>
 
