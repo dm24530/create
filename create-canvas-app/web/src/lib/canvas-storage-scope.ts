@@ -34,10 +34,10 @@ export function legacyCanvasStorageKeys(key: string) {
     if (userCandidate) {
         keys.add(`${key}:user:${userCandidate}`);
     }
-    // Unscoped legacy data has no owner. Migrating it into a user scope can
-    // let whichever account opens the canvas first claim another user's work.
-    // Keep it only for the explicit non-user default scope.
+    // Images generated before account scoping were stored under the default
+    // scope. Preserve those local records and migrate them on first access.
     if (canvasStorageScope === "default") keys.add(key);
+    else keys.add(`scope:default:${key}`);
     keys.delete(scopedCanvasStorageKey(key));
     return [...keys];
 }
