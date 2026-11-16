@@ -1,6 +1,6 @@
-import { ArrowLeft, ArrowRight, BookOpen, CheckSquare, ClipboardPaste, Download, FolderPlus, History, LoaderCircle, Plus, SlidersHorizontal, Sparkles, Trash2, Upload, VideoIcon } from "lucide-react";
-import { useEffect, useRef, useState, useSyncExternalStore, type DragEvent } from "react";
-import { App, Button, Checkbox, Drawer, Empty, Input, Modal, Tag, Typography } from "antd";
+import { ArrowLeft, ArrowRight, CheckSquare, ChevronDown, ClipboardPaste, Copy, Download, Film, FolderPlus, History, LoaderCircle, Music2, Plus, RefreshCw, Sparkles, Trash2, Upload, VideoIcon } from "lucide-react";
+import { type ClipboardEvent as ReactClipboardEvent, useCallback, useEffect, useRef, useState, useSyncExternalStore, type DragEvent } from "react";
+import { App, Button, Checkbox, Drawer, Empty, Modal, Tag, Typography } from "antd";
 import localforage from "localforage";
 import { nanoid } from "nanoid";
 import { saveAs } from "file-saver";
@@ -8,19 +8,19 @@ import { useTranslation } from "react-i18next";
 
 import { AssetPickerModal, type InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
 import { ModelPicker } from "@/components/model-picker";
-import { PromptSelectDialog } from "@/components/prompts/prompt-select-dialog";
-import { VideoSettingsPanel, normalizeVideoResolutionValue, normalizeVideoSizeValue, videoModeLabel, videoSizeLabel } from "@/components/video-settings-panel";
-import { canvasThemes } from "@/lib/canvas-theme";
-import { clampVideoSeconds } from "@/lib/media-size";
+import { normalizeVideoResolutionValue, normalizeVideoSizeValue } from "@/components/video-settings-panel";
+import { clampVideoSeconds, computeVideoSize, inferVideoRatio, parsePixelSize, parseVideoResolution, readVideoDimensions, VIDEO_SECONDS_MAX, VIDEO_SECONDS_MIN, videoRatioOptions } from "@/lib/media-size";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
-import { resolveMediaUrl } from "@/services/file-storage";
+import { resolveMediaUrl, uploadMediaFile } from "@/services/file-storage";
 import { resolveImageUrl, ensureImagePreview, getImagePreviewRevision, previewUrlFor, subscribeImagePreviews, uploadImage } from "@/services/image-storage";
 import { createVideoGenerationTask, pollVideoGenerationTask, storeGeneratedVideo, type VideoGenerationTask } from "@/services/api/video";
+import { getManagedKeySelection, listCreateManagedKeys, managedKeySupportsVideo, switchManagedKey, type CreateManagedKey } from "@/services/create-managed-channel";
 import { useAssetStore } from "@/stores/use-asset-store";
+import { useUserStore } from "@/stores/use-user-store";
 import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
-import { boolConfig, modelOptionLabel, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
-import { useThemeStore } from "@/stores/use-theme-store";
+import { boolConfig, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
+import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 import i18n from "@/i18n";
 
 type GeneratedVideo = {
@@ -50,6 +50,8 @@ type GenerationLog = {
     model: string;
     config: GenerationLogConfig;
     references: ReferenceImage[];
+    referenceVideos: ReferenceVideo[];
+    referenceAudios: ReferenceAudio[];
     durationMs: number;
     size: string;
     resolution: string;
@@ -62,10 +64,14 @@ type GenerationLog = {
 
 type GenerationLogConfig = Pick<AiConfig, "model" | "videoModel" | "size" | "vquality" | "videoSeconds" | "videoGenerateAudio" | "videoWatermark" | "videoMode">;
 
-type UpdateAiConfig = <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => void;
-
 const LOG_STORE_KEY = "infinite-canvas:video_generation_logs";
 const MAX_WORKBENCH_LOGS = 100;
+const MAX_REFERENCE_IMAGES = 9;
+const MAX_REFERENCE_VIDEOS = 3;
+const MAX_REFERENCE_AUDIOS = 3;
+const MAX_VIDEO_TASKS = 4;
+const MAX_PROMPT_LENGTH = 5000;
+const VIDEO_SECONDS_PRESETS = [5, 8, 10, 15] as const;
 const logStore = localforage.createInstance({ name: "infinite-canvas", storeName: "video_generation_logs" });
 
 export default function VideoPage() {
@@ -75,21 +81,26 @@ export default function VideoPage() {
     const fileInputRef = useRef<HTMLInputElement>(null);
     const dragDepthRef = useRef(0);
     const activeLogIdsRef = useRef<Set<string>>(new Set());
-    const config = useConfigStore((state) => state.config);
     const effectiveConfig = useEffectiveConfig();
     const updateConfig = useConfigStore((state) => state.updateConfig);
     const isAiConfigReady = useConfigStore((state) => state.isAiConfigReady);
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
     const addAsset = useAssetStore((state) => state.addAsset);
     const cleanupAssets = useAssetStore((state) => state.cleanupImages);
+    const session = useUserStore((state) => state.session);
+    const [videoKeys, setVideoKeys] = useState<CreateManagedKey[]>([]);
+    const [videoKeysLoading, setVideoKeysLoading] = useState(false);
+    const [selectedVideoKeyId, setSelectedVideoKeyId] = useState(() => getManagedKeySelection().videoKeyId);
+    const [switchingVideoKey, setSwitchingVideoKey] = useState(false);
     const [prompt, setPrompt] = useState("");
     const [references, setReferences] = useState<ReferenceImage[]>([]);
+    const [referenceVideos, setReferenceVideos] = useState<ReferenceVideo[]>([]);
+    const [referenceAudios, setReferenceAudios] = useState<ReferenceAudio[]>([]);
+    const [taskCount, setTaskCount] = useState(1);
     const [results, setResults] = useState<GenerationResult[]>([]);
     const [logs, setLogs] = useState<GenerationLog[]>([]);
     const [running, setRunning] = useState(false);
     const [logsOpen, setLogsOpen] = useState(false);
-    const [settingsOpen, setSettingsOpen] = useState(false);
-    const [promptDialogOpen, setPromptDialogOpen] = useState(false);
     const [assetPickerOpen, setAssetPickerOpen] = useState(false);
     const [startedAt, setStartedAt] = useState(0);
     const [elapsedMs, setElapsedMs] = useState(0);
@@ -106,6 +117,54 @@ export default function VideoPage() {
 
     const model = effectiveConfig.videoModel || effectiveConfig.model;
     const canGenerate = Boolean(prompt.trim());
+    const resolution = parseVideoResolution(effectiveConfig.vquality);
+    const selectedRatio = inferVideoRatio(effectiveConfig.size);
+    const dimensions = readVideoDimensions(effectiveConfig.size, resolution, selectedRatio);
+    const seconds = Number(clampVideoSeconds(effectiveConfig.videoSeconds || "5"));
+    const generateAudio = boolConfig(effectiveConfig.videoGenerateAudio, true);
+    const selectedSizeLabel = selectedRatio === "auto" ? "自适应" : `${videoOrientationLabel(selectedRatio)} ${dimensions.width}×${dimensions.height}`;
+
+    const loadVideoKeys = useCallback(async () => {
+        if (!session) {
+            setVideoKeys([]);
+            return;
+        }
+        setVideoKeysLoading(true);
+        try {
+            const keys = (await listCreateManagedKeys(session)).filter((item) => item.status === "active" && Boolean(item.key?.trim()) && managedKeySupportsVideo(item.group));
+            setVideoKeys(keys);
+            const storedId = getManagedKeySelection().videoKeyId;
+            setSelectedVideoKeyId((current) => keys.find((item) => item.id === storedId)?.id || keys.find((item) => item.id === current)?.id || keys[0]?.id || 0);
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "加载视频 API 密钥失败");
+        } finally {
+            setVideoKeysLoading(false);
+        }
+    }, [message, session]);
+
+    const selectVideoKey = async (keyId: number) => {
+        if (!session || !keyId || keyId === selectedVideoKeyId || switchingVideoKey) return;
+        const key = videoKeys.find((item) => item.id === keyId);
+        if (!key) return;
+        const previousId = selectedVideoKeyId;
+        setSelectedVideoKeyId(keyId);
+        setSwitchingVideoKey(true);
+        try {
+            await switchManagedKey(session, key, "video");
+            setSelectedVideoKeyId(getManagedKeySelection().videoKeyId || keyId);
+            message.success(`已切换到 ${key.name}`);
+            await loadVideoKeys();
+        } catch (error) {
+            setSelectedVideoKeyId(previousId);
+            message.error(error instanceof Error ? error.message : "切换视频 API 密钥失败");
+        } finally {
+            setSwitchingVideoKey(false);
+        }
+    };
+
+    useEffect(() => {
+        void loadVideoKeys();
+    }, [loadVideoKeys]);
 
     useEffect(() => {
         if (!running || !startedAt) return;
@@ -121,18 +180,56 @@ export default function VideoPage() {
         })();
     }, [cleanupAssets]);
 
-    const addReferences = async (files?: FileList | null) => {
+    const addReferences = async (files?: FileList | File[] | null) => {
         const selectedFiles = Array.from(files || []);
-        const unsupported = selectedFiles.filter((file) => !file.type.startsWith("image/"));
+        const unsupported = selectedFiles.filter((file) => !file.type.startsWith("image/") && !file.type.startsWith("video/") && !file.type.startsWith("audio/"));
         if (unsupported.length) message.warning(t("videoWorkbench.unsupportedFiles"));
-        const imageFiles = selectedFiles.filter((file) => file.type.startsWith("image/")).slice(0, 7 - references.length);
-        const nextReferences = await Promise.all(
-            imageFiles.map(async (file) => {
-                const image = await uploadImage(file);
-                return { id: nanoid(), name: file.name, type: image.mimeType, dataUrl: image.url, storageKey: image.storageKey };
-            }),
-        );
-        setReferences((value) => [...value, ...nextReferences].slice(0, 7));
+
+        const imageFiles = selectedFiles.filter((file) => file.type.startsWith("image/"));
+        const videoFiles = selectedFiles.filter((file) => file.type.startsWith("video/"));
+        const audioFiles = selectedFiles.filter((file) => file.type.startsWith("audio/"));
+
+        const acceptedImages = imageFiles.filter((file) => file.size <= 30 * 1024 * 1024).slice(0, Math.max(0, MAX_REFERENCE_IMAGES - references.length));
+        const acceptedVideos = videoFiles.filter((file) => file.size <= 200 * 1024 * 1024).slice(0, Math.max(0, MAX_REFERENCE_VIDEOS - referenceVideos.length));
+        const acceptedAudios = audioFiles.filter((file) => file.size <= 15 * 1024 * 1024).slice(0, Math.max(0, MAX_REFERENCE_AUDIOS - referenceAudios.length));
+        if (imageFiles.some((file) => file.size > 30 * 1024 * 1024)) message.warning(t("videoWorkbench.imageTooLarge"));
+        if (videoFiles.some((file) => file.size > 200 * 1024 * 1024)) message.warning(t("videoWorkbench.videoTooLarge"));
+        if (audioFiles.some((file) => file.size > 15 * 1024 * 1024)) message.warning(t("videoWorkbench.audioTooLarge"));
+
+        const [nextImages, nextVideos, nextAudios] = await Promise.all([
+            Promise.all(
+                acceptedImages.map(async (file) => {
+                    const image = await uploadImage(file);
+                    return { id: nanoid(), name: file.name, type: image.mimeType, dataUrl: image.url, storageKey: image.storageKey };
+                }),
+            ),
+            Promise.all(
+                acceptedVideos.map(async (file) => {
+                    const video = await uploadMediaFile(file, "video");
+                    return { id: nanoid(), name: file.name, type: video.mimeType, url: video.url, storageKey: video.storageKey, bytes: video.bytes, width: video.width, height: video.height, durationMs: video.durationMs };
+                }),
+            ),
+            Promise.all(
+                acceptedAudios.map(async (file) => {
+                    const audio = await uploadMediaFile(file, "audio");
+                    return { id: nanoid(), name: file.name, type: audio.mimeType, url: audio.url, storageKey: audio.storageKey, durationMs: audio.durationMs };
+                }),
+            ),
+        ]);
+
+        const totalAudioMs = referenceAudios.reduce((total, item) => total + (item.durationMs || 0), 0);
+        let runningAudioMs = totalAudioMs;
+        const validAudios = nextAudios.filter((audio) => {
+            const duration = audio.durationMs || 0;
+            if (duration && (duration < 2_000 || duration > 15_000 || runningAudioMs + duration > 15_000)) return false;
+            runningAudioMs += duration;
+            return true;
+        });
+        if (validAudios.length !== nextAudios.length) message.warning(t("videoWorkbench.audioDurationInvalid"));
+
+        setReferences((value) => [...value, ...nextImages].slice(0, MAX_REFERENCE_IMAGES));
+        setReferenceVideos((value) => [...value, ...nextVideos].slice(0, MAX_REFERENCE_VIDEOS));
+        setReferenceAudios((value) => [...value, ...validAudios].slice(0, MAX_REFERENCE_AUDIOS));
     };
 
     const handleReferenceDragEnter = (event: DragEvent<HTMLDivElement>) => {
@@ -163,17 +260,51 @@ export default function VideoPage() {
                 return;
             }
             const nextReferences = await Promise.all(
-                blobs.slice(0, 7 - references.length).map(async (blob, index) => {
+                blobs.slice(0, Math.max(0, MAX_REFERENCE_IMAGES - references.length)).map(async (blob, index) => {
                     const image = await uploadImage(blob);
                     return { id: nanoid(), name: `clipboard-${index + 1}.png`, type: image.mimeType, dataUrl: image.url, storageKey: image.storageKey };
                 }),
             );
-            setReferences((value) => [...value, ...nextReferences].slice(0, 7));
+            setReferences((value) => [...value, ...nextReferences].slice(0, MAX_REFERENCE_IMAGES));
             message.success(t("videoWorkbench.clipboardAdded", { count: nextReferences.length }));
         } catch {
             message.error(t("videoWorkbench.clipboardEmpty"));
         }
     };
+    const copyPrompt = async () => {
+        if (!prompt.trim()) return;
+        try {
+            await navigator.clipboard.writeText(prompt);
+            message.success("提示词已复制");
+        } catch {
+            message.error("复制提示词失败");
+        }
+    };
+
+    const handleComposerPaste = (event: ReactClipboardEvent<HTMLTextAreaElement>) => {
+        const files = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith("image/"));
+        if (!files.length) return;
+        event.preventDefault();
+        void addReferences(files);
+    };
+
+    const selectResolution = (nextResolution: string) => {
+        updateConfig("vquality", nextResolution);
+        if (selectedRatio !== "auto") updateConfig("size", computeVideoSize(nextResolution, selectedRatio));
+    };
+
+    const selectVideoRatio = (ratio: string) => {
+        updateConfig("size", ratio === "auto" ? "auto" : computeVideoSize(resolution, ratio));
+    };
+
+    const commitSeconds = (raw: string) => {
+        updateConfig("videoSeconds", clampVideoSeconds(raw));
+    };
+
+    const commitTaskCount = (raw: string) => {
+        setTaskCount(Math.max(1, Math.min(MAX_VIDEO_TASKS, Math.floor(Number(raw) || 1))));
+    };
+
     const generate = async () => {
         const agentTaskId = agentTaskIdRef.current;
         agentTaskIdRef.current = undefined;
@@ -186,21 +317,70 @@ export default function VideoPage() {
         setRunning(true);
         if (agentTaskId) updateAgentTask(agentTaskId, { status: "running", error: undefined });
         setPreviewLog(null);
-        setResults([{ id: nanoid(), status: "pending" }]);
+        const requestedCount = Math.max(1, Math.min(MAX_VIDEO_TASKS, taskCount));
+        const resultSlots: GenerationResult[] = Array.from({ length: requestedCount }, () => ({ id: nanoid(), status: "pending" }));
+        setResults(resultSlots);
         const batchStartedAt = performance.now();
         setStartedAt(batchStartedAt);
-        try {
-            const task = await createVideoGenerationTask(snapshot.config, snapshot.text, snapshot.references);
-            const log = buildLog({ prompt: snapshot.text, model, config: snapshot.config, references: snapshot.references, durationMs: 0, status: "pending", task });
-            await saveLog(log, false);
-            void pollGenerationLog(log, snapshot.config, agentTaskId);
-        } catch (error) {
-            const errorMessage = error instanceof Error ? error.message : t("workbench.generationFailed");
-            setResults([{ id: nanoid(), status: "failed", error: errorMessage }]);
-            if (agentTaskId) updateAgentTask(agentTaskId, { status: "failed", successCount: 0, failCount: 1, error: errorMessage });
-            await saveLog(buildLog({ prompt: snapshot.text, model, config: snapshot.config, references: snapshot.references, durationMs: performance.now() - batchStartedAt, status: "failed", error: errorMessage }));
-            message.error(errorMessage);
+
+        const settled = await Promise.allSettled(
+            Array.from({ length: requestedCount }, () =>
+                createVideoGenerationTask(snapshot.config, snapshot.text, snapshot.references, {
+                    videos: snapshot.referenceVideos,
+                    audios: snapshot.referenceAudios,
+                }),
+            ),
+        );
+        const nextResults = [...resultSlots];
+        const pendingLogs: Array<{ log: GenerationLog; slotId: string; index: number }> = [];
+        let firstAgentTaskIndex = -1;
+
+        for (let index = 0; index < settled.length; index += 1) {
+            const settledResult = settled[index];
+            const slot = resultSlots[index];
+            if (settledResult.status === "fulfilled") {
+                if (firstAgentTaskIndex < 0) firstAgentTaskIndex = index;
+                const log = buildLog({
+                    prompt: snapshot.text,
+                    model,
+                    config: snapshot.config,
+                    references: snapshot.references,
+                    referenceVideos: snapshot.referenceVideos,
+                    referenceAudios: snapshot.referenceAudios,
+                    durationMs: 0,
+                    status: "pending",
+                    task: settledResult.value,
+                });
+                pendingLogs.push({ log, slotId: slot.id, index });
+            } else {
+                const errorMessage = settledResult.reason instanceof Error ? settledResult.reason.message : t("workbench.generationFailed");
+                nextResults[index] = { ...slot, status: "failed", error: errorMessage };
+                await saveLog(
+                    buildLog({
+                        prompt: snapshot.text,
+                        model,
+                        config: snapshot.config,
+                        references: snapshot.references,
+                        referenceVideos: snapshot.referenceVideos,
+                        referenceAudios: snapshot.referenceAudios,
+                        durationMs: performance.now() - batchStartedAt,
+                        status: "failed",
+                        error: errorMessage,
+                    }),
+                );
+                message.error(errorMessage);
+            }
+        }
+
+        setResults(nextResults);
+        if (!pendingLogs.length) {
+            if (agentTaskId) updateAgentTask(agentTaskId, { status: "failed", successCount: 0, failCount: requestedCount, error: t("workbench.generationFailed") });
             setRunning(false);
+            return;
+        }
+        for (const { log, slotId, index } of pendingLogs) {
+            await saveLog(log, false);
+            void pollGenerationLog(log, snapshot.config, index === firstAgentTaskIndex ? agentTaskId : undefined, slotId);
         }
     };
 
@@ -237,7 +417,13 @@ export default function VideoPage() {
             openConfigDialog(true);
             return null;
         }
-        return { text, config: buildVideoConfig(effectiveConfig, model), references: [...references] };
+        return {
+            text,
+            config: buildVideoConfig(effectiveConfig, model),
+            references: [...references],
+            referenceVideos: [...referenceVideos],
+            referenceAudios: [...referenceAudios],
+        };
     };
 
     const retryResult = () => {
@@ -266,7 +452,16 @@ export default function VideoPage() {
             setPrompt(payload.content);
         } else if (payload.kind === "image") {
             const stored = await uploadImage(payload.dataUrl);
-            setReferences((value) => [...value, { id: nanoid(), name: payload.title, type: stored.mimeType, dataUrl: stored.url, storageKey: stored.storageKey }].slice(0, 7));
+            setReferences((value) => [...value, { id: nanoid(), name: payload.title, type: stored.mimeType, dataUrl: stored.url, storageKey: stored.storageKey }].slice(0, MAX_REFERENCE_IMAGES));
+        } else if (payload.kind === "video") {
+            const source = payload.storageKey ? await resolveMediaUrl(payload.storageKey, payload.url) : payload.url;
+            const stored = await uploadMediaFile(source, "video");
+            setReferenceVideos((value) =>
+                [...value, { id: nanoid(), name: payload.title, type: stored.mimeType, url: stored.url, storageKey: stored.storageKey, bytes: stored.bytes, width: stored.width, height: stored.height, durationMs: stored.durationMs }].slice(
+                    0,
+                    MAX_REFERENCE_VIDEOS,
+                ),
+            );
         }
         setAssetPickerOpen(false);
     };
@@ -274,6 +469,8 @@ export default function VideoPage() {
     const createSession = () => {
         setPrompt("");
         setReferences([]);
+        setReferenceVideos([]);
+        setReferenceAudios([]);
         setResults([]);
         setElapsedMs(0);
         setStartedAt(0);
@@ -314,12 +511,20 @@ export default function VideoPage() {
         }
     };
 
-    const pollGenerationLog = async (log: GenerationLog, configOverride?: AiConfig, agentTaskId?: string) => {
+    const pollGenerationLog = async (log: GenerationLog, configOverride?: AiConfig, agentTaskId?: string, resultSlotId?: string) => {
         if (!log.task || activeLogIdsRef.current.has(log.id)) return;
+        const resultId = resultSlotId || log.id;
+        const upsertResult = (next: Omit<GenerationResult, "id">) => {
+            setResults((value) => {
+                const index = value.findIndex((item) => item.id === resultId);
+                if (index < 0) return [...value, { id: resultId, ...next }];
+                return value.map((item, itemIndex) => (itemIndex === index ? { id: resultId, ...next } : item));
+            });
+        };
         activeLogIdsRef.current.add(log.id);
         setRunning(true);
         setStartedAt((value) => value || performance.now());
-        setResults((value) => (value.length ? value : [{ id: log.id, status: "pending" }]));
+        setResults((value) => (value.some((item) => item.id === resultId) ? value : [...value, { id: resultId, status: "pending" }]));
         const taskConfig = buildVideoConfig({ ...effectiveConfig, ...log.config }, log.task.model || log.model);
         try {
             for (let attempt = 0; attempt < 120; attempt += 1) {
@@ -336,7 +541,7 @@ export default function VideoPage() {
                         bytes: stored.bytes,
                         mimeType: stored.mimeType,
                     };
-                    setResults([{ id: nextVideo.id, status: "success", video: nextVideo }]);
+                    upsertResult({ status: "success", video: nextVideo, error: undefined });
                     if (agentTaskId) updateAgentTask(agentTaskId, { status: "succeeded", successCount: 1, failCount: 0, error: undefined });
                     await saveLog({ ...log, status: "success", durationMs: nextVideo.durationMs, video: nextVideo, error: undefined });
                     message.success(t("videoWorkbench.generated"));
@@ -348,7 +553,7 @@ export default function VideoPage() {
             }
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : t("workbench.generationFailed");
-            setResults([{ id: log.id, status: "failed", error: errorMessage }]);
+            upsertResult({ status: "failed", error: errorMessage, video: undefined });
             if (agentTaskId) updateAgentTask(agentTaskId, { status: "failed", successCount: 0, failCount: 1, error: errorMessage });
             await saveLog({ ...log, status: "failed", durationMs: Date.now() - log.createdAt, error: errorMessage });
             message.error(errorMessage);
@@ -366,6 +571,8 @@ export default function VideoPage() {
         setLogsOpen(false);
         setPrompt(log.prompt);
         setReferences(log.references || []);
+        setReferenceVideos(log.referenceVideos || []);
+        setReferenceAudios(log.referenceAudios || []);
         if (log.config.videoModel || log.model) updateConfig("videoModel", log.config.videoModel || log.model);
         if (log.config.size) updateConfig("size", log.config.size);
         if (log.config.vquality) updateConfig("vquality", log.config.vquality);
@@ -380,91 +587,338 @@ export default function VideoPage() {
         <div className="flex h-full flex-col overflow-hidden bg-stone-50 text-stone-900 dark:bg-stone-950 dark:text-stone-100">
             <main className="grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-y-auto p-3 lg:grid-cols-[300px_minmax(0,1fr)] lg:overflow-hidden xl:grid-cols-[320px_minmax(0,1fr)]">
                 <aside className="thin-scrollbar hidden min-h-0 overflow-y-auto rounded-lg border border-stone-200 bg-card p-4 shadow-sm dark:border-stone-800 lg:block">
-                    <LogPanel logs={logs} selectedLogIds={selectedLogIds} activeLogId={previewLog?.id} onSelectedLogIdsChange={setSelectedLogIds} onCreateSession={createSession} onDeleteSelected={() => setDeleteConfirmOpen(true)} onPreviewLog={previewGenerationLog} />
+                    <LogPanel
+                        logs={logs}
+                        selectedLogIds={selectedLogIds}
+                        activeLogId={previewLog?.id}
+                        onSelectedLogIdsChange={setSelectedLogIds}
+                        onCreateSession={createSession}
+                        onDeleteSelected={() => setDeleteConfirmOpen(true)}
+                        onPreviewLog={previewGenerationLog}
+                    />
                 </aside>
 
                 <section className="grid gap-3 lg:min-h-0 lg:overflow-hidden xl:grid-cols-[420px_minmax(0,1fr)]">
-                    <div className="thin-scrollbar flex flex-col rounded-lg border border-stone-200 bg-card p-4 shadow-sm dark:border-stone-800 lg:min-h-0 lg:overflow-y-auto">
-                        <div className="flex items-start justify-between gap-3">
-                            <h1 className="text-2xl font-semibold text-stone-950 dark:text-stone-100">{t("videoWorkbench.title")}</h1>
-                            <div className="flex shrink-0 gap-2 lg:hidden">
-                                <Button icon={<History className="size-4" />} onClick={() => setLogsOpen(true)}>
-                                    {t("workbench.logs")}
-                                </Button>
-                                <Button icon={<SlidersHorizontal className="size-4" />} onClick={() => setSettingsOpen(true)}>
-                                    {t("workbench.settings")}
-                                </Button>
-                            </div>
+                    <div className="thin-scrollbar flex flex-col rounded-xl border border-stone-200 bg-card p-4 shadow-sm dark:border-stone-800 lg:min-h-0 lg:overflow-y-auto">
+                        <div className="flex items-center justify-between gap-3">
+                            <h1 className="text-[26px] font-semibold leading-8 tracking-tight text-stone-950 dark:text-stone-100">{t("videoWorkbench.title")}</h1>
+                            <button
+                                type="button"
+                                className="grid size-8 shrink-0 place-items-center rounded-lg text-stone-500 transition hover:bg-stone-100 hover:text-stone-900 dark:hover:bg-stone-800 dark:hover:text-stone-100 lg:hidden"
+                                title={t("workbench.logs")}
+                                aria-label={t("workbench.logs")}
+                                onClick={() => setLogsOpen(true)}
+                            >
+                                <History className="size-4" />
+                            </button>
                         </div>
 
-                        <div className="mt-6 space-y-5">
-                            <div>
-                                <div className="mb-2 flex items-center justify-between gap-3">
-                                    <span className="text-base font-semibold">{t("workbench.prompt")}</span>
-                                    <div className="flex gap-2">
-                                        <Button size="small" icon={<BookOpen className="size-3.5" />} onClick={() => setPromptDialogOpen(true)}>
-                                            {t("workbench.viewPrompts")}
-                                        </Button>
-                                        <Button size="small" icon={<FolderPlus className="size-3.5" />} onClick={() => setAssetPickerOpen(true)}>
-                                            {t("workbench.viewAssets")}
-                                        </Button>
-                                    </div>
-                                </div>
-                                <Input.TextArea value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={7} placeholder={t("videoWorkbench.promptPlaceholder")} />
-                            </div>
-
-                            <div className="min-w-0">
-                                <div className="mb-2 flex items-center justify-between gap-3">
-                                    <span className="text-base font-semibold">{t("videoWorkbench.references")}</span>
-                                    <div className="flex gap-2">
-                                        <Button size="small" icon={<ClipboardPaste className="size-3.5" />} onClick={() => void addReferencesFromClipboard()}>
-                                            {t("workbench.clipboard")}
-                                        </Button>
-                                        <Button size="small" icon={<Upload className="size-3.5" />} onClick={() => fileInputRef.current?.click()}>
-                                            {t("workbench.upload")}
-                                        </Button>
-                                    </div>
-                                </div>
-                                <div
-                                    className={`hover-scrollbar hover-scrollbar-hint flex min-h-24 w-full min-w-0 max-w-full gap-2 overflow-x-scroll overflow-y-hidden rounded-lg border border-dashed p-2 pb-3 overscroll-x-contain transition-colors ${referenceDragTarget ? "border-stone-900 bg-stone-100/80 dark:border-stone-100 dark:bg-stone-900/80" : "border-stone-300 dark:border-stone-700"}`}
-                                    onDragEnter={handleReferenceDragEnter}
-                                    onDragOver={(event) => {
-                                        event.preventDefault();
-                                        event.dataTransfer.dropEffect = "copy";
-                                    }}
-                                    onDragLeave={handleReferenceDragLeave}
-                                    onDrop={handleReferenceDrop}
+                        <div className="mt-3 flex items-center gap-2">
+                            <label className="relative flex h-10 min-w-0 flex-1 items-center overflow-hidden rounded-xl border border-stone-200 bg-stone-50 text-sm dark:border-stone-700 dark:bg-stone-900/60">
+                                <span className="shrink-0 px-3 text-xs font-medium text-stone-500 dark:text-stone-400">API Key</span>
+                                <span className="h-4 w-px shrink-0 bg-stone-300 dark:bg-stone-700" />
+                                <select
+                                    aria-label="视频 API Key"
+                                    className="workbench-native-select h-full min-w-0 flex-1 cursor-pointer appearance-none bg-transparent px-3 pr-9 text-sm text-stone-800 outline-none disabled:cursor-not-allowed disabled:text-stone-500 dark:text-stone-100"
+                                    value={videoKeysLoading || !videoKeys.some((item) => item.id === selectedVideoKeyId) ? 0 : selectedVideoKeyId}
+                                    disabled={videoKeysLoading || switchingVideoKey || !videoKeys.length}
+                                    onChange={(event) => void selectVideoKey(Number(event.target.value))}
                                 >
-                                    {references.map((item, index) => (
-                                        <div key={item.id} className="group relative size-20 shrink-0 overflow-hidden rounded-md border border-stone-200 dark:border-stone-800">
-                                            <img src={previewUrlFor(item.storageKey) || item.dataUrl} alt={item.name} className="size-full object-cover" />
-                                            <span className="absolute left-1 top-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-medium text-white">{index + 1}</span>
-                                            <ReferenceOrderButtons index={index} total={references.length} onMove={(offset) => setReferences((value) => moveListItem(value, index, offset))} />
-                                            <button type="button" className="absolute right-1 top-1 hidden size-6 items-center justify-center rounded bg-black/60 text-white group-hover:flex" onClick={() => setReferences((value) => value.filter((ref) => ref.id !== item.id))} aria-label={t("videoWorkbench.removeImage")}>
-                                                <Trash2 className="size-3.5" />
-                                            </button>
-                                        </div>
-                                    ))}
-                                    {!references.length ? <div className="flex min-w-full items-center justify-center text-sm text-stone-500">{referenceDragTarget ? t("videoWorkbench.dropReferences") : t("videoWorkbench.noImages")}</div> : null}
+                                    {videoKeysLoading ? <option value={0}>正在加载...</option> : null}
+                                    {!videoKeysLoading && !videoKeys.length ? <option value={0}>暂无可用密钥</option> : null}
+                                    {!videoKeysLoading
+                                        ? videoKeys.map((item) => (
+                                              <option key={item.id} value={item.id}>
+                                                  {item.name}
+                                              </option>
+                                          ))
+                                        : null}
+                                </select>
+                                <ChevronDown className="pointer-events-none absolute right-3 size-4 text-stone-500" />
+                            </label>
+                            <button
+                                type="button"
+                                className="grid size-10 shrink-0 place-items-center rounded-xl border border-stone-200 text-stone-500 transition hover:bg-stone-100 hover:text-stone-900 disabled:cursor-wait disabled:opacity-60 dark:border-stone-700 dark:hover:bg-stone-800 dark:hover:text-stone-100"
+                                disabled={videoKeysLoading || switchingVideoKey || !session}
+                                title="刷新视频 API 密钥"
+                                aria-label="刷新视频 API 密钥"
+                                onClick={() => void loadVideoKeys()}
+                            >
+                                <RefreshCw className={`size-4 ${videoKeysLoading || switchingVideoKey ? "animate-spin" : ""}`} />
+                            </button>
+                        </div>
+
+                        <div className="mt-3 overflow-hidden rounded-2xl border border-stone-200 bg-stone-50 dark:border-stone-800 dark:bg-stone-900/70">
+                            <textarea
+                                className="block min-h-[236px] w-full resize-none bg-transparent px-4 py-4 text-[15px] leading-6 text-stone-900 outline-none placeholder:text-stone-500 dark:text-stone-100"
+                                value={prompt}
+                                maxLength={MAX_PROMPT_LENGTH}
+                                onChange={(event) => setPrompt(event.target.value)}
+                                onPaste={handleComposerPaste}
+                                placeholder={t("videoWorkbench.promptPlaceholder")}
+                            />
+                            <div className="flex items-center justify-between gap-2 px-2.5 pb-1">
+                                <ModelPicker
+                                    config={effectiveConfig}
+                                    value={model}
+                                    onChange={(value) => updateConfig("videoModel", value)}
+                                    capability="video"
+                                    className="!h-9 !max-w-[220px] !rounded-xl !border-stone-200 !bg-stone-100 !px-3 !text-stone-700 dark:!border-stone-700 dark:!bg-stone-800/80 dark:!text-stone-100"
+                                    onMissingConfig={() => openConfigDialog(false)}
+                                />
+                                <div className="flex shrink-0 items-center gap-0.5">
+                                    <button
+                                        type="button"
+                                        className="grid size-8 place-items-center rounded-lg text-stone-500 transition hover:bg-stone-200 hover:text-stone-900 disabled:cursor-not-allowed disabled:opacity-35 dark:hover:bg-stone-800 dark:hover:text-stone-100"
+                                        disabled={!prompt.trim()}
+                                        title="复制提示词"
+                                        aria-label="复制提示词"
+                                        onClick={() => void copyPrompt()}
+                                    >
+                                        <Copy className="size-4" />
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="grid size-8 place-items-center rounded-lg text-stone-500 transition hover:bg-stone-200 hover:text-stone-900 disabled:cursor-not-allowed disabled:opacity-35 dark:hover:bg-stone-800 dark:hover:text-stone-100"
+                                        disabled={references.length >= MAX_REFERENCE_IMAGES}
+                                        title="从剪贴板添加参考图"
+                                        aria-label="从剪贴板添加参考图"
+                                        onClick={() => void addReferencesFromClipboard()}
+                                    >
+                                        <ClipboardPaste className="size-4" />
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="grid size-8 place-items-center rounded-lg text-stone-500 transition hover:bg-stone-200 hover:text-stone-900 disabled:cursor-not-allowed disabled:opacity-35 dark:hover:bg-stone-800 dark:hover:text-stone-100"
+                                        disabled={!prompt}
+                                        title="清空提示词"
+                                        aria-label="清空提示词"
+                                        onClick={() => setPrompt("")}
+                                    >
+                                        <Trash2 className="size-4" />
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="grid size-8 place-items-center rounded-lg text-stone-500 transition hover:bg-stone-200 hover:text-stone-900 dark:hover:bg-stone-800 dark:hover:text-stone-100"
+                                        title="查看我的资产"
+                                        aria-label="查看我的资产"
+                                        onClick={() => setAssetPickerOpen(true)}
+                                    >
+                                        <FolderPlus className="size-4" />
+                                    </button>
                                 </div>
                             </div>
-
-                            <div className="flex items-center justify-between rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-sm dark:border-stone-800 dark:bg-stone-900 sm:hidden">
-                                <span className="truncate text-stone-500 dark:text-stone-400">
-                                    {modelOptionLabel(effectiveConfig, model)} · {normalizeResolution(effectiveConfig.vquality)}p · {videoSizeLabel(effectiveConfig.size)} · {normalizeVideoSeconds(effectiveConfig.videoSeconds)}s · {videoModeLabel(effectiveConfig.videoMode)}
-                                </span>
-                                <Button size="small" type="text" icon={<SlidersHorizontal className="size-4" />} onClick={() => setSettingsOpen(true)}>
-                                    {t("workbench.adjust")}
-                                </Button>
-                            </div>
-
-                            <div className="hidden gap-4 sm:grid sm:grid-cols-2">
-                                <GenerationSettings config={effectiveConfig} model={model} updateConfig={updateConfig} openConfigDialog={openConfigDialog} />
+                            <div className="px-3 pb-2 text-right text-[11px] text-stone-500">
+                                {prompt.length}/{MAX_PROMPT_LENGTH}
                             </div>
                         </div>
 
-                        <div className="mt-auto pt-6">
-                            <Button type="primary" size="large" block icon={<Sparkles className="size-4" />} loading={running} disabled={!canGenerate || running} onClick={() => void generate()}>
+                        <div className="mt-4 min-w-0">
+                            <div className="flex items-center justify-between gap-3">
+                                <span className="text-sm font-semibold text-stone-900 dark:text-stone-100">参考素材</span>
+                                <button
+                                    type="button"
+                                    className="grid size-7 place-items-center rounded-lg text-stone-500 transition hover:bg-stone-100 hover:text-stone-900 dark:hover:bg-stone-800 dark:hover:text-stone-100"
+                                    title="上传参考素材"
+                                    aria-label="上传参考素材"
+                                    onClick={() => fileInputRef.current?.click()}
+                                >
+                                    <Upload className="size-4" />
+                                </button>
+                            </div>
+                            <div
+                                className={`hover-scrollbar hover-scrollbar-hint mt-2 flex min-h-28 w-full min-w-0 max-w-full gap-2 overflow-x-scroll overflow-y-hidden rounded-xl p-0.5 pb-2 overscroll-x-contain transition-colors ${referenceDragTarget ? "bg-stone-100 ring-2 ring-stone-400 dark:bg-stone-900/80 dark:ring-stone-500" : ""}`}
+                                onDragEnter={handleReferenceDragEnter}
+                                onDragOver={(event) => {
+                                    event.preventDefault();
+                                    event.dataTransfer.dropEffect = "copy";
+                                }}
+                                onDragLeave={handleReferenceDragLeave}
+                                onDrop={handleReferenceDrop}
+                                onWheel={(event) => {
+                                    if (event.currentTarget.scrollWidth <= event.currentTarget.clientWidth) return;
+                                    event.preventDefault();
+                                    event.currentTarget.scrollLeft += event.deltaY;
+                                }}
+                            >
+                                {references.map((item, index) => (
+                                    <div key={item.id} className="group relative size-28 shrink-0 overflow-hidden rounded-xl border border-stone-200 dark:border-stone-700">
+                                        <img src={previewUrlFor(item.storageKey) || item.dataUrl} alt={item.name} className="size-full object-cover" />
+                                        <span className="absolute left-1.5 top-1.5 rounded-md bg-black/65 px-1.5 py-0.5 text-[10px] font-medium text-white backdrop-blur">图片{index + 1}</span>
+                                        <ReferenceOrderButtons index={index} total={references.length} onMove={(offset) => setReferences((value) => moveListItem(value, index, offset))} />
+                                        <button
+                                            type="button"
+                                            className="absolute right-1.5 top-1.5 hidden size-6 items-center justify-center rounded-md bg-black/65 text-white backdrop-blur group-hover:flex"
+                                            onClick={() => setReferences((value) => value.filter((ref) => ref.id !== item.id))}
+                                            aria-label={t("videoWorkbench.removeImage")}
+                                        >
+                                            <Trash2 className="size-3.5" />
+                                        </button>
+                                    </div>
+                                ))}
+                                {referenceVideos.map((item, index) => (
+                                    <div key={item.id} className="group relative size-28 shrink-0 overflow-hidden rounded-xl border border-stone-200 bg-stone-900 dark:border-stone-700">
+                                        <video src={item.url} muted preload="metadata" className="size-full object-cover opacity-80" />
+                                        <span className="absolute left-1.5 top-1.5 inline-flex items-center gap-1 rounded-md bg-black/65 px-1.5 py-0.5 text-[10px] font-medium text-white backdrop-blur">
+                                            <Film className="size-3" /> 视频{index + 1}
+                                        </span>
+                                        <button
+                                            type="button"
+                                            className="absolute right-1.5 top-1.5 hidden size-6 items-center justify-center rounded-md bg-black/65 text-white backdrop-blur group-hover:flex"
+                                            onClick={() => setReferenceVideos((value) => value.filter((ref) => ref.id !== item.id))}
+                                            aria-label={t("videoWorkbench.removeVideo")}
+                                        >
+                                            <Trash2 className="size-3.5" />
+                                        </button>
+                                    </div>
+                                ))}
+                                {referenceAudios.map((item, index) => (
+                                    <div
+                                        key={item.id}
+                                        className="group relative flex size-28 shrink-0 flex-col items-center justify-center overflow-hidden rounded-xl border border-stone-200 bg-gradient-to-br from-stone-800 to-stone-900 p-2 text-center dark:border-stone-700"
+                                    >
+                                        <Music2 className="size-7 text-stone-300" />
+                                        <span className="mt-2 line-clamp-2 text-[10px] leading-4 text-stone-300">{item.name}</span>
+                                        <span className="absolute left-1.5 top-1.5 rounded-md bg-black/55 px-1.5 py-0.5 text-[10px] text-white">音频{index + 1}</span>
+                                        <button
+                                            type="button"
+                                            className="absolute right-1.5 top-1.5 hidden size-6 items-center justify-center rounded-md bg-black/65 text-white backdrop-blur group-hover:flex"
+                                            onClick={() => setReferenceAudios((value) => value.filter((ref) => ref.id !== item.id))}
+                                            aria-label={t("videoWorkbench.removeAudio")}
+                                        >
+                                            <Trash2 className="size-3.5" />
+                                        </button>
+                                    </div>
+                                ))}
+                                <button
+                                    type="button"
+                                    className="grid size-28 shrink-0 place-items-center rounded-xl border border-dashed border-stone-500 text-stone-500 transition hover:border-stone-700 hover:bg-stone-100 hover:text-stone-900 dark:hover:border-stone-400 dark:hover:bg-stone-900 dark:hover:text-stone-100"
+                                    title={referenceDragTarget ? t("videoWorkbench.dropReferences") : t("videoWorkbench.noImages")}
+                                    onClick={() => fileInputRef.current?.click()}
+                                >
+                                    <Plus className="size-7 stroke-[1.4]" />
+                                </button>
+                            </div>
+                            <p className="mt-1 text-xs leading-5 text-stone-500">可拖拽或粘贴参考图，也可添加参考视频和音频。参考图最多 {MAX_REFERENCE_IMAGES} 张。</p>
+                        </div>
+
+                        <div className="mt-4">
+                            <div className="mb-2 text-sm font-semibold text-stone-900 dark:text-stone-100">清晰度</div>
+                            <div className="grid grid-cols-3 overflow-hidden rounded-xl border border-stone-200 bg-stone-100/60 p-1 dark:border-stone-700 dark:bg-stone-900/60">
+                                {["480", "720", "1080"].map((value) => (
+                                    <button
+                                        key={value}
+                                        type="button"
+                                        className={`h-9 rounded-lg text-sm transition ${resolution === value ? "bg-stone-200 font-semibold !text-stone-950 shadow-sm dark:bg-stone-700 dark:!text-stone-100" : "text-stone-500 hover:text-stone-900 dark:hover:text-stone-100"}`}
+                                        onClick={() => selectResolution(value)}
+                                    >
+                                        {value}P
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+
+                        <div className="mt-4">
+                            <div className="mb-2 text-sm font-semibold text-stone-900 dark:text-stone-100">尺寸</div>
+                            <div className="relative">
+                                <VideoSizeBadge ratio={selectedRatio} className="pointer-events-none absolute left-3 top-3 z-10 text-stone-400" />
+                                <select
+                                    aria-label="视频尺寸"
+                                    className="workbench-native-select h-10 w-full cursor-pointer appearance-none rounded-xl border border-stone-200 bg-stone-50 pl-10 pr-9 text-sm text-stone-800 outline-none dark:border-stone-700 dark:bg-stone-900/60 dark:text-stone-100"
+                                    value={selectedRatio}
+                                    onChange={(event) => selectVideoRatio(event.target.value)}
+                                >
+                                    {videoRatioOptions
+                                        .filter((item) => item.value !== "auto")
+                                        .map((item) => (
+                                            <option key={item.value} value={item.value}>
+                                                {videoRatioSizeLabel(item.value, resolution)}
+                                            </option>
+                                        ))}
+                                    <option value="auto">自适应</option>
+                                </select>
+                                <ChevronDown className="pointer-events-none absolute right-3 top-3 size-4 text-stone-500" />
+                            </div>
+                        </div>
+
+                        <div className="mt-4">
+                            <div className="mb-2 text-sm font-semibold text-stone-900 dark:text-stone-100">秒数</div>
+                            <div className="grid grid-cols-[1fr_96px] items-center gap-2">
+                                <div className="grid grid-cols-4 rounded-xl border border-stone-200 p-1 dark:border-stone-700">
+                                    {VIDEO_SECONDS_PRESETS.map((value) => (
+                                        <button
+                                            key={value}
+                                            type="button"
+                                            className={`h-9 rounded-lg text-sm transition ${seconds === value ? "bg-stone-200 font-semibold !text-stone-950 shadow-sm dark:bg-stone-700 dark:!text-stone-100" : "text-stone-500 hover:bg-stone-100 dark:hover:bg-stone-800"}`}
+                                            onClick={() => updateConfig("videoSeconds", String(value))}
+                                        >
+                                            {value}秒
+                                        </button>
+                                    ))}
+                                </div>
+                                <label className="flex h-10 items-center overflow-hidden rounded-xl border border-stone-200 bg-stone-50 dark:border-stone-700 dark:bg-stone-900/60">
+                                    <input
+                                        aria-label="自定义秒数"
+                                        type="number"
+                                        min={VIDEO_SECONDS_MIN}
+                                        max={VIDEO_SECONDS_MAX}
+                                        defaultValue={seconds}
+                                        key={seconds}
+                                        className="min-w-0 flex-1 bg-transparent px-2 text-center text-sm outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                                        onBlur={(event) => commitSeconds(event.currentTarget.value)}
+                                        onKeyDown={(event) => {
+                                            if (event.key === "Enter") event.currentTarget.blur();
+                                        }}
+                                    />
+                                    <span className="pr-2 text-xs text-stone-500">秒</span>
+                                </label>
+                            </div>
+                        </div>
+
+                        <div className="mt-4 flex items-center justify-between gap-3">
+                            <span className="text-sm font-semibold text-stone-900 dark:text-stone-100">任务数量</span>
+                            <label className="flex h-10 w-[96px] items-center overflow-hidden rounded-xl border border-stone-200 bg-stone-50 dark:border-stone-700 dark:bg-stone-900/60">
+                                <input
+                                    aria-label="视频任务数量"
+                                    type="number"
+                                    min={1}
+                                    max={MAX_VIDEO_TASKS}
+                                    defaultValue={taskCount}
+                                    key={taskCount}
+                                    className="min-w-0 flex-1 bg-transparent px-3 text-center text-sm outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                                    onBlur={(event) => commitTaskCount(event.currentTarget.value)}
+                                    onKeyDown={(event) => {
+                                        if (event.key === "Enter") event.currentTarget.blur();
+                                    }}
+                                />
+                            </label>
+                        </div>
+
+                        <div className="mt-4 flex items-center justify-between gap-3">
+                            <span className="text-sm font-semibold text-stone-900 dark:text-stone-100">生成音频</span>
+                            <button
+                                type="button"
+                                role="switch"
+                                aria-checked={generateAudio}
+                                aria-label="生成音频"
+                                className={`relative h-6 w-10 shrink-0 rounded-full transition ${generateAudio ? "bg-stone-200" : "bg-stone-600"}`}
+                                onClick={() => updateConfig("videoGenerateAudio", String(!generateAudio))}
+                            >
+                                <span className={`absolute top-0.5 size-5 rounded-full bg-white shadow-sm transition-[left] ${generateAudio ? "left-[18px]" : "left-0.5"}`} />
+                            </button>
+                        </div>
+
+                        <div className="mt-4">
+                            <Button
+                                type="primary"
+                                size="large"
+                                block
+                                icon={<Sparkles className="size-4" />}
+                                loading={running}
+                                disabled={!canGenerate || running}
+                                onClick={() => void generate()}
+                                className="!h-11 !rounded-xl !border-0 !bg-stone-300 !font-semibold !text-stone-950 !shadow-none hover:!bg-stone-200 disabled:!bg-stone-600 disabled:!text-stone-300"
+                            >
                                 {t("workbench.generate")}
                             </Button>
                         </div>
@@ -477,7 +931,15 @@ export default function VideoPage() {
                         </div>
                         {results.length ? (
                             <div className="grid gap-4">
-                                {results.map((result) => (result.status === "success" && result.video ? <ResultVideoCard key={result.id} video={result.video} onDownload={downloadVideo} onSaveAsset={saveResultToAssets} /> : result.status === "failed" ? <FailedVideoCard key={result.id} error={result.error || t("workbench.generationFailed")} onRetry={retryResult} /> : <PendingVideoCard key={result.id} />))}
+                                {results.map((result) =>
+                                    result.status === "success" && result.video ? (
+                                        <ResultVideoCard key={result.id} video={result.video} onDownload={downloadVideo} onSaveAsset={saveResultToAssets} />
+                                    ) : result.status === "failed" ? (
+                                        <FailedVideoCard key={result.id} error={result.error || t("workbench.generationFailed")} onRetry={retryResult} />
+                                    ) : (
+                                        <PendingVideoCard key={result.id} />
+                                    ),
+                                )}
                             </div>
                         ) : (
                             <div className="flex min-h-[320px] flex-col items-center justify-center rounded-lg border border-dashed border-stone-300 text-center dark:border-stone-700 lg:min-h-[560px]">
@@ -491,7 +953,7 @@ export default function VideoPage() {
             <input
                 ref={fileInputRef}
                 type="file"
-                accept="image/*"
+                accept="image/*,video/*,audio/*"
                 multiple
                 className="hidden"
                 onChange={(event) => {
@@ -500,14 +962,16 @@ export default function VideoPage() {
                 }}
             />
             <Drawer title={t("workbench.logs")} placement="bottom" size="large" open={logsOpen} onClose={() => setLogsOpen(false)}>
-                <LogPanel logs={logs} selectedLogIds={selectedLogIds} activeLogId={previewLog?.id} onSelectedLogIdsChange={setSelectedLogIds} onCreateSession={createSession} onDeleteSelected={() => setDeleteConfirmOpen(true)} onPreviewLog={previewGenerationLog} />
+                <LogPanel
+                    logs={logs}
+                    selectedLogIds={selectedLogIds}
+                    activeLogId={previewLog?.id}
+                    onSelectedLogIdsChange={setSelectedLogIds}
+                    onCreateSession={createSession}
+                    onDeleteSelected={() => setDeleteConfirmOpen(true)}
+                    onPreviewLog={previewGenerationLog}
+                />
             </Drawer>
-            <Drawer title={t("workbench.settings")} placement="bottom" height="82vh" open={settingsOpen} onClose={() => setSettingsOpen(false)}>
-                <div className="grid grid-cols-2 gap-3 pb-4">
-                    <GenerationSettings config={effectiveConfig} model={model} updateConfig={updateConfig} openConfigDialog={openConfigDialog} />
-                </div>
-            </Drawer>
-            <PromptSelectDialog open={promptDialogOpen} onOpenChange={setPromptDialogOpen} onSelect={setPrompt} />
             <AssetPickerModal open={assetPickerOpen} defaultTab="my-assets" onInsert={(payload) => void insertPickedAsset(payload)} onClose={() => setAssetPickerOpen(false)} />
             <Modal title={t("workbench.deleteLogs")} open={deleteConfirmOpen} onCancel={() => setDeleteConfirmOpen(false)} onOk={deleteSelectedLogs} okText={t("common.delete")} okButtonProps={{ danger: true }} cancelText={t("common.cancel")}>
                 {t("workbench.deleteLogsConfirm", { count: selectedLogIds.length })}
@@ -516,21 +980,26 @@ export default function VideoPage() {
     );
 }
 
-function GenerationSettings({ config, model, updateConfig, openConfigDialog }: { config: AiConfig; model: string; updateConfig: UpdateAiConfig; openConfigDialog: (shouldPromptContinue?: boolean) => void }) {
-    const theme = canvasThemes[useThemeStore((state) => state.theme)];
-    const { t } = useTranslation();
+function VideoSizeBadge({ ratio, className = "" }: { ratio: string; className?: string }) {
+    const item = videoRatioOptions.find((option) => option.value === ratio);
+    if (!item || item.value === "auto") return <span className={`block size-4 ${className}`} />;
+    const longSide = Math.max(item.width, item.height);
+    const width = Math.max(8, Math.round((item.width / longSide) * 18));
+    const height = Math.max(8, Math.round((item.height / longSide) * 18));
+    return <span className={`block rounded-[3px] border-2 border-current ${className}`} style={{ width, height }} />;
+}
 
-    return (
-        <>
-            <label className="col-span-2 block min-w-0 sm:col-span-1">
-                <span className="mb-1.5 block text-sm font-semibold sm:mb-2 sm:text-base">{t("workbench.model")}</span>
-                <ModelPicker config={config} value={model} onChange={(value) => updateConfig("videoModel", value)} capability="video" fullWidth onMissingConfig={() => openConfigDialog(false)} />
-            </label>
-            <div className="col-span-2">
-                <VideoSettingsPanel config={config} onConfigChange={(key, value) => updateConfig(key, value)} theme={theme} showTitle={false} className="space-y-4" />
-            </div>
-        </>
-    );
+function videoOrientationLabel(ratio: string) {
+    const item = videoRatioOptions.find((option) => option.value === ratio);
+    if (!item || item.value === "auto") return "自适应";
+    if (item.width === item.height) return "方形";
+    return item.width > item.height ? "横屏" : "竖屏";
+}
+
+function videoRatioSizeLabel(ratio: string, resolution: string) {
+    const pixels = parsePixelSize(computeVideoSize(resolution, ratio));
+    if (!pixels) return "自适应";
+    return `${videoOrientationLabel(ratio)} ${pixels.width}×${pixels.height}`;
 }
 
 function ResultVideoCard({ video, onDownload, onSaveAsset }: { video: GeneratedVideo; onDownload: (video: GeneratedVideo) => void; onSaveAsset: (video: GeneratedVideo) => void }) {
@@ -630,7 +1099,14 @@ function LogPanel({
             </div>
             <div className="space-y-3">
                 {logs.map((log) => (
-                    <LogCard key={log.id} log={log} selected={selectedLogIds.includes(log.id)} active={activeLogId === log.id} onSelectedChange={(checked) => onSelectedLogIdsChange(checked ? [...selectedLogIds, log.id] : selectedLogIds.filter((id) => id !== log.id))} onClick={() => onPreviewLog(log)} />
+                    <LogCard
+                        key={log.id}
+                        log={log}
+                        selected={selectedLogIds.includes(log.id)}
+                        active={activeLogId === log.id}
+                        onSelectedChange={(checked) => onSelectedLogIdsChange(checked ? [...selectedLogIds, log.id] : selectedLogIds.filter((id) => id !== log.id))}
+                        onClick={() => onPreviewLog(log)}
+                    />
                 ))}
                 {!logs.length ? <div className="flex min-h-48 items-center justify-center rounded-lg border border-dashed border-stone-300 text-center text-sm text-stone-500 dark:border-stone-700">{t("workbench.noLogs")}</div> : null}
             </div>
@@ -641,7 +1117,11 @@ function LogPanel({
 function LogCard({ log, selected, active, onSelectedChange, onClick }: { log: GenerationLog; selected: boolean; active: boolean; onSelectedChange: (checked: boolean) => void; onClick: () => void }) {
     const { t } = useTranslation();
     return (
-        <button type="button" className={`block w-full rounded-lg border p-2 text-left transition ${active ? "border-stone-900 bg-blue-50 dark:border-stone-100 dark:bg-blue-950/20" : "border-stone-200 bg-background hover:bg-stone-50 dark:border-stone-800 dark:hover:bg-stone-900"}`} onClick={onClick}>
+        <button
+            type="button"
+            className={`block w-full rounded-lg border p-2 text-left transition ${active ? "border-stone-900 bg-blue-50 dark:border-stone-100 dark:bg-blue-950/20" : "border-stone-200 bg-background hover:bg-stone-50 dark:border-stone-800 dark:hover:bg-stone-900"}`}
+            onClick={onClick}
+        >
             <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-2">
                 <Checkbox className="mt-0.5" checked={selected} onClick={(event) => event.stopPropagation()} onChange={(event) => onSelectedChange(event.target.checked)} />
                 <div className="min-w-0">
@@ -701,6 +1181,8 @@ async function normalizeLog(log: Partial<GenerationLog>): Promise<GenerationLog>
             return { ...item, dataUrl: await resolveImageUrl(item.storageKey, item.dataUrl) };
         }),
     );
+    const referenceVideos = await Promise.all((log.referenceVideos || []).map(async (item) => ({ ...item, url: await resolveMediaUrl(item.storageKey, item.url) })));
+    const referenceAudios = await Promise.all((log.referenceAudios || []).map(async (item) => ({ ...item, url: await resolveMediaUrl(item.storageKey, item.url) })));
     const config = normalizeLogConfig(log);
     return {
         id: log.id || nanoid(),
@@ -711,6 +1193,8 @@ async function normalizeLog(log: Partial<GenerationLog>): Promise<GenerationLog>
         model: log.model || config.videoModel || "",
         config,
         references,
+        referenceVideos,
+        referenceAudios,
         durationMs: log.durationMs || 0,
         size: log.size || config.size || "",
         resolution: normalizeResolution(log.resolution || config.vquality || ""),
@@ -726,6 +1210,8 @@ function serializeLog(log: GenerationLog): GenerationLog {
     return {
         ...log,
         references: log.references.map((item) => ({ ...item, dataUrl: item.storageKey ? "" : item.dataUrl })),
+        referenceVideos: log.referenceVideos.map((item) => ({ ...item, url: item.storageKey ? "" : item.url })),
+        referenceAudios: log.referenceAudios.map((item) => ({ ...item, url: item.storageKey ? "" : item.url })),
         video: log.video?.storageKey ? { ...log.video, url: "" } : log.video,
     };
 }
@@ -761,7 +1247,31 @@ function normalizeLogConfig(log: Partial<GenerationLog>): GenerationLogConfig {
     };
 }
 
-function buildLog({ prompt, model, config, references, durationMs, status, task, video, error }: { prompt: string; model: string; config: AiConfig; references: ReferenceImage[]; durationMs: number; status: GenerationLog["status"]; task?: VideoGenerationTask; video?: GeneratedVideo; error?: string }): GenerationLog {
+function buildLog({
+    prompt,
+    model,
+    config,
+    references,
+    referenceVideos,
+    referenceAudios,
+    durationMs,
+    status,
+    task,
+    video,
+    error,
+}: {
+    prompt: string;
+    model: string;
+    config: AiConfig;
+    references: ReferenceImage[];
+    referenceVideos: ReferenceVideo[];
+    referenceAudios: ReferenceAudio[];
+    durationMs: number;
+    status: GenerationLog["status"];
+    task?: VideoGenerationTask;
+    video?: GeneratedVideo;
+    error?: string;
+}): GenerationLog {
     const logConfig = {
         model: config.model,
         videoModel: config.videoModel,
@@ -781,6 +1291,8 @@ function buildLog({ prompt, model, config, references, durationMs, status, task,
         model,
         config: logConfig,
         references,
+        referenceVideos,
+        referenceAudios,
         durationMs,
         size: logConfig.size,
         resolution: logConfig.vquality,

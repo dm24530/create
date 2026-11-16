@@ -561,7 +561,7 @@ export default function ImagePage() {
                                 <span className="h-4 w-px shrink-0 bg-stone-300 dark:bg-stone-700" />
                                 <select
                                     aria-label="API Key"
-                                    className="image-workbench-native-select h-full min-w-0 flex-1 cursor-pointer appearance-none bg-transparent px-3 pr-9 text-sm text-stone-800 outline-none disabled:cursor-not-allowed disabled:text-stone-500 dark:text-stone-100"
+                                    className="workbench-native-select h-full min-w-0 flex-1 cursor-pointer appearance-none bg-transparent px-3 pr-9 text-sm text-stone-800 outline-none disabled:cursor-not-allowed disabled:text-stone-500 dark:text-stone-100"
                                     value={imageKeysLoading || !imageKeys.some((item) => item.id === selectedImageKeyId) ? 0 : selectedImageKeyId}
                                     disabled={imageKeysLoading || switchingImageKey || !imageKeys.length}
                                     onChange={(event) => void selectImageKey(Number(event.target.value))}
@@ -774,7 +774,7 @@ export default function ImagePage() {
                             <div className="relative mt-2">
                                 <select
                                     aria-label="尺寸"
-                                    className="image-workbench-native-select h-10 w-full cursor-pointer appearance-none rounded-xl border border-stone-200 bg-stone-50 px-3 pr-9 text-sm text-stone-800 outline-none dark:border-stone-700 dark:bg-stone-900/60 dark:text-stone-100"
+                                    className="workbench-native-select h-10 w-full cursor-pointer appearance-none rounded-xl border border-stone-200 bg-stone-50 px-3 pr-9 text-sm text-stone-800 outline-none dark:border-stone-700 dark:bg-stone-900/60 dark:text-stone-100"
                                     value={selectedRatio}
                                     onChange={(event) => updateConfig("size", event.target.value === "auto" ? "auto" : computeMediaSize("1k", event.target.value))}
                                 >

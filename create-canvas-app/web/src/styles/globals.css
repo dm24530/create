@@ -169,20 +169,20 @@
         }
     }
 
-    .image-workbench-native-select {
+    .workbench-native-select {
         color-scheme: light;
     }
 
-    .dark .image-workbench-native-select {
+    .dark .workbench-native-select {
         color-scheme: dark;
     }
 
-    .image-workbench-native-select option {
+    .workbench-native-select option {
         background-color: var(--popover);
         color: var(--popover-foreground);
     }
 
-    .image-workbench-native-select option:disabled {
+    .workbench-native-select option:disabled {
         color: var(--muted-foreground);
     }
 
