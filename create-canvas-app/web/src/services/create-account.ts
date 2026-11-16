@@ -73,17 +73,39 @@ export function getCreateUsageStats(session: CreateSession, query: CreateUsageQu
         accessToken: session.accessToken,
     });
 }
+export type CreateModelPricingInterval = {
+    min_tokens?: number;
+    max_tokens?: number | null;
+    tier_label?: string;
+    input_price?: number | null;
+    output_price?: number | null;
+    cache_write_price?: number | null;
+    cache_write_1h_price?: number | null;
+    cache_read_price?: number | null;
+    input_multiplier?: number | null;
+    output_multiplier?: number | null;
+    cache_write_multiplier?: number | null;
+    cache_read_multiplier?: number | null;
+    per_request_price?: number | null;
+};
+
+export type CreateModelPricing = {
+    billing_mode?: string;
+    input_price?: number | null;
+    output_price?: number | null;
+    cache_write_price?: number | null;
+    cache_write_1h_price?: number | null;
+    cache_read_price?: number | null;
+    image_input_price?: number | null;
+    image_output_price?: number | null;
+    per_request_price?: number | null;
+    intervals?: CreateModelPricingInterval[] | null;
+};
+
 export type CreateModelPlazaModel = {
     name: string;
     platform: string;
-    pricing?: {
-        billing_mode?: string;
-        input_price?: number;
-        output_price?: number;
-        image_input_price?: number;
-        image_output_price?: number;
-        per_request_price?: number;
-    } | null;
+    pricing?: CreateModelPricing | null;
     official_pricing?: Record<string, unknown> | null;
 };
 
@@ -142,10 +164,7 @@ export async function getCreateCheckoutInfo(session: CreateSession) {
     return createRequest<CreateCheckoutInfo>("/payment/checkout-info", { accessToken: session.accessToken });
 }
 
-export async function createCreatePaymentOrder(
-    session: CreateSession,
-    input: { amount: number; paymentType: string; orderType?: string },
-) {
+export async function createCreatePaymentOrder(session: CreateSession, input: { amount: number; paymentType: string; orderType?: string }) {
     return createRequest<CreatePaymentOrderResult>("/payment/orders", {
         method: "POST",
         accessToken: session.accessToken,
@@ -156,4 +175,3 @@ export async function createCreatePaymentOrder(
         }),
     });
 }
-
