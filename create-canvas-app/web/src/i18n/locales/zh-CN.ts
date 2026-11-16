@@ -1,7 +1,7 @@
 export default {
     meta: {
-        title: "Create",
-        description: "Create AI 创作工作台",
+        title: "无限画布",
+        description: "一个无限画布创作工具",
     },
     theme: { toggle: "切换主题" },
     common: {
@@ -217,7 +217,7 @@ export default {
     canvas: {
         defaultTitle: "无限画布 {{count}}",
         library: "画布库",
-        title: "Create",
+        title: "无限画布",
         imported: "已导入 {{count}} 个画布",
         importFailed: "导入失败，请选择有效的画布压缩包",
         opening: "正在打开画布...",
@@ -327,6 +327,7 @@ export default {
         },
     },
     navigation: {
+        canvas: "我的画布",
         image: "生图工作台",
         video: "视频创作台",
         prompts: "提示词库",
@@ -348,8 +349,9 @@ export default {
     },
     home: {
         promptError: "获取提示词失败",
-        description: "在一个工作台中完成 <content>图片与视频生成</content>，让创作、素材管理和结果复用连成一体。",
+        description: "在 <canvas>无限画布</canvas> 中生成、连接和重组 <content>图片、文字与图形</content>，让创作从单次生成变成连续推演。",
         start: "开始使用",
+        openCanvas: "打开画布",
         showcaseTitle: "沉淀每一次好结果",
         showcaseDescription: "收藏稳定出图的提示词、参考风格和结果图片，让下一次创作从已有经验开始。",
         viewPrompts: "查看提示词库",
