@@ -15,6 +15,7 @@ import { formatBytes, formatDuration } from "@/lib/image-utils";
 import { requestEdit, requestGeneration, submitPersistentImageTask, waitForPersistentImageTask } from "@/services/api/image";
 import { ensureImagePreview, getImagePreviewRevision, previewUrlFor, resolveImageUrl, subscribeImagePreviews, uploadImage } from "@/services/image-storage";
 import { getManagedKeySelection, listCreateManagedKeys, managedKeySupportsImage, switchManagedKey, type CreateManagedKey } from "@/services/create-managed-channel";
+import { WorkbenchModelSelect } from "@/components/workbench/model-select";
 import { PanelResizeHandle, useStoredPanelWidth } from "@/components/workbench/panel-resize-handle";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useUserStore } from "@/stores/use-user-store";
@@ -638,32 +639,14 @@ export default function ImagePage() {
                                 placeholder={t("imageWorkbench.promptPlaceholder")}
                             />
                             <div className="flex min-h-10 items-center justify-between gap-2 px-2.5 pb-2">
-                                <div className="relative min-w-0 max-w-[260px] flex-1">
-                                    <select
-                                        aria-label="生图模型"
-                                        className="workbench-native-select h-8 w-full cursor-pointer appearance-none rounded-xl border border-stone-200 bg-stone-100 px-3 pr-8 text-sm text-stone-700 outline-none dark:border-stone-700 dark:bg-stone-800/80 dark:text-stone-100"
-                                        value={imageModelOptions.includes(model) ? model : ""}
-                                        onFocus={() => {
-                                            if (!imageModelOptions.length) openConfigDialog(false);
-                                        }}
-                                        onChange={(event) => updateConfig("imageModel", event.target.value)}
-                                    >
-                                        {!imageModelOptions.length ? (
-                                            <option value="" disabled>
-                                                请先配置模型
-                                            </option>
-                                        ) : null}
-                                        {imageModelGroups.map((group) => (
-                                            <optgroup key={group.id} label={group.name}>
-                                                {group.models.map((option) => (
-                                                    <option key={option.value} value={option.value}>
-                                                        {option.label}
-                                                    </option>
-                                                ))}
-                                            </optgroup>
-                                        ))}
-                                    </select>
-                                    <ChevronDown className="pointer-events-none absolute right-2.5 top-2 size-4 text-stone-500" />
+                                <div className="min-w-0 max-w-[300px] flex-1">
+                                    <WorkbenchModelSelect
+                                        label="生图模型"
+                                        value={imageModelGroups.some((group) => group.models.some((item) => item.value === model)) ? model : ""}
+                                        groups={imageModelGroups}
+                                        onChange={(value) => updateConfig("imageModel", value)}
+                                        onEmptyOpen={() => openConfigDialog(false)}
+                                    />
                                 </div>
                                 <div className="flex shrink-0 items-center gap-0.5">
                                     <button
