@@ -1,5 +1,5 @@
 import { App, Button, Dropdown, Tooltip } from "antd";
-import { BarChart3, Grid3X3, KeyRound, LogOut, UserRound } from "lucide-react";
+import { BarChart3, FolderCog, Grid3X3, KeyRound, LogOut, UserRound } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { AnimatedThemeToggler } from "@/components/ui/animated-theme-toggler";
@@ -7,6 +7,8 @@ import { CreateApiKeysModal } from "@/components/create-account/create-api-keys-
 import { CreateUsageModal } from "@/components/create-account/create-usage-modal";
 import { CreateModelPlazaModal } from "@/components/create-account/create-model-plaza-modal";
 import { CreateRechargeModal } from "@/components/create-account/create-recharge-modal";
+import { LocalSaveSettingsModal } from "@/components/settings/local-save-settings-modal";
+import { getDesktopSaveBridge } from "@/lib/desktop-save";
 import { createLogout } from "@/services/create-auth";
 import { listCreateManagedKeys, type CreateManagedKey } from "@/services/create-managed-channel";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -25,6 +27,8 @@ export function CreateAccountActions() {
     const [usageOpen, setUsageOpen] = useState(false);
     const [modelPlazaOpen, setModelPlazaOpen] = useState(false);
     const [rechargeOpen, setRechargeOpen] = useState(false);
+    const [localSaveOpen, setLocalSaveOpen] = useState(false);
+    const saveBridge = getDesktopSaveBridge();
 
     const refreshKeys = async () => {
         if (!session) return;
@@ -75,6 +79,13 @@ export function CreateAccountActions() {
                         <BarChart3 className="size-4" />
                     </button>
                 </Tooltip>
+                {saveBridge ? (
+                    <Tooltip title="本地保存设置">
+                        <button type="button" className={iconClass} aria-label="本地保存设置" onClick={() => setLocalSaveOpen(true)}>
+                            <FolderCog className="size-4" />
+                        </button>
+                    </Tooltip>
+                ) : null}
                 <Tooltip title="模型广场">
                     <button type="button" className={iconClass} aria-label="模型广场" onClick={() => setModelPlazaOpen(true)}>
                         <Grid3X3 className="size-4" />
@@ -90,6 +101,7 @@ export function CreateAccountActions() {
                             if (key === "usage") setUsageOpen(true);
                             if (key === "models") setModelPlazaOpen(true);
                             if (key === "recharge") setRechargeOpen(true);
+                            if (key === "local-save") setLocalSaveOpen(true);
                             if (key === "logout") logout();
                         },
                     }}
@@ -103,7 +115,9 @@ export function CreateAccountActions() {
             <CreateUsageModal open={usageOpen} onClose={() => setUsageOpen(false)} session={session} keys={keys} />
             <CreateModelPlazaModal open={modelPlazaOpen} onClose={() => setModelPlazaOpen(false)} session={session} />
             <CreateRechargeModal open={rechargeOpen} onClose={() => setRechargeOpen(false)} session={session} />
+            <LocalSaveSettingsModal open={localSaveOpen} onClose={() => setLocalSaveOpen(false)} />
         </>
     );
 }
+
 

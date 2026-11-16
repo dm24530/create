@@ -16,7 +16,8 @@
     "test:mock-login": "node test/mock-login-smoke.js",
     "test:mock-account": "node test/mock-account-smoke.js",
     "test:local-billing": "node test/local-billing-smoke.js",
-    "test:direct-image": "node test/direct-image-smoke.js"
+    "test:direct-image": "node test/direct-image-smoke.js",
+    "test:save-settings": "node test/local-save-settings-smoke.js"
   },
   "devDependencies": {
     "electron": "^45.3.2",
