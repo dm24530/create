@@ -175,6 +175,8 @@ export default {
         invalidParams: "Invalid image generation parameters",
         busy: "The Image Studio is already running a task",
         generated: "Images generated",
+        downloaded: "Image saved",
+        downloadFailed: "Download failed. Try again.",
         addedReference: "Added to reference images",
         resultTitle: "Generated image {{count}}",
         source: "Image Studio",

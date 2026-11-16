@@ -175,6 +175,8 @@ export default {
         invalidParams: "生图参数无效",
         busy: "生图工作台已有任务正在运行",
         generated: "图片已生成",
+        downloaded: "图片已保存",
+        downloadFailed: "下载失败，请重试",
         addedReference: "已加入参考图",
         resultTitle: "生成结果 {{count}}",
         source: "生图工作台",

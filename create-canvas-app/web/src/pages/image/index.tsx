@@ -2,16 +2,16 @@ import { ArrowLeft, ArrowRight, CheckSquare, ChevronDown, ClipboardPaste, Copy, 
 import { type CSSProperties, type ClipboardEvent as ReactClipboardEvent, useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { App, Button, Checkbox, Drawer, Empty, Image, Modal, Tag, Tooltip, Typography } from "antd";
 import localforage from "localforage";
-import { saveAs } from "file-saver";
 import { useTranslation } from "react-i18next";
 
 import { AssetPickerModal, type InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
+import { resolveGeneratedImageBlob } from "@/lib/generated-image-download";
 import { imageReferenceLabel } from "@/lib/image-reference-prompt";
 import { normalizeImageBackground, normalizeImageOutputFormat, supportsTransparentImageBackground } from "@/lib/image-output-format";
 import { computeMediaSize, inferMediaRatio, inferMediaScale, mediaRatioOptions, parsePixelSize } from "@/lib/media-size";
 import { encodeChannelModel, modelOptionName, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { nanoid } from "nanoid";
-import { autoSaveGeneratedFile } from "@/lib/desktop-save";
+import { autoSaveGeneratedFile, generatedFileExtension, saveGeneratedFile } from "@/lib/desktop-save";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
 import { requestEdit, requestGeneration, submitPersistentImageTask, waitForPersistentImageTask } from "@/services/api/image";
 import { ensureImagePreview, getImageBlob, getImagePreviewRevision, previewUrlFor, resolveImageUrl, subscribeImagePreviews, uploadImage } from "@/services/image-storage";
@@ -367,8 +367,16 @@ export default function ImagePage() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [autoRunToken]);
 
-    const downloadImage = (image: GeneratedImage, index: number) => {
-        saveAs(image.dataUrl, `image-${index + 1}.png`);
+    const downloadImage = async (image: GeneratedImage, index: number) => {
+        try {
+            const blob = await resolveGeneratedImageBlob(image);
+            const mimeType = blob.type || image.mimeType || "image/png";
+            await saveGeneratedFile(blob, "image", mimeType, `image-${index + 1}.${generatedFileExtension("image", mimeType)}`);
+            message.success(t("imageWorkbench.downloaded"));
+        } catch (error) {
+            console.error("Image download failed", error);
+            message.error(t("imageWorkbench.downloadFailed"));
+        }
     };
 
     const addResultToReferences = async (image: GeneratedImage, index: number) => {
@@ -1004,7 +1012,7 @@ function ResultImageCard({
     image: GeneratedImage;
     index: number;
     onEdit: (image: GeneratedImage, index: number) => void;
-    onDownload: (image: GeneratedImage, index: number) => void;
+    onDownload: (image: GeneratedImage, index: number) => Promise<void>;
     onSaveAsset: (image: GeneratedImage, index: number) => void;
 }) {
     const { t } = useTranslation();
@@ -1032,7 +1040,7 @@ function ResultImageCard({
                         </Button>
                     </Tooltip>
                     <Tooltip title={t("common.download")}>
-                        <Button className={RESULT_ACTION_BUTTON_CLASS} size="small" icon={<Download className="size-3.5" />} onClick={() => onDownload(image, index)}>
+                        <Button className={RESULT_ACTION_BUTTON_CLASS} size="small" icon={<Download className="size-3.5" />} onClick={() => void onDownload(image, index)}>
                             {t("common.download")}
                         </Button>
                     </Tooltip>

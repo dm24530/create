@@ -27,21 +27,33 @@ export function getDesktopSaveBridge(): DesktopSaveBridge | null {
     return bridge as DesktopSaveBridge;
 }
 
-export async function autoSaveGeneratedFile(blob: Blob, kind: DesktopSaveKind, mimeType: string, date = new Date()) {
+export async function saveGeneratedFile(blob: Blob, kind: DesktopSaveKind, mimeType: string, filename: string) {
     const bridge = getDesktopSaveBridge();
-    if (!bridge) return false;
-    const extension = generatedFileExtension(kind, mimeType);
-    const stamp = date.toISOString().replace(/[-:]/g, "").replace("T", "-").slice(0, 15);
-    const filename = `create-${kind}-${stamp}.${extension}`;
-    if (bridge.saveGeneratedFile) {
-        await bridge.saveGeneratedFile({ kind, mimeType: blob.type || mimeType, filename, data: await blob.arrayBuffer() });
+    if (bridge?.saveGeneratedFile) {
+        await bridge.saveGeneratedFile({ kind, mimeType: blob.type || mimeType, filename, data: await blobToArrayBuffer(blob) });
         return true;
     }
     saveAs(blob, filename);
-    return true;
+    return Boolean(bridge);
 }
 
-function generatedFileExtension(kind: DesktopSaveKind, mimeType: string) {
+export async function autoSaveGeneratedFile(blob: Blob, kind: DesktopSaveKind, mimeType: string, date = new Date()) {
+    const extension = generatedFileExtension(kind, mimeType);
+    const stamp = date.toISOString().replace(/[-:]/g, "").replace("T", "-").slice(0, 15);
+    return saveGeneratedFile(blob, kind, mimeType, `create-${kind}-${stamp}.${extension}`);
+}
+
+function blobToArrayBuffer(blob: Blob): Promise<ArrayBuffer> {
+    if (typeof blob.arrayBuffer === "function") return blob.arrayBuffer();
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as ArrayBuffer);
+        reader.onerror = () => reject(reader.error || new Error("Failed to read generated file"));
+        reader.readAsArrayBuffer(blob);
+    });
+}
+
+export function generatedFileExtension(kind: DesktopSaveKind, mimeType: string) {
     const type = String(mimeType || "").toLowerCase();
     if (kind === "image") {
         if (type.includes("jpeg")) return "jpg";
