@@ -32,6 +32,25 @@ export type CreateManagedKey = {
     usage_1d?: number;
     usage_7d?: number;
     expires_at?: string | null;
+    created_at?: string;
+    last_used_at?: string | null;
+};
+
+export type CreateManagedKeyOptions = {
+    quota?: number;
+    expiresInDays?: number;
+    rateLimit5h?: number;
+    rateLimit1d?: number;
+    rateLimit7d?: number;
+};
+
+export type UpdateCreateManagedKeyInput = {
+    name: string;
+    groupId: number;
+    quota: number;
+    rateLimit5h: number;
+    rateLimit1d: number;
+    rateLimit7d: number;
 };
 
 const SELECTED_IMAGE_KEY_STORAGE = "create-canvas:selected-image-key-id";
@@ -160,11 +179,39 @@ export async function listCreateManagedGroups(session: CreateSession): Promise<C
     });
 }
 
-export async function createCreateManagedKey(session: CreateSession, name: string, groupId: number): Promise<CreateManagedKey> {
+export async function createCreateManagedKey(session: CreateSession, name: string, groupId: number, options: CreateManagedKeyOptions = {}): Promise<CreateManagedKey> {
+    const payload: Record<string, string | number> = { name, group_id: groupId };
+    if (Number(options.quota || 0) > 0) payload.quota = Number(options.quota);
+    if (Number(options.expiresInDays || 0) > 0) payload.expires_in_days = Number(options.expiresInDays);
+    if (Number(options.rateLimit5h || 0) > 0) payload.rate_limit_5h = Number(options.rateLimit5h);
+    if (Number(options.rateLimit1d || 0) > 0) payload.rate_limit_1d = Number(options.rateLimit1d);
+    if (Number(options.rateLimit7d || 0) > 0) payload.rate_limit_7d = Number(options.rateLimit7d);
     return createRequest<CreateManagedKey>("/keys", {
         method: "POST",
         accessToken: session.accessToken,
-        body: JSON.stringify({ name, group_id: groupId }),
+        body: JSON.stringify(payload),
+    });
+}
+
+export async function updateCreateManagedKey(session: CreateSession, id: number, input: UpdateCreateManagedKeyInput): Promise<CreateManagedKey> {
+    return createRequest<CreateManagedKey>(`/keys/${id}`, {
+        method: "PUT",
+        accessToken: session.accessToken,
+        body: JSON.stringify({
+            name: input.name,
+            group_id: input.groupId,
+            quota: Math.max(0, Number(input.quota || 0)),
+            rate_limit_5h: Math.max(0, Number(input.rateLimit5h || 0)),
+            rate_limit_1d: Math.max(0, Number(input.rateLimit1d || 0)),
+            rate_limit_7d: Math.max(0, Number(input.rateLimit7d || 0)),
+        }),
+    });
+}
+
+export async function deleteCreateManagedKey(session: CreateSession, id: number): Promise<void> {
+    await createRequest(`/keys/${id}`, {
+        method: "DELETE",
+        accessToken: session.accessToken,
     });
 }
 
