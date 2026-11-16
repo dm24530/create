@@ -8,3 +8,5 @@ desktop/node_modules/
 desktop/release/
 desktop/dist/
 desktop/test-results/
+.local-run/
+

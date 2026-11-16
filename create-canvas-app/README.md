@@ -18,6 +18,16 @@ This source tree is intentionally separate from the existing Vue Web and
 - Electron loads bundled local assets from `app://create/`.
 - The existing Vue Web remains unchanged.
 
+## One-Click Local Test
+
+```powershell
+cd C:\项目\code\create\create-canvas-app
+.\start-local.ps1
+```
+
+This starts the local mock API, Vite dev server, and Electron. Closing Electron
+stops both background servers. Mock login accepts any email/password.
+
 ## Web Development
 
 ```powershell
@@ -81,5 +91,6 @@ Create login screen renders through the `app://create` protocol.
 - The first milestone intentionally keeps upstream UI and IndexedDB persistence.
 - Real account login and generation require the configured Create server and
   database-backed test credentials.
+
 
 
