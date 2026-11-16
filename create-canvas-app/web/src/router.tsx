@@ -1,5 +1,5 @@
 import { lazy, Suspense } from "react";
-import { createBrowserRouter, Outlet } from "react-router-dom";
+import { createBrowserRouter, Navigate, Outlet } from "react-router-dom";
 
 import { AnalyticsTracker } from "@/components/layout/analytics-tracker";
 import { ManagedRouteBridge } from "@/components/layout/managed-route-bridge";
@@ -43,7 +43,9 @@ export const router = createBrowserRouter([
             </UserLayout>
         ),
         children: [
-            { path: "/", element: <HomePage /> },
+            isCreateProductMode()
+                ? { path: "/", element: <Navigate to="/image" replace /> }
+                : { path: "/", element: <HomePage /> },
             { path: "/image", element: <ImagePage /> },
             { path: "/video", element: <VideoPage /> },
             { path: "/assets", element: <AssetsPage /> },
@@ -65,4 +67,5 @@ export const router = createBrowserRouter([
 ], {
     basename: import.meta.env.BASE_URL,
 });
+
 
