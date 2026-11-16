@@ -126,14 +126,16 @@ export default function VideoPage() {
 
     const model = effectiveConfig.videoModel || effectiveConfig.model;
     const videoModelGroups = effectiveConfig.channels
-        .map((channel) => ({
-            id: channel.id,
-            name: channel.name,
-            models: channel.models.filter((item) => item.capability === "video").map((item) => ({ value: encodeChannelModel(channel.id, item.name), label: item.name })),
-        }))
+        .map((channel) => {
+            const capableModels = channel.models.filter((item) => item.capability === "video").map((item) => ({ value: encodeChannelModel(channel.id, item.name), label: item.name }));
+            const allModels = channel.models.map((item) => ({ value: encodeChannelModel(channel.id, item.name), label: item.name }));
+            return { id: channel.id, name: channel.name, models: capableModels.length ? capableModels : allModels };
+        })
         .filter((group) => group.models.length > 0);
+    if (model && !videoModelGroups.some((group) => group.models.some((item) => item.value === model))) {
+        videoModelGroups.push({ id: "current-model", name: "当前模型", models: [{ value: model, label: modelOptionName(model) }] });
+    }
     const videoModelOptions = videoModelGroups.flatMap((group) => group.models.map((item) => item.value));
-    if (model && !videoModelOptions.includes(model)) videoModelGroups.push({ id: "current-model", name: "当前模型", models: [{ value: model, label: modelOptionName(model) }] });
     const canGenerate = Boolean(prompt.trim());
     const resolution = parseVideoResolution(effectiveConfig.vquality);
     const selectedRatio = inferVideoRatio(effectiveConfig.size);

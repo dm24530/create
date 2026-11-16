@@ -119,14 +119,16 @@ export default function ImagePage() {
 
     const model = effectiveConfig.imageModel || effectiveConfig.model;
     const imageModelGroups = effectiveConfig.channels
-        .map((channel) => ({
-            id: channel.id,
-            name: channel.name,
-            models: channel.models.filter((item) => item.capability === "image").map((item) => ({ value: encodeChannelModel(channel.id, item.name), label: item.name })),
-        }))
+        .map((channel) => {
+            const capableModels = channel.models.filter((item) => item.capability === "image").map((item) => ({ value: encodeChannelModel(channel.id, item.name), label: item.name }));
+            const allModels = channel.models.map((item) => ({ value: encodeChannelModel(channel.id, item.name), label: item.name }));
+            return { id: channel.id, name: channel.name, models: capableModels.length ? capableModels : allModels };
+        })
         .filter((group) => group.models.length > 0);
+    if (model && !imageModelGroups.some((group) => group.models.some((item) => item.value === model))) {
+        imageModelGroups.push({ id: "current-model", name: "当前模型", models: [{ value: model, label: modelOptionName(model) }] });
+    }
     const imageModelOptions = imageModelGroups.flatMap((group) => group.models.map((item) => item.value));
-    if (model && !imageModelOptions.includes(model)) imageModelGroups.push({ id: "current-model", name: "当前模型", models: [{ value: model, label: modelOptionName(model) }] });
     const canGenerate = Boolean(prompt.trim());
     const generationCount = Math.max(1, Math.min(10, Number(config.count) || 1));
     const selectedRatio = inferMediaRatio(effectiveConfig.size);
