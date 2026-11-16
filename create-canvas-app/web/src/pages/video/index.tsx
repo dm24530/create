@@ -7,7 +7,6 @@ import { saveAs } from "file-saver";
 import { useTranslation } from "react-i18next";
 
 import { AssetPickerModal, type InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
-import { ModelPicker } from "@/components/model-picker";
 import { normalizeVideoResolutionValue, normalizeVideoSizeValue } from "@/components/video-settings-panel";
 import { clampVideoSeconds, computeVideoSize, inferVideoRatio, parsePixelSize, parseVideoResolution, readVideoDimensions, VIDEO_SECONDS_MAX, VIDEO_SECONDS_MIN, videoRatioOptions } from "@/lib/media-size";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
@@ -18,7 +17,7 @@ import { getManagedKeySelection, listCreateManagedKeys, managedKeySupportsVideo,
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useUserStore } from "@/stores/use-user-store";
 import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
-import { boolConfig, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+import { boolConfig, modelOptionLabel, selectableModelsByCapability, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 import i18n from "@/i18n";
@@ -116,6 +115,7 @@ export default function VideoPage() {
     const agentTaskIdRef = useRef<string | undefined>(undefined);
 
     const model = effectiveConfig.videoModel || effectiveConfig.model;
+    const videoModelOptions = Array.from(new Set([model, ...selectableModelsByCapability(effectiveConfig, "video")].filter(Boolean)));
     const canGenerate = Boolean(prompt.trim());
     const resolution = parseVideoResolution(effectiveConfig.vquality);
     const selectedRatio = inferVideoRatio(effectiveConfig.size);
@@ -585,7 +585,7 @@ export default function VideoPage() {
 
     return (
         <div className="flex h-full flex-col overflow-hidden bg-stone-50 text-stone-900 dark:bg-stone-950 dark:text-stone-100">
-            <main className="grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-y-auto p-3 lg:grid-cols-[300px_minmax(0,1fr)] lg:overflow-hidden xl:grid-cols-[320px_minmax(0,1fr)]">
+            <main className="grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-y-auto p-3 lg:grid-cols-[clamp(260px,20vw,340px)_minmax(0,1fr)] lg:overflow-hidden">
                 <aside className="thin-scrollbar hidden min-h-0 overflow-y-auto rounded-lg border border-stone-200 bg-card p-4 shadow-sm dark:border-stone-800 lg:block">
                     <LogPanel
                         logs={logs}
@@ -598,8 +598,8 @@ export default function VideoPage() {
                     />
                 </aside>
 
-                <section className="grid gap-3 lg:min-h-0 lg:overflow-hidden xl:grid-cols-[420px_minmax(0,1fr)]">
-                    <div className="thin-scrollbar flex flex-col rounded-xl border border-stone-200 bg-card p-4 shadow-sm dark:border-stone-800 lg:min-h-0 lg:overflow-y-auto">
+                <section className="grid gap-3 lg:min-h-0 lg:overflow-hidden xl:grid-cols-[clamp(420px,32vw,600px)_minmax(0,1fr)]">
+                    <div className="thin-scrollbar flex flex-col rounded-xl border border-stone-200 bg-card p-4 shadow-sm dark:border-stone-800 lg:min-h-0 lg:overflow-y-auto [&>*]:shrink-0">
                         <div className="flex items-center justify-between gap-3">
                             <h1 className="text-[26px] font-semibold leading-8 tracking-tight text-stone-950 dark:text-stone-100">{t("videoWorkbench.title")}</h1>
                             <button
@@ -658,14 +658,29 @@ export default function VideoPage() {
                                 placeholder={t("videoWorkbench.promptPlaceholder")}
                             />
                             <div className="flex items-center justify-between gap-2 px-2.5 pb-1">
-                                <ModelPicker
-                                    config={effectiveConfig}
-                                    value={model}
-                                    onChange={(value) => updateConfig("videoModel", value)}
-                                    capability="video"
-                                    className="!h-9 !max-w-[220px] !rounded-xl !border-stone-200 !bg-stone-100 !px-3 !text-stone-700 dark:!border-stone-700 dark:!bg-stone-800/80 dark:!text-stone-100"
-                                    onMissingConfig={() => openConfigDialog(false)}
-                                />
+                                <div className="relative min-w-0 max-w-[260px] flex-1">
+                                    <select
+                                        aria-label="视频模型"
+                                        className="workbench-native-select h-9 w-full cursor-pointer appearance-none rounded-xl border border-stone-200 bg-stone-100 px-3 pr-8 text-sm text-stone-700 outline-none dark:border-stone-700 dark:bg-stone-800/80 dark:text-stone-100"
+                                        value={videoModelOptions.includes(model) ? model : ""}
+                                        onFocus={() => {
+                                            if (!videoModelOptions.length) openConfigDialog(false);
+                                        }}
+                                        onChange={(event) => updateConfig("videoModel", event.target.value)}
+                                    >
+                                        {!videoModelOptions.length ? (
+                                            <option value="" disabled>
+                                                请先配置模型
+                                            </option>
+                                        ) : null}
+                                        {videoModelOptions.map((option) => (
+                                            <option key={option} value={option}>
+                                                {modelOptionLabel(effectiveConfig, option)}
+                                            </option>
+                                        ))}
+                                    </select>
+                                    <ChevronDown className="pointer-events-none absolute right-2.5 top-2.5 size-4 text-stone-500" />
+                                </div>
                                 <div className="flex shrink-0 items-center gap-0.5">
                                     <button
                                         type="button"

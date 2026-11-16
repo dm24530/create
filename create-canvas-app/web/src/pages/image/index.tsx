@@ -5,12 +5,11 @@ import localforage from "localforage";
 import { saveAs } from "file-saver";
 import { useTranslation } from "react-i18next";
 
-import { ModelPicker } from "@/components/model-picker";
 import { AssetPickerModal, type InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
 import { imageReferenceLabel } from "@/lib/image-reference-prompt";
 import { normalizeImageBackground, normalizeImageOutputFormat, supportsTransparentImageBackground } from "@/lib/image-output-format";
 import { computeMediaSize, inferMediaRatio, inferMediaScale, mediaRatioOptions, parsePixelSize } from "@/lib/media-size";
-import { useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+import { modelOptionLabel, selectableModelsByCapability, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { nanoid } from "nanoid";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
 import { requestEdit, requestGeneration, submitPersistentImageTask, waitForPersistentImageTask } from "@/services/api/image";
@@ -109,6 +108,7 @@ export default function ImagePage() {
     const agentTaskIdRef = useRef<string | undefined>(undefined);
 
     const model = effectiveConfig.imageModel || effectiveConfig.model;
+    const imageModelOptions = Array.from(new Set([model, ...selectableModelsByCapability(effectiveConfig, "image")].filter(Boolean)));
     const canGenerate = Boolean(prompt.trim());
     const generationCount = Math.max(1, Math.min(10, Number(config.count) || 1));
     const selectedRatio = inferMediaRatio(effectiveConfig.size);
@@ -536,7 +536,7 @@ export default function ImagePage() {
 
     return (
         <div className="flex h-full flex-col overflow-hidden bg-stone-50 text-stone-900 dark:bg-stone-950 dark:text-stone-100">
-            <main className="grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-y-auto p-3 lg:grid-cols-[300px_minmax(0,1fr)] lg:overflow-hidden xl:grid-cols-[320px_minmax(0,1fr)]">
+            <main className="grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-y-auto p-3 lg:grid-cols-[clamp(260px,20vw,340px)_minmax(0,1fr)] lg:overflow-hidden">
                 <aside className="thin-scrollbar hidden min-h-0 overflow-y-auto rounded-lg border border-stone-200 bg-card p-4 shadow-sm dark:border-stone-800 lg:block">
                     <LogPanel
                         logs={logs}
@@ -549,8 +549,8 @@ export default function ImagePage() {
                     />
                 </aside>
 
-                <section className="grid gap-3 lg:min-h-0 lg:overflow-hidden xl:grid-cols-[420px_minmax(0,1fr)]">
-                    <div className="thin-scrollbar flex flex-col rounded-xl border border-stone-200 bg-card p-4 shadow-sm dark:border-stone-800 lg:min-h-0 lg:overflow-y-auto">
+                <section className="grid gap-3 lg:min-h-0 lg:overflow-hidden xl:grid-cols-[clamp(420px,32vw,600px)_minmax(0,1fr)]">
+                    <div className="thin-scrollbar flex flex-col rounded-xl border border-stone-200 bg-card p-4 shadow-sm dark:border-stone-800 lg:min-h-0 lg:overflow-y-auto [&>*]:shrink-0">
                         <div className="flex items-center justify-between gap-3">
                             <h1 className="text-[26px] font-semibold leading-8 tracking-tight text-stone-950 dark:text-stone-100">{t("imageWorkbench.title")}</h1>
                             <button
@@ -599,7 +599,7 @@ export default function ImagePage() {
                             </button>
                         </div>
 
-                        <div className="mt-3 flex flex-col overflow-hidden rounded-2xl border border-stone-200 bg-stone-50 dark:border-stone-800 dark:bg-stone-900/70">
+                        <div className="mt-3 flex shrink-0 flex-col overflow-hidden rounded-2xl border border-stone-200 bg-stone-50 dark:border-stone-800 dark:bg-stone-900/70">
                             <textarea
                                 className="block w-full flex-none resize-none bg-transparent px-4 py-4 text-[15px] leading-6 text-stone-900 outline-none placeholder:text-stone-500 dark:text-stone-100"
                                 style={{ height: 236, minHeight: 236 }}
@@ -609,14 +609,29 @@ export default function ImagePage() {
                                 placeholder={t("imageWorkbench.promptPlaceholder")}
                             />
                             <div className="flex min-h-11 items-center justify-between gap-2 px-2.5 pb-2.5">
-                                <ModelPicker
-                                    config={effectiveConfig}
-                                    value={model}
-                                    onChange={(value) => updateConfig("imageModel", value)}
-                                    capability="image"
-                                    className="!h-9 !max-w-[220px] !rounded-xl !border-stone-200 !bg-stone-100 !px-3 !text-stone-700 dark:!border-stone-700 dark:!bg-stone-800/80 dark:!text-stone-100"
-                                    onMissingConfig={() => openConfigDialog(false)}
-                                />
+                                <div className="relative min-w-0 max-w-[260px] flex-1">
+                                    <select
+                                        aria-label="生图模型"
+                                        className="workbench-native-select h-9 w-full cursor-pointer appearance-none rounded-xl border border-stone-200 bg-stone-100 px-3 pr-8 text-sm text-stone-700 outline-none dark:border-stone-700 dark:bg-stone-800/80 dark:text-stone-100"
+                                        value={imageModelOptions.includes(model) ? model : ""}
+                                        onFocus={() => {
+                                            if (!imageModelOptions.length) openConfigDialog(false);
+                                        }}
+                                        onChange={(event) => updateConfig("imageModel", event.target.value)}
+                                    >
+                                        {!imageModelOptions.length ? (
+                                            <option value="" disabled>
+                                                请先配置模型
+                                            </option>
+                                        ) : null}
+                                        {imageModelOptions.map((option) => (
+                                            <option key={option} value={option}>
+                                                {modelOptionLabel(effectiveConfig, option)}
+                                            </option>
+                                        ))}
+                                    </select>
+                                    <ChevronDown className="pointer-events-none absolute right-2.5 top-2.5 size-4 text-stone-500" />
+                                </div>
                                 <div className="flex shrink-0 items-center gap-0.5">
                                     <button
                                         type="button"
