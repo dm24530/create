@@ -28,11 +28,13 @@ jobs:
         working-directory: create-canvas-app/web
         run: npm install --legacy-peer-deps --no-audit --no-fund
 
-      - name: Typecheck and test
+      - name: Typecheck
         working-directory: create-canvas-app/web
-        run: |
-          npm run typecheck
-          npm test
+        run: npm run typecheck
+
+      - name: Test
+        working-directory: create-canvas-app/web
+        run: npm test
 
       - name: Build Web and Desktop assets
         working-directory: create-canvas-app/web
@@ -104,4 +106,5 @@ jobs:
           name: ${{ matrix.artifact }}
           path: create-canvas-app/desktop/release/**
           if-no-files-found: error
+
 
