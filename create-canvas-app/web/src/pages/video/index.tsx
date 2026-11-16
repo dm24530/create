@@ -1,5 +1,5 @@
 import { ArrowLeft, ArrowRight, CheckSquare, ChevronDown, ClipboardPaste, Copy, Download, Film, FolderPlus, History, LoaderCircle, Music2, Plus, RefreshCw, Sparkles, Trash2, Upload, VideoIcon } from "lucide-react";
-import { type ClipboardEvent as ReactClipboardEvent, useCallback, useEffect, useRef, useState, useSyncExternalStore, type DragEvent } from "react";
+import { type CSSProperties, type ClipboardEvent as ReactClipboardEvent, useCallback, useEffect, useRef, useState, useSyncExternalStore, type DragEvent } from "react";
 import { App, Button, Checkbox, Drawer, Empty, Modal, Tag, Typography } from "antd";
 import localforage from "localforage";
 import { nanoid } from "nanoid";
@@ -14,6 +14,7 @@ import { resolveMediaUrl, uploadMediaFile } from "@/services/file-storage";
 import { resolveImageUrl, ensureImagePreview, getImagePreviewRevision, previewUrlFor, subscribeImagePreviews, uploadImage } from "@/services/image-storage";
 import { createVideoGenerationTask, pollVideoGenerationTask, storeGeneratedVideo, type VideoGenerationTask } from "@/services/api/video";
 import { getManagedKeySelection, listCreateManagedKeys, managedKeySupportsVideo, switchManagedKey, type CreateManagedKey } from "@/services/create-managed-channel";
+import { PanelResizeHandle, useStoredPanelWidth } from "@/components/workbench/panel-resize-handle";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useUserStore } from "@/stores/use-user-store";
 import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
@@ -80,6 +81,10 @@ export default function VideoPage() {
     const fileInputRef = useRef<HTMLInputElement>(null);
     const dragDepthRef = useRef(0);
     const activeLogIdsRef = useRef<Set<string>>(new Set());
+    const logPanelRef = useRef<HTMLElement>(null);
+    const workbenchPanelRef = useRef<HTMLDivElement>(null);
+    const [logPanelWidth, setLogPanelWidth] = useStoredPanelWidth("create-canvas:video-workbench-layout:logs", 300);
+    const [workbenchPanelWidth, setWorkbenchPanelWidth] = useStoredPanelWidth("create-canvas:video-workbench-layout:form", 600);
     const effectiveConfig = useEffectiveConfig();
     const updateConfig = useConfigStore((state) => state.updateConfig);
     const isAiConfigReady = useConfigStore((state) => state.isAiConfigReady);
@@ -113,6 +118,11 @@ export default function VideoPage() {
     const updateAgentTask = useWorkbenchAgentStore((state) => state.updateTask);
     const processedCommandRef = useRef(0);
     const agentTaskIdRef = useRef<string | undefined>(undefined);
+
+    const layoutStyle = {
+        "--log-panel-width": `${logPanelWidth}px`,
+        "--workbench-panel-width": `${workbenchPanelWidth}px`,
+    } as CSSProperties;
 
     const model = effectiveConfig.videoModel || effectiveConfig.model;
     const videoModelGroups = effectiveConfig.channels
@@ -593,8 +603,8 @@ export default function VideoPage() {
 
     return (
         <div className="flex h-full flex-col overflow-hidden bg-stone-50 text-stone-900 dark:bg-stone-950 dark:text-stone-100">
-            <main className="grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-y-auto p-3 lg:grid-cols-[clamp(260px,20vw,340px)_minmax(0,1fr)] lg:overflow-hidden">
-                <aside className="thin-scrollbar hidden min-h-0 overflow-y-auto rounded-lg border border-stone-200 bg-card p-4 shadow-sm dark:border-stone-800 lg:block">
+            <main className="workbench-main-grid grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-y-auto p-3 lg:overflow-hidden" style={layoutStyle}>
+                <aside ref={logPanelRef} className="thin-scrollbar hidden min-w-0 overflow-y-auto rounded-lg border border-stone-200 bg-card p-4 shadow-sm dark:border-stone-800 lg:block">
                     <LogPanel
                         logs={logs}
                         selectedLogIds={selectedLogIds}
@@ -606,8 +616,17 @@ export default function VideoPage() {
                     />
                 </aside>
 
-                <section className="grid gap-3 lg:min-h-0 lg:overflow-hidden xl:grid-cols-[clamp(420px,32vw,600px)_minmax(0,1fr)]">
-                    <div className="thin-scrollbar flex flex-col rounded-xl border border-stone-200 bg-card p-4 shadow-sm dark:border-stone-800 lg:min-h-0 lg:overflow-y-auto [&>*]:shrink-0">
+                <PanelResizeHandle
+                    className="hidden lg:flex"
+                    label="调整生成记录宽度"
+                    getWidth={() => logPanelRef.current?.getBoundingClientRect().width || logPanelWidth}
+                    minWidth={240}
+                    maxWidth={() => Math.min(520, window.innerWidth * 0.28)}
+                    onWidthChange={setLogPanelWidth}
+                />
+
+                <section className="workbench-split-grid grid gap-3 lg:min-h-0 lg:overflow-hidden">
+                    <div ref={workbenchPanelRef} className="thin-scrollbar flex min-w-0 flex-col rounded-xl border border-stone-200 bg-card p-4 shadow-sm dark:border-stone-800 lg:min-h-0 lg:overflow-y-auto [&>*]:shrink-0">
                         <div className="flex items-center justify-between gap-3">
                             <h1 className="text-[26px] font-semibold leading-8 tracking-tight text-stone-950 dark:text-stone-100">{t("videoWorkbench.title")}</h1>
                             <button
@@ -951,7 +970,16 @@ export default function VideoPage() {
                         </div>
                     </div>
 
-                    <div className="thin-scrollbar rounded-lg border border-stone-200 bg-card p-4 shadow-sm dark:border-stone-800 lg:min-h-0 lg:overflow-y-auto lg:p-5">
+                    <PanelResizeHandle
+                        className="hidden xl:flex"
+                        label="调整工作台宽度"
+                        getWidth={() => workbenchPanelRef.current?.getBoundingClientRect().width || workbenchPanelWidth}
+                        minWidth={360}
+                        maxWidth={() => Math.min(820, window.innerWidth * 0.46)}
+                        onWidthChange={setWorkbenchPanelWidth}
+                    />
+
+                    <div className="thin-scrollbar min-w-0 rounded-lg border border-stone-200 bg-card p-4 shadow-sm dark:border-stone-800 lg:min-h-0 lg:overflow-y-auto lg:p-5">
                         <div className="mb-4 flex items-center justify-between gap-3">
                             <h2 className="text-xl font-semibold">{t("workbench.results")}</h2>
                             {running ? <Tag className="m-0 px-2 py-1">{t("workbench.waiting", { time: formatDuration(elapsedMs) })}</Tag> : null}

@@ -477,6 +477,18 @@
     }
 }
 
+@media (min-width: 1024px) {
+    .workbench-main-grid {
+        grid-template-columns: clamp(240px, var(--log-panel-width, 300px), 28vw) 8px minmax(0, 1fr);
+    }
+}
+
+@media (min-width: 1280px) {
+    .workbench-split-grid {
+        grid-template-columns: clamp(360px, var(--workbench-panel-width, 600px), 46vw) 8px minmax(0, 1fr);
+    }
+}
+
 ::view-transition-old(root),
 ::view-transition-new(root) {
     animation: none;
