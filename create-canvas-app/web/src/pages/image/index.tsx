@@ -241,11 +241,7 @@ export default function ImagePage() {
         void addReferences(files);
     };
 
-    const selectOutputFormat = (format: "png" | "jpeg" | "webp") => {
-        if (format === "webp") {
-            message.info("WebP 暂未接入当前生成接口，请先使用 PNG 或 JPEG");
-            return;
-        }
+    const selectOutputFormat = (format: "png" | "jpeg") => {
         updateConfig("outputFormat", format);
         if (format !== "png" && config.background === "transparent") updateConfig("background", "");
     };
@@ -757,15 +753,12 @@ export default function ImagePage() {
                             </div>
                             <div className="min-w-0">
                                 <div className="mb-2 text-sm font-semibold text-stone-900 dark:text-stone-100">格式</div>
-                                <div className="grid grid-cols-3 gap-1">
+                                <div className="grid grid-cols-2 gap-1">
                                     <CompactChoice selected={outputFormat === "png"} onClick={() => selectOutputFormat("png")}>
                                         PNG
                                     </CompactChoice>
                                     <CompactChoice selected={outputFormat === "jpeg"} onClick={() => selectOutputFormat("jpeg")}>
                                         JPEG
-                                    </CompactChoice>
-                                    <CompactChoice selected={false} onClick={() => selectOutputFormat("webp")}>
-                                        WEBP
                                     </CompactChoice>
                                 </div>
                             </div>
