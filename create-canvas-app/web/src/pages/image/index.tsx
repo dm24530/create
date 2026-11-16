@@ -119,11 +119,11 @@ export default function ImagePage() {
     } as CSSProperties;
 
     const model = effectiveConfig.imageModel || effectiveConfig.model;
+    const hasImageModels = effectiveConfig.channels.some((channel) => channel.models.some((item) => item.capability === "image"));
     const imageModelGroups = effectiveConfig.channels
         .map((channel) => {
-            const capableModels = channel.models.filter((item) => item.capability === "image").map((item) => ({ value: encodeChannelModel(channel.id, item.name), label: item.name }));
-            const allModels = channel.models.map((item) => ({ value: encodeChannelModel(channel.id, item.name), label: item.name }));
-            return { id: channel.id, name: channel.name, models: capableModels.length ? capableModels : allModels };
+            const models = channel.models.filter((item) => !hasImageModels || item.capability === "image").map((item) => ({ value: encodeChannelModel(channel.id, item.name), label: item.name }));
+            return { id: channel.id, name: channel.name, models };
         })
         .filter((group) => group.models.length > 0);
     if (model && !imageModelGroups.some((group) => group.models.some((item) => item.value === model))) {

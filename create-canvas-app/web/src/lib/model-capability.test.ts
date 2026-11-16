@@ -1,15 +1,20 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-const { guessModelCapability } = await import(
-    new URL("./model-capability.ts", import.meta.url).href
-) as typeof import("./model-capability");
+const { guessModelCapability } = (await import(new URL("./model-capability.ts", import.meta.url).href)) as typeof import("./model-capability");
 
 test("classifies Seedance video models used by managed canvas channels", () => {
     assert.equal(guessModelCapability("seedance-2.0"), "video");
     assert.equal(guessModelCapability("seedance-2.0-fast"), "video");
     assert.equal(guessModelCapability("seedance-2.5"), "video");
     assert.equal(guessModelCapability("dreamina-seedance-2-5"), "video");
+});
+
+test("classifies Muse video models without treating Muse text models as video", () => {
+    assert.equal(guessModelCapability("muse-video"), "video");
+    assert.equal(guessModelCapability("muse-cheap"), "video");
+    assert.equal(guessModelCapability("muse/muse-video"), "video");
+    assert.equal(guessModelCapability("muse-spark-1.3-contributor"), "text");
 });
 
 test("keeps existing image, video, text, and audio classification", () => {

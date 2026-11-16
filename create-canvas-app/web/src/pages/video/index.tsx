@@ -126,11 +126,11 @@ export default function VideoPage() {
     } as CSSProperties;
 
     const model = effectiveConfig.videoModel || effectiveConfig.model;
+    const hasVideoModels = effectiveConfig.channels.some((channel) => channel.models.some((item) => item.capability === "video"));
     const videoModelGroups = effectiveConfig.channels
         .map((channel) => {
-            const capableModels = channel.models.filter((item) => item.capability === "video").map((item) => ({ value: encodeChannelModel(channel.id, item.name), label: item.name }));
-            const allModels = channel.models.map((item) => ({ value: encodeChannelModel(channel.id, item.name), label: item.name }));
-            return { id: channel.id, name: channel.name, models: capableModels.length ? capableModels : allModels };
+            const models = channel.models.filter((item) => !hasVideoModels || item.capability === "video").map((item) => ({ value: encodeChannelModel(channel.id, item.name), label: item.name }));
+            return { id: channel.id, name: channel.name, models };
         })
         .filter((group) => group.models.length > 0);
     if (model && !videoModelGroups.some((group) => group.models.some((item) => item.value === model))) {
