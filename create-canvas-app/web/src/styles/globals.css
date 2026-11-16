@@ -169,6 +169,23 @@
         }
     }
 
+    .image-workbench-native-select {
+        color-scheme: light;
+    }
+
+    .dark .image-workbench-native-select {
+        color-scheme: dark;
+    }
+
+    .image-workbench-native-select option {
+        background-color: var(--popover);
+        color: var(--popover-foreground);
+    }
+
+    .image-workbench-native-select option:disabled {
+        color: var(--muted-foreground);
+    }
+
     .hide-scrollbar {
         -ms-overflow-style: none;
         scrollbar-width: none;
@@ -452,7 +469,6 @@
             transform: translate(0, 0) rotate(0) scale(1);
         }
     }
-
 }
 
 ::view-transition-old(root),
