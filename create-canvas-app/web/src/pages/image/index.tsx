@@ -629,17 +629,17 @@ export default function ImagePage() {
                         <div className="mt-3 flex shrink-0 flex-col overflow-hidden rounded-2xl border border-stone-200 bg-stone-50 dark:border-stone-800 dark:bg-stone-900/70">
                             <textarea
                                 className="block w-full flex-none resize-none bg-transparent px-4 py-4 text-[15px] leading-6 text-stone-900 outline-none placeholder:text-stone-500 dark:text-stone-100"
-                                style={{ height: 236, minHeight: 236 }}
+                                style={{ height: 180, minHeight: 180 }}
                                 value={prompt}
                                 onChange={(event) => setPrompt(event.target.value)}
                                 onPaste={handleComposerPaste}
                                 placeholder={t("imageWorkbench.promptPlaceholder")}
                             />
-                            <div className="flex min-h-11 items-center justify-between gap-2 px-2.5 pb-2.5">
+                            <div className="flex min-h-10 items-center justify-between gap-2 px-2.5 pb-2">
                                 <div className="relative min-w-0 max-w-[260px] flex-1">
                                     <select
                                         aria-label="生图模型"
-                                        className="workbench-native-select h-9 w-full cursor-pointer appearance-none rounded-xl border border-stone-200 bg-stone-100 px-3 pr-8 text-sm text-stone-700 outline-none dark:border-stone-700 dark:bg-stone-800/80 dark:text-stone-100"
+                                        className="workbench-native-select h-8 w-full cursor-pointer appearance-none rounded-xl border border-stone-200 bg-stone-100 px-3 pr-8 text-sm text-stone-700 outline-none dark:border-stone-700 dark:bg-stone-800/80 dark:text-stone-100"
                                         value={imageModelOptions.includes(model) ? model : ""}
                                         onFocus={() => {
                                             if (!imageModelOptions.length) openConfigDialog(false);
@@ -661,12 +661,12 @@ export default function ImagePage() {
                                             </optgroup>
                                         ))}
                                     </select>
-                                    <ChevronDown className="pointer-events-none absolute right-2.5 top-2.5 size-4 text-stone-500" />
+                                    <ChevronDown className="pointer-events-none absolute right-2.5 top-2 size-4 text-stone-500" />
                                 </div>
                                 <div className="flex shrink-0 items-center gap-0.5">
                                     <button
                                         type="button"
-                                        className="grid size-8 place-items-center rounded-lg text-stone-500 transition hover:bg-stone-200 hover:text-stone-900 disabled:cursor-not-allowed disabled:opacity-35 dark:hover:bg-stone-800 dark:hover:text-stone-100"
+                                        className="grid size-7 place-items-center rounded-lg text-stone-500 transition hover:bg-stone-200 hover:text-stone-900 disabled:cursor-not-allowed disabled:opacity-35 dark:hover:bg-stone-800 dark:hover:text-stone-100"
                                         disabled={!prompt.trim()}
                                         title="复制提示词"
                                         aria-label="复制提示词"
@@ -676,7 +676,7 @@ export default function ImagePage() {
                                     </button>
                                     <button
                                         type="button"
-                                        className="grid size-8 place-items-center rounded-lg text-stone-500 transition hover:bg-stone-200 hover:text-stone-900 disabled:cursor-not-allowed disabled:opacity-35 dark:hover:bg-stone-800 dark:hover:text-stone-100"
+                                        className="grid size-7 place-items-center rounded-lg text-stone-500 transition hover:bg-stone-200 hover:text-stone-900 disabled:cursor-not-allowed disabled:opacity-35 dark:hover:bg-stone-800 dark:hover:text-stone-100"
                                         disabled={references.length >= MAX_IMAGE_REFERENCES}
                                         title="从剪贴板添加参考图"
                                         aria-label="从剪贴板添加参考图"
@@ -686,7 +686,7 @@ export default function ImagePage() {
                                     </button>
                                     <button
                                         type="button"
-                                        className="grid size-8 place-items-center rounded-lg text-stone-500 transition hover:bg-stone-200 hover:text-stone-900 disabled:cursor-not-allowed disabled:opacity-35 dark:hover:bg-stone-800 dark:hover:text-stone-100"
+                                        className="grid size-7 place-items-center rounded-lg text-stone-500 transition hover:bg-stone-200 hover:text-stone-900 disabled:cursor-not-allowed disabled:opacity-35 dark:hover:bg-stone-800 dark:hover:text-stone-100"
                                         disabled={!prompt}
                                         title="清空提示词"
                                         aria-label="清空提示词"
@@ -696,7 +696,7 @@ export default function ImagePage() {
                                     </button>
                                     <button
                                         type="button"
-                                        className="grid size-8 place-items-center rounded-lg text-stone-500 transition hover:bg-stone-200 hover:text-stone-900 dark:hover:bg-stone-800 dark:hover:text-stone-100"
+                                        className="grid size-7 place-items-center rounded-lg text-stone-500 transition hover:bg-stone-200 hover:text-stone-900 dark:hover:bg-stone-800 dark:hover:text-stone-100"
                                         title="查看我的资产"
                                         aria-label="查看我的资产"
                                         onClick={() => setAssetPickerOpen(true)}
@@ -707,7 +707,7 @@ export default function ImagePage() {
                             </div>
                         </div>
 
-                        <div className="mt-4 min-w-0">
+                        <div className="mt-3 min-w-0">
                             <div className="flex items-center justify-between gap-3">
                                 <span className="text-sm font-semibold text-stone-900 dark:text-stone-100">{t("imageWorkbench.references")}</span>
                                 <button
@@ -721,7 +721,7 @@ export default function ImagePage() {
                                 </button>
                             </div>
                             <div
-                                className={`hover-scrollbar hover-scrollbar-hint mt-2 flex min-h-28 w-full min-w-0 max-w-full gap-2 overflow-x-scroll overflow-y-hidden rounded-xl p-0.5 pb-2 overscroll-x-contain transition-colors ${isReferenceDragActive ? "bg-stone-100 ring-2 ring-stone-400 dark:bg-stone-900/80 dark:ring-stone-500" : ""}`}
+                                className={`hover-scrollbar hover-scrollbar-hint mt-2 flex min-h-24 w-full min-w-0 max-w-full gap-2 overflow-x-scroll overflow-y-hidden rounded-xl p-0.5 pb-2 overscroll-x-contain transition-colors ${isReferenceDragActive ? "bg-stone-100 ring-2 ring-stone-400 dark:bg-stone-900/80 dark:ring-stone-500" : ""}`}
                                 onDragEnter={(event) => {
                                     event.preventDefault();
                                     dragDepthRef.current += 1;
@@ -749,7 +749,7 @@ export default function ImagePage() {
                                 }}
                             >
                                 {references.map((item, index) => (
-                                    <div key={item.id} className="group relative size-28 shrink-0 overflow-hidden rounded-xl border border-stone-200 dark:border-stone-700">
+                                    <div key={item.id} className="group relative size-24 shrink-0 overflow-hidden rounded-xl border border-stone-200 dark:border-stone-700">
                                         <img src={previewUrlFor(item.storageKey) || item.dataUrl} alt={item.name} className="size-full object-cover" />
                                         <button type="button" className="absolute left-1.5 top-1.5 rounded-md bg-black/65 px-1.5 py-0.5 text-[10px] font-medium text-white backdrop-blur" title="插入引用" onClick={() => insertReferenceLabel(index)}>
                                             {imageReferenceLabel(index)}
@@ -767,7 +767,7 @@ export default function ImagePage() {
                                 ))}
                                 <button
                                     type="button"
-                                    className="grid size-28 shrink-0 place-items-center rounded-xl border border-dashed border-stone-500 text-stone-500 transition hover:border-stone-700 hover:bg-stone-100 hover:text-stone-900 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:border-stone-400 dark:hover:bg-stone-900 dark:hover:text-stone-100"
+                                    className="grid size-24 shrink-0 place-items-center rounded-xl border border-dashed border-stone-500 text-stone-500 transition hover:border-stone-700 hover:bg-stone-100 hover:text-stone-900 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:border-stone-400 dark:hover:bg-stone-900 dark:hover:text-stone-100"
                                     disabled={references.length >= MAX_IMAGE_REFERENCES}
                                     title={isReferenceDragActive ? t("imageWorkbench.dropReferences") : t("imageWorkbench.noReferences")}
                                     onClick={() => fileInputRef.current?.click()}
@@ -775,10 +775,10 @@ export default function ImagePage() {
                                     <Plus className="size-7 stroke-[1.4]" />
                                 </button>
                             </div>
-                            <p className="mt-1 text-xs leading-5 text-stone-500">可拖拽或粘贴参考图，当前模型最多 {MAX_IMAGE_REFERENCES} 张。点击图片编号可把「图片1」等引用插入提示词。</p>
+                            <p className="mt-1 text-[11px] leading-4 text-stone-500">可拖拽或粘贴参考图，最多 {MAX_IMAGE_REFERENCES} 张；点击编号可插入引用。</p>
                         </div>
 
-                        <div className="mt-4 flex items-center justify-between gap-3">
+                        <div className="mt-3 flex items-center justify-between gap-3">
                             <div className="min-w-0">
                                 <span className="text-sm font-semibold text-stone-900 dark:text-stone-100">{t("settingsPanels.image.transparent")}</span>
                                 {!transparentAvailable ? <span className="ml-2 text-[11px] text-stone-500">{outputFormat !== "png" ? "仅 PNG 支持" : "当前模型不支持"}</span> : null}
@@ -796,7 +796,7 @@ export default function ImagePage() {
                             </button>
                         </div>
 
-                        <div className="mt-4 grid grid-cols-[1.08fr_0.92fr] gap-4">
+                        <div className="mt-3 grid grid-cols-[1.08fr_0.92fr] gap-4">
                             <div className="min-w-0">
                                 <div className="mb-2 text-sm font-semibold text-stone-900 dark:text-stone-100">质量</div>
                                 <div className="grid grid-cols-4 rounded-xl border border-stone-200 bg-stone-100/60 p-1 dark:border-stone-700 dark:bg-stone-900/60">
@@ -833,7 +833,7 @@ export default function ImagePage() {
                             </div>
                         </div>
 
-                        <div className="mt-4">
+                        <div className="mt-3">
                             <div className="flex items-center justify-between gap-3">
                                 <span className="text-sm font-semibold text-stone-900 dark:text-stone-100">尺寸</span>
                                 <button type="button" className="text-xs text-stone-500 transition hover:text-stone-900 dark:hover:text-stone-100" onClick={() => setCustomSizeOpen((value) => !value)}>
@@ -843,7 +843,7 @@ export default function ImagePage() {
                             <div className="relative mt-2">
                                 <select
                                     aria-label="尺寸"
-                                    className="workbench-native-select h-10 w-full cursor-pointer appearance-none rounded-xl border border-stone-200 bg-stone-50 px-3 pr-9 text-sm text-stone-800 outline-none dark:border-stone-700 dark:bg-stone-900/60 dark:text-stone-100"
+                                    className="workbench-native-select h-9 w-full cursor-pointer appearance-none rounded-xl border border-stone-200 bg-stone-50 px-3 pr-9 text-sm text-stone-800 outline-none dark:border-stone-700 dark:bg-stone-900/60 dark:text-stone-100"
                                     value={selectedRatio}
                                     onChange={(event) => updateConfig("size", event.target.value === "auto" ? "auto" : computeMediaSize("1k", event.target.value))}
                                 >
@@ -858,7 +858,7 @@ export default function ImagePage() {
                             </div>
                             {customSizeOpen ? (
                                 <div className="mt-2 grid grid-cols-[1fr_auto_1fr] items-center gap-2">
-                                    <label className="flex h-10 items-center overflow-hidden rounded-xl border border-stone-200 bg-stone-50 dark:border-stone-700 dark:bg-stone-900/60">
+                                    <label className="flex h-9 items-center overflow-hidden rounded-xl border border-stone-200 bg-stone-50 dark:border-stone-700 dark:bg-stone-900/60">
                                         <span className="pl-3 text-xs text-stone-500">W</span>
                                         <input
                                             key={`width-${selectedSize.width}`}
@@ -874,7 +874,7 @@ export default function ImagePage() {
                                         />
                                     </label>
                                     <span className="text-stone-500">×</span>
-                                    <label className="flex h-10 items-center overflow-hidden rounded-xl border border-stone-200 bg-stone-50 dark:border-stone-700 dark:bg-stone-900/60">
+                                    <label className="flex h-9 items-center overflow-hidden rounded-xl border border-stone-200 bg-stone-50 dark:border-stone-700 dark:bg-stone-900/60">
                                         <span className="pl-3 text-xs text-stone-500">H</span>
                                         <input
                                             key={`height-${selectedSize.height}`}
@@ -893,7 +893,7 @@ export default function ImagePage() {
                             ) : null}
                         </div>
 
-                        <div className="mt-4">
+                        <div className="mt-3">
                             <div className="mb-2 text-sm font-semibold text-stone-900 dark:text-stone-100">生成张数</div>
                             <div className="grid grid-cols-4 rounded-xl border border-stone-200 p-1 dark:border-stone-700">
                                 {[1, 2, 3, 4].map((value) => (
@@ -909,7 +909,7 @@ export default function ImagePage() {
                             </div>
                         </div>
 
-                        <div className="mt-4">
+                        <div className="mt-3">
                             <Button
                                 type="primary"
                                 size="large"
@@ -918,7 +918,7 @@ export default function ImagePage() {
                                 loading={running}
                                 disabled={!canGenerate || running}
                                 onClick={() => void generate()}
-                                className="!h-11 !rounded-xl !border-0 !bg-stone-300 !font-semibold !text-stone-950 !shadow-none hover:!bg-stone-200 disabled:!bg-stone-600 disabled:!text-stone-300"
+                                className="!h-10 !rounded-xl !border-0 !bg-stone-300 !font-semibold !text-stone-950 !shadow-none hover:!bg-stone-200 disabled:!bg-stone-600 disabled:!text-stone-300"
                             >
                                 {t("workbench.generate")}
                             </Button>

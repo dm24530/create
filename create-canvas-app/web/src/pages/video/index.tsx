@@ -688,7 +688,7 @@ export default function VideoPage() {
                                 <div className="relative min-w-0 max-w-[260px] flex-1">
                                     <select
                                         aria-label="视频模型"
-                                        className="workbench-native-select h-9 w-full cursor-pointer appearance-none rounded-xl border border-stone-200 bg-stone-100 px-3 pr-8 text-sm text-stone-700 outline-none dark:border-stone-700 dark:bg-stone-800/80 dark:text-stone-100"
+                                        className="workbench-native-select h-8 w-full cursor-pointer appearance-none rounded-xl border border-stone-200 bg-stone-100 px-3 pr-8 text-sm text-stone-700 outline-none dark:border-stone-700 dark:bg-stone-800/80 dark:text-stone-100"
                                         value={videoModelOptions.includes(model) ? model : ""}
                                         onFocus={() => {
                                             if (!videoModelOptions.length) openConfigDialog(false);
@@ -710,12 +710,12 @@ export default function VideoPage() {
                                             </optgroup>
                                         ))}
                                     </select>
-                                    <ChevronDown className="pointer-events-none absolute right-2.5 top-2.5 size-4 text-stone-500" />
+                                    <ChevronDown className="pointer-events-none absolute right-2.5 top-2 size-4 text-stone-500" />
                                 </div>
                                 <div className="flex shrink-0 items-center gap-0.5">
                                     <button
                                         type="button"
-                                        className="grid size-8 place-items-center rounded-lg text-stone-500 transition hover:bg-stone-200 hover:text-stone-900 disabled:cursor-not-allowed disabled:opacity-35 dark:hover:bg-stone-800 dark:hover:text-stone-100"
+                                        className="grid size-7 place-items-center rounded-lg text-stone-500 transition hover:bg-stone-200 hover:text-stone-900 disabled:cursor-not-allowed disabled:opacity-35 dark:hover:bg-stone-800 dark:hover:text-stone-100"
                                         disabled={!prompt.trim()}
                                         title="复制提示词"
                                         aria-label="复制提示词"
@@ -725,7 +725,7 @@ export default function VideoPage() {
                                     </button>
                                     <button
                                         type="button"
-                                        className="grid size-8 place-items-center rounded-lg text-stone-500 transition hover:bg-stone-200 hover:text-stone-900 disabled:cursor-not-allowed disabled:opacity-35 dark:hover:bg-stone-800 dark:hover:text-stone-100"
+                                        className="grid size-7 place-items-center rounded-lg text-stone-500 transition hover:bg-stone-200 hover:text-stone-900 disabled:cursor-not-allowed disabled:opacity-35 dark:hover:bg-stone-800 dark:hover:text-stone-100"
                                         disabled={references.length >= MAX_REFERENCE_IMAGES}
                                         title="从剪贴板添加参考图"
                                         aria-label="从剪贴板添加参考图"
@@ -735,7 +735,7 @@ export default function VideoPage() {
                                     </button>
                                     <button
                                         type="button"
-                                        className="grid size-8 place-items-center rounded-lg text-stone-500 transition hover:bg-stone-200 hover:text-stone-900 disabled:cursor-not-allowed disabled:opacity-35 dark:hover:bg-stone-800 dark:hover:text-stone-100"
+                                        className="grid size-7 place-items-center rounded-lg text-stone-500 transition hover:bg-stone-200 hover:text-stone-900 disabled:cursor-not-allowed disabled:opacity-35 dark:hover:bg-stone-800 dark:hover:text-stone-100"
                                         disabled={!prompt}
                                         title="清空提示词"
                                         aria-label="清空提示词"
@@ -745,7 +745,7 @@ export default function VideoPage() {
                                     </button>
                                     <button
                                         type="button"
-                                        className="grid size-8 place-items-center rounded-lg text-stone-500 transition hover:bg-stone-200 hover:text-stone-900 dark:hover:bg-stone-800 dark:hover:text-stone-100"
+                                        className="grid size-7 place-items-center rounded-lg text-stone-500 transition hover:bg-stone-200 hover:text-stone-900 dark:hover:bg-stone-800 dark:hover:text-stone-100"
                                         title="查看我的资产"
                                         aria-label="查看我的资产"
                                         onClick={() => setAssetPickerOpen(true)}
@@ -759,7 +759,7 @@ export default function VideoPage() {
                             </div>
                         </div>
 
-                        <div className="mt-4 min-w-0">
+                        <div className="mt-3 min-w-0">
                             <div className="flex items-center justify-between gap-3">
                                 <span className="text-sm font-semibold text-stone-900 dark:text-stone-100">参考素材</span>
                                 <button
@@ -773,7 +773,7 @@ export default function VideoPage() {
                                 </button>
                             </div>
                             <div
-                                className={`hover-scrollbar hover-scrollbar-hint mt-2 flex min-h-28 w-full min-w-0 max-w-full gap-2 overflow-x-scroll overflow-y-hidden rounded-xl p-0.5 pb-2 overscroll-x-contain transition-colors ${referenceDragTarget ? "bg-stone-100 ring-2 ring-stone-400 dark:bg-stone-900/80 dark:ring-stone-500" : ""}`}
+                                className={`hover-scrollbar hover-scrollbar-hint mt-2 flex min-h-24 w-full min-w-0 max-w-full gap-2 overflow-x-scroll overflow-y-hidden rounded-xl p-0.5 pb-2 overscroll-x-contain transition-colors ${referenceDragTarget ? "bg-stone-100 ring-2 ring-stone-400 dark:bg-stone-900/80 dark:ring-stone-500" : ""}`}
                                 onDragEnter={handleReferenceDragEnter}
                                 onDragOver={(event) => {
                                     event.preventDefault();
@@ -788,7 +788,7 @@ export default function VideoPage() {
                                 }}
                             >
                                 {references.map((item, index) => (
-                                    <div key={item.id} className="group relative size-28 shrink-0 overflow-hidden rounded-xl border border-stone-200 dark:border-stone-700">
+                                    <div key={item.id} className="group relative size-24 shrink-0 overflow-hidden rounded-xl border border-stone-200 dark:border-stone-700">
                                         <img src={previewUrlFor(item.storageKey) || item.dataUrl} alt={item.name} className="size-full object-cover" />
                                         <span className="absolute left-1.5 top-1.5 rounded-md bg-black/65 px-1.5 py-0.5 text-[10px] font-medium text-white backdrop-blur">图片{index + 1}</span>
                                         <ReferenceOrderButtons index={index} total={references.length} onMove={(offset) => setReferences((value) => moveListItem(value, index, offset))} />
@@ -803,7 +803,7 @@ export default function VideoPage() {
                                     </div>
                                 ))}
                                 {referenceVideos.map((item, index) => (
-                                    <div key={item.id} className="group relative size-28 shrink-0 overflow-hidden rounded-xl border border-stone-200 bg-stone-900 dark:border-stone-700">
+                                    <div key={item.id} className="group relative size-24 shrink-0 overflow-hidden rounded-xl border border-stone-200 bg-stone-900 dark:border-stone-700">
                                         <video src={item.url} muted preload="metadata" className="size-full object-cover opacity-80" />
                                         <span className="absolute left-1.5 top-1.5 inline-flex items-center gap-1 rounded-md bg-black/65 px-1.5 py-0.5 text-[10px] font-medium text-white backdrop-blur">
                                             <Film className="size-3" /> 视频{index + 1}
@@ -821,7 +821,7 @@ export default function VideoPage() {
                                 {referenceAudios.map((item, index) => (
                                     <div
                                         key={item.id}
-                                        className="group relative flex size-28 shrink-0 flex-col items-center justify-center overflow-hidden rounded-xl border border-stone-200 bg-gradient-to-br from-stone-800 to-stone-900 p-2 text-center dark:border-stone-700"
+                                        className="group relative flex size-24 shrink-0 flex-col items-center justify-center overflow-hidden rounded-xl border border-stone-200 bg-gradient-to-br from-stone-800 to-stone-900 p-2 text-center dark:border-stone-700"
                                     >
                                         <Music2 className="size-7 text-stone-300" />
                                         <span className="mt-2 line-clamp-2 text-[10px] leading-4 text-stone-300">{item.name}</span>
@@ -838,17 +838,17 @@ export default function VideoPage() {
                                 ))}
                                 <button
                                     type="button"
-                                    className="grid size-28 shrink-0 place-items-center rounded-xl border border-dashed border-stone-500 text-stone-500 transition hover:border-stone-700 hover:bg-stone-100 hover:text-stone-900 dark:hover:border-stone-400 dark:hover:bg-stone-900 dark:hover:text-stone-100"
+                                    className="grid size-24 shrink-0 place-items-center rounded-xl border border-dashed border-stone-500 text-stone-500 transition hover:border-stone-700 hover:bg-stone-100 hover:text-stone-900 dark:hover:border-stone-400 dark:hover:bg-stone-900 dark:hover:text-stone-100"
                                     title={referenceDragTarget ? t("videoWorkbench.dropReferences") : t("videoWorkbench.noImages")}
                                     onClick={() => fileInputRef.current?.click()}
                                 >
                                     <Plus className="size-7 stroke-[1.4]" />
                                 </button>
                             </div>
-                            <p className="mt-1 text-xs leading-5 text-stone-500">可拖拽或粘贴参考图，也可添加参考视频和音频。参考图最多 {MAX_REFERENCE_IMAGES} 张。</p>
+                            <p className="mt-1 text-[11px] leading-4 text-stone-500">可拖拽或粘贴参考图、视频或音频，图片最多 {MAX_REFERENCE_IMAGES} 张。</p>
                         </div>
 
-                        <div className="mt-4">
+                        <div className="mt-3">
                             <div className="mb-2 text-sm font-semibold text-stone-900 dark:text-stone-100">清晰度</div>
                             <div className="grid grid-cols-3 overflow-hidden rounded-xl border border-stone-200 bg-stone-100/60 p-1 dark:border-stone-700 dark:bg-stone-900/60">
                                 {["480", "720", "1080"].map((value) => (
@@ -864,13 +864,13 @@ export default function VideoPage() {
                             </div>
                         </div>
 
-                        <div className="mt-4">
+                        <div className="mt-3">
                             <div className="mb-2 text-sm font-semibold text-stone-900 dark:text-stone-100">尺寸</div>
                             <div className="relative">
                                 <VideoSizeBadge ratio={selectedRatio} className="pointer-events-none absolute left-3 top-3 z-10 text-stone-400" />
                                 <select
                                     aria-label="视频尺寸"
-                                    className="workbench-native-select h-10 w-full cursor-pointer appearance-none rounded-xl border border-stone-200 bg-stone-50 pl-10 pr-9 text-sm text-stone-800 outline-none dark:border-stone-700 dark:bg-stone-900/60 dark:text-stone-100"
+                                    className="workbench-native-select h-9 w-full cursor-pointer appearance-none rounded-xl border border-stone-200 bg-stone-50 pl-10 pr-9 text-sm text-stone-800 outline-none dark:border-stone-700 dark:bg-stone-900/60 dark:text-stone-100"
                                     value={selectedRatio}
                                     onChange={(event) => selectVideoRatio(event.target.value)}
                                 >
@@ -887,7 +887,7 @@ export default function VideoPage() {
                             </div>
                         </div>
 
-                        <div className="mt-4">
+                        <div className="mt-3">
                             <div className="mb-2 text-sm font-semibold text-stone-900 dark:text-stone-100">秒数</div>
                             <div className="grid grid-cols-[1fr_96px] items-center gap-2">
                                 <div className="grid grid-cols-4 rounded-xl border border-stone-200 p-1 dark:border-stone-700">
@@ -902,7 +902,7 @@ export default function VideoPage() {
                                         </button>
                                     ))}
                                 </div>
-                                <label className="flex h-10 items-center overflow-hidden rounded-xl border border-stone-200 bg-stone-50 dark:border-stone-700 dark:bg-stone-900/60">
+                                <label className="flex h-9 items-center overflow-hidden rounded-xl border border-stone-200 bg-stone-50 dark:border-stone-700 dark:bg-stone-900/60">
                                     <input
                                         aria-label="自定义秒数"
                                         type="number"
@@ -921,7 +921,7 @@ export default function VideoPage() {
                             </div>
                         </div>
 
-                        <div className="mt-4 flex items-center justify-between gap-3">
+                        <div className="mt-3 flex items-center justify-between gap-3">
                             <span className="text-sm font-semibold text-stone-900 dark:text-stone-100">任务数量</span>
                             <label className="flex h-10 w-[96px] items-center overflow-hidden rounded-xl border border-stone-200 bg-stone-50 dark:border-stone-700 dark:bg-stone-900/60">
                                 <input
@@ -940,7 +940,7 @@ export default function VideoPage() {
                             </label>
                         </div>
 
-                        <div className="mt-4 flex items-center justify-between gap-3">
+                        <div className="mt-3 flex items-center justify-between gap-3">
                             <span className="text-sm font-semibold text-stone-900 dark:text-stone-100">生成音频</span>
                             <button
                                 type="button"
@@ -954,7 +954,7 @@ export default function VideoPage() {
                             </button>
                         </div>
 
-                        <div className="mt-4">
+                        <div className="mt-3">
                             <Button
                                 type="primary"
                                 size="large"
@@ -963,7 +963,7 @@ export default function VideoPage() {
                                 loading={running}
                                 disabled={!canGenerate || running}
                                 onClick={() => void generate()}
-                                className="!h-11 !rounded-xl !border-0 !bg-stone-300 !font-semibold !text-stone-950 !shadow-none hover:!bg-stone-200 disabled:!bg-stone-600 disabled:!text-stone-300"
+                                className="!h-10 !rounded-xl !border-0 !bg-stone-300 !font-semibold !text-stone-950 !shadow-none hover:!bg-stone-200 disabled:!bg-stone-600 disabled:!text-stone-300"
                             >
                                 {t("workbench.generate")}
                             </Button>
