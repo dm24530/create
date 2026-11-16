@@ -3,8 +3,6 @@ name: Create Canvas App
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
     tags:
       - "create-canvas-v*"
 permissions:
@@ -106,5 +104,6 @@ jobs:
           name: ${{ matrix.artifact }}
           path: create-canvas-app/desktop/release/**
           if-no-files-found: error
+
 
 

@@ -47,6 +47,11 @@ const secondKey = {
 const projects = new Map();
 const assets = new Map();
 const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nX0AAAAASUVORK5CYII=";
+const mockStartedAt = Date.now();
+const mockUsageLogs = [
+  { id: 1, api_key_id: 1, model: "gpt-image-2", group_id: 1, input_tokens: 120, output_tokens: 80, total_cost: 0.03, actual_cost: 0.02, stream: false, created_at: new Date(mockStartedAt - 10 * 60 * 1000).toISOString() },
+  { id: 2, api_key_id: 2, model: "grok-imagine-video", group_id: 1, input_tokens: 200, output_tokens: 150, total_cost: 0.09, actual_cost: 0.06, stream: false, created_at: new Date(mockStartedAt - 20 * 60 * 1000).toISOString() },
+];
 
 function envelope(data, status = 200, message = "ok") {
   return { status, body: { code: 0, message, data } };
@@ -124,11 +129,7 @@ const server = http.createServer(async (request, response) => {
     return send(response, 200, { code: 0, data: { items: [], total: 0, page: 1, page_size: 12, pages: 0 } });
   }
   if (path === "/api/v1/usage" && method === "GET") {
-    const items = [
-      { id: 1, api_key_id: 1, model: "gpt-image-2", group_id: 1, input_tokens: 120, output_tokens: 80, total_cost: 0.03, actual_cost: 0.02, stream: false, created_at: new Date().toISOString() },
-      { id: 2, api_key_id: 2, model: "grok-imagine-video", group_id: 1, input_tokens: 200, output_tokens: 150, total_cost: 0.09, actual_cost: 0.06, stream: false, created_at: new Date(Date.now() - 60000).toISOString() },
-    ];
-    return send(response, 200, { code: 0, data: { items, total: items.length, page: 1, page_size: 20, pages: 1 } });
+    return send(response, 200, { code: 0, data: { items: mockUsageLogs, total: mockUsageLogs.length, page: 1, page_size: 20, pages: 1 } });
   }
   if (path === "/api/v1/usage/stats") {
     return send(response, 200, { code: 0, data: { total_requests: 2, total_input_tokens: 320, total_output_tokens: 230, total_tokens: 550, total_cost: 0.12, total_actual_cost: 0.08 } });
@@ -217,4 +218,5 @@ const server = http.createServer(async (request, response) => {
 server.listen(port, "127.0.0.1", () => {
   console.log(`Create Mock listening on http://127.0.0.1:${port}`);
 });
+
 
