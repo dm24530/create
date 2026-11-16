@@ -3,15 +3,7 @@ import { createRequest } from "@/services/create-api";
 import type { CreateSession } from "@/services/create-auth";
 import { createGatewayBaseUrl } from "@/lib/create-product";
 import { configureCanvasCloud } from "@/services/canvas-cloud";
-import {
-    createModelChannel,
-    guessCapability,
-    modelOptionsFromChannels,
-    selectableModelsByCapability,
-    useConfigStore,
-    type ModelCapability,
-    type ModelChannel,
-} from "@/stores/use-config-store";
+import { createModelChannel, guessCapability, modelOptionsFromChannels, selectableModelsByCapability, useConfigStore, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
 
 export type CreateManagedGroup = {
     id: number;
@@ -62,13 +54,7 @@ export function managedKeySupportsImage(group?: CreateManagedGroup | null) {
 
 export function managedKeySupportsVideo(group?: CreateManagedGroup | null) {
     if (!group) return false;
-    return Boolean(
-        group.video_capable ||
-        group.platform === "composite" ||
-        group.video_price_480p != null ||
-        group.video_price_720p != null ||
-        group.video_price_1080p != null,
-    );
+    return Boolean(group.video_capable || group.platform === "composite" || group.video_price_480p != null || group.video_price_720p != null || group.video_price_1080p != null);
 }
 
 export function getManagedKeySelection() {
@@ -107,9 +93,7 @@ function chooseCapableKey(keys: CreateManagedKey[], supports: (group?: CreateMan
 }
 
 function chooseGroup(groups: CreateManagedGroup[], supports: (group?: CreateManagedGroup | null) => boolean) {
-    return groups
-        .filter((group) => supports(group))
-        .sort((left, right) => Number(right.platform === "composite") - Number(left.platform === "composite"))[0] || null;
+    return groups.filter((group) => supports(group)).sort((left, right) => Number(right.platform === "composite") - Number(left.platform === "composite"))[0] || null;
 }
 
 function modelsFor(channel: ModelChannel, capability: ModelCapability) {
@@ -124,8 +108,7 @@ function channelFromModels(id: string, name: string, apiKey: string, models: str
         baseUrl: createGatewayBaseUrl(),
         apiKey,
         apiFormat: "openai",
-        models: models.map((model) => ({ name: model, capability: guessCapability(model) }))
-            .filter((model) => !allowed || allowed.has(model.capability)),
+        models: models.map((model) => ({ name: model, capability: guessCapability(model) })).filter((model) => !allowed || allowed.has(model.capability)),
     });
 }
 
@@ -151,25 +134,15 @@ function applyManagedChannels(channels: ModelChannel[]) {
 
 function defaultDependencies(overrides: Partial<WorkspaceDependencies> = {}): WorkspaceDependencies {
     return {
-        listKeys: async (activeSession) => {
-            const page = await createRequest<KeysPage>("/keys?page=1&page_size=100&status=active", {
-                accessToken: activeSession.accessToken,
-            });
-            return page.items || [];
-        },
-        listGroups: (activeSession) => createRequest<CreateManagedGroup[]>("/groups/available", {
-            accessToken: activeSession.accessToken,
-        }),
-        createKey: (activeSession, name, groupId) => createRequest<CreateManagedKey>("/keys", {
-            method: "POST",
-            accessToken: activeSession.accessToken,
-            body: JSON.stringify({ name, group_id: groupId }),
-        }),
-        loadModels: (apiKey) => fetchImageModels({
-            baseUrl: createGatewayBaseUrl(),
-            apiKey,
-            apiFormat: "openai",
-        }),
+        listKeys: listCreateManagedKeys,
+        listGroups: listCreateManagedGroups,
+        createKey: createCreateManagedKey,
+        loadModels: (apiKey) =>
+            fetchImageModels({
+                baseUrl: createGatewayBaseUrl(),
+                apiKey,
+                apiFormat: "openai",
+            }),
         ...overrides,
     };
 }
@@ -181,10 +154,21 @@ export async function listCreateManagedKeys(session: CreateSession): Promise<Cre
     return page.items || [];
 }
 
-export async function resolveManagedCredentials(
-    session: CreateSession,
-    deps: WorkspaceDependencies,
-): Promise<{ imageKey: CreateManagedKey; videoKey: CreateManagedKey | null; groups: CreateManagedGroup[] }> {
+export async function listCreateManagedGroups(session: CreateSession): Promise<CreateManagedGroup[]> {
+    return createRequest<CreateManagedGroup[]>("/groups/available", {
+        accessToken: session.accessToken,
+    });
+}
+
+export async function createCreateManagedKey(session: CreateSession, name: string, groupId: number): Promise<CreateManagedKey> {
+    return createRequest<CreateManagedKey>("/keys", {
+        method: "POST",
+        accessToken: session.accessToken,
+        body: JSON.stringify({ name, group_id: groupId }),
+    });
+}
+
+export async function resolveManagedCredentials(session: CreateSession, deps: WorkspaceDependencies): Promise<{ imageKey: CreateManagedKey; videoKey: CreateManagedKey | null; groups: CreateManagedGroup[] }> {
     const [initialKeys, groups] = await Promise.all([deps.listKeys(session), deps.listGroups(session)]);
     const activeKeys = initialKeys.filter(isActiveKey);
     const composite = chooseCompositeKey(activeKeys);
@@ -210,12 +194,7 @@ export async function resolveManagedCredentials(
     return { imageKey, videoKey: videoKey || null, groups };
 }
 
-export async function switchManagedKey(
-    session: CreateSession,
-    key: CreateManagedKey,
-    role: ManagedKeyRole,
-    overrides: Partial<WorkspaceDependencies> = {},
-) {
+export async function switchManagedKey(session: CreateSession, key: CreateManagedKey, role: ManagedKeyRole, overrides: Partial<WorkspaceDependencies> = {}) {
     if (!isActiveKey(key)) throw new Error("该密钥当前不可用");
     const capable = role === "image" ? managedKeySupportsImage(key.group) : managedKeySupportsVideo(key.group);
     if (!capable) throw new Error(role === "image" ? "该密钥不支持生图" : "该密钥不支持生视频");
@@ -223,16 +202,10 @@ export async function switchManagedKey(
     return configureCreateWorkspace(session, overrides);
 }
 
-export async function configureCreateWorkspace(
-    session: CreateSession,
-    overrides: Partial<WorkspaceDependencies> = {},
-) {
+export async function configureCreateWorkspace(session: CreateSession, overrides: Partial<WorkspaceDependencies> = {}) {
     const deps = defaultDependencies(overrides);
     const { imageKey, videoKey } = await resolveManagedCredentials(session, deps);
-    const [imageModels, videoModels] = await Promise.all([
-        deps.loadModels(imageKey.key).catch(() => []),
-        videoKey ? deps.loadModels(videoKey.key).catch(() => []) : Promise.resolve([]),
-    ]);
+    const [imageModels, videoModels] = await Promise.all([deps.loadModels(imageKey.key).catch(() => []), videoKey ? deps.loadModels(videoKey.key).catch(() => []) : Promise.resolve([])]);
 
     const channels: ModelChannel[] = [];
     if (videoKey && videoKey.id === imageKey.id) {
@@ -254,6 +227,3 @@ export async function configureCreateWorkspace(
         imageChannelModels: channels.flatMap((channel) => modelsFor(channel, "image")).length,
     };
 }
-
-
-
