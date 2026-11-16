@@ -17,7 +17,7 @@ import { getManagedKeySelection, listCreateManagedKeys, managedKeySupportsVideo,
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useUserStore } from "@/stores/use-user-store";
 import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
-import { boolConfig, modelOptionLabel, selectableModelsByCapability, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+import { boolConfig, encodeChannelModel, modelOptionName, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 import i18n from "@/i18n";
@@ -115,7 +115,15 @@ export default function VideoPage() {
     const agentTaskIdRef = useRef<string | undefined>(undefined);
 
     const model = effectiveConfig.videoModel || effectiveConfig.model;
-    const videoModelOptions = Array.from(new Set([model, ...selectableModelsByCapability(effectiveConfig, "video")].filter(Boolean)));
+    const videoModelGroups = effectiveConfig.channels
+        .map((channel) => ({
+            id: channel.id,
+            name: channel.name,
+            models: channel.models.filter((item) => item.capability === "video").map((item) => ({ value: encodeChannelModel(channel.id, item.name), label: item.name })),
+        }))
+        .filter((group) => group.models.length > 0);
+    const videoModelOptions = videoModelGroups.flatMap((group) => group.models.map((item) => item.value));
+    if (model && !videoModelOptions.includes(model)) videoModelGroups.push({ id: "current-model", name: "当前模型", models: [{ value: model, label: modelOptionName(model) }] });
     const canGenerate = Boolean(prompt.trim());
     const resolution = parseVideoResolution(effectiveConfig.vquality);
     const selectedRatio = inferVideoRatio(effectiveConfig.size);
@@ -673,10 +681,14 @@ export default function VideoPage() {
                                                 请先配置模型
                                             </option>
                                         ) : null}
-                                        {videoModelOptions.map((option) => (
-                                            <option key={option} value={option}>
-                                                {modelOptionLabel(effectiveConfig, option)}
-                                            </option>
+                                        {videoModelGroups.map((group) => (
+                                            <optgroup key={group.id} label={group.name}>
+                                                {group.models.map((option) => (
+                                                    <option key={option.value} value={option.value}>
+                                                        {option.label}
+                                                    </option>
+                                                ))}
+                                            </optgroup>
                                         ))}
                                     </select>
                                     <ChevronDown className="pointer-events-none absolute right-2.5 top-2.5 size-4 text-stone-500" />

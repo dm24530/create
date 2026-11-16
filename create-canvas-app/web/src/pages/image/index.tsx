@@ -9,7 +9,7 @@ import { AssetPickerModal, type InsertAssetPayload } from "@/components/canvas/a
 import { imageReferenceLabel } from "@/lib/image-reference-prompt";
 import { normalizeImageBackground, normalizeImageOutputFormat, supportsTransparentImageBackground } from "@/lib/image-output-format";
 import { computeMediaSize, inferMediaRatio, inferMediaScale, mediaRatioOptions, parsePixelSize } from "@/lib/media-size";
-import { modelOptionLabel, selectableModelsByCapability, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+import { encodeChannelModel, modelOptionName, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { nanoid } from "nanoid";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
 import { requestEdit, requestGeneration, submitPersistentImageTask, waitForPersistentImageTask } from "@/services/api/image";
@@ -108,7 +108,15 @@ export default function ImagePage() {
     const agentTaskIdRef = useRef<string | undefined>(undefined);
 
     const model = effectiveConfig.imageModel || effectiveConfig.model;
-    const imageModelOptions = Array.from(new Set([model, ...selectableModelsByCapability(effectiveConfig, "image")].filter(Boolean)));
+    const imageModelGroups = effectiveConfig.channels
+        .map((channel) => ({
+            id: channel.id,
+            name: channel.name,
+            models: channel.models.filter((item) => item.capability === "image").map((item) => ({ value: encodeChannelModel(channel.id, item.name), label: item.name })),
+        }))
+        .filter((group) => group.models.length > 0);
+    const imageModelOptions = imageModelGroups.flatMap((group) => group.models.map((item) => item.value));
+    if (model && !imageModelOptions.includes(model)) imageModelGroups.push({ id: "current-model", name: "当前模型", models: [{ value: model, label: modelOptionName(model) }] });
     const canGenerate = Boolean(prompt.trim());
     const generationCount = Math.max(1, Math.min(10, Number(config.count) || 1));
     const selectedRatio = inferMediaRatio(effectiveConfig.size);
@@ -624,10 +632,14 @@ export default function ImagePage() {
                                                 请先配置模型
                                             </option>
                                         ) : null}
-                                        {imageModelOptions.map((option) => (
-                                            <option key={option} value={option}>
-                                                {modelOptionLabel(effectiveConfig, option)}
-                                            </option>
+                                        {imageModelGroups.map((group) => (
+                                            <optgroup key={group.id} label={group.name}>
+                                                {group.models.map((option) => (
+                                                    <option key={option.value} value={option.value}>
+                                                        {option.label}
+                                                    </option>
+                                                ))}
+                                            </optgroup>
                                         ))}
                                     </select>
                                     <ChevronDown className="pointer-events-none absolute right-2.5 top-2.5 size-4 text-stone-500" />

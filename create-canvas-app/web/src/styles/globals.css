@@ -182,6 +182,12 @@
         color: var(--popover-foreground);
     }
 
+    .workbench-native-select optgroup {
+        background-color: var(--popover);
+        color: var(--muted-foreground);
+        font-weight: 600;
+    }
+
     .workbench-native-select option:disabled {
         color: var(--muted-foreground);
     }
