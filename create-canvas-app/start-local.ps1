@@ -1,6 +1,7 @@
 param(
     [int]$MockPort = 9890,
-    [int]$WebPort = 3001
+    [int]$WebPort = 3001,
+    [string]$BackendUrl = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -12,8 +13,7 @@ $logRoot = Join-Path $root ".local-run"
 New-Item -ItemType Directory -Force -Path $logRoot | Out-Null
 
 function Assert-PortFree([int]$Port) {
-    $listener = Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction SilentlyContinue
-    if ($listener) {
+    if (Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction SilentlyContinue) {
         throw "Port $Port is already in use"
     }
 }
@@ -40,7 +40,7 @@ function Stop-PortProcess([int]$Port) {
     }
 }
 
-Assert-PortFree $MockPort
+if (-not $BackendUrl) { Assert-PortFree $MockPort }
 Assert-PortFree $WebPort
 
 $mockOut = Join-Path $logRoot "mock.out.log"
@@ -52,10 +52,14 @@ Remove-Item -LiteralPath $mockOut,$mockErr,$webOut,$webErr -Force -ErrorAction S
 $mockProcess = $null
 $webProcess = $null
 try {
-    $mockProcess = Start-Process -FilePath "node.exe" -ArgumentList "server.mjs" -WorkingDirectory $mockRoot -WindowStyle Hidden -PassThru -RedirectStandardOutput $mockOut -RedirectStandardError $mockErr
-    Wait-Http "http://127.0.0.1:$MockPort/health"
+    $proxyTarget = $BackendUrl.Trim().TrimEnd("/")
+    if (-not $proxyTarget) {
+        $mockProcess = Start-Process -FilePath "node.exe" -ArgumentList "server.mjs" -WorkingDirectory $mockRoot -WindowStyle Hidden -PassThru -RedirectStandardOutput $mockOut -RedirectStandardError $mockErr
+        $proxyTarget = "http://127.0.0.1:$MockPort"
+    }
+    Wait-Http "$proxyTarget/health"
 
-    $env:VITE_CREATE_API_PROXY_TARGET = "http://127.0.0.1:$MockPort"
+    $env:VITE_CREATE_API_PROXY_TARGET = $proxyTarget
     $webProcess = Start-Process -FilePath "npm.cmd" -ArgumentList @("run", "dev", "--", "--host", "127.0.0.1", "--port", "$WebPort") -WorkingDirectory $webRoot -WindowStyle Hidden -PassThru -RedirectStandardOutput $webOut -RedirectStandardError $webErr
     Wait-Http "http://127.0.0.1:$WebPort/"
 
@@ -68,7 +72,9 @@ try {
     }
 } finally {
     Stop-PortProcess $WebPort
-    Stop-PortProcess $MockPort
+    if (-not $BackendUrl) {
+        Stop-PortProcess $MockPort
+    }
     if ($mockProcess -and -not $mockProcess.HasExited) { Stop-Process -Id $mockProcess.Id -Force -ErrorAction SilentlyContinue }
     if ($webProcess -and -not $webProcess.HasExited) { Stop-Process -Id $webProcess.Id -Force -ErrorAction SilentlyContinue }
     Remove-Item Env:VITE_CREATE_API_PROXY_TARGET -ErrorAction SilentlyContinue

@@ -25,6 +25,14 @@ cd C:\项目\code\create\create-canvas-app
 .\start-local.ps1
 ```
 
+To use an existing local Create backend instead of the mock server:
+
+```powershell
+.\start-local.ps1 -BackendUrl http://127.0.0.1:9899
+```
+
+The launcher proxies `/api` and `/v1` through Vite, so the desktop app does not require CORS changes for local testing.
+
 This starts the local mock API, Vite dev server, and Electron. Closing Electron
 stops both background servers. Mock login accepts any email/password.
 
@@ -91,6 +99,7 @@ Create login screen renders through the `app://create` protocol.
 - The first milestone intentionally keeps upstream UI and IndexedDB persistence.
 - Real account login and generation require the configured Create server and
   database-backed test credentials.
+
 
 
 
