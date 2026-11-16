@@ -3,9 +3,10 @@ name: Create Canvas App
 on:
   workflow_dispatch:
   push:
+    branches:
+      - main
     tags:
       - "create-canvas-v*"
-
 permissions:
   contents: read
 
