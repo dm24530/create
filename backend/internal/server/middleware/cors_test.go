@@ -332,4 +332,5 @@ func TestCORS_AllowsFirstPartyDesktopOrigin(t *testing.T) {
 	assert.Equal(t, "true", w.Header().Get("Access-Control-Allow-Credentials"))
 	assert.Contains(t, w.Header().Values("Vary"), "Origin")
 	assert.Contains(t, w.Header().Get("Access-Control-Allow-Headers"), "Authorization")
+	assert.Contains(t, w.Header().Get("Access-Control-Allow-Headers"), "X-Create-Image-Passthrough")
 }
