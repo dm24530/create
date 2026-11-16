@@ -64,6 +64,8 @@ try {
     Wait-Http "http://127.0.0.1:$WebPort/"
 
     $env:CREATE_CANVAS_DEV_URL = "http://127.0.0.1:$WebPort"
+    $backendKey = if ($BackendUrl) { try { ([Uri]$BackendUrl).Port } catch { "custom" } } else { "mock-$MockPort" }
+    $env:CREATE_CANVAS_USER_DATA_PATH = Join-Path $logRoot "user-data-$backendKey"
     Push-Location $desktopRoot
     try {
         & npm.cmd start
@@ -79,4 +81,6 @@ try {
     if ($webProcess -and -not $webProcess.HasExited) { Stop-Process -Id $webProcess.Id -Force -ErrorAction SilentlyContinue }
     Remove-Item Env:VITE_CREATE_API_PROXY_TARGET -ErrorAction SilentlyContinue
     Remove-Item Env:CREATE_CANVAS_DEV_URL -ErrorAction SilentlyContinue
+    Remove-Item Env:CREATE_CANVAS_USER_DATA_PATH -ErrorAction SilentlyContinue
 }
+

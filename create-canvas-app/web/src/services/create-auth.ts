@@ -135,21 +135,30 @@ export function createAuthorizedOptions(session: CreateSession, options: CreateR
     return { ...options, accessToken: session.accessToken };
 }
 export async function restoreCreateSession(): Promise<CreateSession | null> {
-    const stored = readStoredCreateSession();
+    let stored = readStoredCreateSession();
     if (!stored) return null;
-    if (isCreateSessionFresh(stored)) return stored;
-    if (!stored.refreshToken) {
-        clearCreateSession();
-        return null;
+    if (!isCreateSessionFresh(stored) && stored.refreshToken) {
+        try {
+            stored = await createRefresh(stored);
+        } catch (error) {
+            if (error instanceof CreateApiError && error.status >= 400 && error.status < 500) {
+                clearCreateSession();
+                return null;
+            }
+            return stored;
+        }
     }
     try {
-        return await createRefresh(stored);
+        const user = await createMe(stored);
+        stored = { ...stored, user };
+        persistCreateSession(stored);
+        return stored;
     } catch (error) {
         if (error instanceof CreateApiError && error.status >= 400 && error.status < 500) {
             clearCreateSession();
             return null;
         }
-        // Keep the last account workspace available while offline.
+        // Preserve the last account workspace while the backend is unreachable.
         return stored;
     }
 }

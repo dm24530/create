@@ -86,6 +86,18 @@ describe("create auth", () => {
         await expect(restoreCreateSession()).resolves.toMatchObject({ user: { id: 7 } });
     });
 
+    it("clears a stored session rejected by the backend", async () => {
+        persistCreateSession({
+            accessToken: "invalid",
+            refreshToken: "refresh",
+            expiresAt: Date.now() + 60_000,
+            user,
+        });
+        vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse({ code: 401, message: "Invalid token" }, 401));
+        await expect(restoreCreateSession()).resolves.toBeNull();
+        expect(readStoredCreateSession()).toBeNull();
+    });
+
     it("clears all local session keys", () => {
         localStorage.setItem(CREATE_SESSION_KEYS.accessToken, "access");
         localStorage.setItem(CREATE_SESSION_KEYS.user, JSON.stringify(user));
@@ -93,6 +105,7 @@ describe("create auth", () => {
         expect(readStoredCreateSession()).toBeNull();
     });
 });
+
 
 
 
