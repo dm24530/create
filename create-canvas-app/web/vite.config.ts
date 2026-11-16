@@ -59,11 +59,11 @@ export default defineConfig(({ command }) => ({
         port: 3001,
         proxy: {
             "/api": {
-                target: process.env.VITE_CREATE_API_PROXY_TARGET || "http://127.0.0.1:8080",
+                target: process.env.VITE_CREATE_API_PROXY_TARGET || "http://127.0.0.1:9899",
                 changeOrigin: true,
             },
             "/v1": {
-                target: process.env.VITE_CREATE_API_PROXY_TARGET || "http://127.0.0.1:8080",
+                target: process.env.VITE_CREATE_API_PROXY_TARGET || "http://127.0.0.1:9899",
                 changeOrigin: true,
             },
         },
@@ -73,11 +73,11 @@ export default defineConfig(({ command }) => ({
         port: 3001,
         proxy: {
             "/api": {
-                target: process.env.VITE_CREATE_API_PROXY_TARGET || "http://127.0.0.1:8080",
+                target: process.env.VITE_CREATE_API_PROXY_TARGET || "http://127.0.0.1:9899",
                 changeOrigin: true,
             },
             "/v1": {
-                target: process.env.VITE_CREATE_API_PROXY_TARGET || "http://127.0.0.1:8080",
+                target: process.env.VITE_CREATE_API_PROXY_TARGET || "http://127.0.0.1:9899",
                 changeOrigin: true,
             },
         },

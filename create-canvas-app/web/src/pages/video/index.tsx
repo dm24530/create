@@ -7,6 +7,7 @@ import { saveAs } from "file-saver";
 import { useTranslation } from "react-i18next";
 
 import { AssetPickerModal, type InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
+import { GeneratedMediaDetailModal, type GeneratedMediaDetailData } from "@/components/workbench/generated-media-detail-modal";
 import { normalizeVideoResolutionValue, normalizeVideoSizeValue } from "@/components/video-settings-panel";
 import { clampVideoSeconds, computeVideoSize, inferVideoRatio, parsePixelSize, parseVideoResolution, readVideoDimensions, VIDEO_SECONDS_MAX, VIDEO_SECONDS_MIN, videoRatioOptions } from "@/lib/media-size";
 import { autoSaveGeneratedFile } from "@/lib/desktop-save";
@@ -34,6 +35,8 @@ type GeneratedVideo = {
     height: number;
     bytes: number;
     mimeType: string;
+    prompt?: string;
+    model?: string;
 };
 
 type GenerationResult = {
@@ -83,9 +86,7 @@ export default function VideoPage() {
     const fileInputRef = useRef<HTMLInputElement>(null);
     const dragDepthRef = useRef(0);
     const activeLogIdsRef = useRef<Set<string>>(new Set());
-    const logPanelRef = useRef<HTMLElement>(null);
     const workbenchPanelRef = useRef<HTMLDivElement>(null);
-    const [logPanelWidth, setLogPanelWidth] = useStoredPanelWidth("create-canvas:video-workbench-layout:logs", 300);
     const [workbenchPanelWidth, setWorkbenchPanelWidth] = useStoredPanelWidth("create-canvas:video-workbench-layout:form", 600);
     const effectiveConfig = useEffectiveConfig();
     const updateConfig = useConfigStore((state) => state.updateConfig);
@@ -112,6 +113,7 @@ export default function VideoPage() {
     const [elapsedMs, setElapsedMs] = useState(0);
     const [selectedLogIds, setSelectedLogIds] = useState<string[]>([]);
     const [previewLog, setPreviewLog] = useState<GenerationLog | null>(null);
+    const [previewMedia, setPreviewMedia] = useState<GeneratedMediaDetailData | null>(null);
     const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
     const [referenceDragTarget, setReferenceDragTarget] = useState(false);
     const [autoRunToken, setAutoRunToken] = useState(0);
@@ -122,7 +124,6 @@ export default function VideoPage() {
     const agentTaskIdRef = useRef<string | undefined>(undefined);
 
     const layoutStyle = {
-        "--log-panel-width": `${logPanelWidth}px`,
         "--workbench-panel-width": `${workbenchPanelWidth}px`,
     } as CSSProperties;
 
@@ -498,6 +499,7 @@ export default function VideoPage() {
         setStartedAt(0);
         setSelectedLogIds([]);
         setPreviewLog(null);
+        setPreviewMedia(null);
     };
 
     const deleteSelectedLogs = () => {
@@ -568,6 +570,8 @@ export default function VideoPage() {
                         height: stored.height || 720,
                         bytes: stored.bytes,
                         mimeType: stored.mimeType,
+                        prompt: log.prompt,
+                        model: modelOptionName(log.model),
                     };
                     upsertResult({ status: "success", video: nextVideo, error: undefined });
                     if (agentTaskId) updateAgentTask(agentTaskId, { status: "succeeded", successCount: 1, failCount: 0, error: undefined });
@@ -608,47 +612,28 @@ export default function VideoPage() {
         if (log.config.videoGenerateAudio) updateConfig("videoGenerateAudio", log.config.videoGenerateAudio);
         if (log.config.videoWatermark) updateConfig("videoWatermark", log.config.videoWatermark);
         if (log.config.videoMode) updateConfig("videoMode", log.config.videoMode);
-        setResults(log.status === "pending" ? [{ id: log.id, status: "pending" }] : log.video ? [{ id: log.video.id, status: "success", video: log.video }] : [{ id: log.id, status: "failed", error: log.error || t("workbench.generationFailed") }]);
+        setResults(log.status === "pending" ? [{ id: log.id, status: "pending" }] : log.video ? [{ id: log.video.id, status: "success", video: { ...log.video, prompt: log.video.prompt || log.prompt, model: log.video.model || modelOptionName(log.model) } }] : [{ id: log.id, status: "failed", error: log.error || t("workbench.generationFailed") }]);
     };
+
+    const displayedResults: GenerationResult[] = [...results];
+    const displayedVideoIds = new Set(results.flatMap((result) => (result.video ? [result.video.id] : [])));
+    for (const log of logs) {
+        if (log.status !== "success" || !log.video) continue;
+        if (displayedVideoIds.has(log.video.id)) continue;
+        displayedVideoIds.add(log.video.id);
+        displayedResults.push({
+            id: `history:${log.id}:${log.video.id}`,
+            status: "success",
+            video: { ...log.video, prompt: log.video.prompt || log.prompt, model: log.video.model || modelOptionName(log.model) },
+        });
+    }
 
     return (
         <div className="flex h-full flex-col overflow-hidden bg-stone-50 text-stone-900 dark:bg-stone-950 dark:text-stone-100">
-            <main className="workbench-main-grid grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-y-auto p-3 lg:overflow-hidden" style={layoutStyle}>
-                <aside ref={logPanelRef} className="thin-scrollbar hidden min-w-0 overflow-y-auto rounded-lg border border-stone-200 bg-card p-4 shadow-sm dark:border-stone-800 lg:block">
-                    <LogPanel
-                        logs={logs}
-                        selectedLogIds={selectedLogIds}
-                        activeLogId={previewLog?.id}
-                        onSelectedLogIdsChange={setSelectedLogIds}
-                        onCreateSession={createSession}
-                        onDeleteSelected={() => setDeleteConfirmOpen(true)}
-                        onPreviewLog={previewGenerationLog}
-                    />
-                </aside>
-
-                <PanelResizeHandle
-                    className="hidden lg:flex"
-                    label="调整生成记录宽度"
-                    getWidth={() => logPanelRef.current?.getBoundingClientRect().width || logPanelWidth}
-                    minWidth={280}
-                    maxWidth={() => Math.min(520, window.innerWidth * 0.28)}
-                    onWidthChange={setLogPanelWidth}
-                />
-
+            <main className="grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-y-auto p-3 lg:overflow-hidden" style={layoutStyle}>
                 <section className="workbench-split-grid grid gap-3 lg:min-h-0 lg:overflow-hidden">
                     <div ref={workbenchPanelRef} className="thin-scrollbar flex min-w-0 flex-col rounded-xl border border-stone-200 bg-card p-4 shadow-sm dark:border-stone-800 lg:min-h-0 lg:overflow-y-auto [&>*]:shrink-0">
-                        <div className="flex items-center justify-between gap-3">
-                            <h1 className="text-[26px] font-semibold leading-8 tracking-tight text-stone-950 dark:text-stone-100">{t("videoWorkbench.title")}</h1>
-                            <button
-                                type="button"
-                                className="grid size-8 shrink-0 place-items-center rounded-lg text-stone-500 transition hover:bg-stone-100 hover:text-stone-900 dark:hover:bg-stone-800 dark:hover:text-stone-100 lg:hidden"
-                                title={t("workbench.logs")}
-                                aria-label={t("workbench.logs")}
-                                onClick={() => setLogsOpen(true)}
-                            >
-                                <History className="size-4" />
-                            </button>
-                        </div>
+                        <h1 className="text-[26px] font-semibold leading-8 tracking-tight text-stone-950 dark:text-stone-100">{t("videoWorkbench.title")}</h1>
 
                         <div className="mt-3 flex items-center gap-2">
                             <label className="relative flex h-10 min-w-0 flex-1 items-center overflow-hidden rounded-xl border border-stone-200 bg-stone-50 text-sm dark:border-stone-700 dark:bg-stone-900/60">
@@ -978,13 +963,18 @@ export default function VideoPage() {
                     <div className="thin-scrollbar min-w-0 rounded-lg border border-stone-200 bg-card p-4 shadow-sm dark:border-stone-800 lg:min-h-0 lg:overflow-y-auto lg:p-5">
                         <div className="mb-4 flex items-center justify-between gap-3">
                             <h2 className="text-xl font-semibold">{t("workbench.results")}</h2>
-                            {running ? <Tag className="m-0 px-2 py-1">{t("workbench.waiting", { time: formatDuration(elapsedMs) })}</Tag> : null}
+                            <div className="flex items-center gap-2">
+                                {running ? <Tag className="m-0 px-2 py-1">{t("workbench.waiting", { time: formatDuration(elapsedMs) })}</Tag> : null}
+                                <Button size="small" icon={<History className="size-3.5" />} onClick={() => setLogsOpen(true)}>
+                                    {t("workbench.logs")}
+                                </Button>
+                            </div>
                         </div>
-                        {results.length ? (
+                        {displayedResults.length ? (
                             <div className="grid gap-4">
-                                {results.map((result) =>
+                                {displayedResults.map((result) =>
                                     result.status === "success" && result.video ? (
-                                        <ResultVideoCard key={result.id} video={result.video} onDownload={downloadVideo} onSaveAsset={saveResultToAssets} />
+                                        <ResultVideoCard key={result.id} video={result.video} onPreview={setPreviewMedia} onDownload={downloadVideo} onSaveAsset={saveResultToAssets} />
                                     ) : result.status === "failed" ? (
                                         <FailedVideoCard key={result.id} error={result.error || t("workbench.generationFailed")} onRetry={retryResult} />
                                     ) : (
@@ -1024,6 +1014,7 @@ export default function VideoPage() {
                 />
             </Drawer>
             <AssetPickerModal open={assetPickerOpen} defaultTab="my-assets" onInsert={(payload) => void insertPickedAsset(payload)} onClose={() => setAssetPickerOpen(false)} />
+            <GeneratedMediaDetailModal data={previewMedia} onClose={() => setPreviewMedia(null)} />
             <Modal title={t("workbench.deleteLogs")} open={deleteConfirmOpen} onCancel={() => setDeleteConfirmOpen(false)} onOk={deleteSelectedLogs} okText={t("common.delete")} okButtonProps={{ danger: true }} cancelText={t("common.cancel")}>
                 {t("workbench.deleteLogsConfirm", { count: selectedLogIds.length })}
             </Modal>
@@ -1053,7 +1044,17 @@ function videoRatioSizeLabel(ratio: string, resolution: string) {
     return `${videoOrientationLabel(ratio)} ${pixels.width}×${pixels.height}`;
 }
 
-function ResultVideoCard({ video, onDownload, onSaveAsset }: { video: GeneratedVideo; onDownload: (video: GeneratedVideo) => void; onSaveAsset: (video: GeneratedVideo) => void }) {
+function ResultVideoCard({
+    video,
+    onPreview,
+    onDownload,
+    onSaveAsset,
+}: {
+    video: GeneratedVideo;
+    onPreview: (data: GeneratedMediaDetailData) => void;
+    onDownload: (video: GeneratedVideo) => void;
+    onSaveAsset: (video: GeneratedVideo) => void;
+}) {
     const { t } = useTranslation();
     return (
         <div className="overflow-hidden rounded-lg border border-stone-200 bg-background dark:border-stone-800">
@@ -1069,6 +1070,9 @@ function ResultVideoCard({ video, onDownload, onSaveAsset }: { video: GeneratedV
                 <div className="flex shrink-0 gap-1">
                     <Button size="small" icon={<FolderPlus className="size-3.5" />} onClick={() => onSaveAsset(video)}>
                         {t("common.addToAssets")}
+                    </Button>
+                    <Button size="small" onClick={() => onPreview({ kind: "video", src: video.url, prompt: video.prompt, model: video.model, width: video.width, height: video.height, durationMs: video.durationMs, bytes: video.bytes })}>
+                        {t("common.details")}
                     </Button>
                     <Button size="small" icon={<Download className="size-3.5" />} onClick={() => onDownload(video)}>
                         {t("common.download")}

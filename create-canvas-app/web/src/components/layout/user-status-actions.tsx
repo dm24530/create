@@ -16,9 +16,10 @@ type UserStatusActionsProps = {
     variant?: "default" | "canvas";
     onOpenShortcuts?: () => void;
     onOpenPlugins?: () => void;
+    onExitCanvas?: () => void;
 };
 
-export function UserStatusActions({ showConfig = true, variant = "default", onOpenShortcuts, onOpenPlugins }: UserStatusActionsProps) {
+export function UserStatusActions({ showConfig = true, variant = "default", onOpenShortcuts, onOpenPlugins, onExitCanvas }: UserStatusActionsProps) {
     const { t } = useTranslation();
     const theme = useThemeStore((state) => state.theme);
     const setTheme = useThemeStore((state) => state.setTheme);
@@ -49,9 +50,14 @@ export function UserStatusActions({ showConfig = true, variant = "default", onOp
                 <button
                     type="button"
                     className={naturalIconClass}
-                    title={user?.display_name || user?.username || "退出登录"}
-                    aria-label="退出登录"
+                    style={onExitCanvas ? iconStyle : undefined}
+                    title={onExitCanvas ? t("canvas.exit") : user?.display_name || user?.username || "退出登录"}
+                    aria-label={onExitCanvas ? t("canvas.exit") : "退出登录"}
                     onClick={() => {
+                        if (onExitCanvas) {
+                            onExitCanvas();
+                            return;
+                        }
                         void createLogout(session).finally(() => {
                             clearSession();
                             window.location.reload();

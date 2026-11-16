@@ -47,7 +47,14 @@ export type CloudCanvasProject = CloudCanvasProjectSummary & {
   assets: CloudCanvasAsset[];
 };
 
+function isDesktopCanvasRuntime() {
+  if (typeof window === "undefined") return false;
+  const bridge = (window as Window & { createDesktop?: { isDesktop?: boolean } }).createDesktop;
+  return bridge?.isDesktop === true;
+}
+
 export function configureCanvasCloud(token?: string) {
+  if (isDesktopCanvasRuntime()) return;
   configureCanvasAuth(token);
 }
 
@@ -60,10 +67,11 @@ export function subscribeCanvasCloud(listener: () => void) {
 }
 
 export function isCanvasCloudReady() {
-  return isCanvasAuthReady();
+  return !isDesktopCanvasRuntime() && isCanvasAuthReady();
 }
 
 async function cloudRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  if (isDesktopCanvasRuntime()) throw new Error("Canvas cloud storage is disabled in the desktop app");
   const accessToken = getCanvasAccessTokenFromAuth();
   if (!accessToken) throw new Error("Canvas cloud session is unavailable");
   const headers = new Headers(init?.headers);

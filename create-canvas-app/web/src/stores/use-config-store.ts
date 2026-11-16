@@ -181,12 +181,22 @@ export function modelMatchesCapability(config: AiConfig, value: string, capabili
 export function resolveModelForCapability(config: AiConfig, currentModel: string | undefined, capability: ModelCapability) {
     const defaultModel = capability === "image" ? config.imageModel : capability === "video" ? config.videoModel : capability === "audio" ? config.audioModel : config.textModel;
     const fallbackModel = capability === "image" ? defaultConfig.imageModel : capability === "video" ? defaultConfig.videoModel : capability === "audio" ? defaultConfig.audioModel : defaultConfig.textModel;
+    const recoverModel = (value: string | undefined) => {
+        const model = (value || "").trim();
+        if (!model) return "";
+        const matched = findChannelModel(config, model);
+        if (matched) return !capability || matched.model.capability === capability ? model : "";
+        // A saved node may still reference an old managed-channel id. If the
+        // same model is present in the current key, migrate it transparently
+        // instead of asking the user to configure the workspace again.
+        const rawName = decodeChannelModel(model)?.model || model;
+        const replacement = config.channels.find((channel) => channel.models.some((item) => item.name === rawName && item.capability === capability));
+        if (replacement) return encodeChannelModel(replacement.id, rawName);
+        return model;
+    };
     for (const model of [currentModel, defaultModel]) {
-        if (!model) continue;
-        const configuredCapability = modelCapabilityOf(config, model);
-        // Keep unavailable selections visible so the readiness check blocks the
-        // request. Only a known capability switch may choose another model.
-        if (!configuredCapability || configuredCapability === capability) return model;
+        const recovered = recoverModel(model);
+        if (recovered) return recovered;
     }
     return fallbackModel;
 }
@@ -426,7 +436,9 @@ export function normalizeModelOptionValue(value: string | undefined, channels: M
     const decoded = decodeChannelModel(model);
     if (decoded) {
         const channel = channels.find((item) => item.id === decoded.channelId);
-        return channel && channel.models.some((item) => item.name === decoded.model) ? model : "";
+        if (channel && channel.models.some((item) => item.name === decoded.model)) return model;
+        const replacement = channels.find((item) => item.models.some((candidate) => candidate.name === decoded.model));
+        return replacement ? encodeChannelModel(replacement.id, decoded.model) : "";
     }
     const channel = channels.find((item) => item.models.some((entry) => entry.name === model)) || channels[0];
     return channel && channel.models.some((item) => item.name === model) ? encodeChannelModel(channel.id, model) : model;

@@ -5,6 +5,7 @@ import localforage from "localforage";
 import { useTranslation } from "react-i18next";
 
 import { AssetPickerModal, type InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
+import { GeneratedMediaDetailModal, type GeneratedMediaDetailData } from "@/components/workbench/generated-media-detail-modal";
 import { resolveGeneratedImageBlob } from "@/lib/generated-image-download";
 import { imageReferenceLabel } from "@/lib/image-reference-prompt";
 import { normalizeImageBackground, normalizeImageOutputFormat, supportsTransparentImageBackground } from "@/lib/image-output-format";
@@ -34,6 +35,8 @@ type GeneratedImage = {
     bytes: number;
     mimeType?: string;
     localPath?: string;
+    prompt?: string;
+    model?: string;
 };
 
 type GenerationResult = {
@@ -78,9 +81,7 @@ export default function ImagePage() {
     useSyncExternalStore(subscribeImagePreviews, getImagePreviewRevision);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const dragDepthRef = useRef(0);
-    const logPanelRef = useRef<HTMLElement>(null);
     const workbenchPanelRef = useRef<HTMLDivElement>(null);
-    const [logPanelWidth, setLogPanelWidth] = useStoredPanelWidth("create-canvas:image-workbench-layout:logs", 300);
     const [workbenchPanelWidth, setWorkbenchPanelWidth] = useStoredPanelWidth("create-canvas:image-workbench-layout:form", 600);
     const config = useConfigStore((state) => state.config);
     const effectiveConfig = useEffectiveConfig();
@@ -106,6 +107,7 @@ export default function ImagePage() {
     const [elapsedMs, setElapsedMs] = useState(0);
     const [selectedLogIds, setSelectedLogIds] = useState<string[]>([]);
     const [previewLog, setPreviewLog] = useState<GenerationLog | null>(null);
+    const [previewMedia, setPreviewMedia] = useState<GeneratedMediaDetailData | null>(null);
     const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
     const [isReferenceDragActive, setIsReferenceDragActive] = useState(false);
     const [autoRunToken, setAutoRunToken] = useState(0);
@@ -116,7 +118,6 @@ export default function ImagePage() {
     const agentTaskIdRef = useRef<string | undefined>(undefined);
 
     const layoutStyle = {
-        "--log-panel-width": `${logPanelWidth}px`,
         "--workbench-panel-width": `${workbenchPanelWidth}px`,
     } as CSSProperties;
 
@@ -420,6 +421,7 @@ export default function ImagePage() {
         setStartedAt(0);
         setSelectedLogIds([]);
         setPreviewLog(null);
+        setPreviewMedia(null);
     };
 
     const deleteSelectedLogs = () => {
@@ -454,7 +456,7 @@ export default function ImagePage() {
         if (log.config.quality) updateConfig("quality", log.config.quality);
         if (log.config.size) updateConfig("size", log.config.size);
         if (log.config.count) updateConfig("count", log.config.count);
-        setResults(log.images.map((image) => ({ id: image.id, status: "success", image })));
+        setResults(log.images.map((image) => ({ id: image.id, status: "success", image: { ...image, prompt: image.prompt || log.prompt, model: image.model || modelOptionName(log.model) } })));
     };
 
     const buildRequestSnapshot = () => {
@@ -490,6 +492,8 @@ export default function ImagePage() {
                                 height: 0,
                                 bytes: 0,
                                 mimeType: "image/jpeg",
+                                prompt: snapshot.text,
+                                model: modelOptionName(snapshot.config.model),
                             },
                         }),
                     );
@@ -510,6 +514,8 @@ export default function ImagePage() {
                 height: 0,
                 bytes: 0,
                 mimeType: "",
+                prompt: snapshot.text,
+                model: modelOptionName(snapshot.config.model),
             };
             // Match the canvas behavior: paint the returned image first, then
             // persist it to local storage in the background.
@@ -536,6 +542,8 @@ export default function ImagePage() {
                     height: stored.height,
                     bytes: stored.bytes,
                     mimeType: stored.mimeType,
+                    prompt: snapshot.text,
+                    model: modelOptionName(snapshot.config.model),
                 };
                 setResults((value) => updateResultAt(value, index, { status: "success", image: nextImage }));
                 return nextImage;
@@ -576,44 +584,27 @@ export default function ImagePage() {
         }
     };
 
+    const displayedResults: GenerationResult[] = [...results];
+    const displayedImageIds = new Set(results.flatMap((result) => (result.image ? [result.image.id] : [])));
+    for (const log of logs) {
+        if (log.status !== "success") continue;
+        for (const image of log.images) {
+            if (displayedImageIds.has(image.id)) continue;
+            displayedImageIds.add(image.id);
+            displayedResults.push({
+                id: `history:${log.id}:${image.id}`,
+                status: "success",
+                image: { ...image, prompt: image.prompt || log.prompt, model: image.model || modelOptionName(log.model) },
+            });
+        }
+    }
+
     return (
         <div className="flex h-full flex-col overflow-hidden bg-stone-50 text-stone-900 dark:bg-stone-950 dark:text-stone-100">
-            <main className="workbench-main-grid grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-y-auto p-3 lg:overflow-hidden" style={layoutStyle}>
-                <aside ref={logPanelRef} className="thin-scrollbar hidden min-w-0 overflow-y-auto rounded-lg border border-stone-200 bg-card p-4 shadow-sm dark:border-stone-800 lg:block">
-                    <LogPanel
-                        logs={logs}
-                        selectedLogIds={selectedLogIds}
-                        activeLogId={previewLog?.id}
-                        onSelectedLogIdsChange={setSelectedLogIds}
-                        onCreateSession={createSession}
-                        onDeleteSelected={() => setDeleteConfirmOpen(true)}
-                        onPreviewLog={(log) => void previewGenerationLog(log)}
-                    />
-                </aside>
-
-                <PanelResizeHandle
-                    className="hidden lg:flex"
-                    label="调整生成记录宽度"
-                    getWidth={() => logPanelRef.current?.getBoundingClientRect().width || logPanelWidth}
-                    minWidth={280}
-                    maxWidth={() => Math.min(520, window.innerWidth * 0.28)}
-                    onWidthChange={setLogPanelWidth}
-                />
-
+            <main className="grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-y-auto p-3 lg:overflow-hidden" style={layoutStyle}>
                 <section className="workbench-split-grid grid gap-3 lg:min-h-0 lg:overflow-hidden">
                     <div ref={workbenchPanelRef} className="thin-scrollbar flex min-w-0 flex-col rounded-xl border border-stone-200 bg-card p-4 shadow-sm dark:border-stone-800 lg:min-h-0 lg:overflow-y-auto [&>*]:shrink-0">
-                        <div className="flex items-center justify-between gap-3">
-                            <h1 className="text-[26px] font-semibold leading-8 tracking-tight text-stone-950 dark:text-stone-100">{t("imageWorkbench.title")}</h1>
-                            <button
-                                type="button"
-                                className="grid size-8 shrink-0 place-items-center rounded-lg text-stone-500 transition hover:bg-stone-100 hover:text-stone-900 dark:hover:bg-stone-800 dark:hover:text-stone-100 lg:hidden"
-                                title={t("workbench.logs")}
-                                aria-label={t("workbench.logs")}
-                                onClick={() => setLogsOpen(true)}
-                            >
-                                <History className="size-4" />
-                            </button>
-                        </div>
+                        <h1 className="text-[26px] font-semibold leading-8 tracking-tight text-stone-950 dark:text-stone-100">{t("imageWorkbench.title")}</h1>
 
                         <div className="mt-3 flex items-center gap-2">
                             <label className="relative flex h-10 min-w-0 flex-1 items-center overflow-hidden rounded-xl border border-stone-200 bg-stone-50 text-sm dark:border-stone-700 dark:bg-stone-900/60">
@@ -945,20 +936,20 @@ export default function ImagePage() {
 
                     <div className="thin-scrollbar min-w-0 rounded-lg border border-stone-200 bg-card p-4 shadow-sm dark:border-stone-800 lg:min-h-0 lg:overflow-y-auto lg:p-5">
                         <div className="mb-4 flex items-center justify-between gap-3">
-                            <div>
-                                <h2 className="text-xl font-semibold">{t("workbench.results")}</h2>
-                            </div>
-                            {running ? <Tag className="m-0 px-2 py-1">{t("workbench.waiting", { time: formatDuration(elapsedMs) })}</Tag> : null}
+                            <h2 className="text-xl font-semibold">{t("workbench.results")}</h2>
+                            <Button size="small" icon={<History className="size-3.5" />} onClick={() => setLogsOpen(true)}>
+                                {t("workbench.logs")}
+                            </Button>
                         </div>
-                        {results.length ? (
-                            <div className="grid gap-4 sm:grid-cols-2 2xl:grid-cols-3">
-                                {results.map((result, index) =>
+                        {displayedResults.length ? (
+                            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+                                {displayedResults.map((result, index) =>
                                     result.status === "success" && result.image ? (
-                                        <ResultImageCard key={result.id} image={result.image} index={index} onEdit={addResultToReferences} onDownload={downloadImage} onSaveAsset={saveResultToAssets} />
+                                        <ResultImageCard key={result.id} image={result.image} index={index} onPreview={setPreviewMedia} onEdit={addResultToReferences} onDownload={downloadImage} onSaveAsset={saveResultToAssets} />
                                     ) : result.status === "failed" ? (
                                         <FailedImageCard key={result.id} error={result.error || t("workbench.generationFailed")} onRetry={() => retryResult(index)} />
                                     ) : (
-                                        <PendingImageCard key={result.id} />
+                                        <PendingImageCard key={result.id} elapsedMs={elapsedMs} />
                                     ),
                                 )}
                             </div>
@@ -994,6 +985,7 @@ export default function ImagePage() {
                 />
             </Drawer>
             <AssetPickerModal open={assetPickerOpen} defaultTab="my-assets" onInsert={(payload) => void insertPickedAsset(payload)} onClose={() => setAssetPickerOpen(false)} />
+            <GeneratedMediaDetailModal data={previewMedia} onClose={() => setPreviewMedia(null)} />
             <Modal title={t("workbench.deleteLogs")} open={deleteConfirmOpen} onCancel={() => setDeleteConfirmOpen(false)} onOk={deleteSelectedLogs} okText={t("common.delete")} okButtonProps={{ danger: true }} cancelText={t("common.cancel")}>
                 {t("workbench.deleteLogsConfirm", { count: selectedLogIds.length })}
             </Modal>
@@ -1011,12 +1003,14 @@ function workbenchSizePixels(size: string, ratio: string) {
 function ResultImageCard({
     image,
     index,
+    onPreview,
     onEdit,
     onDownload,
     onSaveAsset,
 }: {
     image: GeneratedImage;
     index: number;
+    onPreview: (data: GeneratedMediaDetailData) => void;
     onEdit: (image: GeneratedImage, index: number) => void;
     onDownload: (image: GeneratedImage, index: number) => Promise<void>;
     onSaveAsset: (image: GeneratedImage, index: number) => void;
@@ -1025,7 +1019,16 @@ function ResultImageCard({
     useSyncExternalStore(subscribeImagePreviews, getImagePreviewRevision);
     return (
         <div className="overflow-hidden rounded-lg border border-stone-200 bg-background dark:border-stone-800">
-            <Image src={previewUrlFor(image.storageKey) || image.dataUrl} preview={{ src: image.dataUrl }} alt={t("imageWorkbench.resultAlt", { count: index + 1 })} className="aspect-square object-cover" />
+            <button
+                type="button"
+                className="group relative block w-full cursor-zoom-in overflow-hidden"
+                title={t("common.details")}
+                aria-label={t("common.details")}
+                onClick={() => onPreview({ kind: "image", src: image.dataUrl, prompt: image.prompt, model: image.model, width: image.width, height: image.height, durationMs: image.durationMs, bytes: image.bytes })}
+            >
+                <Image src={previewUrlFor(image.storageKey) || image.dataUrl} preview={false} alt={t("imageWorkbench.resultAlt", { count: index + 1 })} className="aspect-square w-full object-cover" />
+                <span className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/0 text-xs font-medium text-white opacity-0 transition group-hover:bg-black/20 group-hover:opacity-100">{t("common.details")}</span>
+            </button>
             <div className="space-y-2 border-t border-stone-200 px-3 py-2.5 dark:border-stone-800">
                 <div className="flex min-w-0 gap-x-2 gap-y-1 text-xs text-stone-500 dark:text-stone-400">
                     <span>
@@ -1056,7 +1059,7 @@ function ResultImageCard({
     );
 }
 
-function PendingImageCard() {
+function PendingImageCard({ elapsedMs }: { elapsedMs: number }) {
     const { t } = useTranslation();
     return (
         <div className="relative aspect-square overflow-hidden rounded-lg border border-dashed border-stone-300 bg-stone-50 dark:border-stone-700 dark:bg-stone-900">
@@ -1070,6 +1073,7 @@ function PendingImageCard() {
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-sm text-stone-500 dark:text-stone-400">
                 <LoaderCircle className="size-6 animate-spin" />
                 <span>{t("workbench.generating")}</span>
+                <span className="text-xs tabular-nums">{t("workbench.elapsed", { time: formatDuration(elapsedMs) })}</span>
             </div>
         </div>
     );
