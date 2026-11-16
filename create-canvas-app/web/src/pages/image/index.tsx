@@ -1,23 +1,23 @@
-import { ArrowLeft, ArrowRight, CheckSquare, ClipboardPaste, Download, FolderPlus, History, ImagePlus, LoaderCircle, PenLine, Plus, SlidersHorizontal, Sparkles, Trash2, Upload } from "lucide-react";
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { App, Button, Checkbox, Drawer, Empty, Image, Input, Modal, Tag, Tooltip, Typography } from "antd";
+import { ArrowLeft, ArrowRight, CheckSquare, ChevronDown, ClipboardPaste, Copy, Download, FolderPlus, History, ImagePlus, LoaderCircle, PenLine, Plus, RefreshCw, Sparkles, Trash2, Upload } from "lucide-react";
+import { type ClipboardEvent as ReactClipboardEvent, useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { App, Button, Checkbox, Drawer, Empty, Image, Modal, Tag, Tooltip, Typography } from "antd";
 import localforage from "localforage";
 import { saveAs } from "file-saver";
 import { useTranslation } from "react-i18next";
 
-import { ImageSettingsPanel } from "@/components/image-settings-panel";
 import { ModelPicker } from "@/components/model-picker";
-import { PromptSelectDialog } from "@/components/prompts/prompt-select-dialog";
 import { AssetPickerModal, type InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
-import { canvasThemes } from "@/lib/canvas-theme";
 import { imageReferenceLabel } from "@/lib/image-reference-prompt";
-import { modelOptionLabel, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
-import { useThemeStore } from "@/stores/use-theme-store";
+import { normalizeImageBackground, normalizeImageOutputFormat, supportsTransparentImageBackground } from "@/lib/image-output-format";
+import { computeMediaSize, inferMediaRatio, mediaRatioOptions, parsePixelSize } from "@/lib/media-size";
+import { useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { nanoid } from "nanoid";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
 import { requestEdit, requestGeneration, submitPersistentImageTask, waitForPersistentImageTask } from "@/services/api/image";
 import { ensureImagePreview, getImagePreviewRevision, previewUrlFor, resolveImageUrl, subscribeImagePreviews, uploadImage } from "@/services/image-storage";
+import { getManagedKeySelection, listCreateManagedKeys, managedKeySupportsImage, switchManagedKey, type CreateManagedKey } from "@/services/create-managed-channel";
 import { useAssetStore } from "@/stores/use-asset-store";
+import { useUserStore } from "@/stores/use-user-store";
 import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
 import type { ReferenceImage } from "@/types/image";
 import i18n from "@/i18n";
@@ -61,12 +61,13 @@ type GenerationLog = {
 
 type GenerationLogConfig = Pick<AiConfig, "model" | "imageModel" | "quality" | "size" | "count">;
 
-type UpdateAiConfig = <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => void;
-
 const LOG_STORE_KEY = "infinite-canvas:image_generation_logs";
 const MAX_WORKBENCH_LOGS = 100;
+const MAX_IMAGE_REFERENCES = 14;
 const RESULT_ACTION_BUTTON_CLASS = "min-w-0 px-1.5 [&_.ant-btn-icon]:shrink-0 [&>span:last-child]:min-w-0 [&>span:last-child]:truncate";
 const logStore = localforage.createInstance({ name: "infinite-canvas", storeName: "image_generation_logs" });
+const WORKBENCH_QUALITY_OPTIONS = ["auto", "high", "medium", "low"] as const;
+const WORKBENCH_SIZE_OPTIONS = mediaRatioOptions.filter((item) => item.value !== "auto").map((item) => ({ value: item.value, size: computeMediaSize("1k", item.value) }));
 
 export default function ImagePage() {
     const { message } = App.useApp();
@@ -81,14 +82,18 @@ export default function ImagePage() {
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
     const addAsset = useAssetStore((state) => state.addAsset);
     const cleanupAssets = useAssetStore((state) => state.cleanupImages);
+    const session = useUserStore((state) => state.session);
+    const [imageKeys, setImageKeys] = useState<CreateManagedKey[]>([]);
+    const [imageKeysLoading, setImageKeysLoading] = useState(false);
+    const [selectedImageKeyId, setSelectedImageKeyId] = useState(() => getManagedKeySelection().imageKeyId);
+    const [switchingImageKey, setSwitchingImageKey] = useState(false);
+    const [customSizeOpen, setCustomSizeOpen] = useState(false);
     const [prompt, setPrompt] = useState("");
     const [references, setReferences] = useState<ReferenceImage[]>([]);
     const [results, setResults] = useState<GenerationResult[]>([]);
     const [logs, setLogs] = useState<GenerationLog[]>([]);
     const [running, setRunning] = useState(false);
     const [logsOpen, setLogsOpen] = useState(false);
-    const [settingsOpen, setSettingsOpen] = useState(false);
-    const [promptDialogOpen, setPromptDialogOpen] = useState(false);
     const [assetPickerOpen, setAssetPickerOpen] = useState(false);
     const [startedAt, setStartedAt] = useState(0);
     const [elapsedMs, setElapsedMs] = useState(0);
@@ -106,6 +111,56 @@ export default function ImagePage() {
     const model = effectiveConfig.imageModel || effectiveConfig.model;
     const canGenerate = Boolean(prompt.trim());
     const generationCount = Math.max(1, Math.min(10, Number(config.count) || 1));
+    const selectedRatio = inferMediaRatio(effectiveConfig.size);
+    const selectedSize = workbenchSizePixels(effectiveConfig.size, selectedRatio);
+    const selectedSizeLabel = selectedRatio === "auto" ? "自动" : `${selectedRatio} ${selectedSize.width}x${selectedSize.height}`;
+    const outputFormat = normalizeImageOutputFormat(effectiveConfig.outputFormat);
+    const transparentSupported = supportsTransparentImageBackground(effectiveConfig.model || model);
+    const transparentAvailable = transparentSupported && outputFormat === "png";
+    const transparentEnabled = transparentAvailable && normalizeImageBackground(effectiveConfig.model || model, effectiveConfig.background, outputFormat) === "transparent";
+    const activeQuality = WORKBENCH_QUALITY_OPTIONS.includes(effectiveConfig.quality as (typeof WORKBENCH_QUALITY_OPTIONS)[number]) ? effectiveConfig.quality : "auto";
+
+    const loadImageKeys = useCallback(async () => {
+        if (!session) {
+            setImageKeys([]);
+            return;
+        }
+        setImageKeysLoading(true);
+        try {
+            const keys = (await listCreateManagedKeys(session)).filter((item) => item.status === "active" && Boolean(item.key?.trim()) && managedKeySupportsImage(item.group));
+            setImageKeys(keys);
+            const storedId = getManagedKeySelection().imageKeyId;
+            setSelectedImageKeyId((current) => keys.find((item) => item.id === storedId)?.id || keys.find((item) => item.id === current)?.id || keys[0]?.id || 0);
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "加载 API 密钥失败");
+        } finally {
+            setImageKeysLoading(false);
+        }
+    }, [message, session]);
+
+    const selectImageKey = async (keyId: number) => {
+        if (!session || !keyId || keyId === selectedImageKeyId || switchingImageKey) return;
+        const key = imageKeys.find((item) => item.id === keyId);
+        if (!key) return;
+        const previousId = selectedImageKeyId;
+        setSelectedImageKeyId(keyId);
+        setSwitchingImageKey(true);
+        try {
+            await switchManagedKey(session, key, "image");
+            setSelectedImageKeyId(getManagedKeySelection().imageKeyId || keyId);
+            message.success(`已切换到 ${key.name}`);
+            await loadImageKeys();
+        } catch (error) {
+            setSelectedImageKeyId(previousId);
+            message.error(error instanceof Error ? error.message : "切换 API 密钥失败");
+        } finally {
+            setSwitchingImageKey(false);
+        }
+    };
+
+    useEffect(() => {
+        void loadImageKeys();
+    }, [loadImageKeys]);
 
     useEffect(() => {
         if (!running || !startedAt) return;
@@ -121,15 +176,21 @@ export default function ImagePage() {
         })();
     }, [cleanupAssets]);
 
-    const addReferences = async (files?: FileList | null) => {
+    const addReferences = async (files?: FileList | File[] | null) => {
         const imageFiles = Array.from(files || []).filter((file) => file.type.startsWith("image/"));
+        const remaining = Math.max(0, MAX_IMAGE_REFERENCES - references.length);
+        if (!remaining) {
+            message.warning(`参考图最多 ${MAX_IMAGE_REFERENCES} 张`);
+            return;
+        }
+        if (imageFiles.length > remaining) message.warning(`参考图最多 ${MAX_IMAGE_REFERENCES} 张，已添加前 ${remaining} 张`);
         const nextReferences = await Promise.all(
-            imageFiles.map(async (file) => {
+            imageFiles.slice(0, remaining).map(async (file) => {
                 const image = await uploadImage(file);
                 return { id: nanoid(), name: file.name, type: image.mimeType, dataUrl: image.url, storageKey: image.storageKey };
             }),
         );
-        setReferences((value) => [...value, ...nextReferences]);
+        setReferences((value) => [...value, ...nextReferences].slice(0, MAX_IMAGE_REFERENCES));
     };
 
     const addReferencesFromClipboard = async () => {
@@ -140,17 +201,61 @@ export default function ImagePage() {
                 message.error(t("imageWorkbench.clipboardEmpty"));
                 return;
             }
+            const remaining = Math.max(0, MAX_IMAGE_REFERENCES - references.length);
+            if (!remaining) {
+                message.warning(`参考图最多 ${MAX_IMAGE_REFERENCES} 张`);
+                return;
+            }
             const nextReferences = await Promise.all(
-                blobs.map(async (blob, index) => {
+                blobs.slice(0, remaining).map(async (blob, index) => {
                     const image = await uploadImage(blob);
                     return { id: nanoid(), name: `clipboard-${index + 1}.png`, type: image.mimeType, dataUrl: image.url, storageKey: image.storageKey };
                 }),
             );
-            setReferences((value) => [...value, ...nextReferences]);
+            setReferences((value) => [...value, ...nextReferences].slice(0, MAX_IMAGE_REFERENCES));
             message.success(t("imageWorkbench.clipboardAdded", { count: nextReferences.length }));
         } catch {
             message.error(t("imageWorkbench.clipboardEmpty"));
         }
+    };
+
+    const copyPrompt = async () => {
+        if (!prompt.trim()) return;
+        try {
+            await navigator.clipboard.writeText(prompt);
+            message.success("提示词已复制");
+        } catch {
+            message.error("复制提示词失败");
+        }
+    };
+
+    const insertReferenceLabel = (index: number) => {
+        const label = imageReferenceLabel(index);
+        setPrompt((value) => `${value}${value && !/\s$/.test(value) ? " " : ""}${label}`);
+    };
+
+    const handleComposerPaste = (event: ReactClipboardEvent<HTMLTextAreaElement>) => {
+        const files = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith("image/"));
+        if (!files.length) return;
+        event.preventDefault();
+        void addReferences(files);
+    };
+
+    const selectOutputFormat = (format: "png" | "jpeg" | "webp") => {
+        if (format === "webp") {
+            message.info("WebP 暂未接入当前生成接口，请先使用 PNG 或 JPEG");
+            return;
+        }
+        updateConfig("outputFormat", format);
+        if (format !== "png" && config.background === "transparent") updateConfig("background", "");
+    };
+
+    const commitCustomDimension = (axis: "width" | "height", raw: string) => {
+        const current = workbenchSizePixels(effectiveConfig.size, selectedRatio);
+        const parsed = Math.max(1, Math.floor(Number(raw) || current[axis]));
+        const value = Math.ceil(parsed / 16) * 16;
+        const next = axis === "width" ? { ...current, width: value } : { ...current, height: value };
+        updateConfig("size", `${next.width}x${next.height}`);
     };
 
     const generate = async () => {
@@ -440,111 +545,319 @@ export default function ImagePage() {
                 </aside>
 
                 <section className="grid gap-3 lg:min-h-0 lg:overflow-hidden xl:grid-cols-[420px_minmax(0,1fr)]">
-                    <div className="thin-scrollbar flex flex-col rounded-lg border border-stone-200 bg-card p-4 shadow-sm dark:border-stone-800 lg:min-h-0 lg:overflow-y-auto">
-                        <div>
-                            <div className="flex items-start justify-between gap-3">
-                                <div className="min-w-0">
-                                    <h1 className="text-2xl font-semibold text-stone-950 dark:text-stone-100">{t("imageWorkbench.title")}</h1>
-                                </div>
-                                <div className="flex shrink-0 gap-2 lg:hidden">
-                                    <Button icon={<History className="size-4" />} onClick={() => setLogsOpen(true)}>
-                                        {t("workbench.logs")}
-                                    </Button>
-                                    <Button icon={<SlidersHorizontal className="size-4" />} onClick={() => setSettingsOpen(true)}>
-                                        {t("workbench.settings")}
-                                    </Button>
-                                </div>
-                            </div>
+                    <div className="thin-scrollbar flex flex-col rounded-xl border border-stone-200 bg-card p-4 shadow-sm dark:border-stone-800 lg:min-h-0 lg:overflow-y-auto">
+                        <div className="flex items-center justify-between gap-3">
+                            <h1 className="text-[26px] font-semibold leading-8 tracking-tight text-stone-950 dark:text-stone-100">{t("imageWorkbench.title")}</h1>
+                            <button
+                                type="button"
+                                className="grid size-8 shrink-0 place-items-center rounded-lg text-stone-500 transition hover:bg-stone-100 hover:text-stone-900 dark:hover:bg-stone-800 dark:hover:text-stone-100 lg:hidden"
+                                title={t("workbench.logs")}
+                                aria-label={t("workbench.logs")}
+                                onClick={() => setLogsOpen(true)}
+                            >
+                                <History className="size-4" />
+                            </button>
                         </div>
 
-                        <div className="mt-6 space-y-5">
-                            <div>
-                                <div className="mb-2 flex items-center justify-between gap-3">
-                                    <span className="text-base font-semibold">{t("workbench.prompt")}</span>
-                                    <div className="flex gap-2">
-                                        <Button size="small" icon={<FolderPlus className="size-3.5" />} onClick={() => setAssetPickerOpen(true)}>
-                                            {t("workbench.viewAssets")}
-                                        </Button>
-                                    </div>
-                                </div>
-                                <Input.TextArea value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={7} placeholder={t("imageWorkbench.promptPlaceholder")} />
-                            </div>
-
-                            <div className="min-w-0">
-                                <div className="mb-2 flex items-center justify-between gap-3">
-                                    <span className="text-base font-semibold">{t("imageWorkbench.references")}</span>
-                                    <div className="flex gap-2">
-                                        <Button size="small" icon={<ClipboardPaste className="size-3.5" />} onClick={() => void addReferencesFromClipboard()}>
-                                            {t("workbench.clipboard")}
-                                        </Button>
-                                        <Button size="small" icon={<Upload className="size-3.5" />} onClick={() => fileInputRef.current?.click()}>
-                                            {t("workbench.upload")}
-                                        </Button>
-                                    </div>
-                                </div>
-                                <div
-                                    className={`hover-scrollbar hover-scrollbar-hint relative flex min-h-24 w-full min-w-0 max-w-full gap-2 overflow-x-scroll overflow-y-hidden rounded-lg border border-dashed p-2 pb-3 overscroll-x-contain transition-colors ${isReferenceDragActive ? "border-stone-900 bg-stone-100/80 dark:border-stone-100 dark:bg-stone-900/80" : "border-stone-300 dark:border-stone-700"}`}
-                                    onDragEnter={(event) => {
-                                        event.preventDefault();
-                                        dragDepthRef.current += 1;
-                                        if (event.dataTransfer.types.includes("Files")) setIsReferenceDragActive(true);
-                                    }}
-                                    onDragOver={(event) => {
-                                        event.preventDefault();
-                                        event.dataTransfer.dropEffect = "copy";
-                                    }}
-                                    onDragLeave={(event) => {
-                                        event.preventDefault();
-                                        dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
-                                        if (!dragDepthRef.current) setIsReferenceDragActive(false);
-                                    }}
-                                    onDrop={(event) => {
-                                        event.preventDefault();
-                                        dragDepthRef.current = 0;
-                                        setIsReferenceDragActive(false);
-                                        void addReferences(event.dataTransfer.files);
-                                    }}
-                                    onWheel={(event) => {
-                                        if (event.currentTarget.scrollWidth <= event.currentTarget.clientWidth) return;
-                                        event.preventDefault();
-                                        event.currentTarget.scrollLeft += event.deltaY;
-                                    }}
+                        <div className="mt-3 flex items-center gap-2">
+                            <label className="relative flex h-10 min-w-0 flex-1 items-center overflow-hidden rounded-xl border border-stone-200 bg-stone-50 text-sm dark:border-stone-700 dark:bg-stone-900/60">
+                                <span className="shrink-0 px-3 text-xs font-medium text-stone-500 dark:text-stone-400">API Key</span>
+                                <span className="h-4 w-px shrink-0 bg-stone-300 dark:bg-stone-700" />
+                                <select
+                                    aria-label="API Key"
+                                    className="h-full min-w-0 flex-1 cursor-pointer appearance-none bg-transparent px-3 pr-9 text-sm text-stone-800 outline-none disabled:cursor-not-allowed disabled:text-stone-500 dark:text-stone-100"
+                                    value={imageKeysLoading || !imageKeys.some((item) => item.id === selectedImageKeyId) ? 0 : selectedImageKeyId}
+                                    disabled={imageKeysLoading || switchingImageKey || !imageKeys.length}
+                                    onChange={(event) => void selectImageKey(Number(event.target.value))}
                                 >
-                                    {references.map((item, index) => (
-                                        <div key={item.id} className="group relative size-20 shrink-0 overflow-hidden rounded-md border border-stone-200 dark:border-stone-800">
-                                            <img src={previewUrlFor(item.storageKey) || item.dataUrl} alt={item.name} className="size-full object-cover" />
-                                            <span className="absolute left-1 top-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-medium text-white">{imageReferenceLabel(index)}</span>
-                                            <ReferenceOrderButtons index={index} total={references.length} onMove={(offset) => setReferences((value) => moveListItem(value, index, offset))} />
-                                            <button
-                                                type="button"
-                                                className="absolute right-1 top-1 hidden size-6 items-center justify-center rounded bg-black/60 text-white group-hover:flex"
-                                                onClick={() => setReferences((value) => value.filter((ref) => ref.id !== item.id))}
-                                                aria-label={t("imageWorkbench.removeReference")}
-                                            >
-                                                <Trash2 className="size-3.5" />
-                                            </button>
-                                        </div>
-                                    ))}
-                                    {!references.length ? <div className="flex min-w-full items-center justify-center text-sm text-stone-500">{isReferenceDragActive ? t("imageWorkbench.dropReferences") : t("imageWorkbench.noReferences")}</div> : null}
+                                    {imageKeysLoading ? <option value={0}>正在加载...</option> : null}
+                                    {!imageKeysLoading && !imageKeys.length ? <option value={0}>暂无可用密钥</option> : null}
+                                    {!imageKeysLoading
+                                        ? imageKeys.map((item) => (
+                                              <option key={item.id} value={item.id}>
+                                                  {item.name}
+                                              </option>
+                                          ))
+                                        : null}
+                                </select>
+                                <ChevronDown className="pointer-events-none absolute right-3 size-4 text-stone-500" />
+                            </label>
+                            <button
+                                type="button"
+                                className="grid size-10 shrink-0 place-items-center rounded-xl border border-stone-200 text-stone-500 transition hover:bg-stone-100 hover:text-stone-900 disabled:cursor-wait disabled:opacity-60 dark:border-stone-700 dark:hover:bg-stone-800 dark:hover:text-stone-100"
+                                disabled={imageKeysLoading || switchingImageKey || !session}
+                                title="刷新 API 密钥"
+                                aria-label="刷新 API 密钥"
+                                onClick={() => void loadImageKeys()}
+                            >
+                                <RefreshCw className={`size-4 ${imageKeysLoading || switchingImageKey ? "animate-spin" : ""}`} />
+                            </button>
+                        </div>
+
+                        <div className="mt-3 overflow-hidden rounded-2xl border border-stone-200 bg-stone-50 dark:border-stone-800 dark:bg-stone-900/70">
+                            <textarea
+                                className="block min-h-[236px] w-full resize-none bg-transparent px-4 py-4 text-[15px] leading-6 text-stone-900 outline-none placeholder:text-stone-500 dark:text-stone-100"
+                                value={prompt}
+                                onChange={(event) => setPrompt(event.target.value)}
+                                onPaste={handleComposerPaste}
+                                placeholder={t("imageWorkbench.promptPlaceholder")}
+                            />
+                            <div className="flex items-center justify-between gap-2 px-2.5 pb-2.5">
+                                <ModelPicker
+                                    config={effectiveConfig}
+                                    value={model}
+                                    onChange={(value) => updateConfig("imageModel", value)}
+                                    capability="image"
+                                    className="!h-9 !max-w-[220px] !rounded-xl !border-stone-200 !bg-stone-100 !px-3 !text-stone-700 dark:!border-stone-700 dark:!bg-stone-800/80 dark:!text-stone-100"
+                                    onMissingConfig={() => openConfigDialog(false)}
+                                />
+                                <div className="flex shrink-0 items-center gap-0.5">
+                                    <button
+                                        type="button"
+                                        className="grid size-8 place-items-center rounded-lg text-stone-500 transition hover:bg-stone-200 hover:text-stone-900 disabled:cursor-not-allowed disabled:opacity-35 dark:hover:bg-stone-800 dark:hover:text-stone-100"
+                                        disabled={!prompt.trim()}
+                                        title="复制提示词"
+                                        aria-label="复制提示词"
+                                        onClick={() => void copyPrompt()}
+                                    >
+                                        <Copy className="size-4" />
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="grid size-8 place-items-center rounded-lg text-stone-500 transition hover:bg-stone-200 hover:text-stone-900 disabled:cursor-not-allowed disabled:opacity-35 dark:hover:bg-stone-800 dark:hover:text-stone-100"
+                                        disabled={references.length >= MAX_IMAGE_REFERENCES}
+                                        title="从剪贴板添加参考图"
+                                        aria-label="从剪贴板添加参考图"
+                                        onClick={() => void addReferencesFromClipboard()}
+                                    >
+                                        <ClipboardPaste className="size-4" />
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="grid size-8 place-items-center rounded-lg text-stone-500 transition hover:bg-stone-200 hover:text-stone-900 disabled:cursor-not-allowed disabled:opacity-35 dark:hover:bg-stone-800 dark:hover:text-stone-100"
+                                        disabled={!prompt}
+                                        title="清空提示词"
+                                        aria-label="清空提示词"
+                                        onClick={() => setPrompt("")}
+                                    >
+                                        <Trash2 className="size-4" />
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="grid size-8 place-items-center rounded-lg text-stone-500 transition hover:bg-stone-200 hover:text-stone-900 dark:hover:bg-stone-800 dark:hover:text-stone-100"
+                                        title="查看我的资产"
+                                        aria-label="查看我的资产"
+                                        onClick={() => setAssetPickerOpen(true)}
+                                    >
+                                        <FolderPlus className="size-4" />
+                                    </button>
                                 </div>
-                            </div>
-
-                            <div className="flex items-center justify-between rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-sm dark:border-stone-800 dark:bg-stone-900 sm:hidden">
-                                <span className="truncate text-stone-500 dark:text-stone-400">
-                                    {modelOptionLabel(effectiveConfig, model)} · {effectiveConfig.size} · {effectiveConfig.quality}
-                                </span>
-                                <Button size="small" type="text" icon={<SlidersHorizontal className="size-4" />} onClick={() => setSettingsOpen(true)}>
-                                    {t("workbench.adjust")}
-                                </Button>
-                            </div>
-
-                            <div className="hidden gap-4 sm:grid sm:grid-cols-2">
-                                <GenerationSettings config={effectiveConfig} model={model} updateConfig={updateConfig} openConfigDialog={openConfigDialog} />
                             </div>
                         </div>
 
-                        <div className="mt-auto pt-6">
-                            <Button type="primary" size="large" block icon={<Sparkles className="size-4" />} loading={running} disabled={!canGenerate || running} onClick={() => void generate()}>
+                        <div className="mt-4 min-w-0">
+                            <div className="flex items-center justify-between gap-3">
+                                <span className="text-sm font-semibold text-stone-900 dark:text-stone-100">{t("imageWorkbench.references")}</span>
+                                <button
+                                    type="button"
+                                    className="grid size-7 place-items-center rounded-lg text-stone-500 transition hover:bg-stone-100 hover:text-stone-900 dark:hover:bg-stone-800 dark:hover:text-stone-100"
+                                    title={t("workbench.upload")}
+                                    aria-label={t("workbench.upload")}
+                                    onClick={() => fileInputRef.current?.click()}
+                                >
+                                    <Upload className="size-4" />
+                                </button>
+                            </div>
+                            <div
+                                className={`hover-scrollbar hover-scrollbar-hint mt-2 flex min-h-28 w-full min-w-0 max-w-full gap-2 overflow-x-scroll overflow-y-hidden rounded-xl p-0.5 pb-2 overscroll-x-contain transition-colors ${isReferenceDragActive ? "bg-stone-100 ring-2 ring-stone-400 dark:bg-stone-900/80 dark:ring-stone-500" : ""}`}
+                                onDragEnter={(event) => {
+                                    event.preventDefault();
+                                    dragDepthRef.current += 1;
+                                    if (event.dataTransfer.types.includes("Files")) setIsReferenceDragActive(true);
+                                }}
+                                onDragOver={(event) => {
+                                    event.preventDefault();
+                                    event.dataTransfer.dropEffect = "copy";
+                                }}
+                                onDragLeave={(event) => {
+                                    event.preventDefault();
+                                    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+                                    if (!dragDepthRef.current) setIsReferenceDragActive(false);
+                                }}
+                                onDrop={(event) => {
+                                    event.preventDefault();
+                                    dragDepthRef.current = 0;
+                                    setIsReferenceDragActive(false);
+                                    void addReferences(event.dataTransfer.files);
+                                }}
+                                onWheel={(event) => {
+                                    if (event.currentTarget.scrollWidth <= event.currentTarget.clientWidth) return;
+                                    event.preventDefault();
+                                    event.currentTarget.scrollLeft += event.deltaY;
+                                }}
+                            >
+                                {references.map((item, index) => (
+                                    <div key={item.id} className="group relative size-28 shrink-0 overflow-hidden rounded-xl border border-stone-200 dark:border-stone-700">
+                                        <img src={previewUrlFor(item.storageKey) || item.dataUrl} alt={item.name} className="size-full object-cover" />
+                                        <button type="button" className="absolute left-1.5 top-1.5 rounded-md bg-black/65 px-1.5 py-0.5 text-[10px] font-medium text-white backdrop-blur" title="插入引用" onClick={() => insertReferenceLabel(index)}>
+                                            {imageReferenceLabel(index)}
+                                        </button>
+                                        <ReferenceOrderButtons index={index} total={references.length} onMove={(offset) => setReferences((value) => moveListItem(value, index, offset))} />
+                                        <button
+                                            type="button"
+                                            className="absolute right-1.5 top-1.5 hidden size-6 items-center justify-center rounded-md bg-black/65 text-white backdrop-blur group-hover:flex"
+                                            onClick={() => setReferences((value) => value.filter((ref) => ref.id !== item.id))}
+                                            aria-label={t("imageWorkbench.removeReference")}
+                                        >
+                                            <Trash2 className="size-3.5" />
+                                        </button>
+                                    </div>
+                                ))}
+                                <button
+                                    type="button"
+                                    className="grid size-28 shrink-0 place-items-center rounded-xl border border-dashed border-stone-500 text-stone-500 transition hover:border-stone-700 hover:bg-stone-100 hover:text-stone-900 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:border-stone-400 dark:hover:bg-stone-900 dark:hover:text-stone-100"
+                                    disabled={references.length >= MAX_IMAGE_REFERENCES}
+                                    title={isReferenceDragActive ? t("imageWorkbench.dropReferences") : t("imageWorkbench.noReferences")}
+                                    onClick={() => fileInputRef.current?.click()}
+                                >
+                                    <Plus className="size-7 stroke-[1.4]" />
+                                </button>
+                            </div>
+                            <p className="mt-1 text-xs leading-5 text-stone-500">可拖拽或粘贴参考图，当前模型最多 {MAX_IMAGE_REFERENCES} 张。点击图片编号可把「图片1」等引用插入提示词。</p>
+                        </div>
+
+                        <div className="mt-4 flex items-center justify-between gap-3">
+                            <div className="min-w-0">
+                                <span className="text-sm font-semibold text-stone-900 dark:text-stone-100">{t("settingsPanels.image.transparent")}</span>
+                                {!transparentAvailable ? <span className="ml-2 text-[11px] text-stone-500">{outputFormat !== "png" ? "仅 PNG 支持" : "当前模型不支持"}</span> : null}
+                            </div>
+                            <button
+                                type="button"
+                                role="switch"
+                                aria-checked={transparentEnabled}
+                                aria-label={t("settingsPanels.image.transparent")}
+                                disabled={!transparentAvailable}
+                                className={`relative h-6 w-10 shrink-0 rounded-full transition disabled:cursor-not-allowed disabled:opacity-45 ${transparentEnabled ? "bg-stone-200" : "bg-stone-600"}`}
+                                onClick={() => updateConfig("background", transparentEnabled ? "" : "transparent")}
+                            >
+                                <span className={`absolute top-0.5 size-5 rounded-full bg-white shadow-sm transition-[left] ${transparentEnabled ? "left-[18px]" : "left-0.5"}`} />
+                            </button>
+                        </div>
+
+                        <div className="mt-4 grid grid-cols-[1.08fr_0.92fr] gap-4">
+                            <div className="min-w-0">
+                                <div className="mb-2 text-sm font-semibold text-stone-900 dark:text-stone-100">质量</div>
+                                <div className="grid grid-cols-4 gap-1">
+                                    {WORKBENCH_QUALITY_OPTIONS.map((value) => (
+                                        <CompactChoice key={value} selected={activeQuality === value} onClick={() => updateConfig("quality", value)}>
+                                            {t(`settingsPanels.common.${value}`)}
+                                        </CompactChoice>
+                                    ))}
+                                </div>
+                            </div>
+                            <div className="min-w-0">
+                                <div className="mb-2 text-sm font-semibold text-stone-900 dark:text-stone-100">格式</div>
+                                <div className="grid grid-cols-3 gap-1">
+                                    <CompactChoice selected={outputFormat === "png"} onClick={() => selectOutputFormat("png")}>
+                                        PNG
+                                    </CompactChoice>
+                                    <CompactChoice selected={outputFormat === "jpeg"} onClick={() => selectOutputFormat("jpeg")}>
+                                        JPEG
+                                    </CompactChoice>
+                                    <CompactChoice selected={false} onClick={() => selectOutputFormat("webp")}>
+                                        WEBP
+                                    </CompactChoice>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="mt-4">
+                            <div className="flex items-center justify-between gap-3">
+                                <span className="text-sm font-semibold text-stone-900 dark:text-stone-100">尺寸</span>
+                                <button type="button" className="text-xs text-stone-500 transition hover:text-stone-900 dark:hover:text-stone-100" onClick={() => setCustomSizeOpen((value) => !value)}>
+                                    自定义尺寸
+                                </button>
+                            </div>
+                            <div className="relative mt-2">
+                                <select
+                                    aria-label="尺寸"
+                                    className="h-10 w-full cursor-pointer appearance-none rounded-xl border border-stone-200 bg-stone-50 px-3 pr-9 text-sm text-stone-800 outline-none dark:border-stone-700 dark:bg-stone-900/60 dark:text-stone-100"
+                                    value={selectedRatio}
+                                    onChange={(event) => updateConfig("size", event.target.value === "auto" ? "auto" : computeMediaSize("1k", event.target.value))}
+                                >
+                                    {WORKBENCH_SIZE_OPTIONS.map((option) => (
+                                        <option key={option.value} value={option.value}>
+                                            {selectedRatio === option.value ? selectedSizeLabel : `${option.value} ${option.size}`}
+                                        </option>
+                                    ))}
+                                    <option value="auto">自动</option>
+                                </select>
+                                <ChevronDown className="pointer-events-none absolute right-3 top-3 size-4 text-stone-500" />
+                            </div>
+                            {customSizeOpen ? (
+                                <div className="mt-2 grid grid-cols-[1fr_auto_1fr] items-center gap-2">
+                                    <label className="flex h-10 items-center overflow-hidden rounded-xl border border-stone-200 bg-stone-50 dark:border-stone-700 dark:bg-stone-900/60">
+                                        <span className="pl-3 text-xs text-stone-500">W</span>
+                                        <input
+                                            key={`width-${selectedSize.width}`}
+                                            type="number"
+                                            min={16}
+                                            step={16}
+                                            defaultValue={selectedSize.width}
+                                            className="min-w-0 flex-1 bg-transparent px-2 text-sm outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none"
+                                            onBlur={(event) => commitCustomDimension("width", event.currentTarget.value)}
+                                            onKeyDown={(event) => {
+                                                if (event.key === "Enter") event.currentTarget.blur();
+                                            }}
+                                        />
+                                    </label>
+                                    <span className="text-stone-500">×</span>
+                                    <label className="flex h-10 items-center overflow-hidden rounded-xl border border-stone-200 bg-stone-50 dark:border-stone-700 dark:bg-stone-900/60">
+                                        <span className="pl-3 text-xs text-stone-500">H</span>
+                                        <input
+                                            key={`height-${selectedSize.height}`}
+                                            type="number"
+                                            min={16}
+                                            step={16}
+                                            defaultValue={selectedSize.height}
+                                            className="min-w-0 flex-1 bg-transparent px-2 text-sm outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none"
+                                            onBlur={(event) => commitCustomDimension("height", event.currentTarget.value)}
+                                            onKeyDown={(event) => {
+                                                if (event.key === "Enter") event.currentTarget.blur();
+                                            }}
+                                        />
+                                    </label>
+                                </div>
+                            ) : null}
+                        </div>
+
+                        <div className="mt-4">
+                            <div className="mb-2 text-sm font-semibold text-stone-900 dark:text-stone-100">生成张数</div>
+                            <div className="grid grid-cols-4 rounded-xl border border-stone-200 p-1 dark:border-stone-700">
+                                {[1, 2, 3, 4].map((value) => (
+                                    <button
+                                        key={value}
+                                        type="button"
+                                        className={`h-9 rounded-lg text-sm transition ${generationCount === value ? "bg-stone-100 font-semibold !text-stone-950 shadow-sm dark:bg-stone-100 dark:!text-stone-950" : "text-stone-500 hover:bg-stone-100 dark:hover:bg-stone-800"}`}
+                                        onClick={() => updateConfig("count", String(value))}
+                                    >
+                                        {value}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+
+                        <div className="mt-4">
+                            <Button
+                                type="primary"
+                                size="large"
+                                block
+                                icon={<Sparkles className="size-4" />}
+                                loading={running}
+                                disabled={!canGenerate || running}
+                                onClick={() => void generate()}
+                                className="!h-11 !rounded-xl !border-0 !bg-stone-300 !font-semibold !text-stone-950 !shadow-none hover:!bg-stone-200 disabled:!bg-stone-600 disabled:!text-stone-300"
+                            >
                                 {t("workbench.generate")}
                             </Button>
                         </div>
@@ -600,12 +913,6 @@ export default function ImagePage() {
                     onPreviewLog={(log) => void previewGenerationLog(log)}
                 />
             </Drawer>
-            <Drawer title={t("workbench.settings")} placement="bottom" size="82vh" open={settingsOpen} onClose={() => setSettingsOpen(false)}>
-                <div className="grid grid-cols-2 gap-3 pb-4">
-                    <GenerationSettings config={effectiveConfig} model={model} updateConfig={updateConfig} openConfigDialog={openConfigDialog} />
-                </div>
-            </Drawer>
-            <PromptSelectDialog open={promptDialogOpen} onOpenChange={setPromptDialogOpen} onSelect={setPrompt} />
             <AssetPickerModal open={assetPickerOpen} defaultTab="my-assets" onInsert={(payload) => void insertPickedAsset(payload)} onClose={() => setAssetPickerOpen(false)} />
             <Modal title={t("workbench.deleteLogs")} open={deleteConfirmOpen} onCancel={() => setDeleteConfirmOpen(false)} onOk={deleteSelectedLogs} okText={t("common.delete")} okButtonProps={{ danger: true }} cancelText={t("common.cancel")}>
                 {t("workbench.deleteLogsConfirm", { count: selectedLogIds.length })}
@@ -614,21 +921,23 @@ export default function ImagePage() {
     );
 }
 
-function GenerationSettings({ config, model, updateConfig, openConfigDialog }: { config: AiConfig; model: string; updateConfig: UpdateAiConfig; openConfigDialog: (shouldPromptContinue?: boolean) => void }) {
-    const theme = canvasThemes[useThemeStore((state) => state.theme)];
-    const { t } = useTranslation();
-
+function CompactChoice({ selected, onClick, children }: { selected: boolean; onClick: () => void; children: string }) {
     return (
-        <>
-            <label className="col-span-2 block min-w-0 sm:col-span-1">
-                <span className="mb-1.5 block text-sm font-semibold sm:mb-2 sm:text-base">{t("workbench.model")}</span>
-                <ModelPicker config={config} value={model} onChange={(value) => updateConfig("imageModel", value)} capability="image" fullWidth onMissingConfig={() => openConfigDialog(false)} />
-            </label>
-            <div className="col-span-2">
-                <ImageSettingsPanel config={config} onConfigChange={(key, value) => updateConfig(key, value)} theme={theme} showTitle={false} className="space-y-4" maxCount={10} />
-            </div>
-        </>
+        <button
+            type="button"
+            className={`h-9 min-w-0 truncate rounded-lg border px-1 text-xs transition ${selected ? "border-stone-900 bg-stone-100 font-semibold !text-stone-950 dark:border-stone-100 dark:bg-stone-100 dark:!text-stone-950" : "border-stone-300 text-stone-600 hover:border-stone-500 hover:text-stone-900 dark:border-stone-700 dark:text-stone-400 dark:hover:border-stone-500 dark:hover:text-stone-100"}`}
+            onClick={onClick}
+        >
+            {children}
+        </button>
     );
+}
+
+function workbenchSizePixels(size: string, ratio: string) {
+    const pixels = parsePixelSize(size);
+    if (pixels) return pixels;
+    const option = WORKBENCH_SIZE_OPTIONS.find((item) => item.value === ratio);
+    return parsePixelSize(option?.size || "1024x1024") || { width: 1024, height: 1024 };
 }
 
 function ResultImageCard({
@@ -849,9 +1158,7 @@ async function pruneStoredLogs() {
         if (value && typeof value === "object") logs.push(value);
     });
     if (logs.length <= MAX_WORKBENCH_LOGS) return false;
-    const removable = logs
-        .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))
-        .slice(0, logs.length - MAX_WORKBENCH_LOGS);
+    const removable = logs.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0)).slice(0, logs.length - MAX_WORKBENCH_LOGS);
     if (!removable.length) return false;
     await Promise.all(removable.map((log) => logStore.removeItem(log.id)));
     return true;
@@ -974,4 +1281,3 @@ function buildLog({
         images,
     };
 }
-
