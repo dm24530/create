@@ -252,6 +252,24 @@ function registerIpcHandlers() {
     assertTrustedSender(event);
     return { ...persistSettings(candidate) };
   });
+  ipcMain.handle("desktop:save-generated-file", async (event, payload) => {
+    assertTrustedSender(event);
+    if (!payload || typeof payload !== "object") throw new Error("Generated file payload is required");
+    const kind = payload.kind === "image" || payload.kind === "video" ? payload.kind : "other";
+    const mimeType = String(payload.mimeType || "").toLowerCase();
+    const data = payload.data;
+    const buffer = data instanceof ArrayBuffer ? Buffer.from(data) : ArrayBuffer.isView(data) ? Buffer.from(data.buffer, data.byteOffset, data.byteLength) : null;
+    if (!buffer?.length) throw new Error("Generated file data is empty");
+    if (buffer.length > 512 * 1024 * 1024) throw new Error("Generated file is too large to save automatically");
+    const directory = saveDirectoryForKind(kind);
+    ensureDirectory(directory);
+    const requestedName = String(payload.filename || "").trim() || fallbackFilename(kind, mimeType);
+    const savePath = buildSavePath({ directory, filename: requestedName, exists: (candidate) => fs.existsSync(candidate) });
+    await fsp.writeFile(savePath, buffer);
+    mainWindow?.webContents.send("desktop:download-complete", { kind, savePath });
+    if (settings.openFolderAfterSave) shell.showItemInFolder(savePath);
+    return { savePath };
+  });
   ipcMain.handle("desktop:choose-save-directory", async (event, kind) => {
     assertTrustedSender(event);
     const normalized = kind === "image" || kind === "video" ? kind : "other";

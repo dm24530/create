@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld("createDesktop", {
   openExternal: (url) => ipcRenderer.invoke("desktop:open-external", url),
   getSaveSettings: () => ipcRenderer.invoke("desktop:get-save-settings"),
   saveSaveSettings: (settings) => ipcRenderer.invoke("desktop:save-save-settings", settings),
+  saveGeneratedFile: (payload) => ipcRenderer.invoke("desktop:save-generated-file", payload),
   chooseSaveDirectory: (kind) => ipcRenderer.invoke("desktop:choose-save-directory", kind),
   openSaveFolder: (kind) => ipcRenderer.invoke("desktop:open-save-folder", kind),
   onOpenSaveSettings: (callback) => {

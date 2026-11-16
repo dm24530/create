@@ -9,8 +9,9 @@ import { useTranslation } from "react-i18next";
 import { AssetPickerModal, type InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
 import { normalizeVideoResolutionValue, normalizeVideoSizeValue } from "@/components/video-settings-panel";
 import { clampVideoSeconds, computeVideoSize, inferVideoRatio, parsePixelSize, parseVideoResolution, readVideoDimensions, VIDEO_SECONDS_MAX, VIDEO_SECONDS_MIN, videoRatioOptions } from "@/lib/media-size";
+import { autoSaveGeneratedFile } from "@/lib/desktop-save";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
-import { resolveMediaUrl, uploadMediaFile } from "@/services/file-storage";
+import { getMediaBlob, resolveMediaUrl, uploadMediaFile } from "@/services/file-storage";
 import { resolveImageUrl, ensureImagePreview, getImagePreviewRevision, previewUrlFor, subscribeImagePreviews, uploadImage } from "@/services/image-storage";
 import { createVideoGenerationTask, pollVideoGenerationTask, storeGeneratedVideo, type VideoGenerationTask } from "@/services/api/video";
 import { getManagedKeySelection, listCreateManagedKeys, managedKeySupportsVideo, switchManagedKey, type CreateManagedKey } from "@/services/create-managed-channel";
@@ -552,6 +553,12 @@ export default function VideoPage() {
                 const state = await pollVideoGenerationTask(configOverride || taskConfig, log.task);
                 if (state.status === "completed") {
                     const stored = await storeGeneratedVideo(state.result);
+                    try {
+                        const original = await getMediaBlob(stored.storageKey);
+                        if (original) await autoSaveGeneratedFile(original, "video", stored.mimeType || "video/mp4");
+                    } catch {
+                        // Keep generation successful even when desktop auto-save fails.
+                    }
                     const nextVideo: GeneratedVideo = {
                         id: nanoid(),
                         url: stored.url,

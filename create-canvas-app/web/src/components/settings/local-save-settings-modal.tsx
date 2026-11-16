@@ -15,7 +15,11 @@ export function LocalSaveSettingsModal({ open, onClose }: { open: boolean; onClo
         if (!open || !bridge) return;
         setLoading(true);
         setError("");
-        void bridge.getSaveSettings().then(setSettings).catch((cause) => setError(cause instanceof Error ? cause.message : "读取保存设置失败")).finally(() => setLoading(false));
+        void bridge
+            .getSaveSettings()
+            .then(setSettings)
+            .catch((cause) => setError(cause instanceof Error ? cause.message : "读取保存设置失败"))
+            .finally(() => setLoading(false));
     }, [open, bridge]);
 
     const choose = async (kind: DesktopSaveKind) => {
@@ -42,7 +46,7 @@ export function LocalSaveSettingsModal({ open, onClose }: { open: boolean; onClo
     return (
         <Modal open={open} onCancel={onClose} footer={null} width={700} title="本地保存设置">
             <div className="space-y-4">
-                <p className="text-sm text-stone-500">生成结果点击下载或导出时，会按类型保存到下列目录。同名文件会自动追加时间后缀，不会覆盖原文件。</p>
+                <p className="text-sm text-stone-500">图片和视频生成成功后会自动保存到下列目录；手动下载也会按类型保存。同名文件会自动追加时间后缀，不会覆盖原文件。</p>
                 {error ? <Alert type="error" showIcon message={error} /> : null}
                 {settings ? (
                     <>
@@ -53,9 +57,15 @@ export function LocalSaveSettingsModal({ open, onClose }: { open: boolean; onClo
                             <span>保存完成后在文件管理器中显示</span>
                             <Switch checked={settings.openFolderAfterSave} onChange={(checked) => setSettings({ ...settings, openFolderAfterSave: checked })} />
                         </label>
-                        <div className="flex justify-end"><Button type="primary" icon={<Save className="size-4" />} loading={saving} onClick={() => void save()}>保存设置</Button></div>
+                        <div className="flex justify-end">
+                            <Button type="primary" icon={<Save className="size-4" />} loading={saving} onClick={() => void save()}>
+                                保存设置
+                            </Button>
+                        </div>
                     </>
-                ) : loading ? <div className="py-10 text-center text-sm text-stone-500">正在读取本地设置…</div> : null}
+                ) : loading ? (
+                    <div className="py-10 text-center text-sm text-stone-500">正在读取本地设置…</div>
+                ) : null}
             </div>
         </Modal>
     );
@@ -67,7 +77,9 @@ function DirectoryRow({ label, value, disabled, kind, onChoose, bridge }: { labe
             <div className="mb-1 text-sm text-stone-600 dark:text-stone-300">{label}</div>
             <div className="flex gap-2">
                 <Input readOnly value={value} />
-                <Button disabled={disabled} onClick={() => void onChoose(kind)}>选择目录</Button>
+                <Button disabled={disabled} onClick={() => void onChoose(kind)}>
+                    选择目录
+                </Button>
                 <Button disabled={disabled || !bridge} icon={<FolderOpen className="size-4" />} title="打开目录" onClick={() => void bridge?.openSaveFolder(kind)} />
             </div>
         </div>

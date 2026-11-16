@@ -11,9 +11,10 @@ import { normalizeImageBackground, normalizeImageOutputFormat, supportsTranspare
 import { computeMediaSize, inferMediaRatio, inferMediaScale, mediaRatioOptions, parsePixelSize } from "@/lib/media-size";
 import { encodeChannelModel, modelOptionName, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { nanoid } from "nanoid";
+import { autoSaveGeneratedFile } from "@/lib/desktop-save";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
 import { requestEdit, requestGeneration, submitPersistentImageTask, waitForPersistentImageTask } from "@/services/api/image";
-import { ensureImagePreview, getImagePreviewRevision, previewUrlFor, resolveImageUrl, subscribeImagePreviews, uploadImage } from "@/services/image-storage";
+import { ensureImagePreview, getImageBlob, getImagePreviewRevision, previewUrlFor, resolveImageUrl, subscribeImagePreviews, uploadImage } from "@/services/image-storage";
 import { getManagedKeySelection, listCreateManagedKeys, managedKeySupportsImage, switchManagedKey, type CreateManagedKey } from "@/services/create-managed-channel";
 import { WorkbenchModelSelect } from "@/components/workbench/model-select";
 import { PanelResizeHandle, useStoredPanelWidth } from "@/components/workbench/panel-resize-handle";
@@ -506,6 +507,12 @@ export default function ImagePage() {
             setResults((value) => updateResultAt(value, index, { status: "success", image: immediateImage }));
             try {
                 const stored = await uploadImage(image.dataUrl);
+                try {
+                    const original = stored.storageKey ? await getImageBlob(stored.storageKey) : null;
+                    if (original) await autoSaveGeneratedFile(original, "image", stored.mimeType || "image/png");
+                } catch {
+                    // Keep generation successful even when desktop auto-save fails.
+                }
                 const nextImage: GeneratedImage = {
                     id: image.id,
                     dataUrl: stored.url,
