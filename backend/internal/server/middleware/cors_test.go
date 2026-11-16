@@ -311,3 +311,25 @@ func TestNormalizeOrigins(t *testing.T) {
 		})
 	}
 }
+func TestCORS_AllowsFirstPartyDesktopOrigin(t *testing.T) {
+	cfg := config.CORSConfig{
+		AllowedOrigins:   []string{},
+		AllowCredentials: true,
+	}
+	middleware := CORS(cfg)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodOptions, "/api/v1/settings/public", nil)
+	c.Request.Header.Set("Origin", "app://create")
+	c.Request.Header.Set("Access-Control-Request-Method", "GET")
+	c.Request.Header.Set("Access-Control-Request-Headers", "authorization")
+
+	middleware(c)
+
+	assert.Equal(t, http.StatusNoContent, w.Code)
+	assert.Equal(t, "app://create", w.Header().Get("Access-Control-Allow-Origin"))
+	assert.Equal(t, "true", w.Header().Get("Access-Control-Allow-Credentials"))
+	assert.Contains(t, w.Header().Values("Vary"), "Origin")
+	assert.Contains(t, w.Header().Get("Access-Control-Allow-Headers"), "Authorization")
+}

@@ -1,0 +1,105 @@
+name: Create Canvas App
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "create-canvas-v*"
+
+permissions:
+  contents: read
+
+jobs:
+  web-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: create-canvas-app/web/package-lock.json
+
+      - name: Install Web dependencies
+        working-directory: create-canvas-app/web
+        run: npm install --legacy-peer-deps --no-audit --no-fund
+
+      - name: Typecheck and test
+        working-directory: create-canvas-app/web
+        run: |
+          npm run typecheck
+          npm test
+
+      - name: Build Web and Desktop assets
+        working-directory: create-canvas-app/web
+        run: |
+          npm run build
+          npm run build:desktop
+
+      - name: Upload Desktop Web assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: create-canvas-desktop-web
+          path: create-canvas-app/web/dist-desktop
+          if-no-files-found: error
+
+      - name: Upload Web build
+        uses: actions/upload-artifact@v4
+        with:
+          name: create-canvas-web
+          path: create-canvas-app/web/dist
+          if-no-files-found: error
+
+  package-desktop:
+    needs: web-build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            script: dist:win
+            artifact: create-canvas-windows
+          - os: macos-latest
+            script: dist:mac
+            artifact: create-canvas-macos
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: create-canvas-app/desktop/package-lock.json
+
+      - name: Restore Desktop Web assets
+        uses: actions/download-artifact@v4
+        with:
+          name: create-canvas-desktop-web
+          path: create-canvas-app/web/dist-desktop
+
+      - name: Install Desktop dependencies
+        working-directory: create-canvas-app/desktop
+        run: npm install --legacy-peer-deps --no-audit --no-fund
+
+      - name: Verify Desktop shell
+        working-directory: create-canvas-app/desktop
+        run: npm run check
+
+      - name: Package Desktop App
+        working-directory: create-canvas-app/desktop
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: npm run ${{ matrix.script }}
+
+      - name: Upload Desktop package
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: create-canvas-app/desktop/release/**
+          if-no-files-found: error

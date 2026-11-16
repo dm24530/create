@@ -10,6 +10,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+const firstPartyDesktopOrigin = "app://create"
+
 var corsWarningOnce sync.Once
 
 // CORS 跨域中间件
@@ -67,8 +69,8 @@ func CORS(cfg config.CORSConfig) gin.HandlerFunc {
 
 	return func(c *gin.Context) {
 		origin := strings.TrimSpace(c.GetHeader("Origin"))
-		originAllowed := allowAll
-		if origin != "" && !allowAll {
+		originAllowed := allowAll || origin == firstPartyDesktopOrigin
+		if origin != "" && !allowAll && !originAllowed {
 			_, originAllowed = allowedSet[origin]
 		}
 
