@@ -81,3 +81,4 @@ Create login screen renders through the `app://create` protocol.
 - The first milestone intentionally keeps upstream UI and IndexedDB persistence.
 - Real account login and generation require the configured Create server and
   database-backed test credentials.
+

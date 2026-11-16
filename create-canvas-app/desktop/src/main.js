@@ -41,6 +41,10 @@ const CONTENT_TYPES = {
 let mainWindow = null;
 const smokeMode = process.env.CREATE_CANVAS_SMOKE === "1";
 
+if (process.env.CREATE_CANVAS_USER_DATA_PATH) {
+  app.setPath("userData", path.resolve(process.env.CREATE_CANVAS_USER_DATA_PATH));
+}
+
 function webRoot() {
   const override = process.env.CREATE_CANVAS_WEB_DIST?.trim();
   if (override) return path.resolve(override);
@@ -142,6 +146,7 @@ if (!hasLock) {
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
+
 
 
 

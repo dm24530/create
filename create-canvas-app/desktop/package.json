@@ -11,7 +11,9 @@
     "dist:dir": "electron-builder --dir",
     "dist:win": "electron-builder --win nsis",
     "dist:mac": "electron-builder --mac dmg",
-    "test:smoke": "node test/smoke.js"
+    "test:smoke": "node test/smoke.js",
+    "test:packaged": "node test/packaged-smoke.js",
+    "test:mock-login": "node test/mock-login-smoke.js"
   },
   "devDependencies": {
     "electron": "^45.3.2",

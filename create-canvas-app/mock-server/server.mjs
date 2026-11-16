@@ -1,0 +1,196 @@
+import http from "node:http";
+import { randomUUID } from "node:crypto";
+
+const port = Number(process.env.CREATE_MOCK_PORT || 9890);
+const user = {
+  id: 1001,
+  username: "mock-user",
+  email: "mock@example.com",
+  display_name: "Mock User",
+  role: "user",
+  balance: 100,
+  status: "active",
+};
+const group = {
+  id: 1,
+  name: "Mock Composite",
+  description: "Local mock creation group",
+  platform: "composite",
+  allow_image_generation: true,
+  video_capable: true,
+  video_price_480p: 0.1,
+  video_price_720p: 0.2,
+  video_price_1080p: 0.4,
+};
+const apiKey = {
+  id: 1,
+  user_id: user.id,
+  key: "sk-create-mock",
+  name: "Mock Creation",
+  group_id: group.id,
+  status: "active",
+  group,
+};
+const projects = new Map();
+const assets = new Map();
+const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nX0AAAAASUVORK5CYII=";
+
+function envelope(data, status = 200, message = "ok") {
+  return { status, body: { code: 0, message, data } };
+}
+
+async function body(request) {
+  let raw = "";
+  for await (const chunk of request) raw += chunk;
+  if (!raw) return {};
+  try { return JSON.parse(raw); } catch { return {}; }
+}
+
+function send(response, status, payload) {
+  response.writeHead(status, {
+    "Content-Type": "application/json; charset=utf-8",
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Headers": "Authorization, Content-Type, Accept, Accept-Language",
+    "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+    "Access-Control-Max-Age": "86400",
+  });
+  response.end(JSON.stringify(payload));
+}
+
+const server = http.createServer(async (request, response) => {
+  const url = new URL(request.url, `http://${request.headers.host}`);
+  const path = url.pathname;
+  const method = request.method || "GET";
+
+  if (method === "OPTIONS") {
+    response.writeHead(204, {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Headers": "Authorization, Content-Type, Accept, Accept-Language",
+      "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+      "Access-Control-Max-Age": "86400",
+    });
+    response.end();
+    return;
+  }
+
+  if (path === "/health") return send(response, 200, { ok: true });
+
+  if (path === "/api/v1/auth/login" && method === "POST") {
+    return send(response, 200, { code: 0, data: {
+      access_token: "mock-access-token",
+      refresh_token: "mock-refresh-token",
+      expires_in: 3600,
+      token_type: "Bearer",
+      user,
+    }});
+  }
+  if (path === "/api/v1/auth/refresh" && method === "POST") {
+    return send(response, 200, { code: 0, data: {
+      access_token: "mock-access-token",
+      refresh_token: "mock-refresh-token",
+      expires_in: 3600,
+      token_type: "Bearer",
+    }});
+  }
+  if (path === "/api/v1/auth/me") return send(response, 200, { code: 0, data: user });
+  if (path === "/api/v1/auth/logout") return send(response, 200, { code: 0, data: { message: "ok" } });
+
+  if (path === "/api/v1/settings/public") {
+    return send(response, 200, { code: 0, data: {
+      site_name: "Create Mock",
+      api_base_url: "/v1",
+      registration_enabled: false,
+      payment_enabled: false,
+    }});
+  }
+  if (path === "/api/v1/keys") {
+    return send(response, 200, { code: 0, data: { items: [apiKey], total: 1, page: 1, page_size: 100, pages: 1 } });
+  }
+  if (path === "/api/v1/groups/available") return send(response, 200, { code: 0, data: [group] });
+  if (path === "/api/v1/prompts") {
+    return send(response, 200, { code: 0, data: { items: [], total: 0, page: 1, page_size: 12, pages: 0 } });
+  }
+  if (path === "/api/v1/usage/image-display") {
+    response.writeHead(204, { "Access-Control-Allow-Origin": "*" });
+    response.end();
+    return;
+  }
+
+  if (path === "/v1/models") {
+    return send(response, 200, { object: "list", data: [
+      { id: "gpt-image-2", object: "model" },
+      { id: "grok-imagine-video", object: "model" },
+    ]});
+  }
+  if (path === "/v1/images/generations" && method === "POST") {
+    return send(response, 200, { created: Math.floor(Date.now() / 1000), data: [{ url: `data:image/png;base64,${png}` }] });
+  }
+
+  if (path === "/api/v1/canvas/projects" && method === "GET") {
+    return send(response, 200, { code: 0, data: Array.from(projects.values()).map(({ graph, ...item }) => item) });
+  }
+  if (path === "/api/v1/canvas/projects/full" && method === "GET") {
+    return send(response, 200, { code: 0, data: Array.from(projects.values()) });
+  }
+  const projectMatch = path.match(/^\/api\/v1\/canvas\/projects\/([A-Za-z0-9_-]+)$/);
+  if (projectMatch) {
+    const id = projectMatch[1];
+    if (method === "GET") {
+      const project = projects.get(id);
+      return project ? send(response, 200, { code: 0, data: project }) : send(response, 404, { code: 404, message: "not found" });
+    }
+    if (method === "PUT") {
+      const payload = await body(request);
+      const existing = projects.get(id);
+      if (existing && Number(payload.version || 0) !== existing.version) {
+        return send(response, 409, { code: 409, message: "画布版本已变化，请刷新后重试" });
+      }
+      const now = new Date().toISOString();
+      const project = {
+        id,
+        title: String(payload.title || "Mock Canvas"),
+        graph: payload.graph || {},
+        version: existing ? existing.version + 1 : 1,
+        created_at: existing?.created_at || now,
+        updated_at: now,
+        assets: existing?.assets || [],
+        node_count: Array.isArray(payload.graph?.nodes) ? payload.graph.nodes.length : 0,
+        connection_count: Array.isArray(payload.graph?.connections) ? payload.graph.connections.length : 0,
+      };
+      projects.set(id, project);
+      return send(response, 200, { code: 0, data: { id, version: project.version, updated_at: now } });
+    }
+    if (method === "DELETE") {
+      projects.delete(id);
+      return send(response, 200, { code: 0, data: { deleted: true } });
+    }
+  }
+
+  if (path === "/api/v1/canvas/assets" && method === "POST") {
+    const id = randomUUID().replaceAll("-", "");
+    const asset = {
+      id,
+      project_id: "mock-project",
+      node_id: "",
+      kind: "image",
+      url: `/api/v1/public/canvas-assets/${id}/content`,
+      thumb_url: `/api/v1/public/canvas-assets/${id}/thumb`,
+    };
+    assets.set(id, asset);
+    return send(response, 200, { code: 0, data: asset });
+  }
+  if (path.startsWith("/api/v1/public/")) {
+    if (path.endsWith("/content") || path.endsWith("/thumb")) {
+      response.writeHead(200, { "Content-Type": "image/png", "Access-Control-Allow-Origin": "*" });
+      response.end(Buffer.from(png, "base64"));
+      return;
+    }
+    return send(response, 404, { code: 404, message: "not found" });
+  }
+
+  return send(response, 404, { code: 404, message: `mock endpoint not implemented: ${method} ${path}` });
+});
+
+server.listen(port, "127.0.0.1", () => {
+  console.log(`Create Mock listening on http://127.0.0.1:${port}`);
+});
