@@ -768,17 +768,20 @@ export default function ImagePage() {
                                 <span className="text-sm font-semibold text-stone-900 dark:text-stone-100">{t("settingsPanels.image.transparent")}</span>
                                 {!transparentAvailable ? <span className="ml-2 text-[11px] text-stone-500">{outputFormat !== "png" ? "仅 PNG 支持" : "当前模型不支持"}</span> : null}
                             </div>
-                            <button
-                                type="button"
-                                role="switch"
-                                aria-checked={transparentEnabled}
-                                aria-label={t("settingsPanels.image.transparent")}
-                                disabled={!transparentAvailable}
-                                className={`relative h-6 w-10 shrink-0 rounded-full transition disabled:cursor-not-allowed disabled:opacity-45 ${transparentEnabled ? "bg-stone-200" : "bg-stone-600"}`}
-                                onClick={() => updateConfig("background", transparentEnabled ? "" : "transparent")}
-                            >
-                                <span className={`absolute top-0.5 size-5 rounded-full bg-white shadow-sm transition-[left] ${transparentEnabled ? "left-[18px]" : "left-0.5"}`} />
-                            </button>
+                            <div className="flex shrink-0 items-center gap-2">
+                                <span className={`text-xs font-medium ${transparentEnabled ? "text-emerald-500" : "text-stone-500"}`}>{transparentEnabled ? "开" : "关"}</span>
+                                <button
+                                    type="button"
+                                    role="switch"
+                                    aria-checked={transparentEnabled}
+                                    aria-label={t("settingsPanels.image.transparent")}
+                                    disabled={!transparentAvailable}
+                                    className={`relative h-6 w-10 shrink-0 rounded-full transition disabled:cursor-not-allowed disabled:opacity-45 ${transparentEnabled ? "bg-stone-200" : "bg-stone-600"}`}
+                                    onClick={() => updateConfig("background", transparentEnabled ? "" : "transparent")}
+                                >
+                                    <span className={`absolute top-0.5 size-5 rounded-full bg-white shadow-sm transition-[left] ${transparentEnabled ? "left-[18px]" : "left-0.5"}`} />
+                                </button>
+                            </div>
                         </div>
 
                         <div className="mt-3 grid grid-cols-[1.08fr_0.92fr] gap-4">

@@ -928,16 +928,19 @@ export default function VideoPage() {
 
                         <div className="mt-3 flex items-center justify-between gap-3">
                             <span className="text-sm font-semibold text-stone-900 dark:text-stone-100">生成音频</span>
-                            <button
-                                type="button"
-                                role="switch"
-                                aria-checked={generateAudio}
-                                aria-label="生成音频"
-                                className={`relative h-6 w-10 shrink-0 rounded-full transition ${generateAudio ? "bg-stone-200" : "bg-stone-600"}`}
-                                onClick={() => updateConfig("videoGenerateAudio", String(!generateAudio))}
-                            >
-                                <span className={`absolute top-0.5 size-5 rounded-full bg-white shadow-sm transition-[left] ${generateAudio ? "left-[18px]" : "left-0.5"}`} />
-                            </button>
+                            <div className="flex items-center gap-2">
+                                <span className={`text-xs font-medium ${generateAudio ? "text-emerald-500" : "text-stone-500"}`}>{generateAudio ? "开" : "关"}</span>
+                                <button
+                                    type="button"
+                                    role="switch"
+                                    aria-checked={generateAudio}
+                                    aria-label="生成音频"
+                                    className={`relative h-6 w-10 shrink-0 rounded-full transition ${generateAudio ? "bg-stone-200" : "bg-stone-600"}`}
+                                    onClick={() => updateConfig("videoGenerateAudio", String(!generateAudio))}
+                                >
+                                    <span className={`absolute top-0.5 size-5 rounded-full bg-white shadow-sm transition-[left] ${generateAudio ? "left-[18px]" : "left-0.5"}`} />
+                                </button>
+                            </div>
                         </div>
 
                         <div className="mt-3">
