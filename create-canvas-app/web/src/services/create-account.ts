@@ -8,11 +8,19 @@ export type CreateUsageLog = {
     group_id?: number | null;
     input_tokens?: number;
     output_tokens?: number;
+    total_tokens?: number;
     total_cost?: number;
     actual_cost?: number;
     request_type?: string | null;
     stream?: boolean;
+    billing_mode?: string | null;
     duration_ms?: number | null;
+    first_token_ms?: number | null;
+    image_count?: number;
+    image_size?: string | null;
+    image_generation_duration_ms?: number | null;
+    image_url?: string | null;
+    record_kind?: string;
     created_at: string;
     api_key?: { id: number; name?: string } | null;
     group?: { id: number; name?: string } | null;
@@ -33,6 +41,7 @@ export type CreateUsageStats = {
     total_tokens: number;
     total_cost: number;
     total_actual_cost: number;
+    average_duration_ms: number;
 };
 
 export type CreateUsageQuery = {
@@ -68,7 +77,6 @@ export function listCreateUsage(session: CreateSession, query: CreateUsageQuery 
 
 export function getCreateUsageStats(session: CreateSession, query: CreateUsageQuery = {}) {
     const params = usageParams(query, false);
-    params.set("period", "today");
     return createRequest<CreateUsageStats>(`/usage/stats?${params.toString()}`, {
         accessToken: session.accessToken,
     });
