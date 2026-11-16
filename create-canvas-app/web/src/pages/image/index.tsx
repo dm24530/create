@@ -9,7 +9,7 @@ import { ModelPicker } from "@/components/model-picker";
 import { AssetPickerModal, type InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
 import { imageReferenceLabel } from "@/lib/image-reference-prompt";
 import { normalizeImageBackground, normalizeImageOutputFormat, supportsTransparentImageBackground } from "@/lib/image-output-format";
-import { computeMediaSize, inferMediaRatio, mediaRatioOptions, parsePixelSize } from "@/lib/media-size";
+import { computeMediaSize, inferMediaRatio, inferMediaScale, mediaRatioOptions, parsePixelSize } from "@/lib/media-size";
 import { useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { nanoid } from "nanoid";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
@@ -66,7 +66,7 @@ const MAX_WORKBENCH_LOGS = 100;
 const MAX_IMAGE_REFERENCES = 14;
 const RESULT_ACTION_BUTTON_CLASS = "min-w-0 px-1.5 [&_.ant-btn-icon]:shrink-0 [&>span:last-child]:min-w-0 [&>span:last-child]:truncate";
 const logStore = localforage.createInstance({ name: "infinite-canvas", storeName: "image_generation_logs" });
-const WORKBENCH_QUALITY_OPTIONS = ["auto", "high", "medium", "low"] as const;
+const WORKBENCH_RESOLUTION_OPTIONS = ["auto", "4k", "2k", "1k"] as const;
 const WORKBENCH_SIZE_OPTIONS = mediaRatioOptions.filter((item) => item.value !== "auto").map((item) => ({ value: item.value, size: computeMediaSize("1k", item.value) }));
 
 export default function ImagePage() {
@@ -118,7 +118,7 @@ export default function ImagePage() {
     const transparentSupported = supportsTransparentImageBackground(effectiveConfig.model || model);
     const transparentAvailable = transparentSupported && outputFormat === "png";
     const transparentEnabled = transparentAvailable && normalizeImageBackground(effectiveConfig.model || model, effectiveConfig.background, outputFormat) === "transparent";
-    const activeQuality = WORKBENCH_QUALITY_OPTIONS.includes(effectiveConfig.quality as (typeof WORKBENCH_QUALITY_OPTIONS)[number]) ? effectiveConfig.quality : "auto";
+    const activeResolutionScale = inferMediaScale(effectiveConfig.size);
 
     const loadImageKeys = useCallback(async () => {
         if (!session) {
@@ -244,6 +244,15 @@ export default function ImagePage() {
     const selectOutputFormat = (format: "png" | "jpeg") => {
         updateConfig("outputFormat", format);
         if (format !== "png" && config.background === "transparent") updateConfig("background", "");
+    };
+
+    const selectResolutionScale = (scale: (typeof WORKBENCH_RESOLUTION_OPTIONS)[number]) => {
+        updateConfig("quality", "auto");
+        if (scale === "auto") {
+            updateConfig("size", selectedRatio === "auto" ? "auto" : selectedRatio);
+            return;
+        }
+        updateConfig("size", computeMediaSize(scale, selectedRatio === "auto" ? "1:1" : selectedRatio));
     };
 
     const commitCustomDimension = (axis: "width" | "height", raw: string) => {
@@ -743,23 +752,36 @@ export default function ImagePage() {
                         <div className="mt-4 grid grid-cols-[1.08fr_0.92fr] gap-4">
                             <div className="min-w-0">
                                 <div className="mb-2 text-sm font-semibold text-stone-900 dark:text-stone-100">质量</div>
-                                <div className="grid grid-cols-4 gap-1">
-                                    {WORKBENCH_QUALITY_OPTIONS.map((value) => (
-                                        <CompactChoice key={value} selected={activeQuality === value} onClick={() => updateConfig("quality", value)}>
-                                            {t(`settingsPanels.common.${value}`)}
-                                        </CompactChoice>
+                                <div className="grid grid-cols-4 rounded-xl border border-stone-200 bg-stone-100/60 p-1 dark:border-stone-700 dark:bg-stone-900/60">
+                                    {WORKBENCH_RESOLUTION_OPTIONS.map((value) => (
+                                        <button
+                                            key={value}
+                                            type="button"
+                                            className={`h-9 min-w-0 rounded-lg px-1 text-sm transition ${activeResolutionScale === value ? "bg-stone-100 font-semibold !text-stone-950 shadow-sm dark:bg-stone-100 dark:!text-stone-950" : "text-stone-500 hover:text-stone-900 dark:hover:text-stone-100"}`}
+                                            onClick={() => selectResolutionScale(value)}
+                                        >
+                                            {value === "auto" ? t("settingsPanels.common.auto") : value.toUpperCase()}
+                                        </button>
                                     ))}
                                 </div>
                             </div>
                             <div className="min-w-0">
                                 <div className="mb-2 text-sm font-semibold text-stone-900 dark:text-stone-100">格式</div>
-                                <div className="grid grid-cols-2 gap-1">
-                                    <CompactChoice selected={outputFormat === "png"} onClick={() => selectOutputFormat("png")}>
+                                <div className="grid grid-cols-2 rounded-xl border border-stone-200 bg-stone-100/60 p-1 dark:border-stone-700 dark:bg-stone-900/60">
+                                    <button
+                                        type="button"
+                                        className={`h-9 rounded-lg text-sm transition ${outputFormat === "png" ? "bg-stone-100 font-semibold !text-stone-950 shadow-sm dark:bg-stone-100 dark:!text-stone-950" : "text-stone-500 hover:text-stone-900 dark:hover:text-stone-100"}`}
+                                        onClick={() => selectOutputFormat("png")}
+                                    >
                                         PNG
-                                    </CompactChoice>
-                                    <CompactChoice selected={outputFormat === "jpeg"} onClick={() => selectOutputFormat("jpeg")}>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className={`h-9 rounded-lg text-sm transition ${outputFormat === "jpeg" ? "bg-stone-100 font-semibold !text-stone-950 shadow-sm dark:bg-stone-100 dark:!text-stone-950" : "text-stone-500 hover:text-stone-900 dark:hover:text-stone-100"}`}
+                                        onClick={() => selectOutputFormat("jpeg")}
+                                    >
                                         JPEG
-                                    </CompactChoice>
+                                    </button>
                                 </div>
                             </div>
                         </div>
@@ -911,18 +933,6 @@ export default function ImagePage() {
                 {t("workbench.deleteLogsConfirm", { count: selectedLogIds.length })}
             </Modal>
         </div>
-    );
-}
-
-function CompactChoice({ selected, onClick, children }: { selected: boolean; onClick: () => void; children: string }) {
-    return (
-        <button
-            type="button"
-            className={`h-9 min-w-0 truncate rounded-lg border px-1 text-xs transition ${selected ? "border-stone-900 bg-stone-100 font-semibold !text-stone-950 dark:border-stone-100 dark:bg-stone-100 dark:!text-stone-950" : "border-stone-300 text-stone-600 hover:border-stone-500 hover:text-stone-900 dark:border-stone-700 dark:text-stone-400 dark:hover:border-stone-500 dark:hover:text-stone-100"}`}
-            onClick={onClick}
-        >
-            {children}
-        </button>
     );
 }
 
