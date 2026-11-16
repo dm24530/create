@@ -169,6 +169,16 @@
         }
     }
 
+    .workbench-prompt-textarea {
+        resize: vertical;
+    }
+
+    .workbench-prompt-textarea::-webkit-resizer {
+        display: block;
+        width: 14px;
+        height: 14px;
+    }
+
     .workbench-native-select {
         color-scheme: light;
     }

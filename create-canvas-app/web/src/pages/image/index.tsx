@@ -630,8 +630,8 @@ export default function ImagePage() {
 
                         <div className="mt-3 flex shrink-0 flex-col overflow-hidden rounded-2xl border border-stone-200 bg-stone-50 dark:border-stone-800 dark:bg-stone-900/70">
                             <textarea
-                                className="block w-full flex-none resize-none bg-transparent px-4 py-4 text-[15px] leading-6 text-stone-900 outline-none placeholder:text-stone-500 dark:text-stone-100"
-                                style={{ height: 180, minHeight: 180 }}
+                                className="workbench-prompt-textarea block w-full flex-none resize-y bg-transparent px-4 py-4 text-[15px] leading-6 text-stone-900 outline-none placeholder:text-stone-500 dark:text-stone-100"
+                                style={{ height: 180, minHeight: 180, maxHeight: 420 }}
                                 value={prompt}
                                 onChange={(event) => setPrompt(event.target.value)}
                                 onPaste={handleComposerPaste}
