@@ -407,6 +407,7 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 		userAgent := c.GetHeader("User-Agent")
 		clientIP := ip.GetClientIP(c)
 		requestPayloadHash := service.HashUsageRequestPayload(body)
+		imagePassthrough := isLocalImagePassthroughRequest(c.Request)
 		if parsed.Multipart {
 			requestPayloadHash = service.HashUsageRequestPayload([]byte(parsed.StickySessionSeed()))
 		}
@@ -447,7 +448,9 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 				return
 			}
 			if result != nil {
-				h.recordUsageImageLink(ctx, apiKey, result.RequestID, result.ImageOutputs)
+				if !imagePassthrough {
+					h.recordUsageImageLink(ctx, apiKey, result.RequestID, result.ImageOutputs)
+				}
 				result.ImageOutputs = nil
 			}
 		})

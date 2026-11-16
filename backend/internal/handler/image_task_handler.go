@@ -229,6 +229,10 @@ func (h *AsyncImageHandler) Submit(c *gin.Context) {
 		imageTaskJSONError(c, http.StatusNotFound, "not_found_error", "async image tasks are not enabled")
 		return
 	}
+	if isLocalImagePassthroughRequest(c.Request) {
+		imageTaskJSONError(c, http.StatusBadRequest, "invalid_request_error", "local image clients must use the synchronous image endpoint")
+		return
+	}
 	apiKey, ok := middleware2.GetAPIKeyFromContext(c)
 	if !ok || apiKey == nil || apiKey.UserID <= 0 || apiKey.ID <= 0 {
 		imageTaskError(c, service.ErrImageTaskForbidden)

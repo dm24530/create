@@ -728,6 +728,7 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 		forceCacheBilling := fs.ForceCacheBilling
 		quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
 		sessionID := service.ExtractClientSessionID(c)
+		imagePassthrough := isLocalImagePassthroughRequest(c.Request)
 		// 长上下文阶梯由目录数据驱动，统一在计费路径内生效，入口无需声明。
 		h.submitUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
 			if err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
@@ -758,7 +759,9 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 				).Error("gemini.record_usage_failed", zap.Error(err))
 				return
 			}
-			h.recordUsageImageLink(ctx, apiKey, result)
+			if !imagePassthrough {
+				h.recordUsageImageLink(ctx, apiKey, result)
+			}
 		})
 		reqLog.Debug("gemini.request_completed",
 			zap.Int64("account_id", account.ID),

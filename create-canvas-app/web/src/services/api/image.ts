@@ -14,6 +14,7 @@ import { shouldSkipClientImageNormalization } from "@/lib/image-normalization-po
 import { imageOutputMimeType, normalizeImageBackground, normalizeImageOutputFormat } from "@/lib/image-output-format";
 import type { ReferenceImage } from "@/types/image";
 import { reportCanvasImageDisplay } from "@/services/image-display";
+import { isLocalImagePassthrough, localImagePassthroughHeaders } from "@/lib/local-image-passthrough";
 
 const apiText = (key: string, options?: Record<string, unknown>) => i18n.t(`apiErrors.${key}`, options);
 
@@ -440,6 +441,7 @@ function aiHeaders(config: AiConfig, contentType?: string) {
     return {
         Authorization: `Bearer ${config.apiKey}`,
         ...(contentType ? { "Content-Type": contentType } : {}),
+        ...localImagePassthroughHeaders(),
     };
 }
 
@@ -467,6 +469,7 @@ function geminiHeaders(config: Pick<AiConfig, "apiKey">) {
     return {
         "x-goog-api-key": config.apiKey,
         "Content-Type": "application/json",
+        ...localImagePassthroughHeaders(),
     };
 }
 
@@ -792,7 +795,7 @@ async function requestGeminiImagesOnce(config: AiConfig, prompt: string, referen
         ...toGeminiBody(config, [{ role: "user", content: prompt }], { generationConfig: { responseModalities: ["TEXT", "IMAGE"], ...resolveGeminiImageConfig(config) } }),
         contents: [{ role: "user", parts }],
     };
-    const asyncResult = await requestGeminiImagesAsync(config, request, options);
+    const asyncResult = isLocalImagePassthrough() ? null : await requestGeminiImagesAsync(config, request, options);
     if (asyncResult) return asyncResult;
     try {
         const response = await axios.post<GeminiPayload>(
@@ -831,6 +834,7 @@ export async function submitPersistentImageTask(
     references: ReferenceImage[],
     options?: RequestOptions,
 ): Promise<PersistentImageTask | null> {
+    if (isLocalImagePassthrough()) return null;
     const requestConfig = resolveModelRequestConfig(config, config.model || config.imageModel);
     const requestPrompt = buildImageReferencePromptText(prompt, references);
     if (requestConfig.apiFormat === "gemini" || isGeminiImageModel(requestConfig.model)) {
