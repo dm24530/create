@@ -11,10 +11,10 @@ import { normalizeImageBackground, normalizeImageOutputFormat, supportsTranspare
 import { computeMediaSize, inferMediaRatio, inferMediaScale, mediaRatioOptions, parsePixelSize } from "@/lib/media-size";
 import { encodeChannelModel, modelOptionName, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { nanoid } from "nanoid";
-import { autoSaveGeneratedFile, generatedFileExtension, saveGeneratedFile } from "@/lib/desktop-save";
+import { autoSaveGeneratedFile, generatedFileExtension, readGeneratedFileBlob, saveGeneratedFile } from "@/lib/desktop-save";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
 import { requestEdit, requestGeneration, submitPersistentImageTask, waitForPersistentImageTask } from "@/services/api/image";
-import { ensureImagePreview, getImageBlob, getImagePreviewRevision, previewUrlFor, resolveImageUrl, subscribeImagePreviews, uploadImage } from "@/services/image-storage";
+import { ensureImagePreview, getImageBlob, getImagePreviewRevision, previewUrlFor, resolveImageUrl, setImageBlob, subscribeImagePreviews, uploadImage } from "@/services/image-storage";
 import { getManagedKeySelection, listCreateManagedKeys, managedKeySupportsImage, switchManagedKey, type CreateManagedKey } from "@/services/create-managed-channel";
 import { WorkbenchModelSelect } from "@/components/workbench/model-select";
 import { PanelResizeHandle, useStoredPanelWidth } from "@/components/workbench/panel-resize-handle";
@@ -33,6 +33,7 @@ type GeneratedImage = {
     height: number;
     bytes: number;
     mimeType?: string;
+    localPath?: string;
 };
 
 type GenerationResult = {
@@ -515,9 +516,13 @@ export default function ImagePage() {
             setResults((value) => updateResultAt(value, index, { status: "success", image: immediateImage }));
             try {
                 const stored = await uploadImage(image.dataUrl);
+                let localPath = "";
                 try {
                     const original = stored.storageKey ? await getImageBlob(stored.storageKey) : null;
-                    if (original) await autoSaveGeneratedFile(original, "image", stored.mimeType || "image/png");
+                    if (original) {
+                        const saved = await autoSaveGeneratedFile(original, "image", stored.mimeType || "image/png");
+                        localPath = saved.savePath || "";
+                    }
                 } catch {
                     // Keep generation successful even when desktop auto-save fails.
                 }
@@ -525,6 +530,7 @@ export default function ImagePage() {
                     id: image.id,
                     dataUrl: stored.url,
                     ...(stored.storageKey ? { storageKey: stored.storageKey } : {}),
+                    ...(localPath ? { localPath } : {}),
                     durationMs: performance.now() - itemStartedAt,
                     width: stored.width,
                     height: stored.height,
@@ -1218,6 +1224,23 @@ async function pruneStoredLogs() {
     return true;
 }
 
+async function resolveStoredLogImage(image: GeneratedImage): Promise<GeneratedImage> {
+    if (image.storageKey) {
+        const existing = await getImageBlob(image.storageKey).catch(() => null);
+        if (!existing) {
+            const restored = await readGeneratedFileBlob({
+                kind: "image",
+                path: image.localPath,
+                size: image.bytes,
+                mimeType: image.mimeType,
+            }).catch(() => null);
+            if (restored) await setImageBlob(image.storageKey, restored);
+        }
+        void ensureImagePreview(image.storageKey);
+        return { ...image, dataUrl: await resolveImageUrl(image.storageKey, image.dataUrl) };
+    }
+    return image;
+}
 async function normalizeLog(log: Partial<GenerationLog>): Promise<GenerationLog> {
     const references = await Promise.all(
         (log.references || []).map(async (item) => {
@@ -1225,12 +1248,7 @@ async function normalizeLog(log: Partial<GenerationLog>): Promise<GenerationLog>
             return { ...item, dataUrl: await resolveImageUrl(item.storageKey, item.dataUrl) };
         }),
     );
-    const images = await Promise.all(
-        (log.images || []).map(async (item) => {
-            void ensureImagePreview(item.storageKey);
-            return { ...item, dataUrl: await resolveImageUrl(item.storageKey, item.dataUrl) };
-        }),
-    );
+    const images = await Promise.all((log.images || []).map((item) => resolveStoredLogImage(item)));
     const config = normalizeLogConfig(log);
     return {
         id: log.id || nanoid(),

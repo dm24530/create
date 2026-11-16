@@ -15,6 +15,7 @@ type DesktopSaveBridge = {
     getSaveSettings: () => Promise<LocalSaveSettings>;
     saveSaveSettings: (settings: LocalSaveSettings) => Promise<LocalSaveSettings>;
     saveGeneratedFile?: (payload: { kind: DesktopSaveKind; mimeType: string; filename: string; data: ArrayBuffer }) => Promise<{ savePath: string }>;
+    readGeneratedFile?: (payload: { kind: DesktopSaveKind; path?: string; size?: number; mimeType?: string }) => Promise<{ data: ArrayBuffer | Uint8Array; savePath: string; mimeType: string; size: number } | null>;
     chooseSaveDirectory: (kind: DesktopSaveKind) => Promise<string | null>;
     openSaveFolder: (kind: DesktopSaveKind) => Promise<void>;
     onOpenSaveSettings: (callback: () => void) => () => void;
@@ -27,14 +28,24 @@ export function getDesktopSaveBridge(): DesktopSaveBridge | null {
     return bridge as DesktopSaveBridge;
 }
 
-export async function saveGeneratedFile(blob: Blob, kind: DesktopSaveKind, mimeType: string, filename: string) {
+export type GeneratedFileSaveResult = { savePath?: string };
+
+export async function saveGeneratedFile(blob: Blob, kind: DesktopSaveKind, mimeType: string, filename: string): Promise<GeneratedFileSaveResult> {
     const bridge = getDesktopSaveBridge();
     if (bridge?.saveGeneratedFile) {
-        await bridge.saveGeneratedFile({ kind, mimeType: blob.type || mimeType, filename, data: await blobToArrayBuffer(blob) });
-        return true;
+        return bridge.saveGeneratedFile({ kind, mimeType: blob.type || mimeType, filename, data: await blobToArrayBuffer(blob) });
     }
     saveAs(blob, filename);
-    return Boolean(bridge);
+    return {};
+}
+
+export async function readGeneratedFileBlob(payload: { kind: DesktopSaveKind; path?: string; size?: number; mimeType?: string }): Promise<Blob | null> {
+    const bridge = getDesktopSaveBridge();
+    if (!bridge?.readGeneratedFile) return null;
+    const saved = await bridge.readGeneratedFile(payload);
+    if (!saved?.data) return null;
+    const data = saved.data instanceof ArrayBuffer ? saved.data.slice(0) : new Uint8Array(saved.data).buffer;
+    return new Blob([data], { type: saved.mimeType || payload.mimeType || "application/octet-stream" });
 }
 
 export async function autoSaveGeneratedFile(blob: Blob, kind: DesktopSaveKind, mimeType: string, date = new Date()) {

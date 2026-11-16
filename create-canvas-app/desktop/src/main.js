@@ -128,6 +128,82 @@ function fallbackFilename(kind, mimeType) {
   return "download.bin";
 }
 
+function generatedFileExtensions(kind) {
+  if (kind === "image") return new Set([".png", ".jpg", ".jpeg", ".webp", ".gif"]);
+  if (kind === "video") return new Set([".mp4", ".webm", ".mov", ".m4v"]);
+  return new Set([".bin", ".zip"]);
+}
+
+function mimeTypeForPath(filePath) {
+  const extension = path.extname(filePath).toLowerCase();
+  if (extension === ".jpg" || extension === ".jpeg") return "image/jpeg";
+  if (extension === ".webp") return "image/webp";
+  if (extension === ".gif") return "image/gif";
+  if (extension === ".png") return "image/png";
+  if (extension === ".webm") return "video/webm";
+  if (extension === ".mov") return "video/quicktime";
+  if (extension === ".m4v") return "video/x-m4v";
+  if (extension === ".mp4") return "video/mp4";
+  return "application/octet-stream";
+}
+
+function resolveGeneratedFilePath(kind, requestedPath) {
+  const directory = path.resolve(saveDirectoryForKind(kind));
+  const candidate = path.resolve(String(requestedPath || ""));
+  if (candidate !== directory && !candidate.startsWith(`${directory}${path.sep}`)) {
+    throw new Error("Generated file path is outside the configured directory");
+  }
+  return candidate;
+}
+
+async function findGeneratedFile(kind, payload) {
+  const directory = path.resolve(saveDirectoryForKind(kind));
+  ensureDirectory(directory);
+  const extensions = generatedFileExtensions(kind);
+  const requestedPath = String(payload.path || "").trim();
+  if (requestedPath) {
+    const candidate = resolveGeneratedFilePath(kind, requestedPath);
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  const entries = await fsp.readdir(directory, { withFileTypes: true });
+  const files = await Promise.all(
+    entries
+      .filter((entry) => entry.isFile() && extensions.has(path.extname(entry.name).toLowerCase()))
+      .map(async (entry) => {
+        const filePath = path.join(directory, entry.name);
+        const stat = await fsp.stat(filePath);
+        return { filePath, size: stat.size, modifiedAt: stat.mtimeMs };
+      }),
+  );
+  const expectedSize = Number(payload.size || 0);
+  if (expectedSize > 0) {
+    const exact = files.filter((file) => file.size === expectedSize).sort((left, right) => right.modifiedAt - left.modifiedAt);
+    if (exact[0]) return exact[0].filePath;
+    const close = files
+      .map((file) => ({ ...file, sizeDifference: Math.abs(file.size - expectedSize) }))
+      .filter((file) => file.sizeDifference / expectedSize <= 0.1)
+      .sort((left, right) => left.sizeDifference - right.sizeDifference || right.modifiedAt - left.modifiedAt);
+    if (close[0]) return close[0].filePath;
+  }
+  return files.sort((left, right) => right.modifiedAt - left.modifiedAt)[0]?.filePath || null;
+}
+
+async function readGeneratedFile(payload) {
+  if (!payload || typeof payload !== "object") throw new Error("Generated file payload is required");
+  const kind = payload.kind === "image" || payload.kind === "video" ? payload.kind : "other";
+  const filePath = await findGeneratedFile(kind, payload);
+  if (!filePath) return null;
+  const stat = await fsp.stat(filePath);
+  if (!stat.isFile()) return null;
+  if (stat.size > 512 * 1024 * 1024) throw new Error("Generated file is too large to restore");
+  const data = await fsp.readFile(filePath);
+  return {
+    data: data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength),
+    savePath: filePath,
+    mimeType: mimeTypeForPath(filePath),
+    size: stat.size,
+  };
+}
 function configureDownloadRouting(desktopSession) {
   desktopSession.on("will-download", (_event, item, webContents) => {
     try {
@@ -270,7 +346,10 @@ function registerIpcHandlers() {
     if (settings.openFolderAfterSave) shell.showItemInFolder(savePath);
     return { savePath };
   });
-  ipcMain.handle("desktop:choose-save-directory", async (event, kind) => {
+  ipcMain.handle("desktop:read-generated-file", async (event, payload) => {
+    assertTrustedSender(event);
+    return readGeneratedFile(payload);
+  });  ipcMain.handle("desktop:choose-save-directory", async (event, kind) => {
     assertTrustedSender(event);
     const normalized = kind === "image" || kind === "video" ? kind : "other";
     return chooseSaveDirectory(normalized);
