@@ -42,7 +42,8 @@ export type CreateManagedKey = {
     expires_at?: string | null;
 };
 
-const SELECTED_KEY_STORAGE = "create-canvas:selected-key-id";
+const SELECTED_IMAGE_KEY_STORAGE = "create-canvas:selected-image-key-id";
+const SELECTED_VIDEO_KEY_STORAGE = "create-canvas:selected-video-key-id";
 
 type KeysPage = { items?: CreateManagedKey[] };
 
@@ -52,6 +53,8 @@ type WorkspaceDependencies = {
     createKey: (session: CreateSession, name: string, groupId: number) => Promise<CreateManagedKey>;
     loadModels: (apiKey: string) => Promise<string[]>;
 };
+
+export type ManagedKeyRole = "image" | "video";
 
 export function managedKeySupportsImage(group?: CreateManagedGroup | null) {
     return group?.allow_image_generation === true;
@@ -68,17 +71,24 @@ export function managedKeySupportsVideo(group?: CreateManagedGroup | null) {
     );
 }
 
-function selectedKeyId() {
+export function getManagedKeySelection() {
+    return { imageKeyId: storedSelectedKeyId("image"), videoKeyId: storedSelectedKeyId("video") };
+}
+
+function storedSelectedKeyId(role: ManagedKeyRole) {
     try {
-        return Number(localStorage.getItem(SELECTED_KEY_STORAGE) || 0);
+        const key = role === "image" ? SELECTED_IMAGE_KEY_STORAGE : SELECTED_VIDEO_KEY_STORAGE;
+        return Number(localStorage.getItem(key) || 0);
     } catch {
         return 0;
     }
 }
 
-function rememberSelectedKey(id: number) {
+function rememberSelectedKey(role: ManagedKeyRole, id: number | null | undefined) {
     try {
-        localStorage.setItem(SELECTED_KEY_STORAGE, String(id));
+        const key = role === "image" ? SELECTED_IMAGE_KEY_STORAGE : SELECTED_VIDEO_KEY_STORAGE;
+        if (id && id > 0) localStorage.setItem(key, String(id));
+        else localStorage.removeItem(key);
     } catch {
         // Local persistence is best-effort in hardened browser contexts.
     }
@@ -178,8 +188,10 @@ export async function resolveManagedCredentials(
     const [initialKeys, groups] = await Promise.all([deps.listKeys(session), deps.listGroups(session)]);
     const activeKeys = initialKeys.filter(isActiveKey);
     const composite = chooseCompositeKey(activeKeys);
-    let imageKey = composite || chooseCapableKey(activeKeys, managedKeySupportsImage);
-    let videoKey = composite || chooseCapableKey(activeKeys, managedKeySupportsVideo);
+    const selectedImage = activeKeys.find((key) => key.id === storedSelectedKeyId("image") && managedKeySupportsImage(key.group));
+    const selectedVideo = activeKeys.find((key) => key.id === storedSelectedKeyId("video") && managedKeySupportsVideo(key.group));
+    let imageKey = selectedImage || composite || chooseCapableKey(activeKeys, managedKeySupportsImage);
+    let videoKey = selectedVideo || composite || chooseCapableKey(activeKeys, managedKeySupportsVideo);
 
     if (!imageKey) {
         const imageGroup = chooseGroup(groups, managedKeySupportsImage);
@@ -201,25 +213,14 @@ export async function resolveManagedCredentials(
 export async function switchManagedKey(
     session: CreateSession,
     key: CreateManagedKey,
+    role: ManagedKeyRole,
     overrides: Partial<WorkspaceDependencies> = {},
 ) {
     if (!isActiveKey(key)) throw new Error("该密钥当前不可用");
-    const imageCapable = managedKeySupportsImage(key.group);
-    const videoCapable = managedKeySupportsVideo(key.group);
-    if (!imageCapable && !videoCapable) throw new Error("该密钥所属分组没有图片或视频生成能力");
-
-    const deps = defaultDependencies(overrides);
-    const models = await deps.loadModels(key.key);
-    const channels: ModelChannel[] = [];
-    if (imageCapable && videoCapable) {
-        channels.push(channelFromModels("create-managed", key.group?.name || "Create", key.key, models));
-    } else if (imageCapable) {
-        channels.push(channelFromModels("create-managed-image", key.group?.name || "Create 图片", key.key, models, ["image"]));
-    } else {
-        channels.push(channelFromModels("create-managed-video", key.group?.name || "Create 视频", key.key, models, ["video"]));
-    }
-    applyManagedChannels(channels);
-    return { channels, models };
+    const capable = role === "image" ? managedKeySupportsImage(key.group) : managedKeySupportsVideo(key.group);
+    if (!capable) throw new Error(role === "image" ? "该密钥不支持生图" : "该密钥不支持生视频");
+    rememberSelectedKey(role, key.id);
+    return configureCreateWorkspace(session, overrides);
 }
 
 export async function configureCreateWorkspace(
@@ -242,6 +243,8 @@ export async function configureCreateWorkspace(
     }
 
     applyManagedChannels(channels);
+    rememberSelectedKey("image", imageKey.id);
+    rememberSelectedKey("video", videoKey?.id);
     configureCanvasCloud(session.accessToken);
     return {
         imageKey,
@@ -251,4 +254,6 @@ export async function configureCreateWorkspace(
         imageChannelModels: channels.flatMap((channel) => modelsFor(channel, "image")).length,
     };
 }
+
+
 

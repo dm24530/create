@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { beforeEach } from "vitest";
-import { configureCreateWorkspace, resolveManagedCredentials, type CreateManagedGroup, type CreateManagedKey } from "../create-managed-channel";
+import { configureCreateWorkspace, getManagedKeySelection, resolveManagedCredentials, switchManagedKey, type CreateManagedGroup, type CreateManagedKey } from "../create-managed-channel";
 import type { CreateSession } from "../create-auth";
 import { useConfigStore } from "@/stores/use-config-store";
 
@@ -79,6 +79,24 @@ describe("managed Create credentials", () => {
         expect(config.channels[0]?.id).toBe("create-managed");
         expect(config.imageModel).toContain("gpt-image-2");
         expect(config.videoModel).toContain("grok-imagine-video");
+    });
+
+    it("selects image and video keys independently", async () => {
+        const keys = [key(1, imageGroup), key(2, imageGroup), key(3, videoGroup)];
+        const deps = {
+            listKeys: vi.fn().mockResolvedValue(keys),
+            listGroups: vi.fn().mockResolvedValue([imageGroup, videoGroup]),
+            createKey: vi.fn(),
+            loadModels: vi.fn().mockResolvedValue(["gpt-image-2", "grok-imagine-video"]),
+        };
+        await configureCreateWorkspace(session, deps);
+        expect(getManagedKeySelection()).toEqual({ imageKeyId: 1, videoKeyId: 3 });
+
+        await switchManagedKey(session, keys[1], "image", deps);
+        expect(getManagedKeySelection()).toEqual({ imageKeyId: 2, videoKeyId: 3 });
+        const config = useConfigStore.getState().config;
+        expect(config.channels.find((channel) => channel.id === "create-managed-image")?.apiKey).toBe("sk-2");
+        expect(config.channels.find((channel) => channel.id === "create-managed-video")?.apiKey).toBe("sk-3");
     });
 });
 

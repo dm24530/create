@@ -1,15 +1,16 @@
 import { App, Button, Modal, Tag } from "antd";
-import { Check, Copy, KeyRound, RefreshCw } from "lucide-react";
+import { Check, Copy, ImageIcon, KeyRound, RefreshCw, Video } from "lucide-react";
 import { useState } from "react";
 
 import type { CreateSession } from "@/services/create-auth";
 import {
+    getManagedKeySelection,
     managedKeySupportsImage,
     managedKeySupportsVideo,
     switchManagedKey,
     type CreateManagedKey,
+    type ManagedKeyRole,
 } from "@/services/create-managed-channel";
-import { useConfigStore } from "@/stores/use-config-store";
 
 export function CreateApiKeysModal({
     open,
@@ -27,9 +28,9 @@ export function CreateApiKeysModal({
     onRefresh: () => Promise<void>;
 }) {
     const { message } = App.useApp();
-    const [switchingId, setSwitchingId] = useState<number | null>(null);
+    const [switching, setSwitching] = useState<string | null>(null);
     const [copiedId, setCopiedId] = useState<number | null>(null);
-    const currentApiKey = useConfigStore((state) => state.config.apiKey);
+    const [selection, setSelection] = useState(getManagedKeySelection);
 
     const copyKey = async (item: CreateManagedKey) => {
         try {
@@ -42,32 +43,34 @@ export function CreateApiKeysModal({
         }
     };
 
-    const selectKey = async (item: CreateManagedKey) => {
-        if (!session || item.status !== "active" || switchingId !== null) return;
-        setSwitchingId(item.id);
+    const selectKey = async (item: CreateManagedKey, role: ManagedKeyRole) => {
+        if (!session || item.status !== "active" || switching) return;
+        const switchId = `${item.id}:${role}`;
+        setSwitching(switchId);
         try {
-            await switchManagedKey(session, item);
-            message.success(`已切换到 ${item.name}`);
+            await switchManagedKey(session, item, role);
+            setSelection(getManagedKeySelection());
+            message.success(`${role === "image" ? "生图" : "生视频"}已切换到 ${item.name}`);
             await onRefresh();
         } catch (error) {
             message.error(error instanceof Error ? error.message : "切换密钥失败");
         } finally {
-            setSwitchingId(null);
+            setSwitching(null);
         }
     };
 
     return (
-        <Modal open={open} onCancel={onClose} footer={null} width={760} title="API 密钥">
+        <Modal open={open} onCancel={onClose} footer={null} width={820} title="API 密钥">
             <div className="mb-4 flex items-center justify-between gap-3">
-                <p className="text-sm text-stone-500">查看当前账号的创作密钥、额度和可用能力。选择“使用”后会立即切换图片、视频和画布的工作台通道。</p>
-                <Button icon={<RefreshCw className="size-4" />} loading={loading} onClick={() => void onRefresh()}>
-                    刷新
-                </Button>
+                <p className="text-sm text-stone-500">生图和生视频可以分别使用不同的 Key。切换图片 Key 不会覆盖视频 Key，反过来也一样。</p>
+                <Button icon={<RefreshCw className="size-4" />} loading={loading} onClick={() => void onRefresh()}>刷新</Button>
             </div>
-            <div className="max-h-[62vh] space-y-3 overflow-y-auto pr-1">
+            <div className="max-h-[64vh] space-y-3 overflow-y-auto pr-1">
                 {!loading && !keys.length ? <div className="rounded-xl border border-dashed border-stone-300 p-8 text-center text-sm text-stone-500">没有可用的 API 密钥</div> : null}
                 {keys.map((item) => {
-                    const selected = Boolean(currentApiKey && item.key === currentApiKey);
+                    const imageSelected = selection.imageKeyId === item.id;
+                    const videoSelected = selection.videoKeyId === item.id;
+                    const selected = imageSelected || videoSelected;
                     const imageCapable = managedKeySupportsImage(item.group);
                     const videoCapable = managedKeySupportsVideo(item.group);
                     const active = item.status === "active";
@@ -79,23 +82,31 @@ export function CreateApiKeysModal({
                                         <KeyRound className="size-4 text-orange-500" />
                                         <strong className="text-sm">{item.name}</strong>
                                         <Tag color={active ? "green" : "default"}>{statusLabel(item.status)}</Tag>
-                                        {selected ? <Tag color="orange">当前使用</Tag> : null}
+                                        {imageSelected ? <Tag color="blue">当前生图</Tag> : null}
+                                        {videoSelected ? <Tag color="purple">当前生视频</Tag> : null}
                                     </div>
                                     <div className="mt-1 font-mono text-xs text-stone-500">{maskKey(item.key)}</div>
                                     <div className="mt-2 flex flex-wrap gap-1.5">
                                         {item.group?.name ? <Tag>{item.group.name}</Tag> : null}
-                                        {imageCapable ? <Tag color="blue">生图</Tag> : null}
-                                        {videoCapable ? <Tag color="purple">生视频</Tag> : null}
+                                        {imageCapable ? <Tag color="blue">生图能力</Tag> : null}
+                                        {videoCapable ? <Tag color="purple">生视频能力</Tag> : null}
                                     </div>
                                     <p className="mt-2 text-xs text-stone-500">{quotaSummary(item)}</p>
                                 </div>
-                                <div className="flex shrink-0 gap-2">
+                                <div className="flex shrink-0 flex-wrap gap-2">
                                     <Button icon={copiedId === item.id ? <Check className="size-4" /> : <Copy className="size-4" />} onClick={() => void copyKey(item)}>
                                         {copiedId === item.id ? "已复制" : "复制"}
                                     </Button>
-                                    <Button type="primary" disabled={!active || !session} loading={switchingId === item.id} onClick={() => void selectKey(item)}>
-                                        {selected ? "已选择" : "使用"}
-                                    </Button>
+                                    {imageCapable ? (
+                                        <Button type={imageSelected ? "primary" : "default"} icon={<ImageIcon className="size-4" />} disabled={!active || !session} loading={switching === `${item.id}:image`} onClick={() => void selectKey(item, "image")}>
+                                            {imageSelected ? "生图已选" : "用于生图"}
+                                        </Button>
+                                    ) : null}
+                                    {videoCapable ? (
+                                        <Button type={videoSelected ? "primary" : "default"} icon={<Video className="size-4" />} disabled={!active || !session} loading={switching === `${item.id}:video`} onClick={() => void selectKey(item, "video")}>
+                                            {videoSelected ? "视频已选" : "用于视频"}
+                                        </Button>
+                                    ) : null}
                                 </div>
                             </div>
                         </article>
