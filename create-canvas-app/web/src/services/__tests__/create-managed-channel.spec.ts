@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { beforeEach } from "vitest";
 import { configureCreateWorkspace, resolveManagedCredentials, type CreateManagedGroup, type CreateManagedKey } from "../create-managed-channel";
 import type { CreateSession } from "../create-auth";
 import { useConfigStore } from "@/stores/use-config-store";
@@ -20,6 +21,7 @@ function key(id: number, group: CreateManagedGroup): CreateManagedKey {
 }
 
 describe("managed Create credentials", () => {
+    beforeEach(() => localStorage.clear());
     it("reuses a composite key for image and video", async () => {
         const composite = key(1, compositeGroup);
         const result = await resolveManagedCredentials(session, {
@@ -79,3 +81,4 @@ describe("managed Create credentials", () => {
         expect(config.videoModel).toContain("grok-imagine-video");
     });
 });
+

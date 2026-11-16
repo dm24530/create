@@ -6,6 +6,7 @@ import { navigationTools, type NavigationToolSlug } from "@/constant/navigation-
 import { AppConfigModal } from "@/components/layout/app-config-modal";
 import { MobileNavDrawer } from "@/components/layout/mobile-nav-drawer";
 import { UserStatusActions } from "@/components/layout/user-status-actions";
+import { CreateAccountActions } from "@/components/create-account/create-account-actions";
 import { cn } from "@/lib/utils";
 import { useState } from "react";
 import { isManagedMode, publicAsset } from "@/lib/managed-mode";
@@ -73,7 +74,7 @@ export function AppTopNav() {
                         </div>
 
                         <div className="my-auto flex h-9 min-w-0 items-center justify-end gap-2 justify-self-end whitespace-nowrap">
-                            <UserStatusActions />
+                            {isCreateProductMode() ? <CreateAccountActions /> : <UserStatusActions />}
                         </div>
                     </div>
                 </header>
@@ -84,4 +85,5 @@ export function AppTopNav() {
         </>
     );
 }
+
 
