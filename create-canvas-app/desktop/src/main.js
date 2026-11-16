@@ -7,6 +7,7 @@ const {
   PARTITION,
   isAllowedExternalUrl,
   isTrustedAppUrl,
+  isTrustedRuntimeUrl,
   resolveAppAssetPath,
   secureWindowOptions,
 } = require("./security");
@@ -95,17 +96,17 @@ async function createMainWindow() {
     mainWindow = null;
   });
 
+  const devUrl = process.env.CREATE_CANVAS_DEV_URL?.trim();
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (isTrustedRuntimeUrl(url, devUrl)) return { action: "allow" };
     if (isAllowedExternalUrl(url)) void shell.openExternal(url);
     return { action: "deny" };
   });
   mainWindow.webContents.on("will-navigate", (event, url) => {
-    if (isTrustedAppUrl(url)) return;
+    if (isTrustedRuntimeUrl(url, devUrl)) return;
     event.preventDefault();
     if (isAllowedExternalUrl(url)) void shell.openExternal(url);
   });
-
-  const devUrl = process.env.CREATE_CANVAS_DEV_URL?.trim();
   await mainWindow.loadURL(devUrl || `${APP_ORIGIN}/`);
 }
 
@@ -146,6 +147,7 @@ if (!hasLock) {
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
+
 
 
 

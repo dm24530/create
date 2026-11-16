@@ -5,6 +5,7 @@ const test = require("node:test");
 const {
   isAllowedExternalUrl,
   isTrustedAppUrl,
+  isTrustedRuntimeUrl,
   resolveAppAssetPath,
   secureWindowOptions,
 } = require("../src/security");
@@ -24,6 +25,13 @@ test("only the local app origin is trusted for navigation", () => {
   assert.equal(isTrustedAppUrl("app://create.evil.example/canvas"), false);
 });
 
+test("development App origin is trusted for reloads and navigation", () => {
+  assert.equal(isTrustedRuntimeUrl("http://127.0.0.1:3001/login", "http://127.0.0.1:3001"), true);
+  assert.equal(isTrustedRuntimeUrl("http://127.0.0.1:3001/image", "http://127.0.0.1:3001"), true);
+  assert.equal(isTrustedRuntimeUrl("https://evil.example.com", "http://127.0.0.1:3001"), false);
+  assert.equal(isTrustedRuntimeUrl("app://create/image", "http://127.0.0.1:3001"), true);
+});
+
 test("external navigation is limited to HTTP(S)", () => {
   assert.equal(isAllowedExternalUrl("https://example.com"), true);
   assert.equal(isAllowedExternalUrl("file:///etc/passwd"), false);
@@ -35,4 +43,5 @@ test("asset resolution stays within the packaged web root", () => {
   assert.equal(resolveAppAssetPath(root, "app://create/assets/app.js"), path.join(root, "assets", "app.js"));
   assert.throws(() => resolveAppAssetPath(root, "app://create/%2e%2e%2fsecret.txt"));
 });
+
 

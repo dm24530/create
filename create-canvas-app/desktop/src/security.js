@@ -23,6 +23,16 @@ function isTrustedAppUrl(candidate) {
   }
 }
 
+function isTrustedRuntimeUrl(candidate, devUrl = "") {
+  if (isTrustedAppUrl(candidate)) return true;
+  if (!devUrl) return false;
+  try {
+    return new URL(candidate).origin === new URL(devUrl).origin;
+  } catch {
+    return false;
+  }
+}
+
 function isAllowedExternalUrl(candidate) {
   try {
     const url = new URL(candidate);
@@ -49,6 +59,9 @@ module.exports = {
   PARTITION,
   isAllowedExternalUrl,
   isTrustedAppUrl,
+  isTrustedRuntimeUrl,
   resolveAppAssetPath,
   secureWindowOptions,
 };
+
+
