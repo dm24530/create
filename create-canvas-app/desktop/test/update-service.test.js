@@ -1,5 +1,8 @@
 const assert = require("node:assert/strict");
 const { EventEmitter } = require("node:events");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 const test = require("node:test");
 
 const {
@@ -111,4 +114,66 @@ test("desktop update service checks, downloads, and installs only after explicit
   service.installUpdate();
   await new Promise((resolve) => setTimeout(resolve, 20));
   assert.equal(installed, true);
+});
+
+test("server metadata alone is not enough when the update manifest still has the old version", async () => {
+  const autoUpdater = new EventEmitter();
+  autoUpdater.checkForUpdates = async () => {
+    autoUpdater.emit("update-not-available", { version: "0.1.0" });
+    return { updateInfo: { version: "0.1.0" } };
+  };
+  autoUpdater.setFeedURL = () => undefined;
+
+  const service = createDesktopUpdateService({
+    app: { isPackaged: true, getVersion: () => "0.1.0" },
+    autoUpdater,
+    net: { fetch: async () => ({ ok: true, json: async () => ({ data: { enabled: true, version: "0.1.1", notes: "new", update_base_url: "https://downloads.example.com/create/" } }) }) },
+    onStateChange: () => undefined,
+    platform: "win32",
+  });
+
+  const checked = await service.checkForUpdates("https://api.example.com/api/v1/public/create-client-release");
+  assert.equal(checked.status, UPDATE_STATUS.CURRENT);
+  assert.equal(checked.latestVersion, "0.1.0");
+});
+
+test("desktop update service creates a runtime app-update config for downloads", async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "create-update-config-"));
+  const autoUpdater = new EventEmitter();
+  autoUpdater.checkForUpdates = async () => ({ updateInfo: { version: "0.1.1" } });
+  autoUpdater.setFeedURL = () => undefined;
+
+  const service = createDesktopUpdateService({
+    app: { isPackaged: true, getVersion: () => "0.1.0", getPath: () => tempDir },
+    autoUpdater,
+    net: { fetch: async () => ({ ok: true, json: async () => ({ data: { enabled: true, version: "0.1.1", notes: "new", update_base_url: "https://downloads.example.com/create/" } }) }) },
+    onStateChange: () => undefined,
+    platform: "win32",
+  });
+
+  await service.checkForUpdates("https://api.example.com/api/v1/public/create-client-release");
+  assert.ok(autoUpdater.updateConfigPath, "updateConfigPath should be configured");
+  assert.ok(fs.existsSync(autoUpdater.updateConfigPath), "runtime app-update.yml should exist");
+  const config = fs.readFileSync(autoUpdater.updateConfigPath, "utf8");
+  assert.match(config, /provider: generic/);
+  assert.match(config, /updaterCacheDirName:/);
+});
+
+test("desktop update logger ignores broken stdout pipes", () => {
+  const autoUpdater = new EventEmitter();
+  createDesktopUpdateService({
+    app: { isPackaged: true, getVersion: () => "0.1.0" },
+    autoUpdater,
+    net: { fetch: async () => ({ ok: true, json: async () => ({}) }) },
+    onStateChange: () => undefined,
+    platform: "win32",
+  });
+
+  const originalInfo = console.info;
+  console.info = () => { throw new Error("EPIPE: broken pipe, write"); };
+  try {
+    assert.doesNotThrow(() => autoUpdater.logger.info("install on explicit quitAndInstall"));
+  } finally {
+    console.info = originalInfo;
+  }
 });

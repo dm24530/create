@@ -906,7 +906,8 @@ func (s *ImageTaskService) imageTaskToPublic(task *ImageTaskRecord) *ImageTask {
 	if public == nil || len(public.Result) == 0 {
 		return public
 	}
-	if task.Status == ImageTaskStatusPreviewReady {
+	switch task.Status {
+	case ImageTaskStatusPreviewReady:
 		sanitized, _, err := sanitizeImageTaskPreviewResult(task.ID, public.Result)
 		if err != nil {
 			logger.L().Warn("image_task.public_preview_projection_failed",
@@ -918,7 +919,7 @@ func (s *ImageTaskService) imageTaskToPublic(task *ImageTaskRecord) *ImageTask {
 		}
 		public.Result = sanitized
 		public.ImageURL = firstImageTaskURL(public.Result)
-	} else if task.Status == ImageTaskStatusReady || task.Status == ImageTaskStatusCompleted {
+	case ImageTaskStatusReady, ImageTaskStatusCompleted:
 		sanitized, _, err := sanitizeCompletedImageTaskResult(task.ID, public.Result)
 		if err != nil {
 			logger.L().Warn("image_task.public_completed_projection_failed",

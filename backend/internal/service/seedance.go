@@ -265,7 +265,7 @@ func (s *OpenAIGatewayService) ForwardSeedance(ctx context.Context, c *gin.Conte
 		case SeedanceEndpointStatus:
 			videoEndpoint = SeedanceVideoEndpointStatus
 		default:
-			return nil, fmt.Errorf("Momo video API does not support task deletion")
+			return nil, fmt.Errorf("momo video API does not support task deletion")
 		}
 		result, forwardErr := s.forwardSeedanceVideo(ctx, c, account, videoEndpoint, upstreamTaskID, body, true)
 		if result != nil {

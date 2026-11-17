@@ -209,7 +209,10 @@ func (s *ImageStorageSettingService) localAssetUploadLoop() {
 				}
 				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 				defer cancel()
-				s.uploadLocalAsset(ctx, item, uploader)
+				if err := s.uploadLocalAsset(ctx, item, uploader); err != nil {
+					logger.L().Warn("image_storage.local_asset_upload_failed",
+						zap.String("asset_id", item.ID), zap.Error(err))
+				}
 			}(meta)
 		}
 		time.Sleep(localAssetRetryScanInterval)

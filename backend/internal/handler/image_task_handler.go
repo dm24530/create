@@ -767,10 +767,10 @@ func sanitizeClientImageErrorToken(value string) string {
 		if (char >= 'a' && char <= 'z') ||
 			(char >= '0' && char <= '9') ||
 			char == '_' || char == '-' || char == '.' {
-			builder.WriteRune(char)
+			_, _ = builder.WriteRune(char)
 			lastWasSeparator = false
 		} else if !lastWasSeparator && builder.Len() > 0 {
-			builder.WriteByte('_')
+			_ = builder.WriteByte('_')
 			lastWasSeparator = true
 		}
 		if builder.Len() >= 80 {
@@ -1179,11 +1179,6 @@ func withImageTaskUsageRequestID(ctx context.Context, requestID string) context.
 	default:
 		return ctx
 	}
-}
-
-func isAsyncImageTaskContext(ctx context.Context) bool {
-	async, _ := ctx.Value(ctxkey.AsyncImageTask).(bool)
-	return async
 }
 
 func (h *AsyncImageHandler) recordUsageImageLink(taskID, usageRequestID string) {

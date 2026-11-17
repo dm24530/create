@@ -55,10 +55,6 @@ func serveLocalClientReleaseFile(directory, filename, contentType string) gin.Ha
 			return
 		}
 		target := filepath.Join(directory, filename)
-		if _, err := os.Stat(target); err != nil {
-			c.Status(404)
-			return
-		}
 		c.Header("Cache-Control", "no-cache")
 		c.Header("Content-Type", contentType)
 		c.File(target)

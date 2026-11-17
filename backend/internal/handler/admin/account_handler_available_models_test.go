@@ -532,8 +532,16 @@ func TestAccountHandlerSyncUpstreamModelsPreviewAppliesHeaderOverrides(t *testin
 	require.NotEmpty(t, upstream.requests)
 	modelReq := upstream.requests[0]
 	require.Equal(t, "https://gemini.superai.sbs/v1beta/models", modelReq.URL.String())
-	require.Equal(t, []string{"access-id"}, modelReq.Header["cf-access-client-id"])
-	require.Equal(t, []string{"access-secret"}, modelReq.Header["cf-access-client-secret"])
+	headerValues := func(name string) []string {
+		for key, values := range modelReq.Header {
+			if strings.EqualFold(key, name) {
+				return values
+			}
+		}
+		return nil
+	}
+	require.Equal(t, []string{"access-id"}, headerValues("cf-access-client-id"))
+	require.Equal(t, []string{"access-secret"}, headerValues("cf-access-client-secret"))
 }
 
 func TestAccountHandlerSyncUpstreamModels_UpstreamErrorDoesNotExposeBody(t *testing.T) {

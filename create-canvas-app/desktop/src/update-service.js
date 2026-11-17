@@ -1,3 +1,5 @@
+const fs = require("node:fs");
+const path = require("node:path");
 const { URL } = require("node:url");
 
 const UPDATE_STATUS = Object.freeze({
@@ -29,6 +31,35 @@ function compareVersions(left, right) {
     if (a[index] < b[index]) return -1;
   }
   return 0;
+}
+
+function safeUpdateLog(level, ...args) {
+  try {
+    const method = console[level] || console.log;
+    if (typeof method === "function") method.apply(console, args);
+  } catch {
+    // Packaged GUI processes may have a closed stdout/stderr pipe.
+  }
+}
+
+function ensureRuntimeUpdateConfig(app, updateBaseUrl) {
+  if (!app || typeof app.getPath !== "function" || !isHttpUrl(updateBaseUrl)) return null;
+  try {
+    const runtimeDir = path.join(app.getPath("userData"), "update-runtime");
+    fs.mkdirSync(runtimeDir, { recursive: true });
+    const configPath = path.join(runtimeDir, "app-update.yml");
+    const content = [
+      "provider: generic",
+      `url: ${JSON.stringify(String(updateBaseUrl).trim().replace(/\/+$/, ""))}`,
+      "updaterCacheDirName: create-desktop-updater",
+      "",
+    ].join("\n");
+    fs.writeFileSync(configPath, content, "utf8");
+    return configPath;
+  } catch (error) {
+    console.error("Failed to write runtime update config:", error);
+    return null;
+  }
 }
 
 function isHttpUrl(value) {
@@ -105,6 +136,12 @@ function createDesktopUpdateService(options) {
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = false;
   autoUpdater.allowPrerelease = false;
+  autoUpdater.logger = {
+    info: (...args) => safeUpdateLog("info", ...args),
+    warn: (...args) => safeUpdateLog("warn", ...args),
+    error: (...args) => safeUpdateLog("error", ...args),
+    debug: (...args) => safeUpdateLog("debug", ...args),
+  };
 
   let state = {
     status: UPDATE_STATUS.IDLE,
@@ -219,6 +256,8 @@ function createDesktopUpdateService(options) {
         return publish({ ...metadata, progress: null, error: metadata.error || "" });
       }
 
+      const runtimeConfigPath = ensureRuntimeUpdateConfig(app, metadata.updateBaseUrl);
+      if (runtimeConfigPath) autoUpdater.updateConfigPath = runtimeConfigPath;
       autoUpdater.setFeedURL({ provider: "generic", url: metadata.updateBaseUrl });
       const result = await autoUpdater.checkForUpdates();
       const infoVersion = normalizeVersion(result?.updateInfo?.version || metadata.latestVersion);
@@ -243,6 +282,11 @@ function createDesktopUpdateService(options) {
       progress: state.progress || { percent: 0, transferred: 0, total: 0, bytesPerSecond: 0 },
     });
     try {
+      if (latestMetadata?.updateBaseUrl) {
+        const runtimeConfigPath = ensureRuntimeUpdateConfig(app, latestMetadata.updateBaseUrl);
+        if (runtimeConfigPath) autoUpdater.updateConfigPath = runtimeConfigPath;
+        autoUpdater.setFeedURL({ provider: "generic", url: latestMetadata.updateBaseUrl });
+      }
       await autoUpdater.downloadUpdate();
       return true;
     } catch (error) {
@@ -254,7 +298,15 @@ function createDesktopUpdateService(options) {
 
   function installUpdate() {
     if (state.status !== UPDATE_STATUS.DOWNLOADED) throw new Error("The update has not finished downloading");
-    setImmediate(() => autoUpdater.quitAndInstall(false, true));
+    setImmediate(() => {
+      try {
+        autoUpdater.quitAndInstall(false, true);
+      } catch (error) {
+        eventState(UPDATE_STATUS.ERROR, {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    });
     return true;
   }
 

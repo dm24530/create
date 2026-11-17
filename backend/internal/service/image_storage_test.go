@@ -847,7 +847,7 @@ func TestImageStorageSettingServiceUploadLocalAssetMarksRemoteReady(t *testing.T
 	uploader := NewImageResultUploader(storage, "images/", 0, nil)
 	svc := &ImageStorageSettingService{localAssets: local}
 
-	svc.uploadLocalAsset(context.Background(), meta, uploader)
+	require.NoError(t, svc.uploadLocalAsset(context.Background(), meta, uploader))
 
 	require.Len(t, storage.saved, 1)
 	require.Equal(t, "images/users/42/imgtask_queue-0.png", storage.saved[0].key)
@@ -876,7 +876,7 @@ func TestImageStorageSettingServiceRetriesLocalAssetAfterRemoteFailure(t *testin
 	uploader := NewImageResultUploader(storage, "images/", 0, nil)
 	svc := &ImageStorageSettingService{localAssets: local}
 
-	svc.uploadLocalAsset(context.Background(), meta, uploader)
+	require.ErrorContains(t, svc.uploadLocalAsset(context.Background(), meta, uploader), "temporary R2 outage")
 	pending, err := local.Get(meta.ID)
 	require.NoError(t, err)
 	require.False(t, pending.Uploaded)
@@ -885,7 +885,7 @@ func TestImageStorageSettingServiceRetriesLocalAssetAfterRemoteFailure(t *testin
 
 	storage.err = nil
 	storage.url = "https://cdn.test/images/users/42/imgtask_retry-0.png"
-	svc.uploadLocalAsset(context.Background(), pending, uploader)
+	require.NoError(t, svc.uploadLocalAsset(context.Background(), pending, uploader))
 	uploaded, err := local.Get(meta.ID)
 	require.NoError(t, err)
 	require.True(t, uploaded.Uploaded)

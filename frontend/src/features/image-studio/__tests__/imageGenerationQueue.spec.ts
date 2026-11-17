@@ -21,7 +21,7 @@ describe('image generation queue', () => {
   })
 
   it('creates one stable task and slot per requested image', () => {
-    let nextId = 7
+    const nextId = 7
     let nextTask = 0
     const { images, nextImageId } = createPendingImageBatch({
       count: 2,

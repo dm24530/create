@@ -7,6 +7,7 @@ import { AppConfigModal } from "@/components/layout/app-config-modal";
 import { MobileNavDrawer } from "@/components/layout/mobile-nav-drawer";
 import { UserStatusActions } from "@/components/layout/user-status-actions";
 import { CreateAccountActions } from "@/components/create-account/create-account-actions";
+import { VersionReleaseModal } from "@/components/layout/version-release-modal";
 import { cn } from "@/lib/utils";
 import { useState } from "react";
 import { isManagedMode } from "@/lib/managed-mode";
@@ -28,17 +29,19 @@ export function AppTopNav() {
             {!hideHeader ? (
                 <header className="sticky top-0 z-20 h-14 shrink-0 border-b border-stone-200 bg-background/90 backdrop-blur-xl dark:border-stone-800">
                     <div className="relative mx-auto flex h-full max-w-none items-stretch justify-between gap-5 px-6">
-                        <div className="flex items-center md:hidden">
-
-                            <button
-                                type="button"
-                                className="inline-flex size-8 shrink-0 items-center justify-center text-stone-600 transition hover:text-stone-950 dark:text-stone-300 dark:hover:text-white"
-                                onClick={() => setMobileNavOpen(true)}
-                                aria-label={t("topNav.openMenu")}
-                                title={t("topNav.menu")}
-                            >
-                                <Menu className="size-5" />
-                            </button>
+                        <div className="flex items-center gap-1">
+                            <VersionReleaseModal />
+                            <div className="flex items-center md:hidden">
+                                <button
+                                    type="button"
+                                    className="inline-flex size-8 shrink-0 items-center justify-center text-stone-600 transition hover:text-stone-950 dark:text-stone-300 dark:hover:text-white"
+                                    onClick={() => setMobileNavOpen(true)}
+                                    aria-label={t("topNav.openMenu")}
+                                    title={t("topNav.menu")}
+                                >
+                                    <Menu className="size-5" />
+                                </button>
+                            </div>
                         </div>
 
                         <nav className="hide-scrollbar absolute left-1/2 top-0 hidden h-14 -translate-x-1/2 items-center gap-7 overflow-x-auto md:flex">

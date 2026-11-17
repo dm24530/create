@@ -154,7 +154,7 @@ func (s *galleryHandlerSaverStub) PresignImageObjectDownload(
 	return s.downloadURL, nil
 }
 
-func TestImageStudioGalleryDownloadURLReturnsSignedAttachment(t *testing.T) {
+func TestImageStudioGalleryDownloadURLReturnsSameOriginAttachment(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	galleryStore := &galleryHandlerStoreStub{entries: []*service.ImageStudioGalleryEntry{
 		{
@@ -164,9 +164,7 @@ func TestImageStudioGalleryDownloadURLReturnsSignedAttachment(t *testing.T) {
 			Format:    "jpg",
 		},
 	}}
-	saver := &galleryHandlerSaverStub{
-		downloadURL: "https://cdn.example.com/images/work-1.jpg?response-content-disposition=attachment",
-	}
+	saver := &galleryHandlerSaverStub{}
 	h := NewImageStudioGalleryHandler(service.NewImageStudioGalleryService(galleryStore, saver), nil)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
@@ -184,8 +182,9 @@ func TestImageStudioGalleryDownloadURLReturnsSignedAttachment(t *testing.T) {
 	router.ServeHTTP(recorder, request)
 
 	require.Equal(t, http.StatusOK, recorder.Code)
-	require.Contains(t, recorder.Body.String(), saver.downloadURL)
+	require.Contains(t, recorder.Body.String(), "/api/v1/public/studio-works/work-1/content?download=1")
 	require.Contains(t, recorder.Body.String(), "image-work-1.jpg")
+	require.NotContains(t, recorder.Body.String(), "cdn.example.com")
 }
 
 func TestImageStudioGallerySaveFromTaskUsesPersistedObject(t *testing.T) {

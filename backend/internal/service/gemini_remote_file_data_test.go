@@ -36,10 +36,21 @@ func TestRewriteGeminiRemoteFileDataInlinesR2Images(t *testing.T) {
 
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal(rewritten, &payload))
-	parts := payload["contents"].([]any)[0].(map[string]any)["parts"].([]any)
-	require.Contains(t, parts[1].(map[string]any), "inlineData")
-	require.NotContains(t, parts[1].(map[string]any), "fileData")
-	require.Equal(t, "aW1hZ2UtYnl0ZXM=", parts[1].(map[string]any)["inlineData"].(map[string]any)["data"])
+	contents, ok := payload["contents"].([]any)
+	require.True(t, ok)
+	require.NotEmpty(t, contents)
+	entry, ok := contents[0].(map[string]any)
+	require.True(t, ok)
+	parts, ok := entry["parts"].([]any)
+	require.True(t, ok)
+	require.Greater(t, len(parts), 1)
+	part, ok := parts[1].(map[string]any)
+	require.True(t, ok)
+	require.Contains(t, part, "inlineData")
+	require.NotContains(t, part, "fileData")
+	inline, ok := part["inlineData"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "aW1hZ2UtYnl0ZXM=", inline["data"])
 }
 
 func TestRewriteGeminiRemoteFileDataLeavesNonR2URLsUntouched(t *testing.T) {
@@ -92,8 +103,21 @@ func TestSanitizeGeminiResponseFileDataInlinesRemoteFile(t *testing.T) {
 
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal(rewritten, &payload))
-	parts := payload["candidates"].([]any)[0].(map[string]any)["content"].(map[string]any)["parts"].([]any)
-	require.Equal(t, "aW1hZ2UtYnl0ZXM=", parts[1].(map[string]any)["inlineData"].(map[string]any)["data"])
+	candidates, ok := payload["candidates"].([]any)
+	require.True(t, ok)
+	require.NotEmpty(t, candidates)
+	candidate, ok := candidates[0].(map[string]any)
+	require.True(t, ok)
+	content, ok := candidate["content"].(map[string]any)
+	require.True(t, ok)
+	parts, ok := content["parts"].([]any)
+	require.True(t, ok)
+	require.Greater(t, len(parts), 1)
+	part, ok := parts[1].(map[string]any)
+	require.True(t, ok)
+	inline, ok := part["inlineData"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "aW1hZ2UtYnl0ZXM=", inline["data"])
 }
 
 func TestSanitizeGeminiResponseFileDataRemovesPartWhenFetchFails(t *testing.T) {
@@ -113,9 +137,19 @@ func TestSanitizeGeminiResponseFileDataRemovesPartWhenFetchFails(t *testing.T) {
 
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal(rewritten, &payload))
-	parts := payload["candidates"].([]any)[0].(map[string]any)["content"].(map[string]any)["parts"].([]any)
+	candidates, ok := payload["candidates"].([]any)
+	require.True(t, ok)
+	require.NotEmpty(t, candidates)
+	candidate, ok := candidates[0].(map[string]any)
+	require.True(t, ok)
+	content, ok := candidate["content"].(map[string]any)
+	require.True(t, ok)
+	parts, ok := content["parts"].([]any)
+	require.True(t, ok)
 	require.Len(t, parts, 1)
-	require.Equal(t, "generated", parts[0].(map[string]any)["text"])
+	part, ok := parts[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "generated", part["text"])
 }
 
 func TestSanitizeGeminiResponseFileDataKeepsNormalTextURL(t *testing.T) {

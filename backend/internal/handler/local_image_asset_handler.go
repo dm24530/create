@@ -87,18 +87,6 @@ func (h *LocalImageAssetHandler) Serve(c *gin.Context) {
 	http.ServeContent(c.Writer, c.Request, meta.FileName, time.Unix(meta.CreatedAt, 0), file)
 }
 
-func (h *LocalImageAssetHandler) uploadedAssetURL(
-	c *gin.Context,
-	meta *service.LocalImageAssetMetadata,
-) string {
-	if h.storage != nil && strings.TrimSpace(meta.ObjectKey) != "" {
-		if target, err := h.storage.PresignImageObject(c.Request.Context(), meta.ObjectKey); err == nil {
-			return strings.TrimSpace(target)
-		}
-	}
-	return strings.TrimSpace(meta.RemoteURL)
-}
-
 func (h *LocalImageAssetHandler) serveUploadedDownload(c *gin.Context, assetID string) {
 	if h.storage != nil {
 		data, contentType, err := h.storage.FetchImageURL(

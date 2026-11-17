@@ -8,7 +8,6 @@ import { CreateUsageModal } from "@/components/create-account/create-usage-modal
 import { CreateModelPlazaModal } from "@/components/create-account/create-model-plaza-modal";
 import { CreateRechargeModal } from "@/components/create-account/create-recharge-modal";
 import { LocalSaveSettingsModal } from "@/components/settings/local-save-settings-modal";
-import { VersionReleaseModal } from "@/components/layout/version-release-modal";
 import { getDesktopSaveBridge } from "@/lib/desktop-save";
 import { createLogout } from "@/services/create-auth";
 import { listCreateManagedKeys, type CreateManagedKey } from "@/services/create-managed-channel";
@@ -92,7 +91,6 @@ export function CreateAccountActions() {
                         <Grid3X3 className="size-4" />
                     </button>
                 </Tooltip>
-                <VersionReleaseModal />
                 <AnimatedThemeToggler theme={theme} onThemeChange={setTheme} className={iconClass} aria-label={theme === "dark" ? "切换到浅色主题" : "切换到深色主题"} title={theme === "dark" ? "切换到浅色主题" : "切换到深色主题"} />
                 <Dropdown
                     trigger={["click"]}

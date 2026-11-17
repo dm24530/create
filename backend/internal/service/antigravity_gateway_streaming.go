@@ -259,10 +259,11 @@ func (s *AntigravityGatewayService) handleGeminiStreamingResponse(c *gin.Context
 
 				// 解包 v1internal 响应
 				inner, parseErr := s.unwrapV1InternalResponse([]byte(payload))
+				responseBody := []byte(payload)
 				if parseErr == nil && inner != nil {
-					payload = string(inner)
+					responseBody = inner
 				}
-				inner = sanitizeGeminiResponseFileDataForAccount(c.Request.Context(), s.httpUpstream, account, inner)
+				inner = sanitizeGeminiResponseFileDataForAccount(c.Request.Context(), s.httpUpstream, account, responseBody)
 				payload = string(inner)
 
 				// 解析 usage
