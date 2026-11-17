@@ -13,6 +13,7 @@ export default {
         inspiration: 'Video Inspiration',
         works: 'My Works',
         models: 'Models',
+        download: 'Desktop',
         docs: 'Guide'
       },
       workspace: 'Open Studio',

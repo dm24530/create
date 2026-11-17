@@ -47,6 +47,14 @@
             <span class="hidden sm:inline">{{ t('nav.canvas') }}</span>
           </router-link>
           <router-link
+            to="/download"
+            class="flex h-10 shrink-0 items-center gap-1.5 rounded-lg px-2.5 text-sm font-medium text-gray-500 hover:bg-gray-100 hover:text-gray-700 dark:text-dark-400 dark:hover:bg-dark-800 dark:hover:text-white"
+            :title="t('home.landing.nav.download')"
+          >
+            <Icon name="download" size="md" />
+            <span class="hidden sm:inline">{{ t('home.landing.nav.download') }}</span>
+          </router-link>
+          <router-link
             v-if="showModelPlazaEntry"
             :to="modelPlazaDestination"
             class="flex h-10 shrink-0 items-center gap-1.5 rounded-lg px-2.5 text-sm font-medium text-gray-500 hover:bg-gray-100 hover:text-gray-700 dark:text-dark-400 dark:hover:bg-dark-800 dark:hover:text-white"

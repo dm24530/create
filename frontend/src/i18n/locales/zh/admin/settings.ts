@@ -10,6 +10,7 @@ export default {
         users: '用户默认值',
         gateway: '网关服务',
         email: '邮件设置',
+        client: '客户端发布',
         backup: '数据备份',
         payment: '支付设置',
       },

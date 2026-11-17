@@ -9121,6 +9121,205 @@
         </div>
         <!-- /Tab: Email -->
 
+        <!-- Tab: Client Release -->
+        <div v-show="activeTab === 'client'" class="space-y-6">
+          <div class="card">
+            <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
+              <div class="flex flex-wrap items-start justify-between gap-4">
+                <div>
+                  <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
+                    {{ localText("客户端发布", "Desktop Client Release") }}
+                  </h2>
+                  <p class="mt-1 max-w-3xl text-sm text-gray-500 dark:text-gray-400">
+                    {{
+                      localText(
+                        "配置 Windows 与 macOS 安装包直链。桌面端发现新版本后先展示更新说明，用户确认后才下载；安装包放在 R2/CDN，不经过本服务器。",
+                        "Configure direct Windows and macOS installer links. The desktop app shows release notes first and downloads only after the user confirms. Files stay in R2/CDN and are never proxied by this server.",
+                      )
+                    }}
+                  </p>
+                </div>
+                <a
+                  href="/download"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="btn btn-secondary inline-flex items-center gap-2"
+                >
+                  <Icon name="download" size="sm" />
+                  {{ localText("打开下载页", "Open download page") }}
+                </a>
+              </div>
+            </div>
+            <div class="space-y-6 p-6">
+              <div class="flex items-center justify-between rounded-lg border border-gray-200 p-4 dark:border-dark-700">
+                <div>
+                  <h3 class="text-sm font-medium text-gray-900 dark:text-white">
+                    {{ localText("启用客户端发布", "Enable client release") }}
+                  </h3>
+                  <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    {{
+                      localText(
+                        "关闭后 /download 页面仍可访问，但会显示“暂未发布”。",
+                        "When disabled, /download remains reachable but shows that no release is available.",
+                      )
+                    }}
+                  </p>
+                </div>
+                <Toggle v-model="form.create_client_release_enabled" />
+              </div>
+
+              <div class="grid grid-cols-1 gap-6 md:grid-cols-3">
+                <div>
+                  <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                    {{ localText("最新版本", "Latest version") }}
+                  </label>
+                  <input
+                    v-model="form.create_client_release_version"
+                    type="text"
+                    class="input font-mono text-sm"
+                    placeholder="0.2.0"
+                  />
+                  <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                    {{ localText("必须使用 x.y.z 格式。", "Must use x.y.z format.") }}
+                  </p>
+                </div>
+                <div>
+                  <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                    {{ localText("发布日期", "Publish date") }}
+                  </label>
+                  <input
+                    v-model="form.create_client_release_published_at"
+                    type="date"
+                    class="input"
+                  />
+                </div>
+                <div>
+                  <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                    {{ localText("最低支持版本", "Minimum supported version") }}
+                  </label>
+                  <input
+                    v-model="form.create_client_release_min_version"
+                    type="text"
+                    class="input font-mono text-sm"
+                    placeholder="0.1.0"
+                  />
+                  <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                    {{ localText("供后续客户端强制更新判断使用。", "Used later for minimum-version / forced-update checks.") }}
+                  </p>
+                </div>
+              </div>
+
+              <div>
+                <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                  {{ localText("自动更新基础地址（可选）", "Update base URL (optional)") }}
+                </label>
+                <input
+                  v-model="form.create_client_release_update_base_url"
+                  type="url"
+                  class="input font-mono text-sm"
+                  placeholder="https://downloads.example.com/create/"
+                />
+                <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                  {{
+                    localText(
+                      "预留给桌面端自动更新清单（latest.yml / latest-mac.yml）的公开目录。",
+                      "Reserved for the public directory containing latest.yml / latest-mac.yml.",
+                    )
+                  }}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
+              <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
+                {{ localText("安装包直链", "Installer Direct Links") }}
+              </h2>
+              <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                {{
+                  localText(
+                    "可先只发布一个平台，未填写的平台会在下载页显示为暂不可用。",
+                    "You can launch one platform first; missing platforms show as unavailable on the download page.",
+                  )
+                }}
+              </p>
+            </div>
+            <div class="space-y-5 p-6">
+              <div>
+                <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                  Windows x64
+                </label>
+                <input
+                  v-model="form.create_client_release_windows_url"
+                  type="url"
+                  class="input font-mono text-sm"
+                  placeholder="https://downloads.example.com/create/Create-Setup-0.2.0.exe"
+                />
+              </div>
+              <div>
+                <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                  macOS Apple Silicon (arm64)
+                </label>
+                <input
+                  v-model="form.create_client_release_macos_arm64_url"
+                  type="url"
+                  class="input font-mono text-sm"
+                  placeholder="https://downloads.example.com/create/Create-0.2.0-arm64.dmg"
+                />
+              </div>
+              <div>
+                <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                  macOS Intel (x64)
+                </label>
+                <input
+                  v-model="form.create_client_release_macos_x64_url"
+                  type="url"
+                  class="input font-mono text-sm"
+                  placeholder="https://downloads.example.com/create/Create-0.2.0-x64.dmg"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
+              <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
+                {{ localText("更新说明", "Release Notes") }}
+              </h2>
+            </div>
+            <div class="p-6">
+              <textarea
+                v-model="form.create_client_release_notes"
+                rows="7"
+                class="input font-mono text-sm"
+                :placeholder="
+                  localText(
+                    '例如：\n- 新增本地图片压缩与画布保存\n- 修复视频任务恢复\n- 优化 macOS 启动速度',
+                    'For example:\n- Added local image compression and canvas persistence\n- Fixed video task recovery\n- Improved macOS startup',
+                  )
+                "
+              ></textarea>
+            </div>
+          </div>
+
+          <div class="rounded-xl border border-sky-200 bg-sky-50 p-5 text-sm text-sky-900 dark:border-sky-900/60 dark:bg-sky-950/30 dark:text-sky-100">
+            <div class="flex items-start gap-3">
+              <Icon name="cloud" size="md" class="mt-0.5 shrink-0" />
+              <div class="space-y-2">
+                <p class="font-medium">{{ localText("R2 / CDN 发布步骤", "R2 / CDN publishing steps") }}</p>
+                <ol class="list-decimal space-y-1 pl-5 text-sky-800 dark:text-sky-200">
+                  <li>{{ localText("先上传安装包，再上传自动更新清单文件。", "Upload installers first, then the updater manifest files.") }}</li>
+                  <li>{{ localText("绑定公开自定义域名；生产环境不要长期依赖 pub-*.r2.dev。", "Bind a public custom domain; avoid relying on pub-*.r2.dev for production.") }}</li>
+                  <li>{{ localText("把该公开域名下的安装包完整 URL 填到上方。", "Paste the complete public installer URLs above.") }}</li>
+                  <li>{{ localText("建议清单文件设置 no-store，安装包设置长缓存 immutable。", "Use no-store for manifests and long-lived immutable caching for installers.") }}</li>
+                </ol>
+              </div>
+            </div>
+          </div>
+        </div>
+        <!-- /Tab: Client Release -->
+
         <!-- Tab: Backup -->
         <div v-show="activeTab === 'backup'">
           <BackupSettings />
@@ -9325,6 +9524,7 @@ type SettingsTab =
   | "gateway"
   | "payment"
   | "email"
+  | "client"
   | "backup";
 const activeTab = ref<SettingsTab>("general");
 const settingsTabs = [
@@ -9336,6 +9536,7 @@ const settingsTabs = [
   { key: "gateway" as SettingsTab, icon: "server" as const },
   { key: "payment" as SettingsTab, icon: "creditCard" as const },
   { key: "email" as SettingsTab, icon: "mail" as const },
+  { key: "client" as SettingsTab, icon: "cloud" as const },
   { key: "backup" as SettingsTab, icon: "database" as const },
 ];
 
@@ -10117,6 +10318,15 @@ const form = reactive<SettingsForm>({
     endpoint: string;
     description: string;
   }>,
+  create_client_release_enabled: false,
+  create_client_release_version: "",
+  create_client_release_windows_url: "",
+  create_client_release_macos_arm64_url: "",
+  create_client_release_macos_x64_url: "",
+  create_client_release_notes: "",
+  create_client_release_published_at: "",
+  create_client_release_min_version: "",
+  create_client_release_update_base_url: "",
   frontend_url: "",
   smtp_host: "",
   smtp_port: 587,
@@ -11797,6 +12007,98 @@ async function saveSettings() {
     // Optional URL fields: auto-clear invalid values so they don't cause backend 400 errors
     if (!isValidHttpUrl(form.frontend_url)) form.frontend_url = "";
     if (!isValidHttpUrl(form.doc_url)) form.doc_url = "";
+    const createClientReleaseURLs = [
+      form.create_client_release_windows_url,
+      form.create_client_release_macos_arm64_url,
+      form.create_client_release_macos_x64_url,
+      form.create_client_release_update_base_url,
+    ];
+    if (createClientReleaseURLs.some((url) => !isValidHttpUrl(url.trim()))) {
+      appStore.showError(
+        localText(
+          "客户端下载地址和更新地址必须是完整的 http:// 或 https:// 链接。",
+          "Client download and update URLs must be absolute http:// or https:// links.",
+        ),
+      );
+      return;
+    }
+    const releaseVersionPattern = /^\d+\.\d+\.\d+$/;
+    if (
+      form.create_client_release_version.trim() &&
+      !releaseVersionPattern.test(form.create_client_release_version.trim())
+    ) {
+      appStore.showError(
+        localText(
+          "客户端版本号必须使用 x.y.z 格式，例如 0.2.0。",
+          "Client version must use x.y.z format, for example 0.2.0.",
+        ),
+      );
+      return;
+    }
+    if (
+      form.create_client_release_min_version.trim() &&
+      !releaseVersionPattern.test(form.create_client_release_min_version.trim())
+    ) {
+      appStore.showError(
+        localText(
+          "最低支持版本必须使用 x.y.z 格式。",
+          "Minimum supported version must use x.y.z format.",
+        ),
+      );
+      return;
+    }
+    const compareReleaseVersions = (left: string, right: string): number => {
+      const leftParts = left.split(".").map((part) => Number(part));
+      const rightParts = right.split(".").map((part) => Number(part));
+      for (let index = 0; index < 3; index += 1) {
+        const delta = (leftParts[index] ?? 0) - (rightParts[index] ?? 0);
+        if (delta !== 0) return delta;
+      }
+      return 0;
+    };
+    const releaseVersion = form.create_client_release_version.trim();
+    const releaseMinVersion = form.create_client_release_min_version.trim();
+    if (
+      releaseVersion &&
+      releaseMinVersion &&
+      compareReleaseVersions(releaseMinVersion, releaseVersion) > 0
+    ) {
+      appStore.showError(
+        localText(
+          "最低支持版本不能高于最新版本。",
+          "Minimum supported version cannot be higher than the latest version.",
+        ),
+      );
+      return;
+    }
+    if (
+      form.create_client_release_enabled &&
+      !form.create_client_release_version.trim()
+    ) {
+      appStore.showError(
+        localText(
+          "启用客户端发布前必须填写版本号。",
+          "A version is required before enabling the client release.",
+        ),
+      );
+      return;
+    }
+    if (
+      form.create_client_release_enabled &&
+      ![
+        form.create_client_release_windows_url,
+        form.create_client_release_macos_arm64_url,
+        form.create_client_release_macos_x64_url,
+      ].some((url) => url.trim())
+    ) {
+      appStore.showError(
+        localText(
+          "启用客户端发布前至少填写一个平台下载地址。",
+          "At least one platform download URL is required before enabling the client release.",
+        ),
+      );
+      return;
+    }
     syncWeChatConnectMode();
     const wechatStoredMode = deriveWeChatConnectStoredMode(
       form.wechat_connect_open_enabled,
@@ -11874,6 +12176,15 @@ async function saveSettings() {
       table_page_size_options: form.table_page_size_options,
       custom_menu_items: form.custom_menu_items,
       custom_endpoints: form.custom_endpoints,
+      create_client_release_enabled: form.create_client_release_enabled,
+      create_client_release_version: form.create_client_release_version.trim(),
+      create_client_release_windows_url: form.create_client_release_windows_url.trim(),
+      create_client_release_macos_arm64_url: form.create_client_release_macos_arm64_url.trim(),
+      create_client_release_macos_x64_url: form.create_client_release_macos_x64_url.trim(),
+      create_client_release_notes: form.create_client_release_notes.trim(),
+      create_client_release_published_at: form.create_client_release_published_at.trim(),
+      create_client_release_min_version: form.create_client_release_min_version.trim(),
+      create_client_release_update_base_url: form.create_client_release_update_base_url.trim(),
       frontend_url: form.frontend_url,
       smtp_host: form.smtp_host,
       smtp_port: form.smtp_port,

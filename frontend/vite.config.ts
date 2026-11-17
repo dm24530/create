@@ -163,10 +163,19 @@ export default defineConfig(({ command, mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   const backendUrl = env.VITE_DEV_PROXY_TARGET || 'http://localhost:8080'
   const devPort = Number(env.VITE_DEV_PORT || 3000)
-  const buildTarget = command === 'serve' ? 'full' : mode === 'admin' ? 'admin' : mode === 'full' ? 'full' : 'user'
+  // 'release' keeps the production output path (dist) while including the
+  // admin modules required by the embedded management UI. 'full' writes to
+  // dist-full for verification, and 'user' remains an explicit lean build.
+  const buildTarget = command === 'serve'
+    ? 'full'
+    : mode === 'admin'
+      ? 'admin'
+      : mode === 'full' || mode === 'release'
+        ? 'full'
+        : 'user'
   const outDir = buildTarget === 'admin'
     ? '../backend/internal/web/dist-admin'
-    : buildTarget === 'full'
+    : mode === 'full'
       ? '../backend/internal/web/dist-full'
       : '../backend/internal/web/dist'
 

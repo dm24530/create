@@ -7,10 +7,12 @@
   "scripts": {
     "start": "electron .",
     "test": "node --test test/*.test.js",
-    "check": "node --check src/main.js && node --check src/preload.js && node --check src/security.js && node --check src/save-directory.js && npm test",
+    "check": "node --check src/main.js && node --check src/preload.js && node --check src/update-service.js && node --check src/security.js && node --check src/save-directory.js && npm test",
     "dist:dir": "electron-builder --dir",
-    "dist:win": "electron-builder --win nsis",
-    "dist:mac": "electron-builder --mac dmg",
+    "predist:win": "node ../scripts/sync-version-from-web.mjs",
+    "predist:mac": "node ../scripts/sync-version-from-web.mjs",
+    "dist:win": "electron-builder --win nsis --publish never",
+    "dist:mac": "electron-builder --mac --publish never",
     "test:smoke": "node test/smoke.js",
     "test:packaged": "node test/packaged-smoke.js",
     "test:mock-login": "node test/mock-login-smoke.js",
@@ -50,11 +52,21 @@
     },
     "mac": {
       "target": [
-        "dmg"
+        "dmg",
+        "zip"
       ],
       "category": "public.app-category.graphics-design",
       "icon": "assets/icon.png"
-    }
+    },
+    "publish": [
+      {
+        "provider": "generic",
+        "url": "https://downloads.example.com/create/"
+      }
+    ]
   },
-  "author": "Create"
+  "author": "Create",
+  "dependencies": {
+    "electron-updater": "^6.8.11"
+  }
 }

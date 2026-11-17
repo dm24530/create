@@ -497,6 +497,16 @@ export interface SystemSettings {
   backend_mode_enabled: boolean;
   custom_menu_items: CustomMenuItem[];
   custom_endpoints: CustomEndpoint[];
+  // Create desktop client release metadata (R2/CDN direct links)
+  create_client_release_enabled: boolean;
+  create_client_release_version: string;
+  create_client_release_windows_url: string;
+  create_client_release_macos_arm64_url: string;
+  create_client_release_macos_x64_url: string;
+  create_client_release_notes: string;
+  create_client_release_published_at: string;
+  create_client_release_min_version: string;
+  create_client_release_update_base_url: string;
   // SMTP settings
   smtp_host: string;
   smtp_port: number;
@@ -859,6 +869,15 @@ export interface UpdateSettingsRequest {
   backend_mode_enabled?: boolean;
   custom_menu_items?: CustomMenuItem[];
   custom_endpoints?: CustomEndpoint[];
+  create_client_release_enabled?: boolean;
+  create_client_release_version?: string;
+  create_client_release_windows_url?: string;
+  create_client_release_macos_arm64_url?: string;
+  create_client_release_macos_x64_url?: string;
+  create_client_release_notes?: string;
+  create_client_release_published_at?: string;
+  create_client_release_min_version?: string;
+  create_client_release_update_base_url?: string;
   smtp_host?: string;
   smtp_port?: number;
   smtp_username?: string;

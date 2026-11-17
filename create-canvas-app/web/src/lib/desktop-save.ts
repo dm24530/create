@@ -17,7 +17,7 @@ type DesktopSaveBridge = {
     getSaveSettings: () => Promise<LocalSaveSettings>;
     saveSaveSettings: (settings: LocalSaveSettings) => Promise<LocalSaveSettings>;
     saveGeneratedFile?: (payload: { kind: DesktopSaveKind; mimeType: string; filename: string; data: ArrayBuffer; canvasFolder?: string }) => Promise<{ savePath: string }>;
-    readGeneratedFile?: (payload: { kind: DesktopSaveKind; path?: string; size?: number; mimeType?: string; canvasFolder?: string }) => Promise<{ data: ArrayBuffer | Uint8Array; savePath: string; mimeType: string; size: number } | null>;
+    readGeneratedFile?: (payload: { kind: DesktopSaveKind; path?: string; filename?: string; size?: number; mimeType?: string; canvasFolder?: string }) => Promise<{ data: ArrayBuffer | Uint8Array; savePath: string; mimeType: string; size: number } | null>;
     deleteGeneratedFile?: (payload: { kind: DesktopSaveKind; path: string; canvasFolder?: string }) => Promise<{ deleted: boolean; savePath: string }>;
     chooseSaveDirectory: (kind: DesktopSaveKind) => Promise<string | null>;
     openSaveFolder: (kind: DesktopSaveKind) => Promise<void>;
@@ -32,6 +32,7 @@ export function getDesktopSaveBridge(): DesktopSaveBridge | null {
 }
 
 export type GeneratedFileSaveResult = { savePath?: string };
+export type GeneratedFileReadResult = { blob: Blob; savePath: string; size: number };
 
 export async function saveGeneratedFile(blob: Blob, kind: DesktopSaveKind, mimeType: string, filename: string, options: GeneratedFileSaveOptions = {}): Promise<GeneratedFileSaveResult> {
     const bridge = getDesktopSaveBridge();
@@ -42,13 +43,21 @@ export async function saveGeneratedFile(blob: Blob, kind: DesktopSaveKind, mimeT
     return {};
 }
 
-export async function readGeneratedFileBlob(payload: { kind: DesktopSaveKind; path?: string; size?: number; mimeType?: string; canvasFolder?: string }): Promise<Blob | null> {
+export async function readGeneratedFileAsset(payload: { kind: DesktopSaveKind; path?: string; filename?: string; size?: number; mimeType?: string; canvasFolder?: string }): Promise<GeneratedFileReadResult | null> {
     const bridge = getDesktopSaveBridge();
     if (!bridge?.readGeneratedFile) return null;
     const saved = await bridge.readGeneratedFile(payload);
     if (!saved?.data) return null;
     const data = saved.data instanceof ArrayBuffer ? saved.data.slice(0) : new Uint8Array(saved.data).buffer;
-    return new Blob([data], { type: saved.mimeType || payload.mimeType || "application/octet-stream" });
+    return {
+        blob: new Blob([data], { type: saved.mimeType || payload.mimeType || "application/octet-stream" }),
+        savePath: saved.savePath,
+        size: saved.size,
+    };
+}
+
+export async function readGeneratedFileBlob(payload: { kind: DesktopSaveKind; path?: string; filename?: string; size?: number; mimeType?: string; canvasFolder?: string }): Promise<Blob | null> {
+    return (await readGeneratedFileAsset(payload))?.blob || null;
 }
 
 export async function deleteGeneratedFile(kind: DesktopSaveKind, path: string, options: GeneratedFileSaveOptions = {}): Promise<{ deleted: boolean; savePath?: string }> {

@@ -171,6 +171,17 @@ type SystemSettings struct {
 	CustomMenuItems             []CustomMenuItem `json:"custom_menu_items"`
 	CustomEndpoints             []CustomEndpoint `json:"custom_endpoints"`
 
+	// Create desktop client release metadata (R2/CDN direct links).
+	CreateClientReleaseEnabled       bool   `json:"create_client_release_enabled"`
+	CreateClientReleaseVersion       string `json:"create_client_release_version"`
+	CreateClientReleaseWindowsURL    string `json:"create_client_release_windows_url"`
+	CreateClientReleaseMacOSARM64URL string `json:"create_client_release_macos_arm64_url"`
+	CreateClientReleaseMacOSX64URL   string `json:"create_client_release_macos_x64_url"`
+	CreateClientReleaseNotes         string `json:"create_client_release_notes"`
+	CreateClientReleasePublishedAt   string `json:"create_client_release_published_at"`
+	CreateClientReleaseMinVersion    string `json:"create_client_release_min_version"`
+	CreateClientReleaseUpdateBaseURL string `json:"create_client_release_update_base_url"`
+
 	DefaultConcurrency           int                          `json:"default_concurrency"`
 	DefaultBalance               float64                      `json:"default_balance"`
 	AffiliateRebateRate          float64                      `json:"affiliate_rebate_rate"`

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { deleteGeneratedFile, generatedFileExtension, readGeneratedFileBlob, saveGeneratedFile } from "../desktop-save";
+import { deleteGeneratedFile, generatedFileExtension, readGeneratedFileAsset, readGeneratedFileBlob, saveGeneratedFile } from "../desktop-save";
 
 describe("desktop generated-file save", () => {
     afterEach(() => {
@@ -87,6 +87,10 @@ describe("desktop generated-file save", () => {
                 readGeneratedFile: bridge,
             },
         });
+
+        const asset = await readGeneratedFileAsset({ kind: "image", path: "C:\\images\\image-1.png", filename: "image-1.png", size: 4, mimeType: "image/png" });
+        expect(asset?.savePath).toBe("C:\\images\\image-1.png");
+        expect(bridge).toHaveBeenCalledWith(expect.objectContaining({ filename: "image-1.png" }));
 
         const blob = await readGeneratedFileBlob({ kind: "image", path: "C:\\images\\image-1.png", size: 4, mimeType: "image/png" });
         expect(blob?.type).toBe("image/png");

@@ -155,3 +155,59 @@ func TestSettingHandler_GetPublicSettings_ExposesWeChatOAuthModeCapabilities(t *
 	require.True(t, resp.Data.WeChatOAuthOpenEnabled)
 	require.True(t, resp.Data.WeChatOAuthMPEnabled)
 }
+
+func TestSettingHandler_GetCreateClientRelease_ReturnsSanitizedPublicManifest(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	repo := &settingHandlerPublicRepoStub{
+		values: map[string]string{
+			service.SettingKeyCreateClientReleaseEnabled:       "true",
+			service.SettingKeyCreateClientReleaseVersion:       "0.2.0",
+			service.SettingKeyCreateClientReleasePublishedAt:   "2026-11-17",
+			service.SettingKeyCreateClientReleaseMinVersion:    "0.1.0",
+			service.SettingKeyCreateClientReleaseNotes:         "Local-first release",
+			service.SettingKeyCreateClientReleaseWindowsURL:    "https://downloads.example.com/Create-Setup-0.2.0.exe",
+			service.SettingKeyCreateClientReleaseMacOSARM64URL: "https://downloads.example.com/Create-0.2.0-arm64.dmg",
+			service.SettingKeyCreateClientReleaseMacOSX64URL:   "javascript:alert(1)",
+			service.SettingKeyCreateClientReleaseUpdateBaseURL: "https://downloads.example.com/create/",
+		},
+	}
+	h := NewSettingHandler(service.NewSettingService(repo, &config.Config{}), "test-version")
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/public/create-client-release", nil)
+
+	h.GetCreateClientRelease(c)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Equal(t, "no-cache", recorder.Header().Get("Cache-Control"))
+
+	var resp struct {
+		Code int `json:"code"`
+		Data struct {
+			Enabled        bool   `json:"enabled"`
+			Version        string `json:"version"`
+			PublishedAt    string `json:"published_at"`
+			MinimumVersion string `json:"minimum_version"`
+			Notes          string `json:"notes"`
+			UpdateBaseURL  string `json:"update_base_url"`
+			Downloads      struct {
+				WindowsX64 string `json:"windows_x64"`
+				MacOSARM64 string `json:"macos_arm64"`
+				MacOSX64   string `json:"macos_x64"`
+			} `json:"downloads"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &resp))
+	require.Equal(t, 0, resp.Code)
+	require.True(t, resp.Data.Enabled)
+	require.Equal(t, "0.2.0", resp.Data.Version)
+	require.Equal(t, "2026-11-17", resp.Data.PublishedAt)
+	require.Equal(t, "0.1.0", resp.Data.MinimumVersion)
+	require.Equal(t, "Local-first release", resp.Data.Notes)
+	require.Equal(t, "https://downloads.example.com/Create-Setup-0.2.0.exe", resp.Data.Downloads.WindowsX64)
+	require.Equal(t, "https://downloads.example.com/Create-0.2.0-arm64.dmg", resp.Data.Downloads.MacOSARM64)
+	require.Empty(t, resp.Data.Downloads.MacOSX64)
+	require.Equal(t, "https://downloads.example.com/create/", resp.Data.UpdateBaseURL)
+}

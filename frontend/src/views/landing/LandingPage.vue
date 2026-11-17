@@ -12,6 +12,7 @@
         <RouterLink to="/video-inspiration">{{ t('home.landing.nav.inspiration') }}</RouterLink>
         <RouterLink to="/video-works">{{ t('home.landing.nav.works') }}</RouterLink>
         <RouterLink v-if="showModelPlazaEntry" :to="modelPlazaDestination">{{ t('home.landing.nav.models') }}</RouterLink>
+        <RouterLink to="/download">{{ t('home.landing.nav.download') }}</RouterLink>
         <a v-if="docUrl" :href="docUrl" target="_blank" rel="noopener noreferrer">{{ t('home.landing.nav.docs') }}</a>
       </nav>
 
@@ -34,6 +35,7 @@
       <RouterLink to="/video-inspiration" @click="mobileOpen = false">{{ t('home.landing.nav.inspiration') }}</RouterLink>
       <RouterLink to="/video-works" @click="mobileOpen = false">{{ t('home.landing.nav.works') }}</RouterLink>
       <RouterLink v-if="showModelPlazaEntry" :to="modelPlazaDestination" @click="mobileOpen = false">{{ t('home.landing.nav.models') }}</RouterLink>
+      <RouterLink to="/download" @click="mobileOpen = false">{{ t('home.landing.nav.download') }}</RouterLink>
       <a v-if="docUrl" :href="docUrl" target="_blank" rel="noopener noreferrer">{{ t('home.landing.nav.docs') }}</a>
     </nav>
 

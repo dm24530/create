@@ -42,6 +42,22 @@ export function legacyCanvasStorageKeys(key: string) {
     return [...keys];
 }
 
+
+const LEGACY_DATA_OWNER_KEY = "create-canvas:legacy-data-owner-user-id";
+
+export function canCurrentUserClaimLegacyData() {
+    if (typeof window === "undefined" || !userCandidate) return false;
+    try {
+        const owner = window.localStorage.getItem(LEGACY_DATA_OWNER_KEY) || "";
+        if (!owner) {
+            window.localStorage.setItem(LEGACY_DATA_OWNER_KEY, userCandidate);
+            return true;
+        }
+        return owner === userCandidate;
+    } catch {
+        return false;
+    }
+}
 export function scopedCanvasStoreName(name: string) {
     return `${name}:${canvasStorageScope}`;
 }

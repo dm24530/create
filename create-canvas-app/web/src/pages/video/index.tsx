@@ -14,12 +14,13 @@ import { isCreateProductMode } from "@/lib/create-product";
 import { normalizeVideoResolutionValue } from "@/components/video-settings-panel";
 import { computeVideoSize, inferVideoRatio, parsePixelSize, parseVideoResolution, readVideoDimensions, videoRatioOptions } from "@/lib/media-size";
 import { clampVideoSecondsForProfile, getVideoModelProfile, isVideoDurationOptionAllowed, isVideoRatioSupported, isVideoResolutionSupported, supportsVideoGenerateAudioToggle } from "@/lib/video-model-profile";
-import { autoSaveGeneratedFile, deleteGeneratedFile, readGeneratedFileBlob } from "@/lib/desktop-save";
+import { autoSaveGeneratedFile, deleteGeneratedFile, readGeneratedFileAsset } from "@/lib/desktop-save";
 import { captureVideoAssetCover } from "@/lib/video-asset-cover";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
 import { deleteStoredMedia, getMediaBlob, resolveMediaUrl, setMediaBlob, uploadMediaFile } from "@/services/file-storage";
 import { resolveImageUrl, ensureImagePreview, getImagePreviewRevision, previewUrlFor, subscribeImagePreviews, uploadImage } from "@/services/image-storage";
 import { createVideoGenerationTask, pollVideoGenerationTask, storeGeneratedVideo, type VideoGenerationTask } from "@/services/api/video";
+import { createUserWorkbenchLogStore } from "@/services/workbench-log-storage";
 import { configureCreateWorkspace, getManagedKeySelection, listCreateManagedKeys, managedKeySupportsVideo, switchManagedKey, type CreateManagedKey } from "@/services/create-managed-channel";
 import { WorkbenchModelSelect } from "@/components/workbench/model-select";
 import { PanelResizeHandle, useStoredPanelWidth } from "@/components/workbench/panel-resize-handle";
@@ -70,6 +71,7 @@ type GenerationResult = {
 
 type GenerationLog = {
     id: string;
+    userId?: number;
     createdAt: number;
     title: string;
     prompt: string;
@@ -98,7 +100,7 @@ const MAX_REFERENCE_AUDIOS = 3;
 const MAX_VIDEO_TASKS = 4;
 const MAX_PROMPT_LENGTH = 5000;
 const VIDEO_SECONDS_PRESETS = [5, 8, 10, 15] as const;
-const logStore = localforage.createInstance({ name: "infinite-canvas", storeName: "video_generation_logs" });
+const { store: logStore, ensureMigrated: ensureLogStoreMigrated } = createUserWorkbenchLogStore("video_generation_logs");
 
 export default function VideoPage() {
     const { message, modal } = App.useApp();
@@ -569,7 +571,8 @@ export default function VideoPage() {
     const saveResultToAssets = async (video: GeneratedVideo) => {
         let coverUrl = "";
         try {
-            coverUrl = await captureVideoAssetCover(video.url);
+            const source = video.storageKey ? await resolveMediaUrl(video.storageKey, video.url) : video.url;
+            coverUrl = await captureVideoAssetCover(source);
         } catch (error) {
             console.warn("Failed to generate video cover from the first frame", error);
         }
@@ -684,7 +687,9 @@ export default function VideoPage() {
     };
 
     const saveLog = async (log: GenerationLog, resumePending = true) => {
-        await logStore.setItem(log.id, serializeLog(log));
+        const userId = Number(useUserStore.getState().user?.id);
+        const ownedLog = userId > 0 ? { ...log, userId } : log;
+        await logStore.setItem(ownedLog.id, serializeLog(ownedLog));
         await refreshLogs(resumePending);
     };
 
@@ -720,31 +725,41 @@ export default function VideoPage() {
             for (let attempt = 0; attempt < 120; attempt += 1) {
                 const state = await pollVideoGenerationTask(configOverride || taskConfig, log.task);
                 if (state.status === "completed") {
-                    const stored = await storeGeneratedVideo(state.result);
-                    let localPath = "";
+                    let stored: Awaited<ReturnType<typeof storeGeneratedVideo>> | null = null;
+                    let sourceBlob: Blob | null = state.result.blob || null;
+                    let storageError: unknown = null;
                     try {
-                        const original = await getMediaBlob(stored.storageKey);
-                        if (original) {
-                            const saved = await autoSaveGeneratedFile(original, "video", stored.mimeType || "video/mp4");
-                            localPath = saved.savePath || "";
-                        }
-                    } catch {
-                        // Keep generation successful even when desktop auto-save fails.
+                        stored = await storeGeneratedVideo(state.result);
+                        if (stored.storageKey) sourceBlob = await getMediaBlob(stored.storageKey).catch(() => sourceBlob);
+                    } catch (error) {
+                        storageError = error;
                     }
+                    let localPath = "";
+                    if (sourceBlob?.size) {
+                        const saved = await autoSaveGeneratedFile(
+                            sourceBlob,
+                            "video",
+                            stored?.mimeType || sourceBlob.type || "video/mp4",
+                        ).catch(() => null);
+                        localPath = saved?.savePath || "";
+                    }
+                    if (!stored && !sourceBlob) {
+                        throw storageError instanceof Error ? storageError : new Error(t("videoWorkbench.generated"));
+                    }
+                    const storageKey = stored?.storageKey || `video:${nanoid()}`;
                     const nextVideo: GeneratedVideo = {
                         id: nanoid(),
-                        url: stored.url,
-                        storageKey: stored.storageKey,
-                        localPath,
+                        url: stored?.url || URL.createObjectURL(sourceBlob!),
+                        storageKey,
+                        ...(localPath ? { localPath } : {}),
                         durationMs: Date.now() - log.createdAt,
-                        width: stored.width || 1280,
-                        height: stored.height || 720,
-                        bytes: stored.bytes,
-                        mimeType: stored.mimeType,
+                        width: stored?.width || 1280,
+                        height: stored?.height || 720,
+                        bytes: stored?.bytes || sourceBlob?.size || 0,
+                        mimeType: stored?.mimeType || sourceBlob?.type || "video/mp4",
                         prompt: log.prompt,
                         model: modelOptionName(log.model),
-                    };
-                    upsertResult({ status: "success", logId: log.id, video: nextVideo, error: undefined });
+                    };                    upsertResult({ status: "success", logId: log.id, video: nextVideo, error: undefined });
                     if (agentTaskId) updateAgentTask(agentTaskId, { status: "succeeded", successCount: 1, failCount: 0, error: undefined });
                     await saveLog({ ...log, status: "success", durationMs: nextVideo.durationMs, video: nextVideo, error: undefined });
                     message.success(t("videoWorkbench.generated"));
@@ -1330,8 +1345,8 @@ function ResultVideoCard({
                     const element = event.currentTarget;
                     if (element.dataset.localFallback === "1") return;
                     element.dataset.localFallback = "1";
-                    void recoverVideoUrlFromLocalFile(video).then((recoveredUrl) => {
-                        if (recoveredUrl) element.src = recoveredUrl;
+                    void recoverVideoFromLocalFile(video).then((recovered) => {
+                        if (recovered?.url) element.src = recovered.url;
                     });
                 }}
             />
@@ -1535,11 +1550,19 @@ function LogCard({ log, selected, active, onSelectedChange, onClick }: { log: Ge
 async function readStoredLogs() {
     if (typeof window === "undefined") return [];
     try {
+        await ensureLogStoreMigrated();
         const logs: GenerationLog[] = [];
         await logStore.iterate<GenerationLog, void>((value) => {
             logs.push(value);
         });
-        return (await Promise.all(logs.map(normalizeLog))).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+        const normalized = await Promise.all(logs.map(async (stored) => {
+            const log = await normalizeLog(stored);
+            if (log.video && (log.video.storageKey !== stored.video?.storageKey || log.video.localPath !== stored.video?.localPath)) {
+                await logStore.setItem(log.id, serializeLog(log)).catch(() => undefined);
+            }
+            return log;
+        }));
+        return normalized.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
     } catch {
         return [];
     }
@@ -1577,6 +1600,7 @@ async function normalizeLog(log: Partial<GenerationLog>): Promise<GenerationLog>
     const config = normalizeLogConfig(log);
     return {
         id: log.id || nanoid(),
+        userId: log.userId || Number(useUserStore.getState().user?.id) || undefined,
         createdAt: log.createdAt || Date.now(),
         title: log.title || log.model || i18n.t("workbench.untitled"),
         prompt: log.prompt || "",
@@ -1597,46 +1621,71 @@ async function normalizeLog(log: Partial<GenerationLog>): Promise<GenerationLog>
     };
 }
 
-async function recoverVideoUrlFromLocalFile(video: GeneratedVideo): Promise<string> {
+async function recoverVideoFromLocalFile(video: GeneratedVideo): Promise<GeneratedVideo | null> {
     try {
-        const localBlob = await readGeneratedFileBlob({
+        const recovered = await readGeneratedFileAsset({
             kind: "video",
             path: video.localPath,
+            filename: video.localPath?.split(/[\\/]/).pop() || undefined,
             size: video.bytes,
             mimeType: video.mimeType,
         });
-        if (!localBlob) return "";
-        if (video.storageKey) {
-            try {
-                return await setMediaBlob(video.storageKey, localBlob);
-            } catch {
-                // IndexedDB may be unavailable; keep the local file usable through a blob URL.
-            }
+        if (!recovered?.blob.size) return null;
+        const storageKey = video.storageKey?.trim() || `video:${nanoid()}`;
+        let url = "";
+        try {
+            url = await setMediaBlob(storageKey, recovered.blob);
+        } catch {
+            url = URL.createObjectURL(recovered.blob);
         }
-        return URL.createObjectURL(localBlob);
+        return {
+            ...video,
+            storageKey,
+            localPath: recovered.savePath || video.localPath || "",
+            url,
+            bytes: recovered.blob.size,
+            mimeType: recovered.blob.type || video.mimeType || "video/mp4",
+        };
     } catch {
-        return "";
+        return null;
     }
 }
-
 async function resolveStoredVideoForDisplay(video?: GeneratedVideo): Promise<GeneratedVideo | undefined> {
     if (!video) return undefined;
+    let localPath = video.localPath?.trim() || "";
     let url = "";
     if (video.storageKey) {
-        try {
-            url = await resolveMediaUrl(video.storageKey, "");
-        } catch {
-            url = "";
+        url = await resolveMediaUrl(video.storageKey, "").catch(() => "");
+    }
+    if (!localPath) {
+        const savedFile = await readGeneratedFileAsset({
+            kind: "video",
+            size: video.bytes,
+            mimeType: video.mimeType,
+        }).catch(() => null);
+        if (savedFile?.blob.size) {
+            localPath = savedFile.savePath;
+            if (!url) {
+                const storageKey = video.storageKey || `video:${nanoid()}`;
+                url = await setMediaBlob(storageKey, savedFile.blob).catch(() => URL.createObjectURL(savedFile.blob));
+                if (!video.storageKey) video = { ...video, storageKey };
+            }
+        }
+    }
+    if (url && !localPath && video.storageKey) {
+        const blob = await getMediaBlob(video.storageKey).catch(() => null);
+        if (blob?.size) {
+            const saved = await autoSaveGeneratedFile(blob, "video", video.mimeType || blob.type || "video/mp4").catch(() => null);
+            localPath = saved?.savePath || "";
         }
     }
     if (!url) {
-        // The local file is the durable fallback. It also covers logs written by
-        // older versions that did not persist a usable storageKey/localPath pair.
-        url = await recoverVideoUrlFromLocalFile(video);
+        const recovered = await recoverVideoFromLocalFile({ ...video, localPath });
+        if (recovered) return recovered;
     }
-    return { ...video, url: url || video.url || "" };
+    const durableFallback = video.url && !video.url.startsWith("blob:") ? video.url : "";
+    return { ...video, ...(localPath ? { localPath } : {}), url: url || durableFallback };
 }
-
 function serializeLog(log: GenerationLog): GenerationLog {
     return {
         ...log,

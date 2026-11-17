@@ -3,7 +3,7 @@ import { persist, type PersistStorage, type StorageValue } from "zustand/middlew
 
 import { nanoid } from "nanoid";
 import { localForageStorage } from "@/lib/localforage-storage";
-import { legacyCanvasStorageKeys, scopedCanvasStorageKey } from "@/lib/canvas-storage-scope";
+import { canCurrentUserClaimLegacyData, legacyCanvasStorageKeys, scopedCanvasStorageKey } from "@/lib/canvas-storage-scope";
 import { cleanupUnusedImages, ensureImagePreview, previewUrlFor, resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { cleanupUnusedMedia, resolveMediaUrl } from "@/services/file-storage";
 
@@ -49,7 +49,7 @@ const ASSET_STORE_KEY = scopedCanvasStorageKey(LEGACY_ASSET_STORE_KEY);
 const assetStorage: PersistStorage<AssetStore> = {
     getItem: async (name) => {
         let value = await localForageStorage.getItem(name);
-        if (!value) {
+        if (!value && canCurrentUserClaimLegacyData()) {
             let migratedFrom = "";
             for (const legacyKey of legacyCanvasStorageKeys(LEGACY_ASSET_STORE_KEY)) {
                 value = await localForageStorage.getItem(legacyKey);
@@ -63,11 +63,7 @@ const assetStorage: PersistStorage<AssetStore> = {
                 if (migratedFrom) await localForageStorage.removeItem(migratedFrom);
             }
         }
-        if (value) {
-            for (const legacyKey of legacyCanvasStorageKeys(LEGACY_ASSET_STORE_KEY)) {
-                await localForageStorage.removeItem(legacyKey);
-            }
-        }
+
         if (!value) return null;
         const parsed = JSON.parse(value) as StorageValue<AssetStore>;
         parsed.state.assets = await Promise.all(

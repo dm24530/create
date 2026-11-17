@@ -36,17 +36,26 @@ export async function captureVideoFrame(source: string, position: VideoFramePosi
 
 function waitForVideo(video: HTMLVideoElement, eventName: "loadedmetadata" | "loadeddata" | "seeked") {
     return new Promise<void>((resolve, reject) => {
+        let settled = false;
+        const onError = () => fail();
+        const timer = window.setTimeout(() => fail("Video frame capture timed out"), 15_000);
         const finish = () => {
+            if (settled) return;
+            settled = true;
+            window.clearTimeout(timer);
             video.removeEventListener(eventName, finish);
-            video.removeEventListener("error", fail);
+            video.removeEventListener("error", onError);
             resolve();
         };
-        const fail = () => {
+        const fail = (message = "Failed to read video frame") => {
+            if (settled) return;
+            settled = true;
+            window.clearTimeout(timer);
             video.removeEventListener(eventName, finish);
-            video.removeEventListener("error", fail);
-            reject(new Error("Failed to read video frame"));
+            video.removeEventListener("error", onError);
+            reject(new Error(message));
         };
         video.addEventListener(eventName, finish);
-        video.addEventListener("error", fail);
+        video.addEventListener("error", onError);
     });
 }

@@ -13,6 +13,7 @@ export default {
         inspiration: '视频灵感',
         works: '作品库',
         models: '模型',
+        download: '客户端下载',
         docs: '使用指南'
       },
       workspace: '进入工作台',

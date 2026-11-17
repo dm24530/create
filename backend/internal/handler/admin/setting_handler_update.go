@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
@@ -175,6 +176,17 @@ type UpdateSettingsRequest struct {
 	TablePageSizeOptions        []int                 `json:"table_page_size_options"`
 	CustomMenuItems             *[]dto.CustomMenuItem `json:"custom_menu_items"`
 	CustomEndpoints             *[]dto.CustomEndpoint `json:"custom_endpoints"`
+
+	// Create desktop client release metadata (R2/CDN direct links).
+	CreateClientReleaseEnabled       bool   `json:"create_client_release_enabled"`
+	CreateClientReleaseVersion       string `json:"create_client_release_version"`
+	CreateClientReleaseWindowsURL    string `json:"create_client_release_windows_url"`
+	CreateClientReleaseMacOSARM64URL string `json:"create_client_release_macos_arm64_url"`
+	CreateClientReleaseMacOSX64URL   string `json:"create_client_release_macos_x64_url"`
+	CreateClientReleaseNotes         string `json:"create_client_release_notes"`
+	CreateClientReleasePublishedAt   string `json:"create_client_release_published_at"`
+	CreateClientReleaseMinVersion    string `json:"create_client_release_min_version"`
+	CreateClientReleaseUpdateBaseURL string `json:"create_client_release_update_base_url"`
 
 	// 默认配置
 	DefaultConcurrency                        int                               `json:"default_concurrency"`
@@ -1420,6 +1432,95 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		customEndpointsJSON = string(endpointBytes)
 	}
 
+	// Create desktop client release metadata validation. Installer URLs are
+	// public object-storage links; the API server never proxies the binaries.
+	const (
+		maxCreateClientURLlen   = 4096
+		maxCreateClientNotesLen = 20000
+	)
+	req.CreateClientReleaseVersion = strings.TrimSpace(req.CreateClientReleaseVersion)
+	req.CreateClientReleaseMinVersion = strings.TrimSpace(req.CreateClientReleaseMinVersion)
+	req.CreateClientReleasePublishedAt = strings.TrimSpace(req.CreateClientReleasePublishedAt)
+	req.CreateClientReleaseNotes = strings.TrimSpace(req.CreateClientReleaseNotes)
+	if req.CreateClientReleaseVersion != "" && !semverPattern.MatchString(req.CreateClientReleaseVersion) {
+		response.BadRequest(c, "create_client_release_version must use x.y.z format")
+		return
+	}
+	if req.CreateClientReleaseMinVersion != "" && !semverPattern.MatchString(req.CreateClientReleaseMinVersion) {
+		response.BadRequest(c, "create_client_release_min_version must use x.y.z format")
+		return
+	}
+	if req.CreateClientReleasePublishedAt != "" {
+		if _, err := time.Parse("2006-01-02", req.CreateClientReleasePublishedAt); err != nil {
+			response.BadRequest(c, "create_client_release_published_at must use YYYY-MM-DD format")
+			return
+		}
+	}
+	effectiveVersionForRange := req.CreateClientReleaseVersion
+	if _, sent := sentFields["create_client_release_version"]; !sent {
+		effectiveVersionForRange = previousSettings.CreateClientReleaseVersion
+	}
+	effectiveMinVersionForRange := req.CreateClientReleaseMinVersion
+	if _, sent := sentFields["create_client_release_min_version"]; !sent {
+		effectiveMinVersionForRange = previousSettings.CreateClientReleaseMinVersion
+	}
+	if effectiveVersionForRange != "" && effectiveMinVersionForRange != "" &&
+		service.CompareVersions(effectiveMinVersionForRange, effectiveVersionForRange) > 0 {
+		response.BadRequest(c, "create_client_release_min_version must be less than or equal to create_client_release_version")
+		return
+	}
+	if len(req.CreateClientReleaseNotes) > maxCreateClientNotesLen {
+		response.BadRequest(c, "create_client_release_notes is too long (max 20000 characters)")
+		return
+	}
+	releaseURLFields := []struct {
+		name  string
+		value *string
+	}{
+		{"create_client_release_windows_url", &req.CreateClientReleaseWindowsURL},
+		{"create_client_release_macos_arm64_url", &req.CreateClientReleaseMacOSARM64URL},
+		{"create_client_release_macos_x64_url", &req.CreateClientReleaseMacOSX64URL},
+		{"create_client_release_update_base_url", &req.CreateClientReleaseUpdateBaseURL},
+	}
+	for _, field := range releaseURLFields {
+		if len(strings.TrimSpace(*field.value)) > maxCreateClientURLlen {
+			response.BadRequest(c, field.name+" is too long (max 4096 characters)")
+			return
+		}
+		normalized, err := service.NormalizeCreateClientReleaseURL(*field.value)
+		if err != nil {
+			response.BadRequest(c, field.name+" must be an absolute http:// or https:// URL")
+			return
+		}
+		*field.value = normalized
+	}
+	if req.CreateClientReleaseEnabled {
+		effectiveVersion := req.CreateClientReleaseVersion
+		if _, sent := sentFields["create_client_release_version"]; !sent {
+			effectiveVersion = previousSettings.CreateClientReleaseVersion
+		}
+		effectiveWindowsURL := req.CreateClientReleaseWindowsURL
+		if _, sent := sentFields["create_client_release_windows_url"]; !sent {
+			effectiveWindowsURL = previousSettings.CreateClientReleaseWindowsURL
+		}
+		effectiveMacOSARM64URL := req.CreateClientReleaseMacOSARM64URL
+		if _, sent := sentFields["create_client_release_macos_arm64_url"]; !sent {
+			effectiveMacOSARM64URL = previousSettings.CreateClientReleaseMacOSARM64URL
+		}
+		effectiveMacOSX64URL := req.CreateClientReleaseMacOSX64URL
+		if _, sent := sentFields["create_client_release_macos_x64_url"]; !sent {
+			effectiveMacOSX64URL = previousSettings.CreateClientReleaseMacOSX64URL
+		}
+		if effectiveVersion == "" {
+			response.BadRequest(c, "create_client_release_version is required when the client release is enabled")
+			return
+		}
+		if effectiveWindowsURL == "" && effectiveMacOSARM64URL == "" && effectiveMacOSX64URL == "" {
+			response.BadRequest(c, "at least one Create client download URL is required when the client release is enabled")
+			return
+		}
+	}
+
 	// Ops metrics collector interval validation (seconds).
 	if req.OpsMetricsIntervalSeconds != nil {
 		v := *req.OpsMetricsIntervalSeconds
@@ -1678,6 +1779,15 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		TablePageSizeOptions:                   req.TablePageSizeOptions,
 		CustomMenuItems:                        customMenuJSON,
 		CustomEndpoints:                        customEndpointsJSON,
+		CreateClientReleaseEnabled:             req.CreateClientReleaseEnabled,
+		CreateClientReleaseVersion:             req.CreateClientReleaseVersion,
+		CreateClientReleaseWindowsURL:          req.CreateClientReleaseWindowsURL,
+		CreateClientReleaseMacOSARM64URL:       req.CreateClientReleaseMacOSARM64URL,
+		CreateClientReleaseMacOSX64URL:         req.CreateClientReleaseMacOSX64URL,
+		CreateClientReleaseNotes:               req.CreateClientReleaseNotes,
+		CreateClientReleasePublishedAt:         req.CreateClientReleasePublishedAt,
+		CreateClientReleaseMinVersion:          req.CreateClientReleaseMinVersion,
+		CreateClientReleaseUpdateBaseURL:       req.CreateClientReleaseUpdateBaseURL,
 		DefaultConcurrency:                     req.DefaultConcurrency,
 		DefaultBalance:                         req.DefaultBalance,
 		AffiliateRebateRate:                    affiliateRebateRate,
@@ -2355,6 +2465,15 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		TablePageSizeOptions:                                   updatedSettings.TablePageSizeOptions,
 		CustomMenuItems:                                        dto.ParseCustomMenuItems(updatedSettings.CustomMenuItems),
 		CustomEndpoints:                                        dto.ParseCustomEndpoints(updatedSettings.CustomEndpoints),
+		CreateClientReleaseEnabled:                             updatedSettings.CreateClientReleaseEnabled,
+		CreateClientReleaseVersion:                             updatedSettings.CreateClientReleaseVersion,
+		CreateClientReleaseWindowsURL:                          updatedSettings.CreateClientReleaseWindowsURL,
+		CreateClientReleaseMacOSARM64URL:                       updatedSettings.CreateClientReleaseMacOSARM64URL,
+		CreateClientReleaseMacOSX64URL:                         updatedSettings.CreateClientReleaseMacOSX64URL,
+		CreateClientReleaseNotes:                               updatedSettings.CreateClientReleaseNotes,
+		CreateClientReleasePublishedAt:                         updatedSettings.CreateClientReleasePublishedAt,
+		CreateClientReleaseMinVersion:                          updatedSettings.CreateClientReleaseMinVersion,
+		CreateClientReleaseUpdateBaseURL:                       updatedSettings.CreateClientReleaseUpdateBaseURL,
 		DefaultConcurrency:                                     updatedSettings.DefaultConcurrency,
 		DefaultBalance:                                         updatedSettings.DefaultBalance,
 		AffiliateRebateRate:                                    updatedSettings.AffiliateRebateRate,

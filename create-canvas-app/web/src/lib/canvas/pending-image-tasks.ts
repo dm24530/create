@@ -1,4 +1,5 @@
 import type { PersistentImageTask } from "@/services/api/image";
+import { canvasStorageScope } from "@/lib/canvas-storage-scope";
 import { CanvasNodeType, type CanvasNodeData, type CanvasNodeImage } from "@/types/canvas";
 
 const STORAGE_PREFIX = "infinite-canvas:pending-image-tasks:v1";
@@ -18,9 +19,7 @@ type PendingImageTaskEntry = {
 type PendingImageTaskJournal = Record<string, PendingImageTaskEntry>;
 
 function storageKey() {
-    if (typeof window === "undefined") return STORAGE_PREFIX;
-    const user = new URLSearchParams(window.location.search).get("user")?.trim() || "default";
-    return `${STORAGE_PREFIX}:${user}`;
+    return `${STORAGE_PREFIX}:${canvasStorageScope}`;
 }
 
 function entryKey(nodeId: string, imageId: string) {

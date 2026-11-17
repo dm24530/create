@@ -1,4 +1,5 @@
-const { app, BrowserWindow, dialog, ipcMain, Menu, protocol, session, shell } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, Menu, net, Notification, protocol, session, shell } = require("electron");
+const { autoUpdater } = require("electron-updater");
 const fs = require("node:fs");
 const fsp = require("node:fs/promises");
 const path = require("node:path");
@@ -14,6 +15,7 @@ const {
 const { buildSavePath, classifyDownload } = require("./download-policy");
 const { createDefaultSettings, mergeSettings, validateSettings } = require("./settings-store");
 const { normalizeSaveKind, rootDirectoryForKind, saveDirectoryForKind } = require("./save-directory");
+const { createDesktopUpdateService, UPDATE_STATUS } = require("./update-service");
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -39,6 +41,8 @@ const CONTENT_TYPES = {
 
 let mainWindow = null;
 let settings = null;
+let desktopUpdater = null;
+const notifiedUpdateKeys = new Set();
 const smokeMode = process.env.CREATE_CANVAS_SMOKE === "1";
 
 if (process.env.CREATE_CANVAS_USER_DATA_PATH) {
@@ -163,8 +167,23 @@ async function findGeneratedFile(kind, payload) {
   const extensions = generatedFileExtensions(kind);
   const requestedPath = String(payload.path || "").trim();
   if (requestedPath) {
-    const candidate = resolveGeneratedFilePath(kind, requestedPath, payload.canvasFolder);
-    if (fs.existsSync(candidate)) return candidate;
+    try {
+      const candidate = resolveGeneratedFilePath(kind, requestedPath, payload.canvasFolder);
+      if (fs.existsSync(candidate)) return candidate;
+    } catch {
+      // The settings directory may have changed since this record was written.
+      // Fall through to filename and size matching inside the current directory.
+    }
+  }
+  const requestedFilename = String(payload.filename || "").trim();
+  if (requestedFilename && path.basename(requestedFilename) === requestedFilename) {
+    const namedCandidate = path.join(directory, requestedFilename);
+    try {
+      const stat = await fsp.stat(namedCandidate);
+      if (stat.isFile()) return namedCandidate;
+    } catch {
+      // Continue with metadata matching when the exact filename is unavailable.
+    }
   }
   const entries = await fsp.readdir(directory, { withFileTypes: true });
   const files = await Promise.all(
@@ -335,6 +354,25 @@ function registerIpcHandlers() {
     assertTrustedSender(event);
     return { isDesktop: true, platform: process.platform, version: app.getVersion(), packaged: app.isPackaged };
   });
+  ipcMain.handle("desktop:check-updates", async (event, metadataUrl) => {
+    assertTrustedSender(event);
+    if (!desktopUpdater) throw new Error("Update service is not ready");
+    return desktopUpdater.checkForUpdates(String(metadataUrl || ""));
+  });
+  ipcMain.handle("desktop:download-update", async (event) => {
+    assertTrustedSender(event);
+    if (!desktopUpdater) throw new Error("Update service is not ready");
+    return desktopUpdater.downloadUpdate();
+  });
+  ipcMain.handle("desktop:install-update", (event) => {
+    assertTrustedSender(event);
+    if (!desktopUpdater) throw new Error("Update service is not ready");
+    return desktopUpdater.installUpdate();
+  });
+  ipcMain.handle("desktop:get-update-state", (event) => {
+    assertTrustedSender(event);
+    return desktopUpdater?.getState() || null;
+  });
   ipcMain.handle("desktop:open-external", async (event, url) => {
     assertTrustedSender(event);
     if (!isAllowedExternalUrl(url)) throw new Error("URL is not allowed");
@@ -397,6 +435,32 @@ if (!hasLock) {
 
   app.whenReady().then(async () => {
     settings = loadSettings();
+    desktopUpdater = createDesktopUpdateService({
+      app,
+      autoUpdater,
+      net,
+      onStateChange: (state) => {
+        mainWindow?.webContents.send("desktop:update-event", state);
+        const notify = state.status === UPDATE_STATUS.AVAILABLE || state.status === UPDATE_STATUS.DOWNLOADED;
+        const notifyKey = `${state.status}:${state.latestVersion}`;
+        if (!notify || notifiedUpdateKeys.has(notifyKey) || mainWindow?.isFocused() || !Notification.isSupported()) return;
+        notifiedUpdateKeys.add(notifyKey);
+        const notification = new Notification({
+          title: state.status === UPDATE_STATUS.DOWNLOADED ? "Create 更新已下载" : "Create 有新版本",
+          body: state.status === UPDATE_STATUS.DOWNLOADED
+            ? `v${state.latestVersion} 已下载，打开应用后可重启安装。`
+            : `v${state.latestVersion} 可用，打开 Create 查看更新说明。`,
+        });
+        notification.on("click", () => {
+          if (!mainWindow) return;
+          if (mainWindow.isMinimized()) mainWindow.restore();
+          mainWindow.show();
+          mainWindow.focus();
+          mainWindow.webContents.send("desktop:update-event", state);
+        });
+        notification.show();
+      },
+    });
     const desktopSession = session.fromPartition(PARTITION);
     desktopSession.protocol.handle("app", serveAppAsset);
     configureDownloadRouting(desktopSession);

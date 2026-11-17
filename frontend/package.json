@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vue-tsc -b && vite build --mode user && npm --prefix ../canvas-app run build",
+    "build": "vue-tsc -b && vite build --mode release && npm --prefix ../canvas-app run build",
+    "build:user": "vue-tsc -b && vite build --mode user && npm --prefix ../canvas-app run build",
     "build:admin": "vue-tsc -b && vite build --mode admin",
     "build:full": "vue-tsc -b && vite build --mode full",
     "preview": "vite preview",

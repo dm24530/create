@@ -6,7 +6,7 @@ import { useTranslation } from "react-i18next";
 
 import { useCopyText } from "@/hooks/use-copy-text";
 import { formatBytes, readFileAsDataUrl } from "@/lib/image-utils";
-import { getMediaBlob } from "@/services/file-storage";
+import { getMediaBlob, resolveMediaUrl } from "@/services/file-storage";
 import { getImageBlob, getImagePreviewRevision, subscribeImagePreviews, uploadImage } from "@/services/image-storage";
 import { cn } from "@/lib/utils";
 import { captureVideoAssetCover } from "@/lib/video-asset-cover";
@@ -36,6 +36,8 @@ export default function AssetsPage() {
     const imageInputRef = useRef<HTMLInputElement>(null);
     const assetInputRef = useRef<HTMLInputElement>(null);
     const coverBackfillRef = useRef(new Set<string>());
+    const coverBackfillAttemptsRef = useRef(new Map<string, number>());
+    const [coverBackfillTick, setCoverBackfillTick] = useState(0);
     const assets = useAssetStore((state) => state.assets);
     const addAsset = useAssetStore((state) => state.addAsset);
     const updateAsset = useAssetStore((state) => state.updateAsset);
@@ -77,24 +79,40 @@ export default function AssetsPage() {
 
     useEffect(() => {
         let cancelled = false;
-        const pending = validAssets.flatMap((asset) => asset.kind === "video" && !asset.coverUrl && !coverBackfillRef.current.has(asset.id) ? [asset] : []);
+        const pending = validAssets.flatMap((asset) => {
+            const attempts = coverBackfillAttemptsRef.current.get(asset.id) || 0;
+            return asset.kind === "video" && !asset.coverUrl && !coverBackfillRef.current.has(asset.id) && attempts < 3 ? [asset] : [];
+        });
         if (!pending.length) return;
         void (async () => {
             for (const asset of pending) {
                 if (cancelled) return;
                 coverBackfillRef.current.add(asset.id);
+                const attempts = (coverBackfillAttemptsRef.current.get(asset.id) || 0) + 1;
+                coverBackfillAttemptsRef.current.set(asset.id, attempts);
                 try {
-                    const coverUrl = await captureVideoAssetCover(asset.data.url);
-                    if (!cancelled) updateAsset(asset.id, { coverUrl });
+                    const source = asset.data.storageKey
+                        ? await resolveMediaUrl(asset.data.storageKey, asset.data.url)
+                        : asset.data.url;
+                    const coverUrl = await captureVideoAssetCover(source);
+                    if (!cancelled) {
+                        updateAsset(asset.id, { coverUrl });
+                        coverBackfillAttemptsRef.current.delete(asset.id);
+                    }
                 } catch (error) {
                     console.warn("Failed to backfill video asset cover", error);
+                    coverBackfillRef.current.delete(asset.id);
+                    if (!cancelled && attempts < 3) {
+                        window.setTimeout(() => setCoverBackfillTick((value) => value + 1), 1500);
+                    }
                 }
             }
         })();
         return () => {
             cancelled = true;
+            for (const asset of pending) coverBackfillRef.current.delete(asset.id);
         };
-    }, [updateAsset, validAssets]);
+    }, [coverBackfillTick, updateAsset, validAssets]);
 
     const openCreate = () => {
         setEditingAsset(null);
@@ -507,12 +525,14 @@ function AssetCard({ asset, onOpen, onEdit, onCopy, onDownload, onDelete }: { as
 function AssetDrawer({ asset, onClose, onCopy, onDownload }: { asset: Asset | null; onClose: () => void; onCopy: (asset: Asset) => void; onDownload: (asset: Asset) => void }) {
     const { t } = useTranslation();
     useSyncExternalStore(subscribeImagePreviews, getImagePreviewRevision);
-    const cover = asset ? asset.coverUrl || (asset.kind === "image" ? asset.data.dataUrl : "") : "";
+    const cover = asset && asset.kind !== "video" ? asset.coverUrl || (asset.kind === "image" ? asset.data.dataUrl : "") : "";
     return (
         <Drawer title={t("assets.details")} open={Boolean(asset)} size="large" onClose={onClose}>
             {asset ? (
                 <div className="space-y-5">
-                    {cover ? (
+                    {asset.kind === "video" ? (
+                        <video src={asset.data.url} controls className="aspect-video w-full rounded-lg bg-black" />
+                    ) : cover ? (
                         <Image src={assetCoverUrl(asset)} preview={{ src: cover }} alt={asset.title} className="rounded-lg" />
                     ) : (
                         <div className="rounded-lg border border-stone-200 bg-stone-50 p-5 text-sm leading-6 text-stone-600 dark:border-stone-800 dark:bg-stone-900 dark:text-stone-300">{asset.kind === "text" ? asset.data.content : t("assets.noCover")}</div>
@@ -530,12 +550,10 @@ function AssetDrawer({ asset, onClose, onCopy, onDownload }: { asset: Asset | nu
                     </div>
                     <div className="rounded-lg border border-stone-200 p-4 dark:border-stone-800">
                         <Typography.Text type="secondary" className="block text-xs">
-                            {t("assets.fields.textContent")}
+                            {asset.kind === "video" ? t("assets.kinds.video") : t("assets.fields.textContent")}
                         </Typography.Text>
                         {asset.kind === "text" ? (
                             <Typography.Paragraph className="mt-2 whitespace-pre-wrap">{asset.data.content}</Typography.Paragraph>
-                        ) : asset.kind === "video" ? (
-                            <video src={asset.data.url} controls className="mt-2 aspect-video w-full rounded-lg bg-black" />
                         ) : (
                             <Typography.Text className="mt-2 block">
                                 {asset.data.width}x{asset.data.height} · {formatBytes(asset.data.bytes)} · {asset.data.mimeType}

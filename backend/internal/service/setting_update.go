@@ -433,6 +433,15 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	updates[SettingKeyTablePageSizeOptions] = string(tablePageSizeOptionsJSON)
 	updates[SettingKeyCustomMenuItems] = settings.CustomMenuItems
 	updates[SettingKeyCustomEndpoints] = settings.CustomEndpoints
+	updates[SettingKeyCreateClientReleaseEnabled] = strconv.FormatBool(settings.CreateClientReleaseEnabled)
+	updates[SettingKeyCreateClientReleaseVersion] = strings.TrimSpace(settings.CreateClientReleaseVersion)
+	updates[SettingKeyCreateClientReleaseWindowsURL] = strings.TrimSpace(settings.CreateClientReleaseWindowsURL)
+	updates[SettingKeyCreateClientReleaseMacOSARM64URL] = strings.TrimSpace(settings.CreateClientReleaseMacOSARM64URL)
+	updates[SettingKeyCreateClientReleaseMacOSX64URL] = strings.TrimSpace(settings.CreateClientReleaseMacOSX64URL)
+	updates[SettingKeyCreateClientReleaseNotes] = strings.TrimSpace(settings.CreateClientReleaseNotes)
+	updates[SettingKeyCreateClientReleasePublishedAt] = strings.TrimSpace(settings.CreateClientReleasePublishedAt)
+	updates[SettingKeyCreateClientReleaseMinVersion] = strings.TrimSpace(settings.CreateClientReleaseMinVersion)
+	updates[SettingKeyCreateClientReleaseUpdateBaseURL] = strings.TrimSpace(settings.CreateClientReleaseUpdateBaseURL)
 
 	// 默认配置
 	updates[SettingKeyDefaultConcurrency] = strconv.Itoa(settings.DefaultConcurrency)

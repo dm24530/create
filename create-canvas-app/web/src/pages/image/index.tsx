@@ -1,6 +1,6 @@
 import { ArrowLeft, ArrowRight, CheckSquare, ChevronDown, ClipboardPaste, Copy, Download, FolderPlus, History, ImagePlus, LoaderCircle, PenLine, Plus, RefreshCw, Sparkles, Trash2, Upload } from "lucide-react";
 import { type CSSProperties, type ClipboardEvent as ReactClipboardEvent, useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { App, Button, Checkbox, Drawer, Empty, Image, Modal, Tag, Tooltip, Typography } from "antd";
+import { App, Button, Checkbox, Drawer, Empty, Image, Modal, Popover, Tag, Tooltip, Typography } from "antd";
 import localforage from "localforage";
 import { useTranslation } from "react-i18next";
 
@@ -15,11 +15,12 @@ import { normalizeImageBackground, normalizeImageOutputFormat, supportsTranspare
 import { computeMediaSize, inferMediaRatio, inferMediaScale, mediaRatioOptions, parsePixelSize } from "@/lib/media-size";
 import { encodeChannelModel, modelOptionName, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { nanoid } from "nanoid";
-import { autoSaveGeneratedFile, deleteGeneratedFile, generatedFileExtension, readGeneratedFileBlob, saveGeneratedFile } from "@/lib/desktop-save";
+import { autoSaveGeneratedFile, deleteGeneratedFile, generatedFileExtension, readGeneratedFileAsset, saveGeneratedFile } from "@/lib/desktop-save";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
 import { requestEdit, requestGeneration, submitPersistentImageTask, waitForPersistentImageTask } from "@/services/api/image";
 import { deleteStoredImages, ensureImagePreview, getImageBlob, getImagePreviewRevision, prepareReferenceImagesForRequest, previewUrlFor, resolveImageUrl, setImageBlob, subscribeImagePreviews, uploadImage } from "@/services/image-storage";
 import { saveClientRequestTiming } from "@/services/client-request-timing";
+import { createUserWorkbenchLogStore } from "@/services/workbench-log-storage";
 import { configureCreateWorkspace, getManagedKeySelection, listCreateManagedKeys, managedKeySupportsImage, switchManagedKey, type CreateManagedKey } from "@/services/create-managed-channel";
 import { WorkbenchModelSelect } from "@/components/workbench/model-select";
 import { PanelResizeHandle, useStoredPanelWidth } from "@/components/workbench/panel-resize-handle";
@@ -63,6 +64,7 @@ type GenerationResult = {
 
 type GenerationLog = {
     id: string;
+    userId?: number;
     createdAt: number;
     title: string;
     prompt: string;
@@ -87,7 +89,7 @@ const LOG_STORE_KEY = "infinite-canvas:image_generation_logs";
 const MAX_WORKBENCH_LOGS = 100;
 const MAX_IMAGE_REFERENCES = 14;
 const RESULT_ACTION_BUTTON_CLASS = "min-w-0 px-1.5 [&_.ant-btn-icon]:shrink-0 [&>span:last-child]:min-w-0 [&>span:last-child]:truncate";
-const logStore = localforage.createInstance({ name: "infinite-canvas", storeName: "image_generation_logs" });
+const { store: logStore, ensureMigrated: ensureLogStoreMigrated } = createUserWorkbenchLogStore("image_generation_logs");
 const WORKBENCH_RESOLUTION_OPTIONS = ["auto", "4k", "2k", "1k"] as const;
 const WORKBENCH_SIZE_GROUPS = (["1k", "2k", "4k"] as const).map((scale) => ({
     scale,
@@ -119,6 +121,7 @@ export default function ImagePage() {
     const [selectedImageKeyId, setSelectedImageKeyId] = useState(() => getManagedKeySelection().imageKeyId);
     const [switchingImageKey, setSwitchingImageKey] = useState(false);
     const [customSizeOpen, setCustomSizeOpen] = useState(false);
+    const [sizeMenuOpen, setSizeMenuOpen] = useState(false);
     const [prompt, setPrompt] = useState("");
     const [references, setReferences] = useState<ReferenceImage[]>([]);
     const [results, setResults] = useState<GenerationResult[]>([]);
@@ -179,6 +182,8 @@ export default function ImagePage() {
     const activeResolutionScale = inferMediaScale(effectiveConfig.size);
     const currentSizeIsRatio = mediaRatioOptions.some((option) => option.value === effectiveConfig.size);
     const sizeSelectionValue = effectiveConfig.size === "auto" ? "auto" : WORKBENCH_SIZE_VALUES.has(effectiveConfig.size) ? effectiveConfig.size : "current";
+    const sizeSelectionOption = WORKBENCH_SIZE_GROUPS.flatMap((group) => group.options).find((option) => option.value === sizeSelectionValue);
+    const sizeSelectionLabel = sizeSelectionValue === "auto" ? "自动（由模型决定）" : sizeSelectionValue === "current" ? currentSizeIsRatio ? `${effectiveConfig.size} · 自动分辨率` : `自定义 ${selectedSize.width}x${selectedSize.height}` : sizeSelectionOption ? `${sizeSelectionOption.ratio} ${sizeSelectionOption.value}` : effectiveConfig.size;
     const outputFormat = normalizeImageOutputFormat(effectiveConfig.outputFormat);
     const transparentSupported = supportsTransparentImageBackground(effectiveConfig.model || model);
     const transparentAvailable = transparentSupported && outputFormat === "png";
@@ -337,6 +342,11 @@ export default function ImagePage() {
         updateConfig("size", computeMediaSize(scale, selectedRatio === "auto" ? "1:1" : selectedRatio));
     };
 
+    const selectImageSize = (value: string) => {
+        if (value === "auto") selectResolutionScale("auto");
+        else if (value !== "current") updateConfig("size", value);
+        setSizeMenuOpen(false);
+    };
     const commitCustomDimension = (axis: "width" | "height", raw: string) => {
         const current = workbenchSizePixels(effectiveConfig.size, selectedRatio);
         const parsed = Math.max(1, Math.floor(Number(raw) || current[axis]));
@@ -574,7 +584,9 @@ export default function ImagePage() {
     };
 
     const saveLog = (log: GenerationLog) => {
-        void logStore.setItem(log.id, serializeLog(log)).then(async () => {
+        const userId = Number(useUserStore.getState().user?.id);
+        const ownedLog = userId > 0 ? { ...log, userId } : log;
+        void logStore.setItem(ownedLog.id, serializeLog(ownedLog)).then(async () => {
             const pruned = await pruneStoredLogs();
             await refreshLogs();
             if (pruned) cleanupAssets();
@@ -671,18 +683,28 @@ export default function ImagePage() {
             // Match the canvas behavior: paint the returned image first, then
             // persist it to local storage in the background.
             setResults((value) => updateResultById(value, resultId, { status: "success", image: immediateImage }));
+            let stored: Awaited<ReturnType<typeof uploadImage>> | null = null;
+            let durableBlob: Blob | null = null;
             try {
-                const stored = await uploadImage(image.dataUrl);
-                let localPath = "";
-                try {
-                    const original = stored.storageKey ? await getImageBlob(stored.storageKey) : null;
-                    if (original) {
-                        const saved = await autoSaveGeneratedFile(original, "image", stored.mimeType || "image/png");
-                        localPath = saved.savePath || "";
-                    }
-                } catch {
-                    // Keep generation successful even when desktop auto-save fails.
-                }
+                stored = await uploadImage(image.dataUrl);
+                if (stored.storageKey) durableBlob = await getImageBlob(stored.storageKey);
+            } catch {
+                // The desktop file is the durable fallback when IndexedDB is unavailable.
+            }
+            if (!durableBlob) {
+                durableBlob = await resolveGeneratedImageBlob({ dataUrl: image.dataUrl }).catch(() => null);
+            }
+            let localPath = "";
+            if (durableBlob?.size) {
+                const saved = await autoSaveGeneratedFile(
+                    durableBlob,
+                    "image",
+                    stored?.mimeType || durableBlob.type || "image/png",
+                ).catch(() => null);
+                localPath = saved?.savePath || "";
+            }
+
+            if (stored) {
                 const nextImage: GeneratedImage = {
                     id: image.id,
                     dataUrl: stored.url,
@@ -700,10 +722,22 @@ export default function ImagePage() {
                 };
                 setResults((value) => updateResultById(value, resultId, { status: "success", image: nextImage }));
                 return nextImage;
-            } catch {
-                // Storage failure must not replace a successfully generated image.
-                return immediateImage;
             }
+
+            if (durableBlob) {
+                const nextImage: GeneratedImage = {
+                    ...immediateImage,
+                    dataUrl: URL.createObjectURL(durableBlob),
+                    ...(localPath ? { localPath } : {}),
+                    bytes: durableBlob.size,
+                    mimeType: durableBlob.type || "image/png",
+                };
+                setResults((value) => updateResultById(value, resultId, { status: "success", image: nextImage }));
+                return nextImage;
+            }
+
+            // Storage failure must not replace a successfully generated image.
+            return immediateImage;
         } catch (error) {
             const errorMessage = generationFailureReason(error, t("workbench.failureReasonUnavailable"));
             setResults((value) => updateResultById(value, resultId, { status: "failed", logId: resultId, error: errorMessage }));
@@ -1033,39 +1067,47 @@ export default function ImagePage() {
                         <div className="mt-3">
                             <div className="flex items-center justify-between gap-3">
                                 <span className="text-sm font-semibold text-stone-900 dark:text-stone-100">尺寸</span>
-                                <button type="button" className="text-xs text-stone-500 transition hover:text-stone-900 dark:hover:text-stone-100" onClick={() => setCustomSizeOpen((value) => !value)}>
+                                <button type="button" className="text-xs text-stone-500 transition hover:text-stone-900 dark:hover:text-stone-100" onClick={() => { setSizeMenuOpen(false); setCustomSizeOpen((value) => !value); }}>
                                     自定义尺寸
                                 </button>
                             </div>
-                            <div className="relative mt-2">
-                                <select
+                            <Popover
+                                trigger="click"
+                                placement="bottomLeft"
+                                arrow={false}
+                                open={sizeMenuOpen}
+                                onOpenChange={setSizeMenuOpen}
+                                content={(
+                                    <div className="thin-scrollbar max-h-[440px] w-[320px] overflow-y-auto p-1" role="listbox" aria-label="尺寸">
+                                        <button type="button" className={`flex w-full items-start justify-between gap-3 rounded-lg px-3 py-2 text-left transition ${sizeSelectionValue === "auto" ? "bg-stone-200 text-stone-950 dark:bg-stone-700 dark:text-white" : "text-stone-700 hover:bg-stone-100 dark:text-stone-200 dark:hover:bg-stone-800"}`} onClick={() => selectImageSize("auto")}>
+                                            <span className="text-sm font-semibold">自动</span>
+                                            <span className="text-xs text-stone-500 dark:text-stone-400">由模型决定</span>
+                                        </button>
+                                        {sizeSelectionValue === "current" ? (
+                                            <SizeRatioOption value={effectiveConfig.size} label={sizeSelectionLabel} selected onClick={() => selectImageSize("current")} />
+                                        ) : null}
+                                        {WORKBENCH_SIZE_GROUPS.map((group, groupIndex) => (
+                                            <div key={group.scale} className={groupIndex === 0 && sizeSelectionValue !== "current" ? "mt-1" : ""}>
+                                                <div className="px-3 pb-1 pt-3 text-xs font-semibold text-stone-500 dark:text-stone-400">{group.label}</div>
+                                                {group.options.map((option) => (
+                                                    <SizeRatioOption key={option.value} value={option.value} label={`${option.ratio} ${option.value}`} selected={sizeSelectionValue === option.value} onClick={() => selectImageSize(option.value)} />
+                                                ))}
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            >
+                                <button
+                                    type="button"
                                     aria-label="尺寸"
-                                    className="workbench-native-select h-9 w-full cursor-pointer appearance-none rounded-xl border border-stone-200 bg-stone-50 px-3 pr-9 text-sm text-stone-800 outline-none dark:border-stone-700 dark:bg-stone-900/60 dark:text-stone-100"
-                                    value={sizeSelectionValue}
-                                    onChange={(event) => {
-                                        const value = event.target.value;
-                                        if (value === "auto") {
-                                            selectResolutionScale("auto");
-                                            return;
-                                        }
-                                        if (value !== "current") updateConfig("size", value);
-                                    }}
+                                    aria-haspopup="listbox"
+                                    aria-expanded={sizeMenuOpen}
+                                    className="flex h-9 w-full min-w-0 items-center justify-between gap-3 rounded-xl border border-stone-200 bg-stone-50 px-3 text-left text-sm text-stone-800 outline-none transition hover:border-stone-300 dark:border-stone-700 dark:bg-stone-900/60 dark:text-stone-100 dark:hover:border-stone-600"
                                 >
-                                    <option value="auto">自动（由模型决定）</option>
-                                    {sizeSelectionValue === "current" ? <option value="current">{currentSizeIsRatio ? `${effectiveConfig.size} · 自动分辨率` : `自定义 ${selectedSize.width}x${selectedSize.height}`}</option> : null}
-                                    {WORKBENCH_SIZE_GROUPS.map((group) => (
-                                        <optgroup key={group.scale} label={group.label}>
-                                            {group.options.map((option) => (
-                                                <option key={option.value} value={option.value}>
-                                                    {option.ratio} {option.value}
-                                                </option>
-                                            ))}
-                                        </optgroup>
-                                    ))}
-                                </select>
-                                <ChevronDown className="pointer-events-none absolute right-3 top-3 size-4 text-stone-500" />
-                            </div>
-                            {customSizeOpen ? (
+                                    <span className="min-w-0 truncate">{sizeSelectionLabel}</span>
+                                    <ChevronDown className={`size-4 shrink-0 text-stone-500 transition ${sizeMenuOpen ? "rotate-180" : ""}`} />
+                                </button>
+                            </Popover>                            {customSizeOpen ? (
                                 <div className="mt-2 grid grid-cols-[1fr_auto_1fr] items-center gap-2">
                                     <label className="flex h-9 items-center overflow-hidden rounded-xl border border-stone-200 bg-stone-50 dark:border-stone-700 dark:bg-stone-900/60">
                                         <span className="pl-3 text-xs text-stone-500">W</span>
@@ -1246,6 +1288,29 @@ export default function ImagePage() {
     );
 }
 
+function SizeRatioOption({ value, label, selected, onClick }: { value: string; label: string; selected: boolean; onClick: () => void }) {
+    const pixels = parsePixelSize(value);
+    const ratioParts = value.split(":").map(Number);
+    const widthUnits = pixels?.width || (ratioParts.length === 2 && ratioParts[0] > 0 ? ratioParts[0] : 1);
+    const heightUnits = pixels?.height || (ratioParts.length === 2 && ratioParts[1] > 0 ? ratioParts[1] : 1);
+    const aspect = widthUnits / Math.max(1, heightUnits);
+    const previewWidth = aspect >= 1 ? 26 : Math.max(8, Math.round(26 * aspect));
+    const previewHeight = aspect >= 1 ? Math.max(8, Math.round(26 / aspect)) : 26;
+    return (
+        <button
+            type="button"
+            role="option"
+            aria-selected={selected}
+            className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition ${selected ? "bg-stone-200 font-semibold text-stone-950 dark:bg-stone-700 dark:text-white" : "text-stone-700 hover:bg-stone-100 dark:text-stone-200 dark:hover:bg-stone-800"}`}
+            onClick={onClick}
+        >
+            <span className="flex size-7 shrink-0 items-center justify-center">
+                <span className={`rounded-[3px] border-2 ${selected ? "border-stone-900 dark:border-white" : "border-stone-400/75 dark:border-stone-500"}`} style={{ width: previewWidth, height: previewHeight }} />
+            </span>
+            <span className="min-w-0 truncate text-sm">{label}</span>
+        </button>
+    );
+}
 function workbenchSizePixels(size: string, ratio: string) {
     const pixels = parsePixelSize(size);
     if (pixels) return pixels;
@@ -1271,6 +1336,14 @@ function ResultImageCard({
 }) {
     const { t } = useTranslation();
     useSyncExternalStore(subscribeImagePreviews, getImagePreviewRevision);
+    const [recoveredImage, setRecoveredImage] = useState<GeneratedImage | null>(null);
+    useEffect(() => setRecoveredImage(null), [image.id, image.storageKey, image.dataUrl]);
+    const currentImage = recoveredImage || image;
+    const imageSource = previewUrlFor(currentImage.storageKey) || currentImage.dataUrl;
+    const recoverImage = async () => {
+        const recovered = await resolveStoredLogImage(currentImage).catch(() => currentImage);
+        if (recovered.dataUrl || recovered.storageKey) setRecoveredImage(recovered);
+    };
     return (
         <div className="overflow-hidden rounded-lg border border-stone-200 bg-background dark:border-stone-800">
             <button
@@ -1278,9 +1351,9 @@ function ResultImageCard({
                 className="group relative block w-full cursor-zoom-in overflow-hidden"
                 title={t("common.details")}
                 aria-label={t("common.details")}
-                onClick={() => onPreview({ kind: "image", src: image.dataUrl, prompt: image.prompt, model: image.model, width: image.width, height: image.height, durationMs: image.durationMs, bytes: image.bytes })}
+                onClick={() => onPreview({ kind: "image", src: currentImage.dataUrl, prompt: currentImage.prompt, model: currentImage.model, width: currentImage.width, height: currentImage.height, durationMs: currentImage.durationMs, bytes: currentImage.bytes })}
             >
-                <Image src={previewUrlFor(image.storageKey) || image.dataUrl} preview={false} alt={t("imageWorkbench.resultAlt", { count: index + 1 })} className="aspect-square w-full object-cover" />
+                <Image src={imageSource} preview={false} alt={t("imageWorkbench.resultAlt", { count: index + 1 })} className="aspect-square w-full object-cover" onError={() => void recoverImage()} />
                 <span className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/0 text-xs font-medium text-white opacity-0 transition group-hover:bg-black/20 group-hover:opacity-100">{t("common.details")}</span>
             </button>
             <div className="space-y-2 border-t border-stone-200 px-3 py-2.5 dark:border-stone-800">
@@ -1295,17 +1368,17 @@ function ResultImageCard({
                 </div>
                 <div className="grid min-w-0 grid-cols-4 gap-2">
                     <Tooltip title={t("common.addToAssets")}>
-                        <Button className={RESULT_ACTION_BUTTON_CLASS} size="small" icon={<FolderPlus className="size-3.5" />} onClick={() => void onSaveAsset(image, index)}>
+                        <Button className={RESULT_ACTION_BUTTON_CLASS} size="small" icon={<FolderPlus className="size-3.5" />} onClick={() => void onSaveAsset(currentImage, index)}>
                             {t("common.addAssetShort")}
                         </Button>
                     </Tooltip>
                     <Tooltip title={t("imageWorkbench.addReference")}>
-                        <Button className={RESULT_ACTION_BUTTON_CLASS} size="small" icon={<PenLine className="size-3.5" />} onClick={() => void onEdit(image, index)}>
+                        <Button className={RESULT_ACTION_BUTTON_CLASS} size="small" icon={<PenLine className="size-3.5" />} onClick={() => void onEdit(currentImage, index)}>
                             {t("imageWorkbench.referenceShort")}
                         </Button>
                     </Tooltip>
                     <Tooltip title={t("common.download")}>
-                        <Button className={RESULT_ACTION_BUTTON_CLASS} size="small" icon={<Download className="size-3.5" />} onClick={() => void onDownload(image, index)}>
+                        <Button className={RESULT_ACTION_BUTTON_CLASS} size="small" icon={<Download className="size-3.5" />} onClick={() => void onDownload(currentImage, index)}>
                             {t("common.download")}
                         </Button>
                     </Tooltip>
@@ -1506,11 +1579,22 @@ function LogCard({ log, selected, active, onSelectedChange, onClick }: { log: Ge
 async function readStoredLogs() {
     if (typeof window === "undefined") return [];
     try {
+        await ensureLogStoreMigrated();
         const values: GenerationLog[] = [];
         await logStore.iterate<GenerationLog, void>((value) => {
             values.push(value);
         });
-        const logs = await Promise.all(values.map(normalizeLog));
+        const logs = await Promise.all(values.map(async (stored) => {
+            const log = await normalizeLog(stored);
+            const changed = log.images.some((image, index) => {
+                const previous = stored.images?.[index];
+                return image.storageKey !== previous?.storageKey || image.localPath !== previous?.localPath;
+            });
+            if (changed) {
+                await logStore.setItem(log.id, serializeLog(log)).catch(() => undefined);
+            }
+            return log;
+        }));
         return logs.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
     } catch {
         return [];
@@ -1518,6 +1602,7 @@ async function readStoredLogs() {
 }
 
 async function pruneStoredLogs() {
+    await ensureLogStoreMigrated();
     const logs: GenerationLog[] = [];
     await logStore.iterate<GenerationLog, void>((value) => {
         if (value && typeof value === "object") logs.push(value);
@@ -1530,23 +1615,56 @@ async function pruneStoredLogs() {
 }
 
 async function resolveStoredLogImage(image: GeneratedImage): Promise<GeneratedImage> {
-    if (image.storageKey) {
-        const existing = await getImageBlob(image.storageKey).catch(() => null);
-        if (!existing) {
-            const restored = await readGeneratedFileBlob({
-                kind: "image",
-                path: image.localPath,
-                size: image.bytes,
-                mimeType: image.mimeType,
-            }).catch(() => null);
-            if (restored) await setImageBlob(image.storageKey, restored);
+    let storageKey = image.storageKey?.trim() || "";
+    let localPath = image.localPath?.trim() || "";
+    let blob = storageKey ? await getImageBlob(storageKey).catch(() => null) : null;
+
+    if (!blob || !localPath) {
+        const recovered = await readGeneratedFileAsset({
+            kind: "image",
+            path: localPath,
+            filename: localPath.split(/[\\/]/).pop() || undefined,
+            size: image.bytes,
+            mimeType: image.mimeType,
+        }).catch(() => null);
+        if (recovered?.blob.size) {
+            blob = recovered.blob;
+            localPath = recovered.savePath || localPath;
         }
-        void ensureImagePreview(image.storageKey);
-        return { ...image, dataUrl: await resolveImageUrl(image.storageKey, image.dataUrl) };
     }
-    return image;
-}
-async function normalizeLog(log: Partial<GenerationLog>): Promise<GenerationLog> {
+
+    if (!blob && image.dataUrl && !image.dataUrl.startsWith("blob:")) {
+        blob = await resolveGeneratedImageBlob({ dataUrl: image.dataUrl }).catch(() => null);
+    }
+    if (blob?.size && !localPath) {
+        const saved = await autoSaveGeneratedFile(blob, "image", image.mimeType || blob.type || "image/png").catch(() => null);
+        localPath = saved?.savePath || "";
+    }
+    if (blob && !storageKey) storageKey = `image:${nanoid()}`;    if (blob && storageKey) {
+        await setImageBlob(storageKey, blob).catch(() => undefined);
+    }
+    if (storageKey) {
+        void ensureImagePreview(storageKey);
+        const dataUrl = await resolveImageUrl(storageKey, "").catch(() => "");
+        if (dataUrl) {
+            return { ...image, storageKey, ...(localPath ? { localPath } : {}), dataUrl };
+        }
+    }
+    if (blob) {
+        return {
+            ...image,
+            ...(storageKey ? { storageKey } : {}),
+            ...(localPath ? { localPath } : {}),
+            dataUrl: URL.createObjectURL(blob),
+            mimeType: blob.type || image.mimeType,
+        };
+    }
+
+    // A blob: URL only belongs to the previous renderer session. Never persist
+    // or display it as a durable source after restart.
+    const durableFallback = image.dataUrl && !image.dataUrl.startsWith("blob:") ? image.dataUrl : "";
+    return { ...image, ...(storageKey ? { storageKey } : {}), ...(localPath ? { localPath } : {}), dataUrl: durableFallback };
+}async function normalizeLog(log: Partial<GenerationLog>): Promise<GenerationLog> {
     const references = await Promise.all(
         (log.references || []).map(async (item) => {
             void ensureImagePreview(item.storageKey);
@@ -1557,6 +1675,7 @@ async function normalizeLog(log: Partial<GenerationLog>): Promise<GenerationLog>
     const config = normalizeLogConfig(log);
     return {
         id: log.id || nanoid(),
+        userId: log.userId || Number(useUserStore.getState().user?.id) || undefined,
         createdAt: log.createdAt || Date.now(),
         title: log.title || log.model || i18n.t("workbench.untitled"),
         prompt: log.prompt || log.title || "",

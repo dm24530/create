@@ -35,6 +35,7 @@ func RegisterPublicRoutes(v1 *gin.RouterGroup, h *handler.Handlers) {
 		if localClientDir == "" {
 			localClientDir = filepath.Join("data", "local-client")
 		}
+		public.GET("/create-client-release", h.Setting.GetCreateClientRelease)
 		public.GET("/local-client/latest.json", serveLocalClientReleaseFile(localClientDir, "latest.json", "application/json; charset=utf-8"))
 		public.GET("/local-client/create-local.exe", serveLocalClientReleaseFile(localClientDir, "create-local.exe", "application/octet-stream"))
 		public.GET("/local-client/create-local.exe.sha256", serveLocalClientReleaseFile(localClientDir, "create-local.exe.sha256", "text/plain; charset=utf-8"))

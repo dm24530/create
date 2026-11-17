@@ -34,6 +34,20 @@ func (h *SettingHandler) SetNotificationEmailService(notificationEmailService *s
 	h.notificationEmailService = notificationEmailService
 }
 
+// GetCreateClientRelease returns the public Create desktop release manifest.
+// GET /api/v1/public/create-client-release
+func (h *SettingHandler) GetCreateClientRelease(c *gin.Context) {
+	release, err := h.settingService.GetCreateClientRelease(c.Request.Context())
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	// Release metadata must reflect an admin save immediately. Installer bytes
+	// remain separately cached at the object-storage layer.
+	c.Header("Cache-Control", "no-cache")
+	response.Success(c, release)
+}
+
 // GetPublicSettings 获取公开设置
 // GET /api/v1/settings/public
 func (h *SettingHandler) GetPublicSettings(c *gin.Context) {

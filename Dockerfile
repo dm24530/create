@@ -53,8 +53,8 @@ RUN --mount=type=cache,id=create-canvas-pnpm-store,target=/root/.local/share/pnp
     pnpm install --frozen-lockfile --prefer-offline
 COPY canvas-app/ /app/canvas-app/
 
-# Build both the main frontend and canvas. The main build script delegates the
-# canvas build to ../canvas-app and writes both outputs into backend/internal/web/dist.
+# Build the production frontend (admin UI included) and canvas. The main
+# release-mode build writes both outputs into backend/internal/web/dist.
 WORKDIR /app/frontend
 RUN pnpm run build
 

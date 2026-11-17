@@ -4,7 +4,7 @@ import { persist, type PersistStorage, type StorageValue } from "zustand/middlew
 import { nanoid } from "nanoid";
 import i18n from "@/i18n";
 import { localForageStorage } from "@/lib/localforage-storage";
-import { legacyCanvasStorageKeys, scopedCanvasStorageKey } from "@/lib/canvas-storage-scope";
+import { canCurrentUserClaimLegacyData, legacyCanvasStorageKeys, scopedCanvasStorageKey } from "@/lib/canvas-storage-scope";
 import { sanitizeCanvasMediaValue } from "@/lib/canvas/canvas-media-url";
 import { canvasAssetFolderName } from "@/lib/canvas/canvas-asset-folder";
 import type { CanvasBackgroundMode } from "@/lib/canvas-theme";
@@ -76,7 +76,7 @@ const canvasStorage: PersistStorage<CanvasStore> = {
         if (backup && persistedStateFreshness(backup) > persistedStateFreshness(value)) {
             value = backup;
         }
-        if (!value) {
+        if (!value && canCurrentUserClaimLegacyData()) {
             let migratedFrom = "";
             for (const legacyKey of legacyCanvasStorageKeys(LEGACY_CANVAS_STORE_KEY)) {
                 value = await localForageStorage.getItem(legacyKey);
@@ -91,11 +91,7 @@ const canvasStorage: PersistStorage<CanvasStore> = {
                 if (migratedFrom) await localForageStorage.removeItem(migratedFrom);
             }
         }
-        if (value) {
-            for (const legacyKey of legacyCanvasStorageKeys(LEGACY_CANVAS_STORE_KEY)) {
-                await localForageStorage.removeItem(legacyKey);
-            }
-        }
+
         if (!value) return null;
         const parsed = JSON.parse(value) as StorageValue<CanvasStore>;
         queuedPersistState = parsed.state as PersistedCanvasState;

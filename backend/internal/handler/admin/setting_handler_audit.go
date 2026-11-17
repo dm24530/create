@@ -452,6 +452,33 @@ func diffSettings(before *service.SystemSettings, after *service.SystemSettings,
 	if before.CustomEndpoints != after.CustomEndpoints {
 		changed = append(changed, "custom_endpoints")
 	}
+	if before.CreateClientReleaseEnabled != after.CreateClientReleaseEnabled {
+		changed = append(changed, "create_client_release_enabled")
+	}
+	if before.CreateClientReleaseVersion != after.CreateClientReleaseVersion {
+		changed = append(changed, "create_client_release_version")
+	}
+	if before.CreateClientReleaseWindowsURL != after.CreateClientReleaseWindowsURL {
+		changed = append(changed, "create_client_release_windows_url")
+	}
+	if before.CreateClientReleaseMacOSARM64URL != after.CreateClientReleaseMacOSARM64URL {
+		changed = append(changed, "create_client_release_macos_arm64_url")
+	}
+	if before.CreateClientReleaseMacOSX64URL != after.CreateClientReleaseMacOSX64URL {
+		changed = append(changed, "create_client_release_macos_x64_url")
+	}
+	if before.CreateClientReleaseNotes != after.CreateClientReleaseNotes {
+		changed = append(changed, "create_client_release_notes")
+	}
+	if before.CreateClientReleasePublishedAt != after.CreateClientReleasePublishedAt {
+		changed = append(changed, "create_client_release_published_at")
+	}
+	if before.CreateClientReleaseMinVersion != after.CreateClientReleaseMinVersion {
+		changed = append(changed, "create_client_release_min_version")
+	}
+	if before.CreateClientReleaseUpdateBaseURL != after.CreateClientReleaseUpdateBaseURL {
+		changed = append(changed, "create_client_release_update_base_url")
+	}
 	if before.EnableFingerprintUnification != after.EnableFingerprintUnification {
 		changed = append(changed, "enable_fingerprint_unification")
 	}

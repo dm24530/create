@@ -172,6 +172,18 @@ type SystemSettings struct {
 	CustomMenuItems             string // JSON array of custom menu items
 	CustomEndpoints             string // JSON array of custom endpoints
 
+	// Create desktop client release metadata. Binaries stay in R2/CDN and are
+	// linked directly; this server only stores and serves release metadata.
+	CreateClientReleaseEnabled       bool
+	CreateClientReleaseVersion       string
+	CreateClientReleaseWindowsURL    string
+	CreateClientReleaseMacOSARM64URL string
+	CreateClientReleaseMacOSX64URL   string
+	CreateClientReleaseNotes         string
+	CreateClientReleasePublishedAt   string
+	CreateClientReleaseMinVersion    string
+	CreateClientReleaseUpdateBaseURL string
+
 	DefaultConcurrency           int
 	DefaultBalance               float64
 	RiskControlEnabled           bool
