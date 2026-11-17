@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"math"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -147,6 +148,45 @@ func (h *APIKeyHandler) List(c *gin.Context) {
 	response.Paginated(c, out, result.Total, page, pageSize)
 }
 
+// Events streams API-key changes for the current user.
+// GET /api/v1/keys/events
+func (h *APIKeyHandler) Events(c *gin.Context) {
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not authenticated")
+		return
+	}
+	flusher, ok := c.Writer.(http.Flusher)
+	if !ok {
+		response.InternalError(c, "streaming is not supported")
+		return
+	}
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no")
+	events, unsubscribe := userKeyEvents.subscribe(subject.UserID)
+	defer unsubscribe()
+	_, _ = c.Writer.WriteString("event: ready\ndata: {\"operation\":\"connected\"}\n\n")
+	flusher.Flush()
+	heartbeat := time.NewTicker(20 * time.Second)
+	defer heartbeat.Stop()
+	for {
+		select {
+		case <-c.Request.Context().Done():
+			return
+		case payload := <-events:
+			_, _ = c.Writer.WriteString("event: keys_changed\ndata: ")
+			_, _ = c.Writer.Write(payload)
+			_, _ = c.Writer.WriteString("\n\n")
+			flusher.Flush()
+		case <-heartbeat.C:
+			_, _ = c.Writer.WriteString(": heartbeat\n\n")
+			flusher.Flush()
+		}
+	}
+}
+
 // GetByID handles getting a single API key
 // GET /api/v1/api-keys/:id
 func (h *APIKeyHandler) GetByID(c *gin.Context) {
@@ -222,6 +262,7 @@ func (h *APIKeyHandler) Create(c *gin.Context) {
 		if err != nil {
 			return nil, err
 		}
+		publishUserKeyEvent(subject.UserID, "created", key.ID)
 		return dto.APIKeyFromService(key).Localized(c.GetHeader("Accept-Language")), nil
 	})
 }
@@ -289,6 +330,7 @@ func (h *APIKeyHandler) Update(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
+	publishUserKeyEvent(subject.UserID, "updated", key.ID)
 
 	response.Success(c, dto.APIKeyFromService(key).Localized(c.GetHeader("Accept-Language")))
 }
@@ -313,6 +355,7 @@ func (h *APIKeyHandler) Delete(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
+	publishUserKeyEvent(subject.UserID, "deleted", keyID)
 
 	response.Success(c, gin.H{"message": "API key deleted successfully"})
 }

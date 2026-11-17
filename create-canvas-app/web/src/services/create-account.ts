@@ -3,6 +3,7 @@ import type { CreateSession } from "@/services/create-auth";
 
 export type CreateUsageLog = {
     id: number;
+    request_id?: string | null;
     api_key_id: number;
     model: string;
     group_id?: number | null;
@@ -181,5 +182,21 @@ export async function createCreatePaymentOrder(session: CreateSession, input: { 
             payment_type: input.paymentType,
             order_type: input.orderType || "balance",
         }),
+    });
+}
+
+export type CreateRedeemResult = {
+    message: string;
+    type: string;
+    value: number;
+    new_balance?: number;
+    new_concurrency?: number;
+};
+
+export async function redeemCreateCode(session: CreateSession, code: string) {
+    return createRequest<CreateRedeemResult>("/redeem", {
+        method: "POST",
+        accessToken: session.accessToken,
+        body: JSON.stringify({ code: code.trim() }),
     });
 }

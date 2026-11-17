@@ -4,6 +4,7 @@
  */
 
 import { apiClient } from './client'
+import { buildApiUrl } from './url'
 import type { ApiKey, CreateApiKeyRequest, UpdateApiKeyRequest, PaginatedResponse } from '@/types'
 
 /**
@@ -33,6 +34,56 @@ export async function list(
     signal: options?.signal
   })
   return data
+}
+
+export type APIKeyChangeEvent = {
+  operation: 'created' | 'updated' | 'deleted' | string
+  key_id?: number
+}
+
+export async function watchEvents(options: {
+  signal: AbortSignal
+  onEvent: (event: APIKeyChangeEvent) => void
+}): Promise<void> {
+  const token = localStorage.getItem('auth_token') || ''
+  const response = await fetch(buildApiUrl('/keys/events'), {
+    headers: {
+      Accept: 'text/event-stream',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    credentials: 'include',
+    signal: options.signal,
+  })
+  if (!response.ok || !response.body) {
+    throw new Error(`API key event stream failed: HTTP ${response.status}`)
+  }
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  while (!options.signal.aborted) {
+    const { value, done } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n')
+    let boundary = buffer.indexOf('\n\n')
+    while (boundary >= 0) {
+      const block = buffer.slice(0, boundary)
+      buffer = buffer.slice(boundary + 2)
+      const event = block
+        .split('\n')
+        .find((line) => line.startsWith('data:'))
+        ?.slice(5)
+        .trim()
+      if (event) {
+        try {
+          const payload = JSON.parse(event) as APIKeyChangeEvent
+          if (payload.operation !== 'connected') options.onEvent(payload)
+        } catch {
+          // Ignore malformed heartbeat or future event types.
+        }
+      }
+      boundary = buffer.indexOf('\n\n')
+    }
+  }
 }
 
 /**
@@ -159,6 +210,7 @@ export async function toggleStatus(id: number, status: 'active' | 'inactive'): P
 
 export const keysAPI = {
   list,
+  watchEvents,
   getById,
   create,
   update,

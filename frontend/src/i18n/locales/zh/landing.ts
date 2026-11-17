@@ -9,7 +9,7 @@ export default {
       nav: {
         image: '图片生成',
         video: '视频生成',
-        canvas: '无限画布',
+        canvas: 'Create',
         inspiration: '视频灵感',
         works: '作品库',
         models: '模型',

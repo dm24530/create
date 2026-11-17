@@ -13,6 +13,7 @@ export interface VideoWorkRecord {
   model: string
   prompt: string
   durationSeconds: number
+  durationAuto?: boolean
   resolution: string
   aspectRatio: string
   generateAudio: boolean

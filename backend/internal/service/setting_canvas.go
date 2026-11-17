@@ -23,7 +23,7 @@ const (
 	canvasAdminOnlyDBTimeout = 2 * time.Second
 )
 
-// IsCanvasAdminOnly reports whether the infinite canvas is still in
+// IsCanvasAdminOnly reports whether the Create is still in
 // administrator-only preview mode. Missing settings and read failures fail
 // closed so a transient DB issue cannot expose an unreleased feature.
 func (s *SettingService) IsCanvasAdminOnly(ctx context.Context) bool {

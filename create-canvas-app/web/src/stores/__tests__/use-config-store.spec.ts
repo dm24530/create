@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { defaultConfig, normalizeModelOptionValue, resolveModelForCapability, type AiConfig } from "../use-config-store";
+import { defaultConfig, normalizeModelOptionValue, resolveModelForCapability, useConfigStore, type AiConfig } from "../use-config-store";
 
 function configWithManagedImageModel(): AiConfig {
     return {
@@ -26,5 +26,17 @@ describe("managed model recovery", () => {
 
         expect(resolveModelForCapability(config, "old-managed-channel::gpt-image-2", "image")).toBe("create-managed::gpt-image-2");
         expect(normalizeModelOptionValue("old-managed-channel::gpt-image-2", config.channels)).toBe("create-managed::gpt-image-2");
+    });
+});
+
+describe("Create mode configuration", () => {
+    it("does not open the legacy configuration dialog", () => {
+        useConfigStore.setState({ isConfigOpen: false, shouldPromptContinue: false });
+
+        useConfigStore.getState().openConfigDialog(true);
+
+        const state = useConfigStore.getState();
+        expect(state.isConfigOpen).toBe(false);
+        expect(state.shouldPromptContinue).toBe(false);
     });
 });

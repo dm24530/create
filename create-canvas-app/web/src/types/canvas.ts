@@ -62,6 +62,8 @@ export type CanvasNodeMetadata = {
     prompt?: string;
     status?: CanvasNodeStatus;
     generationStartedAt?: number;
+    /** Wall-clock generation time, separate from media playback durationMs. */
+    generationDurationMs?: number;
     errorDetails?: string;
     fontSize?: number;
     generationMode?: CanvasGenerationMode;

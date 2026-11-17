@@ -1,6 +1,6 @@
 # Canvas Cloud Storage
 
-The infinite canvas stores project metadata in PostgreSQL and media objects in
+The Create stores project metadata in PostgreSQL and media objects in
 the configured image storage backend (R2 in production).
 
 ## Object Layout

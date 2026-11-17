@@ -23,6 +23,7 @@ type ApiEnvelope<T> = {
 
 export type CreateRequestOptions = RequestInit & {
     accessToken?: string;
+    timeoutMs?: number;
 };
 
 function isEnvelope(value: unknown): value is ApiEnvelope<unknown> {
@@ -36,18 +37,44 @@ function responseMessage(payload: unknown, fallback: string) {
 }
 
 export async function createRequest<T>(path: string, options: CreateRequestOptions = {}): Promise<T> {
-    const { accessToken, headers, ...init } = options;
+    const { accessToken, headers, timeoutMs, signal: callerSignal, ...init } = options;
     const requestHeaders = new Headers(headers);
     if (accessToken) requestHeaders.set("Authorization", `Bearer ${accessToken}`);
     if (init.body && !(init.body instanceof FormData) && !requestHeaders.has("Content-Type")) {
         requestHeaders.set("Content-Type", "application/json");
     }
 
-    const response = await fetch(/^https?:\/\//i.test(path) ? path : createApiUrl(path), {
-        ...init,
-        credentials: "include",
-        headers: requestHeaders,
-    });
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    let timedOut = false;
+    let timeoutController: AbortController | undefined;
+    const abortFromCaller = () => timeoutController?.abort(callerSignal?.reason);
+    if (timeoutMs && timeoutMs > 0) {
+        timeoutController = new AbortController();
+        if (callerSignal?.aborted) abortFromCaller();
+        else callerSignal?.addEventListener("abort", abortFromCaller, { once: true });
+        timeoutId = setTimeout(() => {
+            timedOut = true;
+            timeoutController?.abort(new DOMException("Request timed out", "TimeoutError"));
+        }, timeoutMs);
+    }
+
+    let response: Response;
+    try {
+        response = await fetch(/^https?:\/\//i.test(path) ? path : createApiUrl(path), {
+            ...init,
+            credentials: "include",
+            headers: requestHeaders,
+            signal: timeoutController?.signal || callerSignal,
+        });
+    } catch (error) {
+        if (timedOut) {
+            throw new CreateApiError("请求超时，请检查网络或服务器状态后重试");
+        }
+        throw error;
+    } finally {
+        if (timeoutId) clearTimeout(timeoutId);
+        callerSignal?.removeEventListener("abort", abortFromCaller);
+    }
     const text = await response.text();
     let payload: unknown = null;
     if (text) {

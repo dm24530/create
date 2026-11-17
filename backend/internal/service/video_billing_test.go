@@ -113,7 +113,7 @@ func TestMuseVideoBillingDefaults(t *testing.T) {
 	require.True(t, IsMuseVideoModel("muse-video"))
 	require.True(t, IsMuseVideoModel("muse-cheap"))
 	require.False(t, IsMuseVideoModel("muse-spark-1.3-contributor"))
-	require.Equal(t, 60, NormalizeVideoBillingDurationSecondsForModelOrDefault("muse-video", 60))
+	require.Equal(t, 15, NormalizeVideoBillingDurationSecondsForModelOrDefault("muse-video", 60))
 	require.Equal(t, 30, NormalizeVideoBillingDurationSecondsForModelOrDefault("muse-cheap", 45))
 	require.Equal(t, VideoBillingResolution720P, NormalizeVideoBillingResolutionForModelOrDefault("muse-video", ""))
 	require.Equal(t, VideoBillingResolution720P, NormalizeVideoBillingResolutionForModelOrDefault("muse-cheap", "ignored"))

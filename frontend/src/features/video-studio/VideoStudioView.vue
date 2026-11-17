@@ -424,16 +424,23 @@
           <div class="video-composer__duration" data-testid="video-duration-control">
             <div
               class="video-composer__segmented"
-              :style="{ '--video-segment-count': durationPresetOptions.length }"
+              :style="{ '--video-segment-count': durationPresetOptions.length + 1 }"
               role="group"
               aria-label="时长"
             >
               <button
+                type="button"
+                :class="{ 'is-active': durationAuto }"
+                @click="durationAuto = true"
+              >
+                自动
+              </button>
+              <button
                 v-for="duration in durationPresetOptions"
                 :key="duration"
                 type="button"
-                :class="{ 'is-active': durationSeconds === duration }"
-                @click="durationSeconds = duration"
+                :class="{ 'is-active': !durationAuto && durationSeconds === duration }"
+                @click="durationAuto = false; durationSeconds = duration"
               >
                 {{ duration }}秒
               </button>
@@ -444,7 +451,9 @@
                 type="number"
                 :min="MIN_DURATION"
                 :max="MAX_DURATION"
+                :disabled="durationAuto"
                 aria-label="视频时长（秒）"
+                @input="durationAuto = false"
                 @blur="normalizeDuration"
               />
               <span>秒</span>
@@ -607,7 +616,7 @@
         <dl class="preview__meta">
           <div>
             <dt>时长</dt>
-            <dd>{{ previewTask.durationSeconds }} 秒</dd>
+            <dd>{{ previewTask.durationAuto ? '自动' : `${previewTask.durationSeconds} 秒` }}</dd>
           </div>
           <div>
             <dt>画幅</dt>
@@ -724,7 +733,7 @@ import { videoStudioDraft } from './videoStudioDraft'
 import { findVideoInspiration } from './videoInspiration'
 import { formatVideoElapsedSeconds } from './videoElapsed'
 import { normalizeStudioDisplayOrder } from '@/features/studioDisplayOrder'
-import { notifyCreatorKeyChanged } from '@/utils/creatorKeyEvents'
+import { notifyCreatorKeyChanged, onKeysChanged } from '@/utils/creatorKeyEvents'
 import { prepareImageReferenceImages } from '@/utils/imageReferenceCompression'
 
 interface StudioTask {
@@ -739,6 +748,7 @@ interface StudioTask {
   model: string
   prompt: string
   durationSeconds: number
+  durationAuto: boolean
   resolution: string
   aspectRatio: string
   generateAudio: boolean
@@ -785,6 +795,7 @@ interface VideoStudioPreferences {
   resolution?: string
   aspectRatio?: string
   durationSeconds?: number
+  durationAuto?: boolean
   taskCount?: number
   generateAudio?: boolean
 }
@@ -862,6 +873,7 @@ const durationSeconds = ref(
     ? Math.min(60, Math.max(1, Math.round(Number(storedPreferences.durationSeconds))))
     : 5,
 )
+const durationAuto = ref(storedPreferences.durationAuto === true)
 const taskCount = ref(
   Number.isFinite(storedPreferences.taskCount)
     ? Math.min(MAX_TASK_COUNT, Math.max(1, Math.round(Number(storedPreferences.taskCount))))
@@ -1183,7 +1195,7 @@ function taskMeta(task: StudioTask): string {
   const profile = getVideoModelProfile(task.model, task.provider)
   return [
     task.model,
-    task.durationSeconds ? `${task.durationSeconds}秒` : '',
+    task.durationAuto ? '自动时长' : task.durationSeconds ? `${task.durationSeconds}秒` : '',
     task.resolution,
     task.aspectRatio,
     task.generateAudio || profile.outputsAudio ? '含音频' : '',
@@ -1275,6 +1287,7 @@ function applyInspirationFromRoute() {
   const template = findVideoInspiration(slug)
   if (!template) return
   prompt.value = template.prompt
+  durationAuto.value = false
   durationSeconds.value = template.durationSeconds
   resolution.value = template.resolution
   aspectRatio.value = template.aspectRatio
@@ -1350,6 +1363,7 @@ function taskFromRecord(record: VideoWorkRecord): StudioTask {
     model: record.model,
     prompt: record.prompt,
     durationSeconds: record.durationSeconds,
+    durationAuto: record.durationAuto === true,
     resolution: record.resolution,
     aspectRatio: record.aspectRatio,
     generateAudio: record.generateAudio,
@@ -1395,6 +1409,7 @@ function taskFromArchived(entry: ArchivedVideoEntry): StudioTask {
     model,
     prompt: entry.prompt || '',
     durationSeconds: Number(entry.duration_seconds || 0),
+    durationAuto: false,
     resolution: '',
     aspectRatio: '',
     generateAudio: false,
@@ -1423,6 +1438,7 @@ function recordFromTask(task: StudioTask, status: VideoTaskStatus, statusMessage
     model: task.model,
     prompt: task.prompt,
     durationSeconds: task.durationSeconds,
+    durationAuto: task.durationAuto,
     resolution: task.resolution,
     aspectRatio: task.aspectRatio,
     generateAudio: task.generateAudio,
@@ -1849,6 +1865,7 @@ function applyVideoModelConstraints() {
 /* -------------------------------- 生成流程 -------------------------------- */
 
 function normalizeDuration() {
+  durationAuto.value = false
   durationSeconds.value = clampDuration(Number(durationSeconds.value))
 }
 
@@ -1941,6 +1958,7 @@ async function generate() {
       model,
       prompt: prompt.value.trim(),
       durationSeconds: clampDuration(durationSeconds.value),
+      durationAuto: durationAuto.value,
       resolution: resolution.value,
       aspectRatio: aspectRatio.value,
       generateAudio: generateAudio.value,
@@ -2010,6 +2028,7 @@ async function runTask(
         model: task.model,
         prompt: task.prompt,
         durationSeconds: task.durationSeconds,
+        durationAuto: task.durationAuto,
         resolution: task.resolution,
         aspectRatio: task.aspectRatio,
         generateAudio: task.generateAudio,
@@ -2278,6 +2297,7 @@ watch(
     resolution,
     aspectRatio,
     durationSeconds,
+    durationAuto,
     taskCount,
     generateAudio,
   ],
@@ -2289,6 +2309,7 @@ watch(
       resolution: resolution.value,
       aspectRatio: aspectRatio.value,
       durationSeconds: Number(durationSeconds.value),
+      durationAuto: durationAuto.value,
       taskCount: Number(taskCount.value),
       generateAudio: generateAudio.value,
     })
@@ -2316,7 +2337,12 @@ watch(
 
 // 灵感参数与未完成任务只在进入页面时处理一次：刷新密钥/模型不能覆盖用户
 // 已经改过的提示词，也不能把同一份未完成任务重复挂起来。
+const onMountedCleanup: Array<() => void> = []
+
 onMounted(async () => {
+  onMountedCleanup.push(onKeysChanged(() => {
+    void refreshAll()
+  }))
   restoreProviderSettings()
   await loadData()
   applyInspirationFromRoute()
@@ -2325,6 +2351,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  for (const cleanup of onMountedCleanup.splice(0)) cleanup()
   if (generationClockTimer) window.clearInterval(generationClockTimer)
   for (const task of tasks.value) {
     if (task.revokeUrl && task.videoUrl) URL.revokeObjectURL(task.videoUrl)

@@ -651,3 +651,15 @@
     border-radius: 0.6rem;
     font-size: 0.75rem;
 }
+
+/* Keep Ant Design tooltips readable in the dark theme. */
+.dark .ant-tooltip .ant-tooltip-inner {
+    background: #292524 !important;
+    color: #fafaf9 !important;
+    box-shadow: 0 8px 24px rgb(0 0 0 / 32%);
+    font-weight: 500;
+}
+
+.dark .ant-tooltip .ant-tooltip-arrow::before {
+    background: #292524 !important;
+}

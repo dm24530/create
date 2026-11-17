@@ -29,7 +29,7 @@ describe('AppLayout navigation', () => {
     expect(componentSource).not.toContain('v-if="showStudioNav"')
   })
 
-  it('exposes the infinite canvas entry once in each navigation surface', () => {
+  it('exposes the Create entry once in each navigation surface', () => {
     const userNav = readFileSync(userNavPath, 'utf8')
     const studioNav = readFileSync(studioNavPath, 'utf8')
     const sidebar = readFileSync(sidebarPath, 'utf8')
@@ -54,7 +54,7 @@ describe('AppLayout navigation', () => {
     const canvasMain = readFileSync(canvasMainPath, 'utf8')
     const appSource = readFileSync(appPath, 'utf8')
 
-    expect(canvasHost).toContain('/canvas?embed=1')
+    expect(canvasHost).toContain("url.searchParams.set('embed', '1')")
     expect(canvasHost).toContain('create-canvas-ready')
     expect(canvasHost).toContain('v-if="frameURL"')
     expect(canvasHost).toContain('v-else-if="!frameURL || !frameReady"')

@@ -8,6 +8,7 @@ import type { CreateSession } from "@/services/create-auth";
 import type { CreateManagedKey } from "@/services/create-managed-channel";
 import { resolveCreateServiceUrl } from "@/lib/create-product";
 import { cn } from "@/lib/utils";
+import { getClientRequestTiming } from "@/services/client-request-timing";
 
 export function CreateUsageModal({ open, onClose, session, keys }: { open: boolean; onClose: () => void; session: CreateSession | null; keys: CreateManagedKey[] }) {
     const [logs, setLogs] = useState<CreateUsageLog[]>([]);
@@ -187,6 +188,8 @@ function MetricCard({ icon, iconClass, label, value, hint, valueClass }: { icon:
 function LatencyCell({ row }: { row: CreateUsageLog }) {
     const seconds = Number(row.duration_ms || 0) / 1000;
     const tps = seconds > 0 && Number(row.output_tokens || 0) > 0 ? (Number(row.output_tokens) / seconds).toFixed(1) : "-";
+    const clientTiming = getClientRequestTiming(row.request_id);
+    const sentMs = clientTiming?.generationMs ?? Number(row.duration_ms || 0);
     return (
         <div className="flex gap-2">
             <span className="w-0.5 shrink-0 rounded bg-emerald-500/70" />
@@ -196,8 +199,16 @@ function LatencyCell({ row }: { row: CreateUsageLog }) {
                     <span>{formatDuration(row.first_token_ms)}</span>
                 </div>
                 <div className="flex gap-2">
-                    <span className="w-12 text-stone-500 dark:text-stone-400">总耗时</span>
-                    <span className="text-orange-600 dark:text-orange-400">{formatDuration(row.duration_ms)}</span>
+                    <span className="w-16 text-stone-500 dark:text-stone-400">发送后</span>
+                    <span className="text-orange-600 dark:text-orange-400">{formatDuration(sentMs)}</span>
+                </div>
+                <div className="flex gap-2">
+                    <span className="w-16 text-stone-500 dark:text-stone-400">从压缩开始</span>
+                    <span>{clientTiming ? formatDuration(clientTiming.totalMs) : "-"}</span>
+                </div>
+                <div className="flex gap-2">
+                    <span className="w-16 text-stone-500 dark:text-stone-400">压缩耗时</span>
+                    <span>{clientTiming ? formatDuration(clientTiming.prepareMs) : "-"}</span>
                 </div>
                 <div className="flex gap-2">
                     <span className="w-12 text-stone-500 dark:text-stone-400">输出 TPS</span>

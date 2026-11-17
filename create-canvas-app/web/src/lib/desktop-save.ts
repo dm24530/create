@@ -4,18 +4,21 @@ export type LocalSaveSettings = {
     settingsVersion: number;
     imageDir: string;
     videoDir: string;
+    canvasDir: string;
     otherDir: string;
     openFolderAfterSave: boolean;
 };
 
-export type DesktopSaveKind = "image" | "video" | "other";
+export type DesktopSaveKind = "image" | "video" | "canvas" | "other";
+export type GeneratedFileSaveOptions = { canvasFolder?: string };
 
 type DesktopSaveBridge = {
     isDesktop: true;
     getSaveSettings: () => Promise<LocalSaveSettings>;
     saveSaveSettings: (settings: LocalSaveSettings) => Promise<LocalSaveSettings>;
-    saveGeneratedFile?: (payload: { kind: DesktopSaveKind; mimeType: string; filename: string; data: ArrayBuffer }) => Promise<{ savePath: string }>;
-    readGeneratedFile?: (payload: { kind: DesktopSaveKind; path?: string; size?: number; mimeType?: string }) => Promise<{ data: ArrayBuffer | Uint8Array; savePath: string; mimeType: string; size: number } | null>;
+    saveGeneratedFile?: (payload: { kind: DesktopSaveKind; mimeType: string; filename: string; data: ArrayBuffer; canvasFolder?: string }) => Promise<{ savePath: string }>;
+    readGeneratedFile?: (payload: { kind: DesktopSaveKind; path?: string; size?: number; mimeType?: string; canvasFolder?: string }) => Promise<{ data: ArrayBuffer | Uint8Array; savePath: string; mimeType: string; size: number } | null>;
+    deleteGeneratedFile?: (payload: { kind: DesktopSaveKind; path: string; canvasFolder?: string }) => Promise<{ deleted: boolean; savePath: string }>;
     chooseSaveDirectory: (kind: DesktopSaveKind) => Promise<string | null>;
     openSaveFolder: (kind: DesktopSaveKind) => Promise<void>;
     onOpenSaveSettings: (callback: () => void) => () => void;
@@ -30,16 +33,16 @@ export function getDesktopSaveBridge(): DesktopSaveBridge | null {
 
 export type GeneratedFileSaveResult = { savePath?: string };
 
-export async function saveGeneratedFile(blob: Blob, kind: DesktopSaveKind, mimeType: string, filename: string): Promise<GeneratedFileSaveResult> {
+export async function saveGeneratedFile(blob: Blob, kind: DesktopSaveKind, mimeType: string, filename: string, options: GeneratedFileSaveOptions = {}): Promise<GeneratedFileSaveResult> {
     const bridge = getDesktopSaveBridge();
     if (bridge?.saveGeneratedFile) {
-        return bridge.saveGeneratedFile({ kind, mimeType: blob.type || mimeType, filename, data: await blobToArrayBuffer(blob) });
+        return bridge.saveGeneratedFile({ kind, mimeType: blob.type || mimeType, filename, data: await blobToArrayBuffer(blob), ...options });
     }
     saveAs(blob, filename);
     return {};
 }
 
-export async function readGeneratedFileBlob(payload: { kind: DesktopSaveKind; path?: string; size?: number; mimeType?: string }): Promise<Blob | null> {
+export async function readGeneratedFileBlob(payload: { kind: DesktopSaveKind; path?: string; size?: number; mimeType?: string; canvasFolder?: string }): Promise<Blob | null> {
     const bridge = getDesktopSaveBridge();
     if (!bridge?.readGeneratedFile) return null;
     const saved = await bridge.readGeneratedFile(payload);
@@ -48,10 +51,17 @@ export async function readGeneratedFileBlob(payload: { kind: DesktopSaveKind; pa
     return new Blob([data], { type: saved.mimeType || payload.mimeType || "application/octet-stream" });
 }
 
-export async function autoSaveGeneratedFile(blob: Blob, kind: DesktopSaveKind, mimeType: string, date = new Date()) {
+export async function deleteGeneratedFile(kind: DesktopSaveKind, path: string, options: GeneratedFileSaveOptions = {}): Promise<{ deleted: boolean; savePath?: string }> {
+    const bridge = getDesktopSaveBridge();
+    if (!bridge?.deleteGeneratedFile || !path.trim()) return { deleted: false };
+    return bridge.deleteGeneratedFile({ kind, path: path.trim(), ...options });
+}
+
+export async function autoSaveGeneratedFile(blob: Blob, kind: DesktopSaveKind, mimeType: string, date = new Date(), options: GeneratedFileSaveOptions = {}) {
     const extension = generatedFileExtension(kind, mimeType);
     const stamp = date.toISOString().replace(/[-:]/g, "").replace("T", "-").slice(0, 15);
-    return saveGeneratedFile(blob, kind, mimeType, `create-${kind}-${stamp}.${extension}`);
+    const prefix = kind === "canvas" ? "canvas" : `create-${kind}`;
+    return saveGeneratedFile(blob, kind, mimeType, `${prefix}-${stamp}.${extension}`, options);
 }
 
 function blobToArrayBuffer(blob: Blob): Promise<ArrayBuffer> {
@@ -66,6 +76,7 @@ function blobToArrayBuffer(blob: Blob): Promise<ArrayBuffer> {
 
 export function generatedFileExtension(kind: DesktopSaveKind, mimeType: string) {
     const type = String(mimeType || "").toLowerCase();
+    if (kind === "canvas") kind = type.startsWith("video/") ? "video" : "image";
     if (kind === "image") {
         if (type.includes("jpeg")) return "jpg";
         if (type.includes("webp")) return "webp";

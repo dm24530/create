@@ -891,7 +891,7 @@ import type { ApiKey } from '@/types'
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 import { resolvePlaygroundApiEndpoint } from '@/utils/apiEndpoint'
-import { notifyCreatorKeyChanged } from '@/utils/creatorKeyEvents'
+import { notifyCreatorKeyChanged, onKeysChanged } from '@/utils/creatorKeyEvents'
 
 const IMAGE_GENERATION_TIMEOUT_MS = 10 * 60 * 1000
 const IMAGE_ASYNC_SUBMIT_TIMEOUT_MS = 8 * 60 * 1000
@@ -902,6 +902,7 @@ const reportedGenerationFailures = new Set<string>()
 const reportedVisibleErrors = new Set<string>()
 
 const keys = ref<ApiKey[]>([])
+let unsubscribeKeysChanged: (() => void) | undefined
 const selectedKeyId = ref('')
 const apiBaseUrl = ref('')
 const imageModel = ref('')
@@ -3819,6 +3820,9 @@ onMounted(() => {
   document.addEventListener('visibilitychange', handleGalleryVisibilityChange)
   window.addEventListener(IMAGE_STUDIO_GALLERY_CHANGED_EVENT, refreshGalleryAfterExternalChange)
   window.addEventListener('online', resumeAmbiguousTasksOnOnline)
+  unsubscribeKeysChanged = onKeysChanged(() => {
+    void loadKeysAndSettings()
+  })
   applyInspirationFromRoute()
   startExpiryPruneTimer()
   startGalleryURLRefreshTimer()
@@ -3863,6 +3867,8 @@ onBeforeUnmount(() => {
   document.removeEventListener('visibilitychange', handleGalleryVisibilityChange)
   window.removeEventListener(IMAGE_STUDIO_GALLERY_CHANGED_EVENT, refreshGalleryAfterExternalChange)
   window.removeEventListener('online', resumeAmbiguousTasksOnOnline)
+  unsubscribeKeysChanged?.()
+  unsubscribeKeysChanged = undefined
   for (const timer of imageMediaTimeoutIds.values()) {
     clearTimeout(timer)
   }

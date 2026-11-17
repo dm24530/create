@@ -468,10 +468,6 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 					h.handleFailoverExhausted(c, failoverErr, true)
 					return
 				}
-				if isAsyncImageTaskContext(c.Request.Context()) {
-					h.handleFailoverExhausted(c, failoverErr, false)
-					return
-				}
 				if !failoverErr.ShouldRetryNextAccount() {
 					h.handleFailoverExhausted(c, failoverErr, false)
 					return
@@ -551,6 +547,7 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 				UpstreamModel:        result.UpstreamModel,
 				VideoResolution:      result.VideoResolution,
 				VideoDurationSeconds: result.VideoDurationSeconds,
+				DurationAuto:         requestInfo.DurationAuto,
 				OriginalModel:        clientRequestedModel(c, requestModel),
 				Provider:             grokMediaVideoProvider(endpoint),
 				Platform:             account.Platform,
@@ -587,7 +584,9 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 			endpoint == service.OpenAIVideoEndpointStatus ||
 			endpoint == service.OpenAIVideoEndpointContent {
 			taskID := strings.TrimSpace(requestID)
-			if billResult := prepareGrokVideoCompletionBilling(requestCtx, h, reqLog, apiKey, subject, taskID, result); billResult != nil {
+			if billResult := prepareGrokVideoCompletionBilling(
+				requestCtx, h, reqLog, apiKey, subject, taskID, endpoint, account.Platform, result,
+			); billResult != nil {
 				recordGrokMediaUsage(c, h, reqLog, apiKey, subject, subscription, account, billResult, billResult.Model, body, taskID)
 			}
 		} else if shouldRecordGrokMediaUsage(endpoint, requestModel, result) {
@@ -752,6 +751,8 @@ func prepareGrokVideoCompletionBilling(
 	apiKey *service.APIKey,
 	subject middleware2.AuthSubject,
 	taskRequestID string,
+	endpoint service.GrokMediaEndpoint,
+	platform string,
 	statusResult *service.OpenAIForwardResult,
 ) *service.OpenAIForwardResult {
 	if h == nil || h.gatewayService == nil || apiKey == nil || statusResult == nil {
@@ -770,6 +771,22 @@ func prepareGrokVideoCompletionBilling(
 	pending, loadErr := h.gatewayService.LoadGrokVideoPendingBilling(ctx, taskRequestID, subject.UserID, apiKey.ID)
 	if loadErr != nil {
 		reqLog.Warn("grok_media.video_pending_billing_load_failed", zap.String("request_id", taskRequestID), zap.Error(loadErr))
+	}
+	if pending != nil && platform == service.PlatformMuse {
+		if pending.DurationAuto && endpoint != service.OpenAIVideoEndpointContent {
+			reqLog.Debug("grok_media.video_auto_duration_waiting_for_content",
+				zap.String("request_id", taskRequestID),
+				zap.String("endpoint", string(endpoint)),
+			)
+			return nil
+		}
+		if pending.DurationAuto && endpoint == service.OpenAIVideoEndpointContent && statusResult.VideoDurationSeconds <= 0 {
+			reqLog.Warn("grok_media.video_auto_duration_unverified",
+				zap.String("request_id", taskRequestID),
+				zap.String("reason", "delivered MP4 duration could not be read"),
+			)
+			return nil
+		}
 	}
 	if pending == nil {
 		// Status omits resolution; without pending we would silently default to 480p and underbill.
@@ -812,7 +829,12 @@ func prepareGrokVideoCompletionBilling(
 		if strings.TrimSpace(pending.VideoResolution) != "" {
 			merged.VideoResolution = pending.VideoResolution
 		}
-		if merged.VideoDurationSeconds <= 0 {
+		if platform == service.PlatformMuse && !pending.DurationAuto && pending.VideoDurationSeconds > 0 {
+			// Fixed-duration Muse requests are billed by the duration selected by
+			// the customer. A longer delivered file does not change the upstream or
+			// downstream charge for that request.
+			merged.VideoDurationSeconds = pending.VideoDurationSeconds
+		} else if merged.VideoDurationSeconds <= 0 {
 			merged.VideoDurationSeconds = pending.VideoDurationSeconds
 		}
 		if strings.TrimSpace(merged.ResponseID) == "" {

@@ -1,0 +1,60 @@
+name: Create Local Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "local-v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.27.2"
+          cache-dependency-path: local-client/go.mod
+
+      - name: Enable pnpm
+        shell: pwsh
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.9.0 --activate
+          pnpm --dir frontend install --frozen-lockfile
+
+      - name: Validate version tag
+        shell: pwsh
+        run: |
+          $version = (Get-Content -Raw local-client/VERSION).Trim()
+          if ("${{ github.ref_name }}" -ne "local-v$version") {
+            throw "Tag ${{ github.ref_name }} does not match local-client/VERSION $version"
+          }
+
+      - name: Build Create Local
+        shell: pwsh
+        run: .\local-client\build.ps1 -BuildFrontend
+
+      - name: Publish GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $version = (Get-Content -Raw local-client/VERSION).Trim()
+          gh release create "local-v$version" `
+            "local-client/dist/create-local.exe" `
+            "local-client/dist/create-local.exe.sha256" `
+            "local-client/dist/Create-Local-$version.zip" `
+            --title "Create Local $version" `
+            --generate-notes

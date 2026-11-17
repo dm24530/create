@@ -99,6 +99,8 @@ release/
 # dist 完全由 `pnpm run build` 生成，不入库。带 `-tags embed` 编译前必须先构建前端，
 # 否则 //go:embed all:dist 会因为没有可嵌入的文件而直接报错。
 backend/internal/web/dist/
+backend/internal/web/dist-admin/
+backend/internal/web/dist-full/
 
 # 后端运行时缓存数据
 backend/data/
@@ -165,6 +167,10 @@ docs/screenshots/*
 .serena/
 .codex/
 frontend/coverage/
+desktop/node_modules/
+desktop/release/
+desktop/dist/
+desktop/test-output/
 aicodex
 output/
 .codegraph/
@@ -174,3 +180,17 @@ issues/
 .vite/
 # 本地闭源插件开发目录及构建产物不进入 Sub2API 仓库
 /plugins/
+
+# Generated release bundles and local runtime data
+/artifacts/
+/.wrangler/
+/deploy/create-data/
+/deploy/create-postgres-data/
+/deploy/create-redis-data/
+/deploy/create-v038-data/
+/deploy/create-v038-postgres-data/
+/deploy/create-v038-redis-data/
+create-canvas-app/desktop/test/real-login-debug.js
+/$null
+/file
+/file.*

@@ -13,6 +13,7 @@ import type { AppLocale } from "@/i18n";
 import { syncAppDataToWebdav, type AppSyncDomainKey, type AppSyncProgressEvent } from "@/services/app-sync";
 import { testWebdavConnection, WEBDAV_MANIFEST_FILE_NAME } from "@/services/webdav-sync";
 import { audioFormatOptions, audioVoiceOptions, normalizeAudioSpeedValue } from "@/lib/audio-generation";
+import { isCreateProductMode } from "@/lib/create-product";
 import { computeMediaSize, inferMediaRatio, inferMediaScale, mediaScaleOptions, parseVideoResolution } from "@/lib/media-size";
 import { useConfigStore, type ConfigTabKey, type ModelCapability } from "@/stores/use-config-store";
 
@@ -282,6 +283,11 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "preferenc
 }
 
 export function AppConfigModal() {
+    if (isCreateProductMode()) return null;
+    return <AppConfigModalContent />;
+}
+
+function AppConfigModalContent() {
     const { t } = useTranslation();
     const isConfigOpen = useConfigStore((state) => state.isConfigOpen);
     const configTab = useConfigStore((state) => state.configTab);

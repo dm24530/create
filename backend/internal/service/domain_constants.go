@@ -541,7 +541,7 @@ const (
 	// sidebar entry is hidden. Defaults to false (opt-in feature).
 	SettingKeyAvailableChannelsEnabled = "available_channels_enabled"
 
-	// SettingKeyCanvasAdminOnly keeps the infinite canvas in administrator-only
+	// SettingKeyCanvasAdminOnly keeps the Create in administrator-only
 	// preview until the operator explicitly opens it to users.
 	SettingKeyCanvasAdminOnly = "canvas_admin_only"
 

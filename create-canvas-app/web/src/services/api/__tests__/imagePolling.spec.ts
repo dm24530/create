@@ -8,6 +8,8 @@ import type { AiConfig } from "@/types/image";
 vi.mock("axios", () => ({
     default: {
         get: vi.fn(),
+        isCancel: vi.fn(() => false),
+        isAxiosError: vi.fn(() => false),
     },
     isCancel: vi.fn(() => false),
     isAxiosError: vi.fn(() => false),
@@ -149,5 +151,44 @@ describe("waitForPersistentImageTask", () => {
                 }),
             }),
         );
+    });
+
+    it("preserves the upstream failure reason from a failed image task", async () => {
+        vi.mocked(axios.get).mockResolvedValueOnce({
+            data: {
+                status: "failed",
+                error: {
+                    message: "内容审核未通过：提示词包含受限内容",
+                },
+            },
+        });
+
+        await expect(waitForPersistentImageTask(config, {
+            taskId: "imgtask_failed_reason",
+            pollUrl: "/v1/images/tasks/imgtask_failed_reason",
+            provider: "openai",
+        })).rejects.toThrow("内容审核未通过：提示词包含受限内容");
+    });
+
+    it("surfaces the response body when polling the image task returns an HTTP error", async () => {
+        vi.mocked(axios.get).mockRejectedValueOnce({
+            code: "ERR_BAD_REQUEST",
+            message: "Request failed with status code 400",
+            response: {
+                status: 400,
+                data: {
+                    error: {
+                        message: "上游模型不支持当前尺寸参数",
+                    },
+                },
+            },
+        });
+        vi.mocked(axios.isAxiosError).mockReturnValueOnce(true);
+
+        await expect(waitForPersistentImageTask(config, {
+            taskId: "imgtask_http_error",
+            pollUrl: "/v1/images/tasks/imgtask_http_error",
+            provider: "openai",
+        })).rejects.toThrow("上游模型不支持当前尺寸参数");
     });
 });

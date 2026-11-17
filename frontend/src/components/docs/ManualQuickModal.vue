@@ -27,7 +27,7 @@
         </RouterLink>
         <RouterLink :to="'/canvas'" class="manual-quick-modal__action" @click="emit('close')">
           <Icon name="grid" size="sm" />
-          无限画布
+          Create
         </RouterLink>
         <RouterLink :to="'/video-works'" class="manual-quick-modal__action" @click="emit('close')">
           <Icon name="bookmark" size="sm" />
@@ -95,7 +95,7 @@ const sections = [
     ],
   },
   {
-    title: '无限画布基础操作',
+    title: 'Create基础操作',
     description: '把图片、文字、视频和生成配置放到同一张可无限扩展的画布上，连续推演创作流程。',
     items: [
       '点击工具栏添加图片、文本、视频、音频、生成配置或组节点。',

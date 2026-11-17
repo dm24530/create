@@ -50,6 +50,10 @@ export function getAntThemeConfig(dark: boolean): ThemeConfig {
             Button: {
                 primaryShadow: "none",
             },
+            Tooltip: {
+                colorBgSpotlight: dark ? "#292524" : "#ffffff",
+                colorTextLightSolid: dark ? "#fafaf9" : "#171717",
+            },
             Dropdown: {
                 colorBgElevated: color.elevatedBg,
                 colorText: color.itemText,

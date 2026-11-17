@@ -13,6 +13,7 @@ const {
 } = require("./security");
 const { buildSavePath, classifyDownload } = require("./download-policy");
 const { createDefaultSettings, mergeSettings, validateSettings } = require("./settings-store");
+const { normalizeSaveKind, rootDirectoryForKind, saveDirectoryForKind } = require("./save-directory");
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -71,7 +72,7 @@ async function serveAppAsset(request) {
       return new Response(data, { status: 200, headers: { "Content-Type": CONTENT_TYPES[".html"] } });
     } catch (fallbackError) {
       console.error("[app-protocol] fallback read failed", fallbackError);
-      return new Response("Create Canvas build is missing", { status: 404 });
+      return new Response("Create build is missing", { status: 404 });
     }
   }
 }
@@ -112,12 +113,6 @@ function ensureDirectory(directory) {
   fs.mkdirSync(directory, { recursive: true });
 }
 
-function saveDirectoryForKind(kind) {
-  if (kind === "image") return settings.imageDir;
-  if (kind === "video") return settings.videoDir;
-  return settings.otherDir;
-}
-
 function fallbackFilename(kind, mimeType) {
   if (kind === "image") {
     if (mimeType === "image/jpeg") return "image.jpg";
@@ -125,12 +120,14 @@ function fallbackFilename(kind, mimeType) {
     return "image.png";
   }
   if (kind === "video") return mimeType === "video/webm" ? "video.webm" : "video.mp4";
+  if (kind === "canvas") return mimeType.startsWith("video/") ? "canvas.mp4" : mimeType.startsWith("audio/") ? "canvas.mp3" : "canvas.png";
   return "download.bin";
 }
 
 function generatedFileExtensions(kind) {
   if (kind === "image") return new Set([".png", ".jpg", ".jpeg", ".webp", ".gif"]);
   if (kind === "video") return new Set([".mp4", ".webm", ".mov", ".m4v"]);
+  if (kind === "canvas") return new Set([".png", ".jpg", ".jpeg", ".webp", ".gif", ".mp4", ".webm", ".mov", ".m4v", ".mp3", ".wav", ".m4a", ".ogg"]);
   return new Set([".bin", ".zip"]);
 }
 
@@ -144,11 +141,15 @@ function mimeTypeForPath(filePath) {
   if (extension === ".mov") return "video/quicktime";
   if (extension === ".m4v") return "video/x-m4v";
   if (extension === ".mp4") return "video/mp4";
+  if (extension === ".mp3") return "audio/mpeg";
+  if (extension === ".wav") return "audio/wav";
+  if (extension === ".m4a") return "audio/mp4";
+  if (extension === ".ogg") return "audio/ogg";
   return "application/octet-stream";
 }
 
-function resolveGeneratedFilePath(kind, requestedPath) {
-  const directory = path.resolve(saveDirectoryForKind(kind));
+function resolveGeneratedFilePath(kind, requestedPath, canvasFolder) {
+  const directory = path.resolve(saveDirectoryForKind(settings, kind, canvasFolder));
   const candidate = path.resolve(String(requestedPath || ""));
   if (candidate !== directory && !candidate.startsWith(`${directory}${path.sep}`)) {
     throw new Error("Generated file path is outside the configured directory");
@@ -157,12 +158,12 @@ function resolveGeneratedFilePath(kind, requestedPath) {
 }
 
 async function findGeneratedFile(kind, payload) {
-  const directory = path.resolve(saveDirectoryForKind(kind));
+  const directory = path.resolve(saveDirectoryForKind(settings, kind, payload.canvasFolder));
   ensureDirectory(directory);
   const extensions = generatedFileExtensions(kind);
   const requestedPath = String(payload.path || "").trim();
   if (requestedPath) {
-    const candidate = resolveGeneratedFilePath(kind, requestedPath);
+    const candidate = resolveGeneratedFilePath(kind, requestedPath, payload.canvasFolder);
     if (fs.existsSync(candidate)) return candidate;
   }
   const entries = await fsp.readdir(directory, { withFileTypes: true });
@@ -188,9 +189,26 @@ async function findGeneratedFile(kind, payload) {
   return files.sort((left, right) => right.modifiedAt - left.modifiedAt)[0]?.filePath || null;
 }
 
+async function deleteGeneratedFile(payload) {
+  if (!payload || typeof payload !== "object") throw new Error("Generated file payload is required");
+  const requestedPath = String(payload.path || "").trim();
+  if (!requestedPath) throw new Error("Generated file path is required");
+  const kind = normalizeSaveKind(payload.kind);
+  const filePath = resolveGeneratedFilePath(kind, requestedPath, payload.canvasFolder);
+  try {
+    const stat = await fsp.stat(filePath);
+    if (!stat.isFile()) return { deleted: false, savePath: filePath };
+    await fsp.unlink(filePath);
+    return { deleted: true, savePath: filePath };
+  } catch (error) {
+    if (error && error.code === "ENOENT") return { deleted: false, savePath: filePath };
+    throw error;
+  }
+}
+
 async function readGeneratedFile(payload) {
   if (!payload || typeof payload !== "object") throw new Error("Generated file payload is required");
-  const kind = payload.kind === "image" || payload.kind === "video" ? payload.kind : "other";
+  const kind = normalizeSaveKind(payload.kind);
   const filePath = await findGeneratedFile(kind, payload);
   if (!filePath) return null;
   const stat = await fsp.stat(filePath);
@@ -214,7 +232,7 @@ function configureDownloadRouting(desktopSession) {
       const mimeType = String(item.getMimeType() || "").toLowerCase();
       const filename = item.getFilename() || fallbackFilename(classifyDownload("", mimeType), mimeType);
       const kind = classifyDownload(filename, mimeType);
-      const directory = saveDirectoryForKind(kind);
+      const directory = rootDirectoryForKind(settings, kind);
       ensureDirectory(directory);
       const savePath = buildSavePath({ directory, filename, exists: (candidate) => fs.existsSync(candidate) });
       item.setSavePath(savePath);
@@ -238,7 +256,7 @@ function assertTrustedSender(event) {
 function buildApplicationMenu() {
   const template = [
     {
-      label: "Create Canvas",
+      label: "Create",
       submenu: [
         { label: "本地保存设置…", accelerator: "CmdOrCtrl+,", click: () => void openSaveSettings() },
         { type: "separator" },
@@ -262,7 +280,7 @@ function buildApplicationMenu() {
 }
 
 async function openSaveFolder(kind) {
-  const directory = saveDirectoryForKind(kind === "image" || kind === "video" ? kind : "other");
+  const directory = rootDirectoryForKind(settings, normalizeSaveKind(kind));
   ensureDirectory(directory);
   const error = await shell.openPath(directory);
   if (error) throw new Error(error);
@@ -273,9 +291,10 @@ async function openSaveSettings() {
 }
 
 async function chooseSaveDirectory(kind) {
+  const normalized = normalizeSaveKind(kind);
   const result = await dialog.showOpenDialog(mainWindow, {
-    title: kind === "image" ? "选择图片保存目录" : kind === "video" ? "选择视频保存目录" : "选择其他文件目录",
-    defaultPath: saveDirectoryForKind(kind),
+    title: normalized === "image" ? "选择图片保存目录" : normalized === "video" ? "选择视频保存目录" : normalized === "canvas" ? "选择画布保存目录" : "选择其他文件目录",
+    defaultPath: rootDirectoryForKind(settings, normalized),
     properties: ["openDirectory", "createDirectory"],
   });
   if (result.canceled || !result.filePaths[0]) return null;
@@ -284,13 +303,14 @@ async function chooseSaveDirectory(kind) {
 
 async function createMainWindow() {
   mainWindow = new BrowserWindow({
-    title: "Create Canvas",
+    title: "Create",
     width: 1440,
     height: 920,
     minWidth: 960,
     minHeight: 680,
     show: false,
     backgroundColor: "#0c0f14",
+    icon: path.join(__dirname, "..", "assets", "icon.png"),
     webPreferences: secureWindowOptions(path.join(__dirname, "preload.js")),
   });
   mainWindow.once("ready-to-show", () => { if (!smokeMode) mainWindow?.show(); });
@@ -331,13 +351,13 @@ function registerIpcHandlers() {
   ipcMain.handle("desktop:save-generated-file", async (event, payload) => {
     assertTrustedSender(event);
     if (!payload || typeof payload !== "object") throw new Error("Generated file payload is required");
-    const kind = payload.kind === "image" || payload.kind === "video" ? payload.kind : "other";
+    const kind = normalizeSaveKind(payload.kind);
     const mimeType = String(payload.mimeType || "").toLowerCase();
     const data = payload.data;
     const buffer = data instanceof ArrayBuffer ? Buffer.from(data) : ArrayBuffer.isView(data) ? Buffer.from(data.buffer, data.byteOffset, data.byteLength) : null;
     if (!buffer?.length) throw new Error("Generated file data is empty");
     if (buffer.length > 512 * 1024 * 1024) throw new Error("Generated file is too large to save automatically");
-    const directory = saveDirectoryForKind(kind);
+    const directory = saveDirectoryForKind(settings, kind, payload.canvasFolder);
     ensureDirectory(directory);
     const requestedName = String(payload.filename || "").trim() || fallbackFilename(kind, mimeType);
     const savePath = buildSavePath({ directory, filename: requestedName, exists: (candidate) => fs.existsSync(candidate) });
@@ -349,14 +369,18 @@ function registerIpcHandlers() {
   ipcMain.handle("desktop:read-generated-file", async (event, payload) => {
     assertTrustedSender(event);
     return readGeneratedFile(payload);
-  });  ipcMain.handle("desktop:choose-save-directory", async (event, kind) => {
+  });
+  ipcMain.handle("desktop:delete-generated-file", async (event, payload) => {
     assertTrustedSender(event);
-    const normalized = kind === "image" || kind === "video" ? kind : "other";
-    return chooseSaveDirectory(normalized);
+    return deleteGeneratedFile(payload);
+  });
+  ipcMain.handle("desktop:choose-save-directory", async (event, kind) => {
+    assertTrustedSender(event);
+    return chooseSaveDirectory(normalizeSaveKind(kind));
   });
   ipcMain.handle("desktop:open-save-folder", async (event, kind) => {
     assertTrustedSender(event);
-    await openSaveFolder(kind === "image" || kind === "video" ? kind : "other");
+    await openSaveFolder(normalizeSaveKind(kind));
   });
 }
 
@@ -380,8 +404,8 @@ if (!hasLock) {
     buildApplicationMenu();
     await createMainWindow();
   }).catch((error) => {
-    console.error("Create Canvas startup failed", error);
-    dialog.showErrorBox("Create Canvas 启动失败", error instanceof Error ? error.message : String(error));
+    console.error("Create startup failed", error);
+    dialog.showErrorBox("Create 启动失败", error instanceof Error ? error.message : String(error));
     app.quit();
   });
 

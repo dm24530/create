@@ -11,6 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 )
@@ -61,6 +62,28 @@ func openAIImagesJSONResponse() *http.Response {
 			`{"created":1710000000,"data":[{"b64_json":"aGVsbG8="}],"usage":{"input_tokens":10,"output_tokens":20,"total_tokens":30}}`,
 		)),
 	}
+}
+
+func TestForwardOpenAIImagesAPIKey_PreservesWorkbenchParameters(t *testing.T) {
+	body := []byte(`{"model":"gpt-image-2","prompt":"draw a cat","n":1,"size":"3840x2160","quality":"high","output_format":"png","background":"transparent"}`)
+	c, _ := newOpenAIImagesTestContext(t, body)
+
+	recorder := &httpUpstreamRecorder{resp: openAIImagesJSONResponse()}
+	svc := newOpenAIImagesTestService(recorder)
+
+	parsed, err := svc.ParseOpenAIImagesRequest(c, body)
+	require.NoError(t, err)
+	result, err := svc.ForwardImages(context.Background(), c, newOpenAIImagesAPIKeyAccount(), body, parsed, "")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.NotNil(t, recorder.lastReq)
+
+	require.Equal(t, "gpt-image-2", gjson.GetBytes(recorder.lastBody, "model").String())
+	require.Equal(t, "3840x2160", gjson.GetBytes(recorder.lastBody, "size").String())
+	require.Equal(t, "high", gjson.GetBytes(recorder.lastBody, "quality").String())
+	require.Equal(t, "png", gjson.GetBytes(recorder.lastBody, "output_format").String())
+	require.Equal(t, "transparent", gjson.GetBytes(recorder.lastBody, "background").String())
+	require.EqualValues(t, 1, gjson.GetBytes(recorder.lastBody, "n").Int())
 }
 
 // issue #5411：生图是长耗时、上游侧已经产生实际成本的操作。客户端中途断开时，

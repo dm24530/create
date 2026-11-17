@@ -7,6 +7,8 @@ export const CREATE_SESSION_KEYS = {
     user: "create-canvas:user",
 } as const;
 
+const AUTH_REQUEST_TIMEOUT_MS = 15_000;
+
 export type CreateUser = {
     id: number;
     username: string;
@@ -87,6 +89,7 @@ export async function createLogin(email: string, password: string): Promise<Crea
     const payload = await createRequest<AuthPayload>("/auth/login", {
         method: "POST",
         body: JSON.stringify({ email: email.trim(), password }),
+        timeoutMs: AUTH_REQUEST_TIMEOUT_MS,
     });
     if (payload.requires_2fa) {
         throw new Error("该账号需要二次验证，请先在 Web 端完成登录后再使用当前版本");
@@ -101,6 +104,7 @@ export async function createRefresh(session: CreateSession): Promise<CreateSessi
     const payload = await createRequest<RefreshPayload>("/auth/refresh", {
         method: "POST",
         body: JSON.stringify({ refresh_token: session.refreshToken }),
+        timeoutMs: AUTH_REQUEST_TIMEOUT_MS,
     });
     const next: CreateSession = {
         ...session,
@@ -113,7 +117,7 @@ export async function createRefresh(session: CreateSession): Promise<CreateSessi
 }
 
 export async function createMe(session: CreateSession): Promise<CreateUser> {
-    return createRequest<CreateUser>("/auth/me", { accessToken: session.accessToken });
+    return createRequest<CreateUser>("/auth/me", { accessToken: session.accessToken, timeoutMs: AUTH_REQUEST_TIMEOUT_MS });
 }
 
 export async function createLogout(session: CreateSession): Promise<void> {
@@ -123,6 +127,7 @@ export async function createLogout(session: CreateSession): Promise<void> {
                 method: "POST",
                 accessToken: session.accessToken,
                 body: JSON.stringify({ refresh_token: session.refreshToken }),
+            timeoutMs: AUTH_REQUEST_TIMEOUT_MS,
             });
         } catch {
             // Local logout must still succeed when the server is unavailable.

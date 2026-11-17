@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { ChevronRight, Copy, Download, Group, Image as ImageIcon, Music2, Puzzle, RefreshCw, Star, Trash2, Video } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
-import { formatBytes } from "@/lib/image-utils";
+import { formatBytes, formatDuration } from "@/lib/image-utils";
 import { pickImageSource } from "@/lib/image-thumbnail";
 import { previewUrlFor, subscribeImagePreviews, getImagePreviewRevision } from "@/services/image-storage";
 import { getNodeDefinition } from "@/lib/canvas/node-registry";
@@ -429,6 +429,13 @@ export const CanvasNode = React.memo(function CanvasNode({
                 </div>
 
                 {showImageInfo && hasImageContent ? <ImageInfoBar node={data} /> : null}
+                {hasImageContent || hasVideoContent || hasAudioContent ? (
+                    data.metadata?.generationDurationMs != null ? (
+                        <div className="pointer-events-none absolute left-3 top-3 z-40 rounded-md bg-black/55 px-2 py-1 text-[11px] font-medium leading-none text-white backdrop-blur-sm">
+                            {t("canvas.nodeToolbar.generationDuration")} · {formatDuration(data.metadata.generationDurationMs)}
+                        </div>
+                    ) : null
+                ) : null}
 
                 {!isGroup && !hasImageContent && !hasVideoContent && !hasAudioContent ? <div className="pointer-events-none absolute inset-x-0 bottom-0 h-12" style={{ background: `linear-gradient(to top, ${theme.canvas.background}66, transparent)` }} /> : null}
 

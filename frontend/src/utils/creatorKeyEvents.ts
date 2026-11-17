@@ -6,6 +6,7 @@ export type CreatorKeyChangedDetail = {
 }
 
 export const CREATOR_KEY_CHANGED_EVENT = 'sub2api:creator-key-changed'
+export const KEYS_CHANGED_EVENT = 'sub2api:keys-changed'
 
 export function notifyCreatorKeyChanged(kind: CreatorKeyKind, keyId: string) {
   if (typeof window === 'undefined' || !keyId) return
@@ -25,4 +26,11 @@ export function onCreatorKeyChanged(
   }
   window.addEventListener(CREATOR_KEY_CHANGED_EVENT, handler)
   return () => window.removeEventListener(CREATOR_KEY_CHANGED_EVENT, handler)
+}
+
+export function onKeysChanged(listener: () => void) {
+  if (typeof window === 'undefined') return () => undefined
+  const handler = () => listener()
+  window.addEventListener(KEYS_CHANGED_EVENT, handler)
+  return () => window.removeEventListener(KEYS_CHANGED_EVENT, handler)
 }

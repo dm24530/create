@@ -46,7 +46,7 @@ const IMAGE_DECODE_TIMEOUT_MS = 10_000;
 const IMAGE_RESPONSE_ERROR = "ImageResponseError";
 const IMAGE_TIMEOUT_ERROR = "ImageTimeoutError";
 const REQUEST_IMAGE_CACHE_LIMIT = 64;
-const REQUEST_IMAGE_PREP_CONCURRENCY = 8;
+const REQUEST_IMAGE_PREP_CONCURRENCY = 14;
 
 type StoredImagePreview = { version: number; blob?: Blob };
 
@@ -353,6 +353,26 @@ export async function prepareImageRequestDataUrls(images: readonly ImageReferenc
     throw new Error(i18n.language.toLowerCase().startsWith("zh")
         ? `参考图片总量为 ${actual}，超过 ${limit} 的安全上限，请减少参考图数量或使用更小的图片`
         : `Reference images total ${actual}, above the ${limit} safety limit. Use fewer or smaller images.`);
+}
+
+export async function prepareReferenceImagesForRequest<T extends ImageReferenceSource>(references: readonly T[]): Promise<T[]> {
+    if (!references.length) return [];
+    const prepared = await prepareImageRequestDataUrls(references.map((image) => ({ ...image, url: undefined })));
+    return references.map((image, index) => {
+        const requestImage = prepared[index];
+        if (!requestImage) return image;
+        return {
+            ...image,
+            type: requestImage.mimeType,
+            dataUrl: requestImage.dataUrl,
+            url: undefined,
+            storageKey: undefined,
+            width: requestImage.width || image.width,
+            height: requestImage.height || image.height,
+            bytes: requestImage.bytes,
+            requestDataUrlPrepared: true,
+        } as T;
+    });
 }
 
 function remoteImageReferenceURL(image: ImageReferenceSource) {

@@ -25,6 +25,27 @@ func TestRequestMaxOutputTokens(t *testing.T) {
 	require.Equal(t, 0, requestMaxOutputTokens([]byte(`{}`)))
 }
 
+func TestGrokMediaInflightEstimateUsesMaxDurationForAutomaticVideo(t *testing.T) {
+	t.Parallel()
+
+	req := grokMediaInflightEstimate(
+		service.OpenAIVideoEndpointCreate,
+		"muse-video",
+		service.GrokMediaRequestInfo{Resolution: "720p", DurationSeconds: 8, DurationAuto: true},
+		[]byte(`{"model":"muse-video","prompt":"p"}`),
+	)
+	require.Equal(t, service.InflightEstimateVideo, req.Kind)
+	require.Equal(t, 15, req.VideoDurationSeconds)
+
+	fixed := grokMediaInflightEstimate(
+		service.OpenAIVideoEndpointCreate,
+		"muse-video",
+		service.GrokMediaRequestInfo{Resolution: "720p", DurationSeconds: 4},
+		[]byte(`{"model":"muse-video","prompt":"p","seconds":4}`),
+	)
+	require.Equal(t, 4, fixed.VideoDurationSeconds)
+}
+
 type countingEstimator struct {
 	calls  int
 	cost   float64

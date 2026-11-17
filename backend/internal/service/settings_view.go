@@ -220,7 +220,7 @@ type SystemSettings struct {
 	// Available Channels feature (user-facing aggregate view)
 	AvailableChannelsEnabled bool `json:"available_channels_enabled"`
 
-	// Infinite Canvas administrator-only preview switch.
+	// Create administrator-only preview switch.
 	CanvasAdminOnly bool `json:"canvas_admin_only"`
 
 	// Subscription feature switch: gates the whole user-facing subscription surface
@@ -415,7 +415,7 @@ type PublicSettings struct {
 	// Available Channels feature (user-facing aggregate view)
 	AvailableChannelsEnabled bool `json:"available_channels_enabled"`
 
-	// Infinite Canvas administrator-only preview switch.
+	// Create administrator-only preview switch.
 	CanvasAdminOnly bool `json:"canvas_admin_only"`
 
 	// Subscription feature switch (see SystemSettings.SubscriptionEnabled)

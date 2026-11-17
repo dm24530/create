@@ -7,6 +7,45 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestParseGrokMediaRequestPreservesVideoParameters(t *testing.T) {
+	t.Parallel()
+	info := ParseGrokMediaRequest("application/json", []byte(`{
+		"model":"grok-imagine-video",
+		"prompt":"a cat running",
+		"duration":8,
+		"resolution":"480p",
+		"aspect_ratio":"9:16"
+	}`))
+
+	require.Equal(t, "grok-imagine-video", info.Model)
+	require.Equal(t, 8, info.DurationSeconds)
+	require.Equal(t, "480p", info.Resolution)
+	require.Equal(t, "9:16", info.AspectRatio)
+}
+
+func TestParseGrokMediaRequestDetectsAutomaticDuration(t *testing.T) {
+	t.Parallel()
+
+	explicit := ParseGrokMediaRequest("application/json", []byte(`{"model":"muse-video","prompt":"p","seconds":4}`))
+	require.False(t, explicit.DurationAuto)
+	require.Equal(t, 4, explicit.DurationSeconds)
+
+	automatic := ParseGrokMediaRequest("application/json", []byte(`{"model":"muse-video","prompt":"p"}`))
+	require.True(t, automatic.DurationAuto)
+
+	flagged := ParseGrokMediaRequest("application/json", []byte(`{"model":"muse-video","prompt":"p","duration":10,"duration_mode":"auto"}`))
+	require.True(t, flagged.DurationAuto)
+	require.Equal(t, 10, flagged.DurationSeconds)
+}
+
+func TestVideoReservationMaxDurationSecondsForModel(t *testing.T) {
+	t.Parallel()
+
+	require.Equal(t, 15, VideoReservationMaxDurationSecondsForModel("muse-video"))
+	require.Equal(t, 30, VideoReservationMaxDurationSecondsForModel("muse-cheap"))
+	require.Equal(t, 15, VideoReservationMaxDurationSecondsForModel("grok-imagine-video"))
+}
+
 func TestGrokVideoE2EDurationFromCreatedAt(t *testing.T) {
 	t.Parallel()
 	created := time.Now().UTC().Add(-45 * time.Second)

@@ -200,19 +200,19 @@ describe('HomeView compact mode', () => {
     expect(modelPlazaDestination(wrapper)).toBeUndefined()
   })
 
-  it('shows the infinite canvas entry on the public home when it is open to users', () => {
+  it('shows the Create entry on the public home when it is open to users', () => {
     const wrapper = mountHome({ canvas_admin_only: false })
 
     expect(canvasDestination(wrapper)).toBe('/login')
   })
 
-  it('hides the infinite canvas entry from anonymous visitors in admin-only mode', () => {
+  it('hides the Create entry from anonymous visitors in admin-only mode', () => {
     const wrapper = mountHome({ canvas_admin_only: true })
 
     expect(canvasDestination(wrapper)).toBeUndefined()
   })
 
-  it('shows the infinite canvas entry in compact home when it is open to users', () => {
+  it('shows the Create entry in compact home when it is open to users', () => {
     const wrapper = mountHome({
       compact_home_enabled: true,
       canvas_admin_only: false,

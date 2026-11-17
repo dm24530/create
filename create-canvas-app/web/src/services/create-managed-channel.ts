@@ -3,7 +3,7 @@ import { createRequest } from "@/services/create-api";
 import type { CreateSession } from "@/services/create-auth";
 import { createGatewayBaseUrl } from "@/lib/create-product";
 import { configureCanvasCloud } from "@/services/canvas-cloud";
-import { createModelChannel, guessCapability, modelOptionsFromChannels, selectableModelsByCapability, useConfigStore, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
+import { createModelChannel, guessCapability, modelOptionsFromChannels, normalizeModelOptionValue, selectableModelsByCapability, useConfigStore, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
 
 export type CreateManagedGroup = {
     id: number;
@@ -55,6 +55,8 @@ export type UpdateCreateManagedKeyInput = {
 
 const SELECTED_IMAGE_KEY_STORAGE = "create-canvas:selected-image-key-id";
 const SELECTED_VIDEO_KEY_STORAGE = "create-canvas:selected-video-key-id";
+const WORKSPACE_REQUEST_TIMEOUT_MS = 15_000;
+const WORKSPACE_CONFIGURATION_CACHE_MS = 30_000;
 
 type KeysPage = { items?: CreateManagedKey[] };
 
@@ -64,6 +66,16 @@ type WorkspaceDependencies = {
     createKey: (session: CreateSession, name: string, groupId: number) => Promise<CreateManagedKey>;
     loadModels: (apiKey: string) => Promise<string[]>;
 };
+
+type CreateWorkspaceConfiguration = {
+    imageKey: CreateManagedKey;
+    videoKey: CreateManagedKey | null;
+    imageModels: string[];
+    videoModels: string[];
+    imageChannelModels: number;
+};
+
+let workspaceConfigurationCache: { accessToken: string; createdAt: number; promise: Promise<CreateWorkspaceConfiguration> } | null = null;
 
 export type ManagedKeyRole = "image" | "video";
 
@@ -143,10 +155,15 @@ function applyManagedChannels(channels: ModelChannel[]) {
         apiKey: primary.apiKey,
         apiFormat: primary.apiFormat,
     };
-    nextConfig.imageModel = selectableModelsByCapability(nextConfig, "image")[0] || "";
-    nextConfig.videoModel = selectableModelsByCapability(nextConfig, "video")[0] || "";
-    nextConfig.textModel = selectableModelsByCapability(nextConfig, "text")[0] || "";
-    nextConfig.audioModel = selectableModelsByCapability(nextConfig, "audio")[0] || "";
+    const preserveOrFirst = (current: string, capability: ModelCapability) => {
+        const options = selectableModelsByCapability(nextConfig, capability);
+        const normalized = normalizeModelOptionValue(current, channels);
+        return options.includes(normalized) ? normalized : options[0] || "";
+    };
+    nextConfig.imageModel = preserveOrFirst(state.config.imageModel, "image");
+    nextConfig.videoModel = preserveOrFirst(state.config.videoModel, "video");
+    nextConfig.textModel = preserveOrFirst(state.config.textModel, "text");
+    nextConfig.audioModel = preserveOrFirst(state.config.audioModel, "audio");
     nextConfig.model = nextConfig.imageModel || nextConfig.videoModel || nextConfig.textModel;
     useConfigStore.setState({ config: nextConfig, isConfigOpen: false });
 }
@@ -169,6 +186,7 @@ function defaultDependencies(overrides: Partial<WorkspaceDependencies> = {}): Wo
 export async function listCreateManagedKeys(session: CreateSession): Promise<CreateManagedKey[]> {
     const page = await createRequest<KeysPage>("/keys?page=1&page_size=100", {
         accessToken: session.accessToken,
+        timeoutMs: WORKSPACE_REQUEST_TIMEOUT_MS,
     });
     return page.items || [];
 }
@@ -176,6 +194,7 @@ export async function listCreateManagedKeys(session: CreateSession): Promise<Cre
 export async function listCreateManagedGroups(session: CreateSession): Promise<CreateManagedGroup[]> {
     return createRequest<CreateManagedGroup[]>("/groups/available", {
         accessToken: session.accessToken,
+        timeoutMs: WORKSPACE_REQUEST_TIMEOUT_MS,
     });
 }
 
@@ -190,6 +209,7 @@ export async function createCreateManagedKey(session: CreateSession, name: strin
         method: "POST",
         accessToken: session.accessToken,
         body: JSON.stringify(payload),
+        timeoutMs: WORKSPACE_REQUEST_TIMEOUT_MS,
     });
 }
 
@@ -205,6 +225,7 @@ export async function updateCreateManagedKey(session: CreateSession, id: number,
             rate_limit_1d: Math.max(0, Number(input.rateLimit1d || 0)),
             rate_limit_7d: Math.max(0, Number(input.rateLimit7d || 0)),
         }),
+        timeoutMs: WORKSPACE_REQUEST_TIMEOUT_MS,
     });
 }
 
@@ -212,6 +233,7 @@ export async function deleteCreateManagedKey(session: CreateSession, id: number)
     await createRequest(`/keys/${id}`, {
         method: "DELETE",
         accessToken: session.accessToken,
+        timeoutMs: WORKSPACE_REQUEST_TIMEOUT_MS,
     });
 }
 
@@ -246,20 +268,59 @@ export async function switchManagedKey(session: CreateSession, key: CreateManage
     const capable = role === "image" ? managedKeySupportsImage(key.group) : managedKeySupportsVideo(key.group);
     if (!capable) throw new Error(role === "image" ? "该密钥不支持生图" : "该密钥不支持生视频");
     rememberSelectedKey(role, key.id);
-    return configureCreateWorkspace(session, overrides);
+    return configureCreateWorkspace(session, overrides, { force: true });
 }
 
-export async function configureCreateWorkspace(session: CreateSession, overrides: Partial<WorkspaceDependencies> = {}) {
+export async function configureCreateWorkspace(
+    session: CreateSession,
+    overrides: Partial<WorkspaceDependencies> = {},
+    options: { force?: boolean } = {},
+): Promise<CreateWorkspaceConfiguration> {
+    const now = Date.now();
+    const cacheable = Object.keys(overrides).length === 0;
+    if (
+        cacheable &&
+        !options.force &&
+        workspaceConfigurationCache?.accessToken === session.accessToken &&
+        now - workspaceConfigurationCache.createdAt <= WORKSPACE_CONFIGURATION_CACHE_MS
+    ) {
+        return workspaceConfigurationCache.promise;
+    }
+
+    const pending = configureCreateWorkspaceInternal(session, overrides);
+    const cacheEntry = cacheable ? { accessToken: session.accessToken, createdAt: now, promise: pending } : null;
+    if (cacheEntry) workspaceConfigurationCache = cacheEntry;
+    try {
+        return await pending;
+    } catch (error) {
+        if (cacheEntry && workspaceConfigurationCache === cacheEntry) workspaceConfigurationCache = null;
+        throw error;
+    }
+}
+
+async function configureCreateWorkspaceInternal(session: CreateSession, overrides: Partial<WorkspaceDependencies>): Promise<CreateWorkspaceConfiguration> {
     const deps = defaultDependencies(overrides);
     const { imageKey, videoKey } = await resolveManagedCredentials(session, deps);
     const [imageModels, videoModels] = await Promise.all([deps.loadModels(imageKey.key).catch(() => []), videoKey ? deps.loadModels(videoKey.key).catch(() => []) : Promise.resolve([])]);
 
+    const imageGroupName = imageKey.group?.name?.trim() || "Create 图片";
+    const videoGroupName = videoKey?.group?.name?.trim() || "Create 视频";
     const channels: ModelChannel[] = [];
     if (videoKey && videoKey.id === imageKey.id) {
-        channels.push(channelFromModels("create-managed", "Create", imageKey.key, Array.from(new Set([...imageModels, ...videoModels]))));
+        channels.push(channelFromModels(
+            "create-managed",
+            imageGroupName,
+            imageKey.key,
+            Array.from(new Set([...imageModels, ...videoModels])),
+            ["image", "video"],
+        ));
     } else {
-        if (imageModels.length) channels.push(channelFromModels("create-managed-image", "Create 图片", imageKey.key, imageModels));
-        if (videoKey && videoModels.length) channels.push(channelFromModels("create-managed-video", "Create 视频", videoKey.key, videoModels));
+        if (imageModels.length) {
+            channels.push(channelFromModels("create-managed-image", imageGroupName, imageKey.key, imageModels, ["image"]));
+        }
+        if (videoKey && videoModels.length) {
+            channels.push(channelFromModels("create-managed-video", videoGroupName, videoKey.key, videoModels, ["video"]));
+        }
     }
 
     applyManagedChannels(channels);

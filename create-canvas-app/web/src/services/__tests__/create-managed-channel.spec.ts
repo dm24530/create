@@ -81,6 +81,25 @@ describe("managed Create credentials", () => {
         expect(config.videoModel).toContain("grok-imagine-video");
     });
 
+    it("keeps image and video channels scoped to their own capabilities", async () => {
+        const deps = {
+            listKeys: vi.fn().mockResolvedValue([key(1, imageGroup), key(2, videoGroup)]),
+            listGroups: vi.fn().mockResolvedValue([imageGroup, videoGroup]),
+            createKey: vi.fn(),
+            loadModels: vi.fn().mockResolvedValue(["gpt-image-2", "muse-video", "seedance-2.0"]),
+        }
+        await configureCreateWorkspace(session, deps)
+        const config = useConfigStore.getState().config
+        const imageChannel = config.channels.find((channel) => channel.id === "create-managed-image")
+        const videoChannel = config.channels.find((channel) => channel.id === "create-managed-video")
+
+        expect(imageChannel?.models.map((model) => `${model.name}:${model.capability}`)).toEqual(["gpt-image-2:image"])
+        expect(videoChannel?.models.map((model) => `${model.name}:${model.capability}`)).toEqual([
+            "muse-video:video",
+            "seedance-2.0:video",
+        ])
+    })
+
     it("selects image and video keys independently", async () => {
         const keys = [key(1, imageGroup), key(2, imageGroup), key(3, videoGroup)];
         const deps = {

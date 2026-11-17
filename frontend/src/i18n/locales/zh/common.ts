@@ -171,7 +171,7 @@ export default {
     batchImage: '批量生图',
     imageStudio: '图片工作台',
     videoStudio: '视频工作台',
-    canvas: '无限画布',
+    canvas: 'Create',
     imageInspiration: '图片灵感库',
     videoInspiration: '视频灵感库',
     videoWorks: '我的作品',

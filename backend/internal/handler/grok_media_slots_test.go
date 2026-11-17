@@ -401,6 +401,68 @@ func TestGrokMediaVideoLookupOwnerIsolation(t *testing.T) {
 	}
 }
 
+func TestMuseFixedDurationBillingUsesRequestedDurationInsteadOfDeliveredDuration(t *testing.T) {
+	h, _, _, _ := newGrokMediaSlotHandler(t, false, false)
+	c, _ := grokMediaSlotContext(context.Background(), false)
+	key, ok := middleware2.GetAPIKeyFromContext(c)
+	require.True(t, ok)
+	subject := middleware2.AuthSubject{UserID: 10, Concurrency: 5}
+	require.NoError(t, h.gatewayService.StoreGrokVideoPendingBilling(
+		c.Request.Context(), "task-fixed", subject.UserID, key.ID,
+		service.GrokVideoPendingBilling{
+			Model: "muse-video", BillingModel: "muse-video", VideoResolution: "720p",
+			VideoDurationSeconds: 4, DurationAuto: false,
+		},
+	))
+	result := &service.OpenAIForwardResult{
+		ResponseID: "task-fixed", Model: "muse-video", BillingModel: "muse-video",
+		VideoCount: 1, VideoDurationSeconds: 10,
+	}
+
+	bill := prepareGrokVideoCompletionBilling(
+		c.Request.Context(), h, zap.NewNop(), key, subject, "task-fixed",
+		service.OpenAIVideoEndpointStatus, service.PlatformMuse, result,
+	)
+
+	require.NotNil(t, bill)
+	require.Equal(t, 4, bill.VideoDurationSeconds)
+}
+
+func TestMuseAutomaticDurationBillsDeliveredDurationFromContent(t *testing.T) {
+	h, _, _, _ := newGrokMediaSlotHandler(t, false, false)
+	c, _ := grokMediaSlotContext(context.Background(), false)
+	key, ok := middleware2.GetAPIKeyFromContext(c)
+	require.True(t, ok)
+	subject := middleware2.AuthSubject{UserID: 10, Concurrency: 5}
+	require.NoError(t, h.gatewayService.StoreGrokVideoPendingBilling(
+		c.Request.Context(), "task-auto", subject.UserID, key.ID,
+		service.GrokVideoPendingBilling{
+			Model: "muse-video", BillingModel: "muse-video", VideoResolution: "720p",
+			VideoDurationSeconds: 8, DurationAuto: true,
+		},
+	))
+	statusResult := &service.OpenAIForwardResult{
+		ResponseID: "task-auto", Model: "muse-video", BillingModel: "muse-video",
+		VideoCount: 1,
+	}
+	deferred := prepareGrokVideoCompletionBilling(
+		c.Request.Context(), h, zap.NewNop(), key, subject, "task-auto",
+		service.OpenAIVideoEndpointStatus, service.PlatformMuse, statusResult,
+	)
+	require.Nil(t, deferred)
+
+	contentResult := &service.OpenAIForwardResult{
+		ResponseID: "task-auto", Model: "muse-video", BillingModel: "muse-video",
+		VideoCount: 1, VideoDurationSeconds: 10,
+	}
+	bill := prepareGrokVideoCompletionBilling(
+		c.Request.Context(), h, zap.NewNop(), key, subject, "task-auto",
+		service.OpenAIVideoEndpointContent, service.PlatformMuse, contentResult,
+	)
+	require.NotNil(t, bill)
+	require.Equal(t, 10, bill.VideoDurationSeconds)
+}
+
 func TestGrokMediaVideoCompletionStillClaimsBillingOnce(t *testing.T) {
 	h, _, bindings, _ := newGrokMediaSlotHandler(t, false, false)
 	c, _ := grokMediaSlotContext(context.Background(), false)
@@ -410,7 +472,7 @@ func TestGrokMediaVideoCompletionStillClaimsBillingOnce(t *testing.T) {
 	result := &service.OpenAIForwardResult{ResponseID: "task", Model: "grok-imagine-video",
 		VideoCount: 1, VideoDurationSeconds: 6}
 	for i := range 20 {
-		bill := prepareGrokVideoCompletionBilling(c.Request.Context(), h, zap.NewNop(), key, subject, "task", result)
+		bill := prepareGrokVideoCompletionBilling(c.Request.Context(), h, zap.NewNop(), key, subject, "task", service.GrokMediaEndpointVideoStatus, service.PlatformGrok, result)
 		if i == 0 {
 			require.NotNil(t, bill)
 			require.Equal(t, service.StableGrokVideoBillingRequestID("task"), bill.RequestID)

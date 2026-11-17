@@ -686,7 +686,9 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 			Kind:               "request_error",
 			Message:            safeErr,
 		})
-		return nil, fmt.Errorf("upstream request failed: %s", safeErr)
+		clientErr := newOpenAIImagesTransportClientError(err, safeErr)
+		writeOpenAIImagesUpstreamErrorResponse(c, clientErr)
+		return nil, clientErr
 	}
 	if resp.StatusCode >= 400 {
 		respBody := s.readUpstreamErrorBody(resp)
@@ -809,6 +811,28 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 			ImageOutputSizes: nonStreamSizes,
 			ImageOutputs:     nonStreamOutputs,
 		}, nil
+	}
+}
+
+func newOpenAIImagesTransportClientError(err error, safeErr string) *OpenAIImagesUpstreamError {
+	message := "Upstream request failed"
+	code := "upstream_request_failed"
+	lower := strings.ToLower(strings.TrimSpace(err.Error()))
+	switch {
+	case strings.Contains(lower, "unexpected eof"), strings.Contains(lower, "connection reset"), strings.Contains(lower, "broken pipe"):
+		message = "上游连接在返回图片前中断（unexpected EOF）。上游可能已经完成并计费，请先查看使用记录，避免立即重试。"
+		code = "upstream_connection_interrupted"
+	case strings.Contains(lower, "timeout"), strings.Contains(lower, "timed out"), strings.Contains(lower, "deadline exceeded"):
+		message = "上游响应超时。上游可能已经完成并计费，请先查看使用记录，避免立即重试。"
+		code = "upstream_timeout_possible_billing"
+	case strings.TrimSpace(safeErr) != "":
+		message = "Upstream request failed"
+	}
+	return &OpenAIImagesUpstreamError{
+		StatusCode: http.StatusBadGateway,
+		ErrorType:  "upstream_error",
+		Code:       code,
+		Message:    message,
 	}
 }
 

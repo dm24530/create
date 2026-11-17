@@ -138,15 +138,42 @@ function serveCanvasBuild(): Plugin {
   }
 }
 
-export default defineConfig(({ mode }) => {
+function stubAdminModules(enabled: boolean): Plugin {
+  const stub = resolve(__dirname, 'src/stubs/admin-view.vue')
+  return {
+    name: 'stub-admin-modules',
+    enforce: 'pre',
+    resolveId(source) {
+      if (!enabled) return null
+      const normalized = source.replace(/\\/g, '/')
+      if (
+        normalized.includes('/views/admin/') ||
+        normalized.includes('/features/prompt-audit/') ||
+        normalized.endsWith('/components/admin/AdminComplianceDialog.vue')
+      ) {
+        return stub
+      }
+      return null
+    },
+  }
+}
+
+export default defineConfig(({ command, mode }) => {
   // 加载环境变量
   const env = loadEnv(mode, process.cwd(), '')
   const backendUrl = env.VITE_DEV_PROXY_TARGET || 'http://localhost:8080'
   const devPort = Number(env.VITE_DEV_PORT || 3000)
+  const buildTarget = command === 'serve' ? 'full' : mode === 'admin' ? 'admin' : mode === 'full' ? 'full' : 'user'
+  const outDir = buildTarget === 'admin'
+    ? '../backend/internal/web/dist-admin'
+    : buildTarget === 'full'
+      ? '../backend/internal/web/dist-full'
+      : '../backend/internal/web/dist'
 
   return {
     plugins: [
       vue(),
+      stubAdminModules(buildTarget === 'user'),
       serveCanvasBuild(),
       checker({
         vueTsc: true
@@ -166,7 +193,7 @@ export default defineConfig(({ mode }) => {
     __INTLIFY_JIT_COMPILATION__: true
   },
   build: {
-    outDir: '../backend/internal/web/dist',
+    outDir,
     emptyOutDir: true,
     rollupOptions: {
       output: {

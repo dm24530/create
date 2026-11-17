@@ -10,7 +10,7 @@ import (
 func canvasUsageCompatibility(c *gin.Context) {
 	response.Success(c, gin.H{
 		"canvas_usage": gin.H{
-			"package_name":    "无限画布",
+			"package_name":    "Create",
 			"total_count":     0,
 			"used_count":      0,
 			"reserved_count":  0,

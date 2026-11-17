@@ -46,8 +46,8 @@ export default {
           enabledHint: 'When off, the sidebar entry is hidden and the endpoint returns an empty list.',
         },
         canvas: {
-          title: 'Infinite Canvas',
-          description: 'Control whether the Infinite Canvas is limited to administrators for pre-release validation.',
+          title: 'Create',
+          description: 'Control whether the Create is limited to administrators for pre-release validation.',
           adminOnly: 'Administrators only',
           adminOnlyHint: 'Enabled by default. Users cannot see the entry or access the page/API while enabled; turning it off makes the canvas available to all signed-in users immediately.',
         },

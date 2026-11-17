@@ -38,7 +38,7 @@ function mountPage(overrides: Partial<{
 }
 
 describe('LandingPage', () => {
-  it('shows the infinite canvas entry in desktop and mobile navigation when enabled', async () => {
+  it('shows the Create entry in desktop and mobile navigation when enabled', async () => {
     const wrapper = mountPage({ showCanvasEntry: true })
 
     expect(wrapper.get('.landing-desktop-nav').text()).toContain('home.landing.nav.canvas')
@@ -49,7 +49,7 @@ describe('LandingPage', () => {
     expect(wrapper.get('.landing-mobile-nav').text()).toContain('home.landing.nav.canvas')
   })
 
-  it('hides the infinite canvas navigation entry when disabled', () => {
+  it('hides the Create navigation entry when disabled', () => {
     const wrapper = mountPage({ showCanvasEntry: false })
 
     expect(wrapper.get('.landing-desktop-nav').text()).not.toContain('home.landing.nav.canvas')

@@ -101,8 +101,8 @@ describe('video model classification', () => {
     const museVideo = getVideoModelProfile('muse-video', 'muse_video')
     expect(museVideo.provider).toBe('muse_video')
     expect(museVideo.minDuration).toBe(1)
-    expect(museVideo.maxDuration).toBe(60)
-    expect(museVideo.defaultDuration).toBe(6)
+    expect(museVideo.maxDuration).toBe(15)
+    expect(museVideo.defaultDuration).toBe(10)
     expect(museVideo.resolutions).toEqual(['720p'])
     expect(museVideo.aspectRatios).toEqual(['16:9', '9:16'])
     expect(museVideo.maxImages).toBe(4)
@@ -126,6 +126,7 @@ describe('Seedance video request mapping', () => {
     model: 'seedance-2.5',
     prompt: 'slow push in',
     durationSeconds: 12,
+    durationAuto: false,
     resolution: '1080p',
     aspectRatio: '16:9',
     generateAudio: true,
@@ -209,6 +210,19 @@ describe('Seedance video request mapping', () => {
     })
 
     expect(request.body).toHaveProperty('generate_audio', false)
+  })
+
+  it('omits duration fields when automatic duration is selected', () => {
+    const request = buildVideoRequest('muse_video', {
+      ...base,
+      model: 'muse-video',
+      durationSeconds: 10,
+      durationAuto: true,
+      resolution: '720p',
+    })
+
+    expect(request.body).not.toHaveProperty('seconds')
+    expect(request.body).not.toHaveProperty('duration')
   })
 
   it('builds the documented Muse text-to-video body', () => {

@@ -1,4 +1,4 @@
-name: Create Canvas App
+name: Create App
 
 on:
   workflow_dispatch:

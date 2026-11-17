@@ -46,8 +46,8 @@ export default {
           enabledHint: '关闭后用户端侧边栏入口隐藏，接口返回空数组。',
         },
         canvas: {
-          title: '无限画布',
-          description: '控制无限画布是否仅对管理员开放，便于上线前先行验收。',
+          title: 'Create',
+          description: '控制Create是否仅对管理员开放，便于上线前先行验收。',
           adminOnly: '仅管理员可用',
           adminOnlyHint: '默认开启。开启时普通用户看不到入口，直接访问页面或接口也会被拒绝；关闭后所有已登录用户立即可用。',
         },

@@ -1,8 +1,10 @@
 import { Alert, Button, Form, Input } from "antd";
-import { LockKeyhole, Mail } from "lucide-react";
+import { LockKeyhole, LogIn, Mail } from "lucide-react";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { createLogin, type CreateSession } from "@/services/create-auth";
+import "@/components/auth/create-login-form.css";
 
 type LoginValues = {
     email: string;
@@ -12,6 +14,7 @@ type LoginValues = {
 export function CreateLoginForm({ onAuthenticated }: { onAuthenticated: (session: CreateSession) => void }) {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState("");
+    const { t } = useTranslation();
 
     const submit = async (values: LoginValues) => {
         setLoading(true);
@@ -20,34 +23,89 @@ export function CreateLoginForm({ onAuthenticated }: { onAuthenticated: (session
             onAuthenticated(await createLogin(values.email, values.password));
             window.location.reload();
         } catch (cause) {
-            setError(cause instanceof Error ? cause.message : "登录失败，请稍后重试");
+            setError(cause instanceof Error ? cause.message : t("authPage.loginFailed"));
         } finally {
             setLoading(false);
         }
     };
 
     return (
-        <main className="flex min-h-dvh items-center justify-center bg-stone-950 px-5 py-10 text-stone-100">
-            <section className="w-full max-w-sm rounded-2xl border border-white/10 bg-stone-900/90 p-7 shadow-2xl shadow-black/30">
-                <div className="mb-7">
-                    <p className="text-xs font-medium uppercase tracking-[0.22em] text-orange-400">Create Canvas</p>
-                    <h1 className="mt-2 text-2xl font-semibold">登录 Create</h1>
-                    <p className="mt-2 text-sm leading-6 text-stone-400">使用现有 Create 账号登录。画布项目、素材和生成记录会与云端账号同步。</p>
+        <main className="create-login-shell">
+            <aside className="create-login-visual" aria-hidden="true">
+                <div className="create-login-visual-image" />
+                <div className="create-login-visual-shade" />
+                <div className="create-login-visual-content">
+                    <div className="create-login-brand">{t("authPage.brand")}</div>
+
+                    <div className="create-login-copy">
+                        <p className="create-login-eyebrow">
+                            <span />
+                            {t("authPage.eyebrow")}
+                        </p>
+                        <h1>
+                            {t("authPage.headlineTop")}
+                            <br />
+                            <em>{t("authPage.headlineAccent")}</em>
+                        </h1>
+                        <p>{t("authPage.description")}</p>
+                    </div>
+
+                    <div className="create-login-meta">
+                        <span>GPT IMAGE</span>
+                        <span>SEEDANCE</span>
+                        <span>GROK IMAGINE</span>
+                    </div>
                 </div>
-                {error ? <Alert className="mb-5" type="error" showIcon message={error} /> : null}
-                <Form<LoginValues> layout="vertical" requiredMark={false} onFinish={submit}>
-                    <Form.Item name="email" label="邮箱" rules={[{ required: true, type: "email", message: "请输入有效邮箱" }]}>
-                        <Input prefix={<Mail className="size-4 text-stone-500" />} autoComplete="email" placeholder="name@example.com" size="large" />
-                    </Form.Item>
-                    <Form.Item name="password" label="密码" rules={[{ required: true, message: "请输入密码" }]}>
-                        <Input.Password prefix={<LockKeyhole className="size-4 text-stone-500" />} autoComplete="current-password" placeholder="输入密码" size="large" />
-                    </Form.Item>
-                    <Button block htmlType="submit" loading={loading} size="large" type="primary">
-                        登录
-                    </Button>
-                </Form>
+            </aside>
+
+            <section className="create-login-panel">
+                <div className="create-login-panel-body">
+                    <div className="create-login-form-wrap">
+                        <div className="create-login-heading">
+                            <h2>{t("authPage.welcomeBack")}</h2>
+                            <p>{t("authPage.signInSubtitle")}</p>
+                        </div>
+
+                        {error ? <Alert className="create-login-error" type="error" showIcon message={error} /> : null}
+
+                        <Form<LoginValues> className="create-login-form" layout="vertical" requiredMark={false} onFinish={submit}>
+                            <Form.Item
+                                className="create-login-field"
+                                name="email"
+                                label={t("authPage.email")}
+                                rules={[{ required: true, type: "email", message: t("authPage.invalidEmail") }]}
+                            >
+                                <Input
+                                    autoComplete="email"
+                                    autoFocus
+                                    prefix={<Mail className="create-login-input-icon" />}
+                                    placeholder={t("authPage.emailPlaceholder")}
+                                    size="large"
+                                />
+                            </Form.Item>
+                            <Form.Item
+                                className="create-login-field"
+                                name="password"
+                                label={t("authPage.password")}
+                                rules={[{ required: true, message: t("authPage.passwordRequired") }]}
+                            >
+                                <Input.Password
+                                    autoComplete="current-password"
+                                    prefix={<LockKeyhole className="create-login-input-icon" />}
+                                    placeholder={t("authPage.passwordPlaceholder")}
+                                    size="large"
+                                />
+                            </Form.Item>
+                            <Button block className="create-login-submit" htmlType="submit" loading={loading} size="large" type="primary">
+                                {loading ? null : <LogIn className="size-4" />}
+                                <span>{loading ? t("authPage.signingIn") : t("authPage.signIn")}</span>
+                            </Button>
+                        </Form>
+                    </div>
+
+                    <p className="create-login-copyright">{t("authPage.copyright", { year: new Date().getFullYear() })}</p>
+                </div>
             </section>
         </main>
     );
 }
-

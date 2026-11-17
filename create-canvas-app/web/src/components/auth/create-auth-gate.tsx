@@ -17,24 +17,22 @@ export function CreateAuthGate({ children, onSessionReady }: CreateAuthGateProps
     const [workspaceError, setWorkspaceError] = useState("");
     const setStoredSession = useUserStore((state) => state.setSession);
 
-    const applySession = async (next: CreateSession) => {
+    const applySession = (next: CreateSession) => {
         setStoredSession(next);
         setSession(next);
         setWorkspaceError("");
         if (onSessionReady) {
-            try {
-                await onSessionReady(next);
-            } catch (cause) {
+            void Promise.resolve(onSessionReady(next)).catch((cause: unknown) => {
                 setWorkspaceError(cause instanceof Error ? cause.message : "初始化创作服务失败");
-            }
+            });
         }
     };
 
     useEffect(() => {
         let cancelled = false;
-        void restoreCreateSession().then(async (stored) => {
+        void restoreCreateSession().then((stored) => {
             if (cancelled) return;
-            if (stored) await applySession(stored);
+            if (stored) applySession(stored);
             if (!cancelled) setBooting(false);
         });
         return () => {

@@ -15,7 +15,7 @@ const (
 	VideoBillingMaxDurationSeconds     = 15
 	VideoBillingDefaultDurationSeconds = 8
 	SeedanceBillingMaxDurationSeconds  = 30
-	MuseBillingMaxDurationSeconds      = 60
+	MuseBillingMaxDurationSeconds      = 15
 )
 
 // NormalizeVideoBillingDurationSecondsOrDefault 归一化计费用视频时长：
@@ -32,7 +32,7 @@ func NormalizeVideoBillingDurationSecondsForModelOrDefault(model string, duratio
 	if strings.EqualFold(strings.TrimSpace(model), "muse-cheap") {
 		maxSeconds = SeedanceBillingMaxDurationSeconds
 	} else if IsMuseVideoModel(model) {
-		maxSeconds = MuseBillingMaxDurationSeconds
+		maxSeconds = VideoReservationMaxDurationSecondsForModel(model)
 	} else if IsSeedanceVideoModel(model) {
 		maxSeconds = SeedanceBillingMaxDurationSeconds
 	}
@@ -56,6 +56,22 @@ func IsMuseVideoModel(model string) bool {
 
 func IsMuseCheapVideoModel(model string) bool {
 	return strings.EqualFold(strings.TrimSpace(model), "muse-cheap")
+}
+
+// VideoReservationMaxDurationSecondsForModel returns the conservative upper
+// bound used by automatic-duration balance reservations. It matches the
+// user-facing model capability rather than the wider billing clamp.
+func VideoReservationMaxDurationSecondsForModel(model string) int {
+	switch strings.ToLower(strings.TrimSpace(model)) {
+	case "muse-video":
+		return 15
+	case "muse-cheap":
+		return 30
+	}
+	if IsSeedanceVideoModel(model) {
+		return SeedanceBillingMaxDurationSeconds
+	}
+	return VideoBillingMaxDurationSeconds
 }
 
 func normalizeVideoBillingDurationSeconds(durationSeconds, maxSeconds int) int {

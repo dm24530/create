@@ -6,6 +6,7 @@ import i18n from "@/i18n";
 import { localForageStorage } from "@/lib/localforage-storage";
 import { legacyCanvasStorageKeys, scopedCanvasStorageKey } from "@/lib/canvas-storage-scope";
 import { sanitizeCanvasMediaValue } from "@/lib/canvas/canvas-media-url";
+import { canvasAssetFolderName } from "@/lib/canvas/canvas-asset-folder";
 import type { CanvasBackgroundMode } from "@/lib/canvas-theme";
 import type { CanvasAssistantSession, CanvasConnection, CanvasNodeData, ViewportTransform } from "@/types/canvas";
 
@@ -27,6 +28,7 @@ export type CanvasProject = {
     cloudSyncedAt?: string;
     cloudVersionUncertain?: boolean;
     cloudSyncedFingerprint?: string;
+    assetFolder?: string;
 };
 
 export type CanvasDeletedProject = {
@@ -168,6 +170,7 @@ export const useCanvasStore = create<CanvasStore>()(
                 const project: CanvasProject = {
                     id,
                     title,
+                    assetFolder: canvasAssetFolderName(id, title),
                     createdAt: now,
                     updatedAt: now,
                     nodes: [],
@@ -183,9 +186,12 @@ export const useCanvasStore = create<CanvasStore>()(
             },
             importProject: (source) => {
                 const now = new Date().toISOString();
+                const id = nanoid();
+                const title = source.title || i18n.t("canvas.project.imported");
                 const project: CanvasProject = {
-                    id: nanoid(),
-                    title: source.title || i18n.t("canvas.project.imported"),
+                    id,
+                    title,
+                    assetFolder: source.assetFolder || canvasAssetFolderName(id, title),
                     createdAt: source.createdAt || now,
                     updatedAt: now,
                     nodes: source.nodes || [],
@@ -236,6 +242,7 @@ export const useCanvasStore = create<CanvasStore>()(
                     projects: Array.isArray(state.projects)
                         ? state.projects.map((project) => ({
                             ...project,
+                            assetFolder: project.assetFolder || canvasAssetFolderName(project.id, project.title),
                             nodes: Array.isArray(project.nodes)
                                 ? project.nodes.map((node) => sanitizeCanvasMediaValue(node) as CanvasNodeData)
                                 : project.nodes,

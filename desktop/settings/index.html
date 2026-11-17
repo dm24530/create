@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Create 本地保存设置</title>
+    <link rel="stylesheet" href="./settings.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <div>
+          <h1>本地保存设置</h1>
+          <p>Create 网页功能保持在线更新，生成结果自动保存到本机目录。</p>
+        </div>
+        <span class="badge">Create Desktop</span>
+      </header>
+
+      <form id="settings-form">
+        <section class="server">
+          <span>固定服务器</span>
+          <code>https://create.superai.sbs</code>
+        </section>
+
+        <section class="paths">
+          <div class="path-row">
+            <div class="path-label">
+              <strong>图片保存目录</strong>
+              <small>PNG、JPEG、WebP 等图片下载</small>
+            </div>
+            <input id="image-dir" type="text" readonly />
+            <button type="button" data-choose="image">选择目录</button>
+            <button type="button" class="secondary" data-open="image">打开</button>
+          </div>
+
+          <div class="path-row">
+            <div class="path-label">
+              <strong>视频保存目录</strong>
+              <small>MP4、WebM、MOV 等视频下载</small>
+            </div>
+            <input id="video-dir" type="text" readonly />
+            <button type="button" data-choose="video">选择目录</button>
+            <button type="button" class="secondary" data-open="video">打开</button>
+          </div>
+
+          <div class="path-row">
+            <div class="path-label">
+              <strong>其他下载目录</strong>
+              <small>ZIP、音频和其他文件</small>
+            </div>
+            <input id="other-dir" type="text" readonly />
+            <button type="button" data-choose="other">选择目录</button>
+            <button type="button" class="secondary" data-open="other">打开</button>
+          </div>
+        </section>
+
+        <label class="toggle">
+          <input id="open-folder-after-save" type="checkbox" />
+          <span>下载完成后在文件夹中显示文件</span>
+        </label>
+
+        <p id="status" class="status" role="status"></p>
+
+        <footer>
+          <button id="cancel" type="button" class="secondary">取消</button>
+          <button id="save" type="submit" class="primary">保存设置</button>
+        </footer>
+      </form>
+    </main>
+    <script src="./settings.js"></script>
+  </body>
+</html>

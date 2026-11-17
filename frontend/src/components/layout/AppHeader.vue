@@ -34,6 +34,18 @@
         <!-- Announcement Bell -->
         <AnnouncementBell v-if="user" />
 
+        <!-- Desktop local-save settings -->
+        <button
+          v-if="user && desktopBridgeAvailable"
+          type="button"
+          title="本地保存设置"
+          aria-label="本地保存设置"
+          class="hidden items-center rounded-md p-2 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 dark:text-dark-400 dark:hover:bg-dark-800 dark:hover:text-white sm:flex"
+          @click="openDesktopSettings"
+        >
+          <Icon name="inbox" size="sm" />
+        </button>
+
         <!-- API Docs Link -->
         <a
           v-if="user"
@@ -304,6 +316,7 @@ import { FeatureFlags, isFeatureFlagEnabled } from '@/utils/featureFlags'
 import { resolveRouteMetaKeys } from '@/router/title'
 import { resolveSiteBillingMode } from '@/utils/siteBillingMode'
 import { useTheme } from '@/composables/useTheme'
+import { getDesktopBridge, openDesktopSaveSettings } from '@/utils/desktopBridge'
 
 withDefaults(defineProps<{
   compact?: boolean
@@ -331,6 +344,7 @@ const user = computed(() => authStore.user)
 const dropdownOpen = ref(false)
 const dropdownRef = ref<HTMLElement | null>(null)
 const contactInfo = computed(() => appStore.contactInfo)
+const desktopBridgeAvailable = Boolean(getDesktopBridge())
 const docUrl = computed(() => sanitizeUrl(appStore.docUrl))
 const apiDocsUrl = computed(() => {
   if (docUrl.value) return docUrl.value
@@ -470,6 +484,14 @@ function closeDropdown() {
 function openApiKeyModal() {
   closeDropdown()
   apiKeyModalOpen.value = true
+}
+
+async function openDesktopSettings() {
+  try {
+    await openDesktopSaveSettings()
+  } catch (error) {
+    console.error('Failed to open desktop save settings:', error)
+  }
 }
 
 function openProfileModal() {

@@ -73,10 +73,14 @@ type GrokMediaRequestInfo struct {
 	ImageResolution string
 	Resolution      string
 	DurationSeconds int
-	InputImageURLs  []string
-	MaskImageURL    string
-	Uploads         []OpenAIImagesUpload
-	MaskUpload      *OpenAIImagesUpload
+	// DurationAuto means the caller did not pin a generation duration. The
+	// gateway reserves against the model maximum and bills the delivered
+	// duration when it is available.
+	DurationAuto   bool
+	InputImageURLs []string
+	MaskImageURL   string
+	Uploads        []OpenAIImagesUpload
+	MaskUpload     *OpenAIImagesUpload
 }
 
 func (r GrokMediaRequestInfo) ModerationBody() []byte {
@@ -158,9 +162,22 @@ func parseGrokMediaJSONRequest(body []byte, info *GrokMediaRequestInfo) {
 	info.Size = strings.TrimSpace(gjson.GetBytes(body, "size").String())
 	info.AspectRatio = strings.TrimSpace(gjson.GetBytes(body, "aspect_ratio").String())
 	assignGrokMediaResolution(strings.TrimSpace(gjson.GetBytes(body, "resolution").String()), info)
-	if duration := gjson.GetBytes(body, "duration"); duration.Exists() && duration.Type == gjson.Number {
-		info.DurationSeconds = int(duration.Int())
+	durationExplicit := false
+	for _, path := range []string{"duration", "seconds"} {
+		value := gjson.GetBytes(body, path)
+		if !value.Exists() {
+			continue
+		}
+		if value.Type == gjson.Number && value.Int() > 0 {
+			info.DurationSeconds = int(value.Int())
+			durationExplicit = true
+		}
 	}
+	mode := strings.ToLower(strings.TrimSpace(firstNonEmpty(
+		gjson.GetBytes(body, "duration_mode").String(),
+		gjson.GetBytes(body, "durationMode").String(),
+	)))
+	info.DurationAuto = mode == "auto" || !durationExplicit
 	if n := gjson.GetBytes(body, "n"); n.Exists() && n.Type == gjson.Number {
 		info.N = int(n.Int())
 	}
@@ -274,10 +291,13 @@ func parseGrokMediaMultipartRequest(contentType string, body []byte, info *GrokM
 			info.AspectRatio = value
 		case "resolution":
 			assignGrokMediaResolution(value, info)
-		case "duration":
-			if duration, err := strconv.Atoi(value); err == nil {
+		case "duration", "seconds":
+			if duration, err := strconv.Atoi(value); err == nil && duration > 0 {
 				info.DurationSeconds = duration
+				info.DurationAuto = false
 			}
+		case "duration_mode", "durationMode":
+			info.DurationAuto = strings.EqualFold(value, "auto")
 		case "n":
 			if n, err := strconv.Atoi(value); err == nil {
 				info.N = n
@@ -387,6 +407,7 @@ type GrokVideoPendingBilling struct {
 	UpstreamModel        string `json:"upstream_model,omitempty"`
 	VideoResolution      string `json:"video_resolution,omitempty"`
 	VideoDurationSeconds int    `json:"video_duration_seconds,omitempty"`
+	DurationAuto         bool   `json:"duration_auto,omitempty"`
 	OriginalModel        string `json:"original_model,omitempty"`
 	Provider             string `json:"provider,omitempty"`
 	Platform             string `json:"platform,omitempty"`

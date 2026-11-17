@@ -235,7 +235,7 @@
         <dl class="work-detail__meta">
           <div>
             <dt>时长</dt>
-            <dd>{{ activeRecord.durationSeconds }} 秒</dd>
+            <dd>{{ activeRecord.durationAuto ? '自动' : `${activeRecord.durationSeconds} 秒` }}</dd>
           </div>
           <div>
             <dt>画幅</dt>

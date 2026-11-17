@@ -9,6 +9,7 @@ import { formatBytes, readFileAsDataUrl } from "@/lib/image-utils";
 import { getMediaBlob } from "@/services/file-storage";
 import { getImageBlob, getImagePreviewRevision, subscribeImagePreviews, uploadImage } from "@/services/image-storage";
 import { cn } from "@/lib/utils";
+import { captureVideoAssetCover } from "@/lib/video-asset-cover";
 import { assetCoverUrl, useAssetStore, type Asset, type AssetKind, type ImageAsset } from "@/stores/use-asset-store";
 import { exportAssets, readAssetPackage } from "./asset-transfer";
 
@@ -34,6 +35,7 @@ export default function AssetsPage() {
     const coverInputRef = useRef<HTMLInputElement>(null);
     const imageInputRef = useRef<HTMLInputElement>(null);
     const assetInputRef = useRef<HTMLInputElement>(null);
+    const coverBackfillRef = useRef(new Set<string>());
     const assets = useAssetStore((state) => state.assets);
     const addAsset = useAssetStore((state) => state.addAsset);
     const updateAsset = useAssetStore((state) => state.updateAsset);
@@ -72,6 +74,27 @@ export default function AssetsPage() {
         const maxPage = Math.max(1, Math.ceil(filteredAssets.length / pageSize));
         setPage((value) => Math.min(value, maxPage));
     }, [filteredAssets.length, pageSize]);
+
+    useEffect(() => {
+        let cancelled = false;
+        const pending = validAssets.flatMap((asset) => asset.kind === "video" && !asset.coverUrl && !coverBackfillRef.current.has(asset.id) ? [asset] : []);
+        if (!pending.length) return;
+        void (async () => {
+            for (const asset of pending) {
+                if (cancelled) return;
+                coverBackfillRef.current.add(asset.id);
+                try {
+                    const coverUrl = await captureVideoAssetCover(asset.data.url);
+                    if (!cancelled) updateAsset(asset.id, { coverUrl });
+                } catch (error) {
+                    console.warn("Failed to backfill video asset cover", error);
+                }
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [updateAsset, validAssets]);
 
     const openCreate = () => {
         setEditingAsset(null);

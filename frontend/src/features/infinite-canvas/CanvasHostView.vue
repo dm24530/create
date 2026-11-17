@@ -19,7 +19,7 @@
         class="canvas-host__loading canvas-host__loading--overlay"
       >
         <span class="canvas-host__spinner" />
-        <p>{{ frameLoaded ? '正在启动无限画布...' : '正在加载无限画布...' }}</p>
+        <p>{{ frameLoaded ? '正在启动Create...' : '正在加载Create...' }}</p>
       </div>
     </div>
   </AppLayout>

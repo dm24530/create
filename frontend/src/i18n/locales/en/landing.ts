@@ -9,7 +9,7 @@ export default {
       nav: {
         image: 'Image',
         video: 'Video',
-        canvas: 'Infinite Canvas',
+        canvas: 'Create',
         inspiration: 'Video Inspiration',
         works: 'My Works',
         models: 'Models',

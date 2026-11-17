@@ -750,7 +750,7 @@ export interface SystemSettings {
 
   // Available Channels feature switch
   available_channels_enabled: boolean;
-  // Infinite Canvas administrator-only preview switch
+  // Create administrator-only preview switch
   canvas_admin_only: boolean;
 
   // Subscription feature switch (user sidebar "My Subscriptions" entry)
@@ -1071,7 +1071,7 @@ export interface UpdateSettingsRequest {
 
   // Available Channels feature switch
   available_channels_enabled?: boolean;
-  // Infinite Canvas administrator-only preview switch
+  // Create administrator-only preview switch
   canvas_admin_only?: boolean;
 
   // Subscription feature switch

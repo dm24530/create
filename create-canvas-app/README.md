@@ -1,4 +1,4 @@
-# Create Canvas Standalone App
+# Create Standalone App
 
 Independent Create application built from the pinned
 [`basketikun/infinite-canvas`](https://github.com/basketikun/infinite-canvas) UI.
@@ -9,7 +9,7 @@ This source tree is intentionally separate from the existing Vue Web and
 
 ## Current Implementation
 
-- Upstream React UI and infinite canvas remain the product surface.
+- Upstream React UI and Create remain the product surface.
 - Login uses the existing Create `/api/v1/auth/login` and refresh flow.
 - A managed Create API key is reused or created automatically.
 - Image and video models are loaded from the Create `/v1/models` gateway.

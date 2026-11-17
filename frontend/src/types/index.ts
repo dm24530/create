@@ -278,7 +278,7 @@ export interface PublicSettings {
   /** When true, user monitor hides the user ranking tab and /users payload. */
   channel_monitor_hide_user_ranking?: boolean
   available_channels_enabled: boolean
-  /** Keep the Infinite Canvas in administrator-only preview. Default true. */
+  /** Keep the Create in administrator-only preview. Default true. */
   canvas_admin_only: boolean
   /** When false, the whole user-facing subscription surface is hidden. Default true. */
   subscription_enabled: boolean

@@ -34,7 +34,7 @@ export const userCustomFeatureRoutesAfterKeys: RouteRecordRaw[] = [
     meta: {
       requiresAuth: true,
       requiresAdmin: false,
-      title: 'Infinite Canvas',
+      title: 'Create',
       titleKey: 'nav.canvas',
       immersive: true,
     }
@@ -46,7 +46,7 @@ export const userCustomFeatureRoutesAfterKeys: RouteRecordRaw[] = [
     meta: {
       requiresAuth: true,
       requiresAdmin: false,
-      title: 'Infinite Canvas',
+      title: 'Create',
       titleKey: 'nav.canvas',
       immersive: true,
     }

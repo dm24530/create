@@ -1,13 +1,13 @@
 {
-  "name": "create-canvas-desktop",
+  "name": "create-desktop",
   "version": "0.1.0",
   "private": true,
-  "description": "Create Canvas standalone desktop application",
+  "description": "Create desktop application",
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
     "test": "node --test test/*.test.js",
-    "check": "node --check src/main.js && node --check src/preload.js && node --check src/security.js && npm test",
+    "check": "node --check src/main.js && node --check src/preload.js && node --check src/security.js && node --check src/save-directory.js && npm test",
     "dist:dir": "electron-builder --dir",
     "dist:win": "electron-builder --win nsis",
     "dist:mac": "electron-builder --mac dmg",
@@ -25,14 +25,15 @@
     "playwright-core": "^1.56.0"
   },
   "build": {
-    "appId": "com.create.canvas",
-    "productName": "Create Canvas",
+    "appId": "com.create.desktop",
+    "productName": "Create",
     "asar": true,
     "directories": {
       "output": "release"
     },
     "files": [
       "src/**/*",
+      "assets/**/*",
       "package.json"
     ],
     "extraResources": [
@@ -44,13 +45,15 @@
     "win": {
       "target": [
         "nsis"
-      ]
+      ],
+      "icon": "assets/icon.png"
     },
     "mac": {
       "target": [
         "dmg"
       ],
-      "category": "public.app-category.graphics-design"
+      "category": "public.app-category.graphics-design",
+      "icon": "assets/icon.png"
     }
   },
   "author": "Create"

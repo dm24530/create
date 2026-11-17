@@ -46,6 +46,7 @@ export interface VideoGenerationParams {
   model: string
   prompt: string
   durationSeconds: number
+  durationAuto?: boolean
   resolution: string
   aspectRatio: string
   generateAudio: boolean
@@ -152,8 +153,8 @@ const MUSE_MODEL_PROFILES: Record<string, VideoModelProfile> = {
   'muse-video': {
     provider: 'muse_video',
     minDuration: 1,
-    maxDuration: 60,
-    defaultDuration: 6,
+    maxDuration: 15,
+    defaultDuration: 10,
     resolutions: ['720p'],
     aspectRatios: ['16:9', '9:16'],
     maxImages: 4,
@@ -430,10 +431,10 @@ export function buildVideoRequest(
     const body: Record<string, unknown> = {
       model: params.model.trim(),
       prompt: params.prompt.trim(),
-      seconds: String(params.durationSeconds),
       resolution: '768P',
       ratio: params.aspectRatio,
     }
+    if (!params.durationAuto) body.seconds = String(params.durationSeconds)
     const frameImages = params.images.filter((asset) => asset.role === 'first_frame' || asset.role === 'last_frame')
     const referenceImages = params.images.filter((asset) => asset.role === 'reference_image')
     if (frameImages.length && !referenceImages.length && params.images.length <= 2) {
@@ -464,9 +465,9 @@ export function buildVideoRequest(
     const body: Record<string, unknown> = {
       model: params.model.trim(),
       prompt: params.prompt.trim(),
-      seconds: params.durationSeconds,
       aspect_ratio: params.aspectRatio,
     }
+    if (!params.durationAuto) body.seconds = params.durationSeconds
     if (firstFrame) {
       body.image = firstFrame.url
     } else if (!referenceImages.length && params.images.length) {
@@ -488,11 +489,11 @@ export function buildVideoRequest(
     const body: Record<string, unknown> = {
       model: params.model.trim(),
       prompt: params.prompt.trim(),
-      duration: params.durationSeconds,
       resolution: params.resolution,
       aspect_ratio: params.aspectRatio,
       generate_audio: params.generateAudio,
     }
+    if (!params.durationAuto) body.duration = params.durationSeconds
     if (params.videos.length) {
       body.mode = 'reference-video'
       body.reference_video_urls = params.videos.map((asset) => asset.url)
@@ -517,10 +518,10 @@ export function buildVideoRequest(
     const body: Record<string, unknown> = {
       model: params.model.trim(),
       prompt: params.prompt.trim(),
-      duration: params.durationSeconds,
       resolution: params.resolution,
       aspect_ratio: params.aspectRatio,
     }
+    if (!params.durationAuto) body.duration = params.durationSeconds
     if (params.images.length) {
       body.image = params.images.map((asset) => ({ url: asset.url }))
     }
@@ -553,11 +554,11 @@ export function buildVideoRequest(
   const body: Record<string, unknown> = {
     model: params.model.trim(),
     content,
-    duration: params.durationSeconds,
     resolution: params.resolution,
     ratio: params.aspectRatio,
     generate_audio: params.generateAudio,
   }
+  if (!params.durationAuto) body.duration = params.durationSeconds
   return { path: '/contents/generations/tasks', body }
 }
 

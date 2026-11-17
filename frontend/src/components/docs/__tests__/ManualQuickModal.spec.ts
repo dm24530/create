@@ -25,7 +25,7 @@ describe('ManualQuickModal', () => {
     })
 
     expect(wrapper.text()).toContain('图片、视频与画布创作手册')
-    expect(wrapper.text()).toContain('无限画布基础操作')
+    expect(wrapper.text()).toContain('Create基础操作')
     expect(wrapper.text()).toContain('Ctrl/Cmd+Z 撤回')
     expect(wrapper.text()).toContain('连接本地 Agent')
     expect(wrapper.text()).toContain('使用记录')

@@ -13,6 +13,7 @@ import { updateFavicon } from '@/utils/branding'
 import { FeatureFlags, isFeatureFlagEnabled } from '@/utils/featureFlags'
 import { resolveSiteBillingMode } from '@/utils/siteBillingMode'
 import { isCanvasRoutePath } from '@/features/infinite-canvas/canvasRouteSync'
+import { startKeyEventSync, stopKeyEventSync } from '@/utils/keyEventSync'
 
 const router = useRouter()
 const route = useRoute()
@@ -115,6 +116,7 @@ watch(
   () => authStore.isAuthenticated,
   (isAuthenticated, oldValue) => {
     if (isAuthenticated) {
+      startKeyEventSync()
       if (authStore.isAdmin) {
         adminComplianceStore.fetchStatus().catch((error) => {
           console.error('Failed to fetch admin compliance status:', error)
@@ -139,6 +141,7 @@ watch(
       // Register visibility change listener
       document.addEventListener('visibilitychange', onVisibilityChange)
     } else {
+      stopKeyEventSync()
       // User logged out: clear data and stop polling
       subscriptionStore.clear()
       announcementStore.reset()
@@ -157,6 +160,7 @@ router.afterEach(() => {
 })
 
 onBeforeUnmount(() => {
+  stopKeyEventSync()
   document.removeEventListener('visibilitychange', onVisibilityChange)
   window.removeEventListener('admin-compliance-required', onAdminComplianceRequired)
 })

@@ -58,7 +58,7 @@ describe('resolveFeatureFlag', () => {
     expect(resolveFeatureFlag({} as PublicSettings, FeatureFlags.availableChannels)).toBe(false)
   })
 
-  it('defaults the Infinite Canvas to administrator-only when settings are missing', () => {
+  it('defaults the Create to administrator-only when settings are missing', () => {
     expect(resolveFeatureFlag({} as PublicSettings, FeatureFlags.canvasAdminOnly)).toBe(true)
     expect(resolveFeatureFlag({ canvas_admin_only: false } as PublicSettings, FeatureFlags.canvasAdminOnly)).toBe(false)
   })

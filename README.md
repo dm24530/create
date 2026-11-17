@@ -112,6 +112,29 @@ The Vite dev server proxies `/api`, `/v1`, and `/setup` to
 Production frontend output is written to `backend/internal/web/dist`; the Go
 binary must be built with `-tags embed` to serve it.
 
+## Windows desktop app
+
+The `desktop/` directory contains an Electron shell that opens the hosted Create
+website, keeps the login session, and saves image, video, and other downloads to
+user-selected local directories.
+
+```powershell
+cd desktop
+npm install
+$env:CREATE_WEB_URL = "http://localhost:9898"
+npm start
+```
+
+Build the installer with:
+
+```powershell
+cd desktop
+npm run dist
+```
+
+The installer is written to `desktop/release/Create-Setup-0.1.2.exe`. Desktop updates are published
+through GitHub Releases and checked automatically by installed clients.
+
 ## API Entry Points
 
 - OpenAI: `/v1/chat/completions`, `/v1/responses`, `/v1/images/*`, `/v1/videos/*`

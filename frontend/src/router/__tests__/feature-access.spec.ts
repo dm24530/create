@@ -212,7 +212,7 @@ describe('subscription route guard (opt-out flag)', () => {
   })
 })
 
-describe('infinite canvas administrator preview guard', () => {
+describe('Create administrator preview guard', () => {
   beforeEach(() => {
     authStore.isAdmin = false
     authStore.isSimpleMode = false

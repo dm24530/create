@@ -104,13 +104,20 @@ func grokMediaInflightEstimate(endpoint service.GrokMediaEndpoint, model string,
 	case service.GrokMediaEndpointImagesGenerations, service.GrokMediaEndpointImagesEdits:
 		return service.InflightEstimateRequest{Model: model, BodyBytes: len(body), Kind: service.InflightEstimateImage, Units: info.N}
 	default:
+		durationSeconds := info.DurationSeconds
+		if info.DurationAuto {
+			// Automatic mode may use any duration up to the model maximum. Reserve
+			// against that ceiling before submitting so the user cannot start a
+			// task whose upper-bound cost exceeds the available balance.
+			durationSeconds = service.VideoReservationMaxDurationSecondsForModel(model)
+		}
 		return service.InflightEstimateRequest{
 			Model:                model,
 			BodyBytes:            len(body),
 			Kind:                 service.InflightEstimateVideo,
 			Units:                1,
 			VideoResolution:      info.Resolution,
-			VideoDurationSeconds: info.DurationSeconds,
+			VideoDurationSeconds: durationSeconds,
 		}
 	}
 }

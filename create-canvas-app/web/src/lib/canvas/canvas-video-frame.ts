@@ -1,6 +1,6 @@
 export type VideoFramePosition = "first" | "last" | "current";
 
-export async function captureVideoFrame(source: string, position: VideoFramePosition, currentTime: number) {
+export async function captureVideoFrame(source: string, position: VideoFramePosition, currentTime: number, maxWidth = 0, mimeType = "image/png", quality = 0.92) {
     const video = document.createElement("video");
     video.crossOrigin = "anonymous";
     video.muted = true;
@@ -23,10 +23,11 @@ export async function captureVideoFrame(source: string, position: VideoFramePosi
         }
 
         const canvas = document.createElement("canvas");
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
+        const scale = maxWidth > 0 && video.videoWidth > maxWidth ? maxWidth / video.videoWidth : 1;
+        canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
+        canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
         canvas.getContext("2d")!.drawImage(video, 0, 0);
-        return await new Promise<Blob>((resolve, reject) => canvas.toBlob((result) => (result ? resolve(result) : reject(new Error("Failed to capture video frame"))), "image/png"));
+        return await new Promise<Blob>((resolve, reject) => canvas.toBlob((result) => (result ? resolve(result) : reject(new Error("Failed to capture video frame"))), mimeType, quality));
     } finally {
         video.removeAttribute("src");
         video.load();

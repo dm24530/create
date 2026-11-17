@@ -5,6 +5,7 @@ import { nanoid } from "nanoid";
 
 import i18n from "@/i18n";
 import { normalizeImageOutputFormat } from "@/lib/image-output-format";
+import { isCreateProductMode } from "@/lib/create-product";
 import { guessModelCapability, type ModelCapability } from "@/lib/model-capability";
 
 export type ApiCallFormat = "openai" | "gemini";
@@ -42,6 +43,7 @@ export type AiConfig = {
     audioSpeed: string;
     audioInstructions: string;
     videoSeconds: string;
+    videoDurationAuto?: boolean;
     vquality: string;
     videoGenerateAudio: string;
     videoWatermark: string;
@@ -112,6 +114,7 @@ export const defaultConfig: AiConfig = {
     audioSpeed: "1",
     audioInstructions: "",
     videoSeconds: "6",
+    videoDurationAuto: false,
     vquality: "720",
     videoGenerateAudio: "true",
     videoWatermark: "false",
@@ -245,7 +248,13 @@ export const useConfigStore = create<ConfigStore>()(
                     },
                 })),
             isAiConfigReady: (config, model) => isAiConfigReady(config, model),
-            openConfigDialog: (shouldPromptContinue = false, configTab = "preferences") => set({ isConfigOpen: true, shouldPromptContinue, configTab }),
+            openConfigDialog: (shouldPromptContinue = false, configTab = "preferences") => {
+                if (isCreateProductMode()) {
+                    set({ isConfigOpen: false, shouldPromptContinue: false });
+                    return;
+                }
+                set({ isConfigOpen: true, shouldPromptContinue, configTab });
+            },
             setConfigDialogOpen: (isConfigOpen) => set({ isConfigOpen }),
             clearPromptContinue: () => set({ shouldPromptContinue: false }),
         }),

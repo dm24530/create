@@ -1,5 +1,5 @@
 import { App, Input, Modal, Spin, Tag } from "antd";
-import { Copy, Search } from "lucide-react";
+import { Copy, RefreshCw, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { getCreateModelPlaza, type CreateModelPlaza, type CreateModelPlazaGroup, type CreateModelPlazaModel, type CreateModelPricing, type CreateModelPricingInterval } from "@/services/create-account";
@@ -15,6 +15,7 @@ export function CreateModelPlazaModal({ open, onClose, session }: { open: boolea
     const [error, setError] = useState("");
     const [groupId, setGroupId] = useState("all");
     const [search, setSearch] = useState("");
+    const [refreshNonce, setRefreshNonce] = useState(0);
 
     useEffect(() => {
         if (!open || !session) return;
@@ -34,7 +35,7 @@ export function CreateModelPlazaModal({ open, onClose, session }: { open: boolea
         return () => {
             cancelled = true;
         };
-    }, [open, session]);
+    }, [open, refreshNonce, session]);
 
     const groups = data?.groups || [];
     const modelCount = useMemo(() => groups.reduce((total, group) => total + group.models.length, 0), [groups]);
@@ -56,7 +57,29 @@ export function CreateModelPlazaModal({ open, onClose, session }: { open: boolea
     };
 
     return (
-        <Modal open={open} onCancel={onClose} footer={null} width={1400} title={<span className="text-2xl font-semibold tracking-tight">模型广场</span>} styles={{ body: { padding: 0 } }} className="model-plaza-modal">
+        <Modal
+            open={open}
+            onCancel={onClose}
+            footer={null}
+            width={1400}
+            title={(
+                <div className="flex items-center gap-3 pr-12">
+                    <span className="text-2xl font-semibold tracking-tight">模型广场</span>
+                    <button
+                        type="button"
+                        className="grid size-8 place-items-center rounded-lg text-stone-500 transition hover:bg-stone-100 hover:text-stone-900 disabled:cursor-wait disabled:opacity-50 dark:hover:bg-stone-800 dark:hover:text-stone-100"
+                        aria-label="刷新模型广场"
+                        title="刷新模型广场"
+                        disabled={loading}
+                        onClick={() => setRefreshNonce((value) => value + 1)}
+                    >
+                        <RefreshCw className={cn("size-4", loading && "animate-spin")} />
+                    </button>
+                </div>
+            )}
+            styles={{ body: { padding: 0 } }}
+            className="model-plaza-modal"
+        >
             <div className="flex max-h-[80vh] min-h-[620px] flex-col overflow-hidden">
                 <div className="shrink-0 space-y-4 border-b border-stone-200 px-5 py-4 dark:border-stone-800">
                     <div className="flex items-start gap-4">

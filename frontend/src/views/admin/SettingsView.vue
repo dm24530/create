@@ -10317,7 +10317,7 @@ const form = reactive<SettingsForm>({
   channel_monitor_hide_user_ranking: false,
   // Available Channels feature switch
   available_channels_enabled: false,
-  // Infinite Canvas administrator-only preview
+  // Create administrator-only preview
   canvas_admin_only: true,
   // Subscription feature switch (user sidebar "My Subscriptions" entry)
   subscription_enabled: true,
@@ -12145,7 +12145,7 @@ async function saveSettings() {
       channel_monitor_hide_user_ranking: Boolean(form.channel_monitor_hide_user_ranking),
       // Available Channels feature switch
       available_channels_enabled: form.available_channels_enabled,
-      // Infinite Canvas administrator-only preview
+      // Create administrator-only preview
       canvas_admin_only: form.canvas_admin_only,
       // Subscription feature switch
       subscription_enabled: form.subscription_enabled,

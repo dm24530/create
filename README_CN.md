@@ -111,6 +111,31 @@ pnpm dev
 生产前端产物输出到 `backend/internal/web/dist`。Go 二进制必须使用
 `-tags embed` 构建，才能内嵌前端。
 
+## Windows 桌面应用
+
+`desktop/` 提供 Create 的 Windows Electron 桌面壳。桌面版直接加载线上 Create
+网页，保留登录态，并把图片、视频和其他下载保存到用户选择的本地目录。
+
+开发启动：
+
+```powershell
+cd desktop
+npm install
+$env:CREATE_WEB_URL = "http://localhost:9898"
+npm start
+```
+
+生成安装包：
+
+```powershell
+cd desktop
+npm run dist
+```
+
+安装包输出到 `desktop/release/Create-Setup-0.1.2.exe`。桌面版固定连接
+`https://create.superai.sbs`，应用菜单中的“本地保存设置”只修改图片、视频和其他
+下载目录。更新通过 GitHub Releases 自动检查。
+
 ## API 入口
 
 - OpenAI：`/v1/chat/completions`、`/v1/responses`、`/v1/images/*`、`/v1/videos/*`

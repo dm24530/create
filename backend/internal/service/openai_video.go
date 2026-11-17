@@ -3,7 +3,9 @@ package service
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -14,6 +16,8 @@ import (
 )
 
 const (
+	openAIVideoMaxContentBytes = 512 << 20
+
 	OpenAIVideoEndpointCreate  GrokMediaEndpoint = "openai_video_create"
 	OpenAIVideoEndpointStatus  GrokMediaEndpoint = "openai_video_status"
 	OpenAIVideoEndpointContent GrokMediaEndpoint = "openai_video_content"
@@ -141,10 +145,17 @@ func (s *OpenAIGatewayService) ForwardOpenAIVideo(
 		if resp.StatusCode >= 400 {
 			return s.handleGrokMediaErrorResponse(ctx, resp, c, account, "", "")
 		}
-		if err := writeGrokMediaContentResponse(c, resp); err != nil {
+		durationSeconds, err := writeOpenAIVideoContentResponse(c, resp)
+		if err != nil {
 			return nil, err
 		}
-		return &OpenAIForwardResult{ResponseID: taskID, ResponseHeaders: resp.Header.Clone(), Duration: time.Since(started)}, nil
+		return &OpenAIForwardResult{
+			ResponseID:           taskID,
+			ResponseHeaders:      resp.Header.Clone(),
+			Duration:             time.Since(started),
+			VideoCount:           1,
+			VideoDurationSeconds: durationSeconds,
+		}, nil
 	}
 
 	responseBody, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, openAITooLargeError)
@@ -188,4 +199,90 @@ func (s *OpenAIGatewayService) ForwardOpenAIVideo(
 	}
 	writeGrokMediaResponse(c, resp, responseBody, s.responseHeaderFilter)
 	return result, nil
+}
+
+func writeOpenAIVideoContentResponse(c *gin.Context, resp *http.Response) (int, error) {
+	if c == nil || resp == nil || resp.Body == nil {
+		return 0, fmt.Errorf("video content response is incomplete")
+	}
+	if strings.TrimSpace(resp.Header.Get("Content-Range")) != "" {
+		return 0, writeGrokMediaContentResponse(c, resp)
+	}
+	if resp.ContentLength > openAIVideoMaxContentBytes {
+		return 0, fmt.Errorf("video content exceeds the local inspection limit")
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, openAIVideoMaxContentBytes+1))
+	if err != nil {
+		return 0, err
+	}
+	if len(body) > openAIVideoMaxContentBytes {
+		return 0, fmt.Errorf("video content exceeds the local inspection limit")
+	}
+	for _, name := range []string{
+		"Content-Type",
+		"Content-Length",
+		"Content-Range",
+		"Accept-Ranges",
+		"Content-Disposition",
+	} {
+		if value := strings.TrimSpace(resp.Header.Get(name)); value != "" {
+			c.Header(name, value)
+		}
+	}
+	contentType := strings.TrimSpace(resp.Header.Get("Content-Type"))
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	c.Data(resp.StatusCode, contentType, body)
+	MarkResponseCommitted(c)
+	return extractMP4DurationSeconds(body), nil
+}
+
+// extractMP4DurationSeconds reads the MP4 mvhd header without requiring ffprobe.
+// It is used to verify delivered media duration for automatic billing and to
+// detect provider mismatches without altering or re-encoding the video.
+func extractMP4DurationSeconds(body []byte) int {
+	searchFrom := 0
+	for searchFrom < len(body) {
+		offset := bytes.Index(body[searchFrom:], []byte("mvhd"))
+		if offset < 0 {
+			return 0
+		}
+		payload := searchFrom + offset + 4
+		if payload+20 <= len(body) {
+			version := body[payload]
+			if version == 0 {
+				timescale := binary.BigEndian.Uint32(body[payload+12 : payload+16])
+				duration := uint64(binary.BigEndian.Uint32(body[payload+16 : payload+20]))
+				if seconds := mp4DurationToSeconds(timescale, duration); seconds > 0 {
+					return seconds
+				}
+			}
+			if version == 1 && payload+32 <= len(body) {
+				timescale := binary.BigEndian.Uint32(body[payload+20 : payload+24])
+				duration := binary.BigEndian.Uint64(body[payload+24 : payload+32])
+				if seconds := mp4DurationToSeconds(timescale, duration); seconds > 0 {
+					return seconds
+				}
+			}
+		}
+		searchFrom = payload
+	}
+	return 0
+}
+
+func mp4DurationToSeconds(timescale uint32, duration uint64) int {
+	if timescale == 0 || duration == 0 {
+		return 0
+	}
+	// Round to the nearest second to avoid charging an extra second for normal
+	// container timestamp overhead (for example a 10.04s MP4).
+	seconds := (duration + uint64(timescale)/2) / uint64(timescale)
+	if seconds == 0 {
+		seconds = 1
+	}
+	if seconds > 24*60*60 {
+		return 0
+	}
+	return int(seconds)
 }

@@ -709,7 +709,7 @@ describe('VideoStudioView Seedance model controls', () => {
     expect(wrapper.get('[data-testid="video-resolution-control"]').attributes('style'))
       .toContain('--video-segment-count: 3')
     expect(wrapper.get('[data-testid="video-duration-control"] .video-composer__segmented').attributes('style'))
-      .toContain('--video-segment-count: 5')
+      .toContain('--video-segment-count: 6')
 
     await wrapper.get('textarea').setValue('雨夜车窗外的霓虹缓慢后退')
     const durationInput = wrapper.get('[data-testid="video-duration-control"] input')
@@ -784,7 +784,7 @@ describe('VideoStudioView Seedance model controls', () => {
     expect(wrapper.findAll('[data-testid="video-resolution-control"] button').map((button) => button.text()))
       .toEqual(['720P'])
     const durationInput = wrapper.get('[data-testid="video-duration-control"] input')
-    await durationInput.setValue('60')
+    await durationInput.setValue('12')
     await durationInput.trigger('blur')
 
     await wrapper.get('textarea').setValue('让首帧里的海浪继续向前翻涌')
@@ -803,7 +803,7 @@ describe('VideoStudioView Seedance model controls', () => {
     expect(JSON.parse(String(createCall?.[1]?.body))).toEqual({
       model: 'muse-video',
       prompt: '让首帧里的海浪继续向前翻涌',
-      seconds: 60,
+      seconds: 12,
       aspect_ratio: '16:9',
       image: 'https://cdn.example.com/first.png',
     })
@@ -830,12 +830,17 @@ describe('VideoStudioView Seedance model controls', () => {
 
     expect(wrapper.get('[data-testid="video-model-select"]').text()).toContain('muse-cheap')
     expect(wrapper.findAll('[data-testid="video-duration-control"] button').map((button) => button.text()))
-      .toEqual(['1秒', '5秒', '8秒', '10秒', '20秒', '30秒'])
+      .toEqual(['自动', '1秒', '5秒', '8秒', '10秒', '20秒', '30秒'])
 
     const durationInput = wrapper.get('[data-testid="video-duration-control"] input')
     await durationInput.setValue('15')
     await durationInput.trigger('blur')
     expect((durationInput.element as HTMLInputElement).value).toBe('10')
+
+    await wrapper.findAll('[data-testid="video-duration-control"] button')
+      .find((button) => button.text() === '自动')!
+      .trigger('click')
+    expect(durationInput.attributes('disabled')).toBeDefined()
   })
 
   it('archives authenticated Momo video bytes instead of asking the server to refetch', async () => {
@@ -1033,7 +1038,7 @@ describe('VideoStudioView grok generation', () => {
     expect(wrapper.get('[data-testid="video-resolution-control"]').attributes('style'))
       .toContain('--video-segment-count: 2')
     expect(wrapper.get('[data-testid="video-duration-control"] .video-composer__segmented').attributes('style'))
-      .toContain('--video-segment-count: 3')
+      .toContain('--video-segment-count: 4')
 
     await wrapper.get('textarea').setValue('海浪拍打礁石')
     await wrapper.get('form').trigger('submit')

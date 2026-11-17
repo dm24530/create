@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -92,7 +93,7 @@ func (u *openAIImagesFailoverHTTPUpstream) calls() []int64 {
 	return append([]int64(nil), u.accountIDs...)
 }
 
-func TestOpenAIGatewayHandlerImages_ServerErrorFailsOverAndReturnsClearErrorWhenExhausted(t *testing.T) {
+func TestOpenAIGatewayHandlerImages_AsyncServerErrorFailsOverAndReturnsClearErrorWhenExhausted(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	groupID := int64(3130)
 	accounts := []service.Account{
@@ -165,6 +166,7 @@ func TestOpenAIGatewayHandlerImages_ServerErrorFailsOverAndReturnsClearErrorWhen
 	body := []byte(`{"model":"gpt-image-1","prompt":"draw a cat","quality":"high","size":"1536x1024"}`)
 	core, observedLogs := observer.New(zap.DebugLevel)
 	requestCtx := logger.IntoContext(context.Background(), zap.New(core))
+	requestCtx = context.WithValue(requestCtx, ctxkey.AsyncImageTask, true)
 	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body)).WithContext(requestCtx)
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()

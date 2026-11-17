@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld("createDesktop", {
   saveSaveSettings: (settings) => ipcRenderer.invoke("desktop:save-save-settings", settings),
   saveGeneratedFile: (payload) => ipcRenderer.invoke("desktop:save-generated-file", payload),
   readGeneratedFile: (payload) => ipcRenderer.invoke("desktop:read-generated-file", payload),
+  deleteGeneratedFile: (payload) => ipcRenderer.invoke("desktop:delete-generated-file", payload),
   chooseSaveDirectory: (kind) => ipcRenderer.invoke("desktop:choose-save-directory", kind),
   openSaveFolder: (kind) => ipcRenderer.invoke("desktop:open-save-folder", kind),
   onOpenSaveSettings: (callback) => {

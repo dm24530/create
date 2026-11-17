@@ -1,6 +1,6 @@
 const path = require("node:path");
 
-const SETTINGS_VERSION = 3;
+const SETTINGS_VERSION = 4;
 
 function normalizeDirectory(raw, fieldName) {
   const value = String(raw || "").trim();
@@ -14,6 +14,7 @@ function createDefaultSettings({ picturesPath, downloadsPath, env = process.env 
     settingsVersion: SETTINGS_VERSION,
     imageDir: path.join(picturesPath, "Create", "Images"),
     videoDir: path.join(picturesPath, "Create", "Videos"),
+    canvasDir: path.join(picturesPath, "Create", "Canvas"),
     otherDir: path.join(downloadsPath, "Create"),
     openFolderAfterSave: false,
   };
@@ -32,6 +33,7 @@ function validateSettings(settings) {
     settingsVersion: SETTINGS_VERSION,
     imageDir: normalizeDirectory(settings.imageDir, "Image directory"),
     videoDir: normalizeDirectory(settings.videoDir, "Video directory"),
+    canvasDir: normalizeDirectory(settings.canvasDir, "Canvas directory"),
     otherDir: normalizeDirectory(settings.otherDir, "Other download directory"),
     openFolderAfterSave: Boolean(settings.openFolderAfterSave),
   };

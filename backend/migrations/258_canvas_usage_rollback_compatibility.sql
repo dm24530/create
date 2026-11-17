@@ -2,7 +2,7 @@
 -- Application code no longer reads or writes them.
 CREATE TABLE IF NOT EXISTS canvas_usage_plans (
     user_id      BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-    package_name VARCHAR(64) NOT NULL DEFAULT '无限画布体验套餐',
+    package_name VARCHAR(64) NOT NULL DEFAULT 'Create体验套餐',
     total_count  INTEGER NOT NULL DEFAULT 200 CHECK (total_count >= 0),
     used_count   INTEGER NOT NULL DEFAULT 0 CHECK (used_count >= 0),
     created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),

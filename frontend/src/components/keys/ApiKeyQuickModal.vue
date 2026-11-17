@@ -219,7 +219,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 
 import { keysAPI, userGroupsAPI } from '@/api'
 import type { ApiKey, Group } from '@/types'
@@ -228,6 +228,7 @@ import { useClipboard } from '@/composables/useClipboard'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Icon from '@/components/icons/Icon.vue'
+import { onKeysChanged } from '@/utils/creatorKeyEvents'
 
 const props = defineProps<{ show: boolean }>()
 const emit = defineEmits<{ (event: 'close'): void }>()
@@ -252,6 +253,19 @@ const form = reactive({
   rateLimit5h: null as number | null,
   rateLimit1d: null as number | null,
   rateLimit7d: null as number | null,
+})
+
+let unsubscribeKeysChanged: (() => void) | undefined
+
+onMounted(() => {
+  unsubscribeKeysChanged = onKeysChanged(() => {
+    if (props.show && !formOpen.value) void loadData()
+  })
+})
+
+onBeforeUnmount(() => {
+  unsubscribeKeysChanged?.()
+  unsubscribeKeysChanged = undefined
 })
 
 watch(

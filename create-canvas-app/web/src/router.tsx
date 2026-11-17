@@ -1,8 +1,9 @@
 import { lazy, Suspense } from "react";
-import { createBrowserRouter, Navigate, Outlet } from "react-router-dom";
+import { createBrowserRouter, Navigate } from "react-router-dom";
 
 import { AnalyticsTracker } from "@/components/layout/analytics-tracker";
 import { ManagedRouteBridge } from "@/components/layout/managed-route-bridge";
+import { PersistentWorkbenchOutlet } from "@/components/layout/persistent-workbench-outlet";
 import UserLayout from "@/layouts/user-layout";
 import { isManagedMode } from "@/lib/managed-mode";
 import { isCreateProductMode } from "@/lib/create-product";
@@ -13,10 +14,8 @@ const CanvasPage = lazy(() => import("@/pages/canvas"));
 const CanvasProjectPage = lazy(() => import("@/pages/canvas/project"));
 const ConfigPage = lazy(() => import("@/pages/config"));
 const HomePage = lazy(() => import("@/pages/home"));
-const ImagePage = lazy(() => import("@/pages/image"));
 const NotFound = lazy(() => import("@/pages/not-found"));
 const PromptsPage = lazy(() => import("@/pages/prompts"));
-const VideoPage = lazy(() => import("@/pages/video"));
 
 function RouteLoading() {
     return (
@@ -37,17 +36,15 @@ export const router = createBrowserRouter([
             <UserLayout>
                 <AnalyticsTracker />
                 <ManagedRouteBridge />
-                <Suspense fallback={<RouteLoading />}>
-                    <Outlet />
-                </Suspense>
+                <PersistentWorkbenchOutlet />
             </UserLayout>
         ),
         children: [
             isCreateProductMode()
                 ? { path: "/", element: <Navigate to="/image" replace /> }
                 : { path: "/", element: <HomePage /> },
-            { path: "/image", element: <ImagePage /> },
-            { path: "/video", element: <VideoPage /> },
+            { path: "/image" },
+            { path: "/video" },
             { path: "/assets", element: <AssetsPage /> },
             { path: "/prompts", element: <PromptsPage /> },
             { path: "/canvas", element: <CanvasPage /> },

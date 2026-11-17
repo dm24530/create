@@ -3,15 +3,18 @@ import { nanoid } from "nanoid";
 
 import i18n from "@/i18n";
 import { dataUrlToFile, readFileAsDataUrl } from "@/lib/image-utils";
-import { clampVideoSeconds, computeVideoSize, inferVideoRatio } from "@/lib/media-size";
+import { computeVideoSize, inferVideoRatio } from "@/lib/media-size";
 import { getMediaBlob, resolveMediaUrl, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
+import { createRequest } from "@/services/create-api";
+import { useUserStore } from "@/stores/use-user-store";
 import { prepareImageRequestDataUrls } from "@/services/image-storage";
 import { boolConfig, buildApiUrl, modelOptionName, resolveModelRequestConfig, resolveModelScript, withLocalProxy, type AiConfig } from "@/stores/use-config-store";
 import { runModelPlugin } from "./model-plugin";
+import { clampVideoSecondsForProfile, getVideoModelProfile, type VideoModelProvider } from "@/lib/video-model-profile";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 
-type VideoResponse = { id: string; status?: string; error?: { message?: string }; url?: string; result_url?: string; video_url?: string; content?: { video_url?: string; url?: string } | null };
+type VideoResponse = { id: string; request_id?: string; task_id?: string; status?: string; error?: { message?: string }; url?: string; result_url?: string; video_url?: string; content?: { video_url?: string; url?: string } | null };
 type ApiVideoResponse = VideoResponse | { code?: number | string; data?: VideoResponse | null; msg?: string; message?: string; error?: { message?: string } };
 type ApiEnvelope<T> = T | { code?: number | string; data?: T | null; msg?: string; message?: string; error?: { message?: string } };
 type RequestOptions = { signal?: AbortSignal };
@@ -28,6 +31,114 @@ type GeminiVideoOperation = {
     response?: { generateVideoResponse?: { generatedSamples?: Array<{ video?: { uri?: string } }> } };
 };
 export type VideoGenerationTaskState = { status: "pending" } | { status: "completed"; result: VideoGenerationResult } | { status: "failed"; error: string };
+
+export type VideoProviderRequestInput = {
+    model: string;
+    prompt: string;
+    durationSeconds: number;
+    durationAuto?: boolean;
+    resolution: string;
+    aspectRatio: string;
+    generateAudio: boolean;
+    imageUrls: string[];
+    videoUrls: string[];
+    audioUrls: string[];
+    imageMode: "frames" | "reference";
+};
+
+export function buildVideoProviderRequest(provider: VideoModelProvider, input: VideoProviderRequestInput): { path: string; body: Record<string, unknown> } {
+    if (provider === "muse_video") {
+        const body: Record<string, unknown> = {
+            model: input.model,
+            prompt: input.prompt,
+            aspect_ratio: input.aspectRatio,
+        };
+        if (!input.durationAuto) body.seconds = input.durationSeconds;
+        if (input.imageUrls.length === 1) body.image = input.imageUrls[0];
+        if (input.imageUrls.length > 1) body.reference_images = input.imageUrls;
+        return { path: "/videos", body };
+    }
+
+    if (provider === "grok") {
+        const body: Record<string, unknown> = {
+            model: input.model,
+            prompt: input.prompt,
+            resolution: input.resolution,
+            aspect_ratio: input.aspectRatio,
+        };
+        if (!input.durationAuto) body.duration = input.durationSeconds;
+        if (input.imageUrls.length) body.image = input.imageUrls.map((url) => ({ url }));
+        if (input.videoUrls.length) body.video = { url: input.videoUrls[0] };
+        return { path: input.videoUrls.length ? "/videos/edits" : "/videos/generations", body };
+    }
+
+    if (provider === "seedance_video") {
+        const body: Record<string, unknown> = {
+            model: input.model,
+            prompt: input.prompt,
+            resolution: input.resolution,
+            aspect_ratio: input.aspectRatio,
+            generate_audio: input.generateAudio,
+        };
+        if (!input.durationAuto) body.duration = input.durationSeconds;
+        if (input.videoUrls.length) {
+            body.mode = "reference-video";
+            body.reference_video_urls = input.videoUrls;
+        } else if (input.imageMode === "frames" && input.imageUrls.length) {
+            body.mode = input.imageUrls.length > 1 ? "first-last-frame" : "image-to-video";
+            body.images = input.imageUrls.slice(0, 2);
+        } else if (input.imageUrls.length) {
+            body.mode = "reference-images";
+            body.reference_image_urls = input.imageUrls;
+        } else {
+            body.mode = "text-to-video";
+        }
+        if (input.audioUrls.length) body.reference_audio_urls = input.audioUrls;
+        return { path: "/video/generations", body };
+    }
+
+    if (provider === "video_tasks") {
+        const body: Record<string, unknown> = {
+            model: input.model,
+            prompt: input.prompt,
+            resolution: "768P",
+            ratio: input.aspectRatio,
+        };
+        if (!input.durationAuto) body.seconds = String(input.durationSeconds);
+        if (!input.videoUrls.length && !input.audioUrls.length && input.imageUrls.length <= 2) {
+            body.images = input.imageUrls;
+        } else if (input.imageUrls.length || input.videoUrls.length || input.audioUrls.length) {
+            const content: Array<Record<string, unknown>> = [{ type: "text", text: input.prompt }];
+            input.imageUrls.forEach((url, index) => {
+                content.push({
+                    type: "image_url",
+                    image_url: { url },
+                    role: index === 0 ? "first_frame" : index === 1 ? "last_frame" : "reference_image",
+                });
+            });
+            input.videoUrls.forEach((url) => content.push({ type: "video_url", video_url: { url }, role: "reference_video" }));
+            input.audioUrls.forEach((url) => content.push({ type: "audio_url", audio_url: { url }, role: "reference_audio" }));
+            body.metadata = { content };
+        }
+        return { path: "/videos", body };
+    }
+
+    const body: Record<string, unknown> = {
+        model: input.model,
+        prompt: input.prompt,
+        resolution: input.resolution,
+        aspect_ratio: input.aspectRatio,
+        generate_audio: input.generateAudio,
+    };
+    if (!input.durationAuto) {
+        body.seconds = String(input.durationSeconds);
+        body.duration = input.durationSeconds;
+    }
+    if (input.imageUrls[0]) body.image = { url: input.imageUrls[0] };
+    if (input.videoUrls[0]) body.video = { url: input.videoUrls[0] };
+    return { path: "/videos", body };
+}
+
 
 /** Results for scripted (plugin) video models, which run their own create+poll in one shot at task creation. */
 const pluginVideoResults = new Map<string, VideoGenerationResult>();
@@ -76,7 +187,7 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
     if (script) return createPluginVideoTask(requestConfig, selectedModel, script, prompt, references, options);
     assertVideoConfig(requestConfig, requestConfig.model);
     if (requestConfig.apiFormat === "gemini") return createGeminiVideoTask(requestConfig, selectedModel, prompt, references, options);
-    return createOpenAIVideoTask(requestConfig, selectedModel, prompt, references, options);
+    return createVendorVideoTask(requestConfig, selectedModel, prompt, references, options);
 }
 
 export async function pollVideoGenerationTask(config: AiConfig, task: VideoGenerationTask, options?: RequestOptions): Promise<VideoGenerationTaskState> {
@@ -106,7 +217,7 @@ async function createPluginVideoTask(config: AiConfig, model: string, script: st
             videos,
             audios,
             params: {
-                seconds: normalizeVideoSeconds(config.videoSeconds),
+                seconds: normalizeVideoSecondsForModel(config.videoSeconds, model),
                 size: normalizeVideoSize(config.size, config.vquality),
                 resolution: normalizeVideoResolution(config.vquality),
                 ratio: videoAspectRatio(config.size),
@@ -142,51 +253,60 @@ export async function storeGeneratedVideo(result: VideoGenerationResult): Promis
     throw new Error(apiText("noPlayableVideo"));
 }
 
-async function createOpenAIVideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], options?: VideoMediaOptions): Promise<VideoGenerationTask> {
-    const prepared = await prepareImageRequestDataUrls(references, options);
-    const images = prepared.map((image, index) => dataUrlToFile({
-        id: `reference-${index}`,
-        name: `reference-${index + 1}.${image.mimeType.includes("jpeg") ? "jpg" : image.mimeType.includes("webp") ? "webp" : "png"}`,
-        type: image.mimeType,
-        dataUrl: image.dataUrl,
-    }));
-    const videos = await Promise.all((options?.videos || []).map((video) => referenceMediaToFile(video, "ref.mp4", "invalidReferenceVideo", options)));
-    const audios = await Promise.all((options?.audios || []).map((audio) => referenceMediaToFile(audio, "ref.mp3", "invalidReferenceAudio", options)));
-    const mode = resolveVideoMode(config.videoMode, images.length);
-    const ratio = inferVideoRatio(config.size || "16:9");
-    const body = new FormData();
-    body.append("model", modelOptionName(model));
-    body.append("prompt", prompt);
-    body.append("seconds", normalizeVideoSeconds(config.videoSeconds));
-    body.append("size", normalizeVideoSize(config.size, config.vquality) || "1280x720");
-    if (ratio && ratio !== "auto") {
-        body.append("ratio", ratio);
-    }
-    body.append("resolution_name", normalizeVideoResolution(config.vquality));
-    body.append("generate_audio", String(boolConfig(config.videoGenerateAudio, true)));
-    body.append("watermark", String(boolConfig(config.videoWatermark, false)));
-    body.append("mode", mode);
-    if (mode === "frames") {
-        if (images[0]) {
-            body.append("first_frame", images[0], "first.png");
-            body.append("images", images[0], "first.png");
-        }
-        if (images[1]) {
-            body.append("last_frame", images[1], "last.png");
-            body.append("images", images[1], "last.png");
-        }
-    } else {
-        images.forEach((file, idx) => {
-            body.append("image[]", file, `ref_${idx + 1}.png`);
-            body.append("images", file, `ref_${idx + 1}.png`);
-        });
-    }
-    videos.forEach((file) => body.append("video[]", file));
-    audios.forEach((file) => body.append("audio[]", file));
+async function createVendorVideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], options?: VideoMediaOptions): Promise<VideoGenerationTask> {
+    const profile = getVideoModelProfile(modelOptionName(model));
+    const provider = profile.provider;
+    const preparedImages = await prepareImageRequestDataUrls(references, options);
+    const imageUrls = await Promise.all(preparedImages.map((image) => (
+        image.dataUrl.startsWith("data:") ? uploadVideoReferenceAsset("image", image.dataUrl) : image.dataUrl
+    )));
+    const acceptsVideo = provider === "grok" || provider === "seedance_video" || provider === "video_tasks" || provider === "openai_video";
+    const acceptsAudio = provider === "seedance_video" || provider === "video_tasks" || provider === "openai_video";
+    const videoUrls = acceptsVideo
+        ? await Promise.all((options?.videos || []).map(async (video) => uploadVideoReferenceAsset("video", await readFileAsDataUrl(await referenceMediaToFile(video, "ref.mp4", "invalidReferenceVideo", options)))))
+        : [];
+    const audioUrls = acceptsAudio
+        ? await Promise.all((options?.audios || []).map(async (audio) => uploadVideoReferenceAsset("audio", await readFileAsDataUrl(await referenceMediaToFile(audio, "ref.mp3", "invalidReferenceAudio", options)))))
+        : [];
+    const request = buildVideoProviderRequest(provider, {
+        model: modelOptionName(model),
+        prompt,
+        durationSeconds: Number(clampVideoSecondsForProfile(config.videoSeconds, profile)) || profile.defaultDuration,
+        durationAuto: config.videoDurationAuto === true,
+        resolution: normalizeVideoResolution(config.vquality),
+        aspectRatio: videoAspectRatio(config.size),
+        generateAudio: boolConfig(config.videoGenerateAudio, true),
+        imageUrls,
+        videoUrls,
+        audioUrls,
+        imageMode: resolveVideoMode(config.videoMode, imageUrls.length),
+    });
+    return createJsonVideoTask(config, request.path, request.body, model, options);
+}
+
+async function uploadVideoReferenceAsset(kind: "image" | "video" | "audio", dataUrl: string) {
+    const session = useUserStore.getState().session;
+    if (!session) throw new Error("登录会话已失效，请重新登录");
+    const result = await createRequest<{ url: string }>("/video-studio/reference-assets", {
+        method: "POST",
+        accessToken: session.accessToken,
+        body: JSON.stringify({ kind, data_url: dataUrl }),
+    });
+    const url = String(result?.url || "").trim();
+    if (!url) throw new Error("参考素材上传后没有返回可用地址");
+    return url;
+}
+
+async function createJsonVideoTask(config: AiConfig, path: string, body: Record<string, unknown>, model: string, options?: RequestOptions): Promise<VideoGenerationTask> {
     try {
-        const created = unwrapVideoResponse((await axios.post<ApiVideoResponse>(aiApiUrl(config, "/videos"), body, { headers: aiHeaders(config), signal: options?.signal, timeout: 60_000 })).data);
-        if (!created.id) throw new Error(apiText("noVideoTaskId"));
-        return { id: created.id, provider: "openai", model };
+        const created = unwrapVideoResponse((await axios.post<ApiVideoResponse>(aiApiUrl(config, path), body, {
+            headers: aiHeaders(config, "application/json"),
+            signal: options?.signal,
+            timeout: 60_000,
+        })).data);
+        const taskId = String(created.id || created.request_id || created.task_id || "").trim();
+        if (!taskId) throw new Error(apiText("noVideoTaskId"));
+        return { id: taskId, provider: "openai", model };
     } catch (error) {
         throw new Error(readAxiosError(error, apiText("videoTaskCreateFailed")));
     }
@@ -222,15 +342,18 @@ async function createGeminiVideoTask(config: AiConfig, model: string, prompt: st
     if (videos[0]) instance.video = await fileToGeminiInline(videos[0]);
     if (audios[0]) instance.audio = await fileToGeminiInline(audios[0]);
     try {
+        const parameters: Record<string, unknown> = {
+            aspectRatio: videoAspectRatio(config.size),
+            resolution: normalizeVideoResolution(config.vquality),
+            generateAudio: boolConfig(config.videoGenerateAudio, true),
+            addWatermark: boolConfig(config.videoWatermark, false),
+        };
+        if (config.videoDurationAuto !== true) {
+            parameters.durationSeconds = Number(normalizeVideoSecondsForModel(config.videoSeconds, model)) || getVideoModelProfile(modelOptionName(model)).defaultDuration;
+        }
         const created = unwrapEnvelope((await axios.post<ApiEnvelope<GeminiVideoOperation>>(geminiVideoUrl(config, model, "predictLongRunning"), {
             instances: [instance],
-            parameters: {
-                aspectRatio: videoAspectRatio(config.size),
-                durationSeconds: Number(normalizeVideoSeconds(config.videoSeconds)) || 8,
-                resolution: normalizeVideoResolution(config.vquality),
-                generateAudio: boolConfig(config.videoGenerateAudio, true),
-                addWatermark: boolConfig(config.videoWatermark, false),
-            },
+            parameters,
         }, { headers: geminiVideoHeaders(config), signal: options?.signal, timeout: 60_000 })).data, apiText("noVideoTask"));
         if (!created.name) throw new Error(apiText("noVideoTaskId"));
         return { id: created.name, provider: "gemini", model };
@@ -316,8 +439,8 @@ async function referenceMediaToFile(item: { name: string; type?: string; url?: s
     return new File([blob], item.name || fallbackName, { type: item.type || blob.type || "application/octet-stream" });
 }
 
-function normalizeVideoSeconds(value: string) {
-    return clampVideoSeconds(value);
+function normalizeVideoSecondsForModel(value: string, model: string) {
+    return clampVideoSecondsForProfile(value, getVideoModelProfile(modelOptionName(model)));
 }
 
 function resolveVideoMode(mode: string | undefined, imageCount: number) {

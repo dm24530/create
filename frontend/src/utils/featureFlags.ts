@@ -107,7 +107,7 @@ export const FeatureFlags = {
   canvasAdminOnly: defineFlag({
     key: 'canvas_admin_only',
     mode: 'opt-out',
-    label: 'Infinite Canvas Admin Only',
+    label: 'Create Admin Only',
   }),
   subscription: defineFlag({
     key: 'subscription_enabled',

@@ -11,7 +11,7 @@
       </RouterLink>
       <RouterLink v-if="showCanvas" to="/canvas" class="studio-nav__item" active-class="studio-nav__item--active" data-tour="nav-canvas">
         <Icon name="frame" size="sm" />
-        <span>无限画布</span>
+        <span>Create</span>
       </RouterLink>
       <RouterLink to="/image-inspiration" class="studio-nav__item" active-class="studio-nav__item--active" data-tour="nav-image-inspiration">
         <Icon name="lightbulb" size="sm" />

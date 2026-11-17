@@ -7,7 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// CanvasAdminOnlyGuard keeps the infinite canvas in administrator-only preview
+// CanvasAdminOnlyGuard keeps the Create in administrator-only preview
 // until the operator explicitly opens it. It must run after JWT auth.
 func CanvasAdminOnlyGuard(settingService *service.SettingService) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -19,7 +19,7 @@ func CanvasAdminOnlyGuard(settingService *service.SettingService) gin.HandlerFun
 			c.Next()
 			return
 		}
-		response.Forbidden(c, "Infinite Canvas is currently available to administrators only.")
+		response.Forbidden(c, "Create is currently available to administrators only.")
 		c.Abort()
 	}
 }

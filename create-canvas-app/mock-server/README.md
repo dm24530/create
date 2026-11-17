@@ -1,6 +1,6 @@
 # Create Mock Server
 
-Dependency-free local API used to test the standalone Create Canvas app without
+Dependency-free local API used to test the standalone Create app without
 PostgreSQL, Redis, S3, or a deployed backend.
 
 ```powershell
