@@ -27,7 +27,15 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
+          set +e
           node create-canvas-app/scripts/sync-version-from-web.mjs 2>&1 | tee create-canvas-version-sync.log
+          status=${PIPESTATUS[0]}
+          set -e
+          if [ "$status" -ne 0 ]; then
+            message=$(tr '\n' ' ' < create-canvas-version-sync.log | cut -c1-3500)
+            echo "::error title=Version sync failed::$message"
+            exit "$status"
+          fi
 
       - name: Upload version sync diagnostics
         if: failure()
