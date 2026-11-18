@@ -21,15 +21,24 @@ application. The upstream MIT license is retained at
 - Login uses the existing Create `/api/v1/auth/login` and refresh flow.
 - A managed Create API key is reused or created automatically.
 - Image and video models are loaded from the Create `/v1/models` gateway.
-- Canvas projects and assets use the existing `/api/v1/canvas` API.
+- Canvas projects and generated assets remain local; the desktop runtime disables cloud canvas sync.
 - Browser storage remains IndexedDB/localForage for this milestone.
 - Electron loads bundled local assets from `app://create/`.
 - The cloud Web application is maintained in a separate repository.
 
 ## One-Click Local Test
 
+From the repository root:
+
 ```powershell
 cd C:\项目\code\create-app-split
+npm start
+```
+
+`npm start` delegates to the active Electron shell in `desktop/`. For the
+mock API + Vite development environment, use:
+
+```powershell
 .\start-local.ps1
 ```
 
@@ -73,6 +82,15 @@ cd ../desktop
 npm install --legacy-peer-deps
 npm start
 ```
+
+For a network-independent local unpacked package, run from the repository root:
+
+```powershell
+npm run pack:local
+```
+
+This uses the Electron binary already installed in `desktop/node_modules` and
+writes the unpacked Windows/macOS app to `desktop/release/`.
 
 `build:desktop` reads `web/.env.desktop` and points API traffic to
 `https://create.superai.sbs`. The desktop app uses a separate `app://create`

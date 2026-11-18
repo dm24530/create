@@ -6,7 +6,7 @@ const { _electron: electron } = require("playwright-core");
   try {
     const page = await app.firstWindow();
     await page.waitForLoadState("domcontentloaded");
-    await page.getByText("登录 Create").waitFor({ timeout: 15000 });
+    await page.getByText("欢迎回来").waitFor({ timeout: 15000 });
     console.log("PACKAGED_SMOKE_OK");
   } finally {
     await app.close();

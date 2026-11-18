@@ -12,7 +12,8 @@ const { _electron: electron } = require("playwright-core");
     env: {
       ...process.env,
       CREATE_CANVAS_SMOKE: "1",
-      CREATE_CANVAS_DEV_URL: "http://127.0.0.1:3001",
+      CREATE_CANVAS_DEV_URL: process.env.CREATE_CANVAS_DEV_URL || "http://127.0.0.1:3001",
+      CREATE_CANVAS_WEB_DIST: path.resolve(__dirname, "..", "..", "web", "dist-desktop"),
       CREATE_CANVAS_USER_DATA_PATH: userData,
     },
   });
@@ -24,13 +25,15 @@ const { _electron: electron } = require("playwright-core");
     await page.locator("input[type=password]").click();
     await page.keyboard.type("test");
     await page.locator("button[type=submit]").click();
-    await page.waitForFunction(() => document.body.innerText.includes("开始使用"), null, { timeout: 30000 });
+    await page.waitForFunction(() => location.pathname === "/image" && document.body.innerText.includes("生图工作台"), null, { timeout: 30000 });
 
-    await page.getByRole("button", { name: "API 密钥" }).dispatchEvent("click");
-    await page.waitForFunction(() => document.body.innerText.includes("Mock Alternate"), null, { timeout: 15000 });
-    const alternateCard = page.locator("article").filter({ hasText: "Mock Alternate" });
-    await alternateCard.getByRole("button", { name: /使\s*用/ }).dispatchEvent("click");
-    await page.waitForFunction(() => document.body.innerText.includes("当前使用"), null, { timeout: 15000 });
+    const keySelect = page.locator('select[aria-label="API Key"]');
+    await keySelect.selectOption({ label: "Mock Alternate" });
+    await page.waitForFunction(() => document.body.innerText.includes("已切换到 Mock Alternate"), null, { timeout: 15000 });
+    if (await keySelect.inputValue() !== "2") throw new Error("API key selection did not switch to Mock Alternate");
+
+    await page.getByRole("button", { name: "API 密钥", exact: true }).click();
+    await page.waitForFunction(() => document.body.innerText.includes("Mock Creation") && document.body.innerText.includes("Mock Alternate"), null, { timeout: 15000 });
     await page.keyboard.press("Escape");
 
     await page.getByRole("button", { name: "使用记录" }).dispatchEvent("click");

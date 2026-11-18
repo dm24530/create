@@ -365,7 +365,7 @@ export default {
         },
     },
     navigation: {
-        canvas: "Create",
+        canvas: "Infinite Canvas",
         image: "Image Studio",
         video: "Video Workbench",
         prompts: "Prompt Library",

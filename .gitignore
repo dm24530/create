@@ -13,3 +13,4 @@ desktop/test-results/
 legacy/desktop/node_modules/
 legacy/desktop/release/
 legacy/local-client/dist/
+.local-run-audit/

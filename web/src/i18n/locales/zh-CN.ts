@@ -365,7 +365,7 @@ export default {
         },
     },
     navigation: {
-        canvas: "Create",
+        canvas: "无限画布",
         image: "生图工作台",
         video: "视频工作台",
         prompts: "提示词库",
