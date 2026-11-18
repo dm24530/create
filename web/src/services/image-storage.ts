@@ -345,7 +345,8 @@ export async function prepareImageRequestDataUrls(images: readonly ImageReferenc
         });
         const total = prepared.reduce((sum, image) => sum + image.dataUrl.length, 0);
         smallestTotal = Math.min(smallestTotal, total);
-        if (total <= CANVAS_IMAGE_REQUEST_BUDGET_BYTES) return prepared;
+        const withinPerImageTargets = prepared.every((image) => image.bytes <= policy.targetBytes);
+        if (total <= CANVAS_IMAGE_REQUEST_BUDGET_BYTES && withinPerImageTargets) return prepared;
     }
 
     const limit = `${Math.round(CANVAS_IMAGE_REQUEST_BUDGET_BYTES / 1024 / 1024)} MB`;

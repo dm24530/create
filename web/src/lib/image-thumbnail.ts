@@ -1,6 +1,6 @@
 export const CANVAS_IMAGE_PREVIEW_MAX_EDGE = 768;
 export const CANVAS_IMAGE_REQUEST_BUDGET_BYTES = 4 * 1024 * 1024;
-export const CANVAS_IMAGE_REQUEST_POLICY_VERSION = "v4";
+export const CANVAS_IMAGE_REQUEST_POLICY_VERSION = "v5";
 
 export type ImageRequestPolicy = {
     maxEdge: number;
@@ -9,11 +9,11 @@ export type ImageRequestPolicy = {
 };
 
 export const CANVAS_IMAGE_REQUEST_POLICIES: readonly ImageRequestPolicy[] = [
-    { maxEdge: 2048, quality: 0.84, targetBytes: 700 * 1024 },
-    { maxEdge: 1536, quality: 0.8, targetBytes: 420 * 1024 },
-    { maxEdge: 1280, quality: 0.78, targetBytes: 300 * 1024 },
-    { maxEdge: 1024, quality: 0.74, targetBytes: 200 * 1024 },
-    { maxEdge: 768, quality: 0.7, targetBytes: 140 * 1024 },
+    { maxEdge: 1600, quality: 0.78, targetBytes: 480 * 1024 },
+    { maxEdge: 1400, quality: 0.74, targetBytes: 360 * 1024 },
+    { maxEdge: 1200, quality: 0.72, targetBytes: 280 * 1024 },
+    { maxEdge: 1024, quality: 0.7, targetBytes: 210 * 1024 },
+    { maxEdge: 800, quality: 0.68, targetBytes: 150 * 1024 },
 ];
 
 type ImageSourceChoice = {
@@ -71,30 +71,65 @@ export async function createImageRequestBlob(blob: Blob, policy: ImageRequestPol
     const bitmap = await createImageBitmap(blob);
     const originalWidth = bitmap.width;
     const originalHeight = bitmap.height;
-    const { width, height } = getThumbnailDimensions(bitmap.width, bitmap.height, policy.maxEdge);
-    const needsResize = width !== bitmap.width || height !== bitmap.height;
-    if (!needsResize && blob.size <= policy.targetBytes) {
+    const firstDimensions = getThumbnailDimensions(bitmap.width, bitmap.height, policy.maxEdge);
+    if (
+        firstDimensions.width === bitmap.width &&
+        firstDimensions.height === bitmap.height &&
+        blob.size <= policy.targetBytes
+    ) {
         bitmap.close();
-        return { blob, width, height, reencoded: false };
+        return {
+            blob,
+            width: firstDimensions.width,
+            height: firstDimensions.height,
+            reencoded: false,
+        };
     }
 
-    const canvas = document.createElement("canvas");
-    canvas.width = width;
-    canvas.height = height;
-    const context = canvas.getContext("2d");
-    if (!context) {
+    const attempts = [
+        { scale: 1, quality: policy.quality },
+        { scale: 1, quality: Math.max(0.62, policy.quality - 0.08) },
+        { scale: 0.88, quality: Math.max(0.64, policy.quality - 0.04) },
+        { scale: 0.76, quality: Math.max(0.62, policy.quality - 0.08) },
+        { scale: 0.66, quality: Math.max(0.6, policy.quality - 0.1) },
+        { scale: 0.58, quality: Math.max(0.58, policy.quality - 0.12) },
+        { scale: 0.5, quality: Math.max(0.56, policy.quality - 0.16) },
+    ];
+
+    let best: { blob: Blob; width: number; height: number } | null = null;
+    try {
+        for (const attempt of attempts) {
+            const maxEdge = Math.max(1, Math.round(policy.maxEdge * attempt.scale));
+            const { width, height } = getThumbnailDimensions(bitmap.width, bitmap.height, maxEdge);
+            const canvas = document.createElement("canvas");
+            canvas.width = width;
+            canvas.height = height;
+            const context = canvas.getContext("2d");
+            if (!context) break;
+            context.drawImage(bitmap, 0, 0, width, height);
+            const encoded = await new Promise<Blob | undefined>((resolve) => {
+                canvas.toBlob((result) => resolve(result || undefined), "image/webp", attempt.quality);
+            });
+            if (!encoded) continue;
+            if (!best || encoded.size < best.blob.size) best = { blob: encoded, width, height };
+            if (encoded.size <= policy.targetBytes) break;
+        }
+    } finally {
         bitmap.close();
-        return { blob, width: originalWidth, height: originalHeight, reencoded: false };
     }
-    context.drawImage(bitmap, 0, 0, width, height);
-    bitmap.close();
-    const encoded = await new Promise<Blob | undefined>((resolve) => canvas.toBlob((result) => resolve(result || undefined), "image/webp", policy.quality));
-    if (!encoded) return { blob, width: originalWidth, height: originalHeight, reencoded: false };
-    const selected = encoded.size < blob.size ? encoded : blob;
+
+    if (!best || best.blob.size >= blob.size) {
+        return {
+            blob,
+            width: originalWidth,
+            height: originalHeight,
+            reencoded: false,
+        };
+    }
     return {
-        blob: selected,
-        width: selected === encoded ? width : originalWidth,
-        height: selected === encoded ? height : originalHeight,
-        reencoded: selected === encoded,
+        blob: best.blob,
+        width: best.width,
+        height: best.height,
+        reencoded: true,
     };
 }

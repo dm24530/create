@@ -410,29 +410,49 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Download Windows packages
+      - name: Download Windows x64 package
         uses: actions/download-artifact@v4
         with:
-          pattern: create-canvas-windows-*
-          path: artifacts/windows
-          merge-multiple: true
+          name: create-canvas-windows-x64
+          path: artifacts/windows-x64
 
-      - name: Download macOS packages
+      - name: Download Windows ARM64 package
         uses: actions/download-artifact@v4
         with:
-          pattern: create-canvas-macos-*
-          path: artifacts/macos
-          merge-multiple: true
+          name: create-canvas-windows-arm64
+          path: artifacts/windows-arm64
+
+      - name: Download macOS arm64 package
+        uses: actions/download-artifact@v4
+        with:
+          name: create-canvas-macos-arm64
+          path: artifacts/macos-arm64
+
+      - name: Download macOS x64 package
+        uses: actions/download-artifact@v4
+        with:
+          name: create-canvas-macos-x64
+          path: artifacts/macos-x64
 
       - name: Collect installers and checksums
         shell: bash
         run: |
           mkdir -p release-assets
-          find artifacts -type f \( -name "*.exe" -o -name "*.dmg" -o -name "*.zip" \) \
+          find artifacts -type f \( -name "*.exe" -o -name "*.dmg" -o -name "*.zip" -o -name "*.blockmap" \) \
             ! -name "*uninstaller*" -exec cp -v {} release-assets/ \;
           cd release-assets
           sha256sum * > SHA256SUMS.txt
           ls -lh
+
+      - name: Prepare update manifests
+        env:
+          RELEASE_BASE_URL: https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}
+          UPDATE_SITE_DIR: update-site
+          WINDOWS_X64_DIR: artifacts/windows-x64
+          WINDOWS_ARM64_DIR: artifacts/windows-arm64
+          MACOS_ARM64_DIR: artifacts/macos-arm64
+          MACOS_X64_DIR: artifacts/macos-x64
+        run: node scripts/prepare-update-site.mjs
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
@@ -461,3 +481,13 @@ jobs:
             ```bash
             xattr -dr com.apple.quarantine /Applications/Create.app
             ```
+
+      - name: Publish update manifests
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: gh-pages
+          publish_dir: update-site
+          force_orphan: false
+          user_name: github-actions[bot]
+          user_email: 41898282+github-actions[bot]@users.noreply.github.com
