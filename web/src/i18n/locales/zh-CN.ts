@@ -416,6 +416,8 @@ export default {
         noReleaseNotes: "本次更新暂无详细说明。",
         updateNow: "立即更新",
         later: "稍后",
+        skipVersion: "跳过此版本",
+        skippedVersion: "已跳过此版本，点击左上角版本号仍可随时更新。",
         downloading: "正在下载更新",
         backgroundDownload: "后台下载",
         downloadCompleteTitle: "更新已下载",

@@ -416,6 +416,8 @@ export default {
         noReleaseNotes: "No detailed release notes were provided.",
         updateNow: "Update now",
         later: "Later",
+        skipVersion: "Skip this version",
+        skippedVersion: "This version was skipped. Click the version number anytime to update.",
         downloading: "Downloading update",
         backgroundDownload: "Download in background",
         downloadCompleteTitle: "Update downloaded",

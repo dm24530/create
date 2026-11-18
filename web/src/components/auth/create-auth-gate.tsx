@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { Alert, Spin } from "antd";
 
 import { CreateLoginForm } from "@/components/auth/create-login-form";
+import { VersionReleaseModal } from "@/components/layout/version-release-modal";
 import { restoreCreateSession, type CreateSession } from "@/services/create-auth";
 import { useUserStore } from "@/stores/use-user-store";
 
@@ -52,11 +53,14 @@ export function CreateAuthGate({ children, onSessionReady }: CreateAuthGateProps
 
     if (!session) {
         return (
-            <CreateLoginForm
-                onAuthenticated={(next) => {
-                    void applySession(next);
-                }}
-            />
+            <>
+                <CreateLoginForm
+                    onAuthenticated={(next) => {
+                        void applySession(next);
+                    }}
+                />
+                <VersionReleaseModal className="fixed left-4 top-4 z-50 inline-flex h-8 shrink-0 items-center gap-1 rounded-md border border-white/10 bg-black/30 px-2 text-xs font-medium text-white/70 backdrop-blur transition hover:bg-black/50 hover:text-white" />
+            </>
         );
     }
 

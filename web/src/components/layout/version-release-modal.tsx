@@ -39,8 +39,10 @@ export function VersionReleaseModal({ className, style }: VersionReleaseModalPro
         error,
         checking,
         hasNewVersion,
+        skippedVersion,
         downloadUpdate,
         installUpdate,
+        skipVersion,
     } = useVersionCheck();
     const [actionError, setActionError] = useState("");
 
@@ -96,6 +98,11 @@ export function VersionReleaseModal({ className, style }: VersionReleaseModalPro
                     unavailable ? (
                         <Button key="close" onClick={() => setOpen(false)}>
                             {t("common.close")}
+                        </Button>
+                    ) : null,
+                    updateAvailable ? (
+                        <Button key="skip" onClick={() => skipVersion()}>
+                            {t("version.skipVersion")}
                         </Button>
                     ) : null,
                     updateAvailable ? (
@@ -179,6 +186,9 @@ export function VersionReleaseModal({ className, style }: VersionReleaseModalPro
                     ) : null}
 
                     {status === "current" ? <Alert type="success" showIcon message={t("version.alreadyLatest")} /> : null}
+                    {updateAvailable && skippedVersion === latestVersion ? (
+                        <Alert type="info" showIcon message={t("version.skippedVersion")} />
+                    ) : null}
                     {status === "unsupported" ? <Alert type="info" showIcon message={t("version.desktopOnly")} /> : null}
                     {status === "error" || actionError || error ? (
                         <Alert type="error" showIcon message={t("version.downloadFailed")} description={actionError || error || t("version.updateFailed")} />

@@ -106,6 +106,16 @@ cors:
   allow_credentials: true
 ```
 
+## GitHub Release and Signing
+
+User-facing installers are produced by `.github/workflows/create-canvas-app.yml`.
+Pushing a `create-canvas-v*` tag creates Windows and macOS installers and a
+GitHub Release. Normal users download the `.exe` or `.dmg` directly.
+
+Tagged macOS releases require Developer ID signing and notarization credentials.
+See [`docs/APP_RELEASING.md`](docs/APP_RELEASING.md) for the certificate,
+App Store Connect API key, GitHub Secrets, and release procedure.
+
 ## Desktop Tests
 
 ```powershell

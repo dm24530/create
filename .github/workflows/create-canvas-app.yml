@@ -5,8 +5,12 @@ on:
   push:
     tags:
       - "create-canvas-v*"
+
 permissions:
   contents: read
+
+env:
+  FORCE_COLOR: "1"
 
 jobs:
   web-build:
@@ -143,9 +147,6 @@ jobs:
           set -o pipefail
           [ -n "${CSC_LINK:-}" ] || unset CSC_LINK
           [ -n "${CSC_KEY_PASSWORD:-}" ] || unset CSC_KEY_PASSWORD
-          [ -n "${APPLE_ID:-}" ] || unset APPLE_ID
-          [ -n "${APPLE_APP_SPECIFIC_PASSWORD:-}" ] || unset APPLE_APP_SPECIFIC_PASSWORD
-          [ -n "${APPLE_TEAM_ID:-}" ] || unset APPLE_TEAM_ID
           set +e
           npm run dist:win:${{ matrix.arch }} 2>&1 | tee desktop-package.log
           status=${PIPESTATUS[0]}
@@ -162,6 +163,33 @@ jobs:
             exit "$status"
           fi
 
+      - name: Verify Windows signature and checksums
+        shell: pwsh
+        env:
+          HAS_WIN_CERT: ${{ secrets.WIN_CSC_LINK != '' }}
+        run: |
+          $releaseDir = "desktop/release/win-${{ matrix.arch }}"
+          $installers = Get-ChildItem -Path $releaseDir -Filter "*.exe" -File |
+            Where-Object { $_.Name -notmatch "uninstaller|elevate" }
+          if ($installers.Count -lt 1) { throw "Windows installer was not produced" }
+
+          if ($env:HAS_WIN_CERT -eq "true") {
+            foreach ($installer in $installers) {
+              $signature = Get-AuthenticodeSignature -LiteralPath $installer.FullName
+              if ($signature.Status -ne "Valid") {
+                throw "Windows installer signature is invalid: $($installer.Name) / $($signature.Status)"
+              }
+            }
+          } else {
+            Write-Warning "WIN_CSC_LINK is not configured; Windows artifacts are unsigned."
+          }
+
+          $checksumLines = foreach ($file in Get-ChildItem -Path $releaseDir -File | Where-Object { $_.Extension -in ".exe", ".blockmap" -or $_.Name -like "latest*.yml" }) {
+            $hash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash
+            "$hash  $($file.Name)"
+          }
+          $checksumLines | Set-Content -LiteralPath (Join-Path $releaseDir "SHA256SUMS.txt") -Encoding ascii
+
       - name: Upload Windows ${{ matrix.arch }} package
         uses: actions/upload-artifact@v4
         with:
@@ -169,7 +197,8 @@ jobs:
           path: |
             desktop/release/win-${{ matrix.arch }}/*.exe
             desktop/release/win-${{ matrix.arch }}/*.blockmap
-            desktop/release/win-${{ matrix.arch }}/*.yml
+            desktop/release/win-${{ matrix.arch }}/latest*.yml
+            desktop/release/win-${{ matrix.arch }}/SHA256SUMS.txt
           if-no-files-found: error
 
       - name: Upload Windows ${{ matrix.arch }} diagnostics
@@ -203,6 +232,54 @@ jobs:
       - name: Sync tagged app version
         if: startsWith(github.ref, 'refs/tags/create-canvas-v')
         run: node scripts/sync-version-from-web.mjs
+
+      - name: Check macOS signing credentials
+        if: startsWith(github.ref, 'refs/tags/create-canvas-v')
+        shell: bash
+        env:
+          CSC_LINK_VALUE: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD_VALUE: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID_VALUE: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD_VALUE: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID_VALUE: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_KEY_BASE64_VALUE: ${{ secrets.APPLE_API_KEY_BASE64 }}
+          APPLE_API_KEY_ID_VALUE: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_VALUE: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          signing_ready=1
+          if [ -z "${CSC_LINK_VALUE:-}" ] || [ -z "${CSC_KEY_PASSWORD_VALUE:-}" ]; then
+            signing_ready=0
+          fi
+
+          apple_id_ready=1
+          if [ -z "${APPLE_ID_VALUE:-}" ] || [ -z "${APPLE_APP_SPECIFIC_PASSWORD_VALUE:-}" ] || [ -z "${APPLE_TEAM_ID_VALUE:-}" ]; then
+            apple_id_ready=0
+          fi
+
+          api_key_ready=1
+          if [ -z "${APPLE_API_KEY_BASE64_VALUE:-}" ] || [ -z "${APPLE_API_KEY_ID_VALUE:-}" ] || [ -z "${APPLE_API_ISSUER_VALUE:-}" ]; then
+            api_key_ready=0
+          fi
+
+          if [ "$signing_ready" -ne 1 ]; then
+            echo "::warning title=Unsigned macOS build::Developer ID credentials are not configured; this release will use ad-hoc signing and users must approve it in macOS Security settings."
+          elif [ "$apple_id_ready" -ne 1 ] && [ "$api_key_ready" -ne 1 ]; then
+            echo "::warning title=Unnotarized macOS build::Developer ID signing is configured but notarization credentials are missing; Gatekeeper may still block the app."
+          else
+            echo "macOS Developer ID signing and notarization credentials are configured."
+          fi
+
+      - name: Prepare App Store Connect API key
+        if: env.APPLE_API_KEY_BASE64 != ''
+        shell: bash
+        env:
+          APPLE_API_KEY_BASE64: ${{ secrets.APPLE_API_KEY_BASE64 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+        run: |
+          key_path="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
+          printf '%s' "$APPLE_API_KEY_BASE64" | base64 -D > "$key_path"
+          chmod 600 "$key_path"
+          echo "APPLE_API_KEY=$key_path" >> "$GITHUB_ENV"
 
       - name: Restore Desktop Web assets
         uses: actions/download-artifact@v4
@@ -244,6 +321,8 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           CSC_IDENTITY_AUTO_DISCOVERY: ${{ secrets.CSC_LINK != '' && 'true' || 'false' }}
         run: |
           set -o pipefail
@@ -252,8 +331,13 @@ jobs:
           [ -n "${APPLE_ID:-}" ] || unset APPLE_ID
           [ -n "${APPLE_APP_SPECIFIC_PASSWORD:-}" ] || unset APPLE_APP_SPECIFIC_PASSWORD
           [ -n "${APPLE_TEAM_ID:-}" ] || unset APPLE_TEAM_ID
+          if [ -n "${CSC_LINK:-}" ]; then
+            package_script="dist:mac:${{ matrix.arch }}"
+          else
+            package_script="dist:mac:${{ matrix.arch }}:unsigned"
+          fi
           set +e
-          npm run dist:mac:${{ matrix.arch }} 2>&1 | tee desktop-package.log
+          npm run "$package_script" 2>&1 | tee desktop-package.log
           status=${PIPESTATUS[0]}
           set -e
           if [ "$status" -ne 0 ]; then
@@ -268,6 +352,36 @@ jobs:
             exit "$status"
           fi
 
+      - name: Verify macOS signature and notarization
+        if: env.HAS_MAC_CERT == 'true' && startsWith(github.ref, 'refs/tags/create-canvas-v')
+        shell: bash
+        env:
+          HAS_MAC_CERT: ${{ secrets.CSC_LINK != '' }}
+        run: |
+          app_path=$(find "release/mac-${{ matrix.arch }}" -type d -name "*.app" | head -n 1)
+          if [ -z "$app_path" ]; then
+            echo "::error title=macOS app missing::No .app bundle was produced"
+            exit 1
+          fi
+          codesign --verify --deep --strict --verbose=2 "$app_path"
+          xcrun stapler validate "$app_path"
+          spctl --assess --type execute --verbose=4 "$app_path"
+
+      - name: Report unsigned macOS build
+        if: env.HAS_MAC_CERT != 'true'
+        shell: bash
+        env:
+          HAS_MAC_CERT: ${{ secrets.CSC_LINK != '' }}
+        run: |
+          echo "::warning title=Unsigned macOS installer::This DMG is ad-hoc signed but not notarized. Users may need System Settings > Privacy & Security > Open Anyway."
+
+      - name: Generate macOS checksums
+        working-directory: desktop
+        shell: bash
+        run: |
+          shasum -a 256 release/mac-${{ matrix.arch }}/*.dmg release/mac-${{ matrix.arch }}/*.zip \
+            > release/mac-${{ matrix.arch }}/SHA256SUMS.txt
+
       - name: Upload macOS ${{ matrix.arch }} package
         uses: actions/upload-artifact@v4
         with:
@@ -275,7 +389,8 @@ jobs:
           path: |
             desktop/release/mac-${{ matrix.arch }}/*.dmg
             desktop/release/mac-${{ matrix.arch }}/*.zip
-            desktop/release/mac-${{ matrix.arch }}/*.yml
+            desktop/release/mac-${{ matrix.arch }}/latest*.yml
+            desktop/release/mac-${{ matrix.arch }}/SHA256SUMS.txt
           if-no-files-found: error
 
       - name: Upload macOS ${{ matrix.arch }} diagnostics
@@ -285,3 +400,64 @@ jobs:
           name: create-canvas-macos-${{ matrix.arch }}-build-log
           path: desktop/*.log
           if-no-files-found: ignore
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/create-canvas-v')
+    needs:
+      - package-windows
+      - package-macos
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download Windows packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: create-canvas-windows-*
+          path: artifacts/windows
+          merge-multiple: true
+
+      - name: Download macOS packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: create-canvas-macos-*
+          path: artifacts/macos
+          merge-multiple: true
+
+      - name: Collect installers and checksums
+        shell: bash
+        run: |
+          mkdir -p release-assets
+          find artifacts -type f \( -name "*.exe" -o -name "*.dmg" -o -name "*.zip" \) \
+            ! -name "*uninstaller*" -exec cp -v {} release-assets/ \;
+          cd release-assets
+          sha256sum * > SHA256SUMS.txt
+          ls -lh
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-assets/*
+          fail_on_unmatched_files: true
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+          body: |
+            ## Create Desktop
+
+            Download the installer for your platform:
+
+            - Windows x64: `Create-Setup-*-win-x64.exe`
+            - Windows ARM64: `Create-Setup-*-win-arm64.exe`
+            - macOS Apple Silicon: `Create-*-mac-arm64.dmg`
+            - macOS Intel: `Create-*-mac-x64.dmg`
+
+            `SHA256SUMS.txt` contains integrity hashes for every published file.
+
+            Windows builds use code signing when `WIN_CSC_LINK` is configured.
+
+            If macOS Developer ID secrets are not configured, macOS installers use ad-hoc signing and are not notarized. On first launch, open System Settings > Privacy & Security > Open Anyway, or run:
+
+            ```bash
+            xattr -dr com.apple.quarantine /Applications/Create.app
+            ```

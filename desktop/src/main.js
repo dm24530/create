@@ -16,6 +16,7 @@ const { buildSavePath, classifyDownload } = require("./download-policy");
 const { createDefaultSettings, mergeSettings, validateSettings } = require("./settings-store");
 const { normalizeSaveKind, rootDirectoryForKind, saveDirectoryForKind } = require("./save-directory");
 const { createDesktopUpdateService, UPDATE_STATUS } = require("./update-service");
+const { createUpdatePreferences, shouldNotifyUpdate } = require("./update-preferences");
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -42,6 +43,7 @@ const CONTENT_TYPES = {
 let mainWindow = null;
 let settings = null;
 let desktopUpdater = null;
+let updatePreferences = null;
 const notifiedUpdateKeys = new Set();
 const smokeMode = process.env.CREATE_CANVAS_SMOKE === "1";
 
@@ -88,6 +90,11 @@ function settingsFilePath() {
 
 function defaultSettings() {
   return createDefaultSettings({ picturesPath: app.getPath("pictures"), downloadsPath: app.getPath("downloads") });
+}
+
+function updatePreferencesFilePath() {
+  if (process.env.CREATE_CANVAS_UPDATE_PREFERENCES_PATH) return path.resolve(process.env.CREATE_CANVAS_UPDATE_PREFERENCES_PATH);
+  return path.join(app.getPath("userData"), "update-preferences.json");
 }
 
 function loadSettings() {
@@ -357,7 +364,9 @@ function registerIpcHandlers() {
   ipcMain.handle("desktop:check-updates", async (event, metadataUrl) => {
     assertTrustedSender(event);
     if (!desktopUpdater) throw new Error("Update service is not ready");
-    return desktopUpdater.checkForUpdates(String(metadataUrl || ""));
+    const updateMetadataUrl = String(metadataUrl || "");
+    desktopUpdater.startPeriodicCheck(updateMetadataUrl);
+    return desktopUpdater.checkForUpdates(updateMetadataUrl);
   });
   ipcMain.handle("desktop:download-update", async (event) => {
     assertTrustedSender(event);
@@ -372,6 +381,22 @@ function registerIpcHandlers() {
   ipcMain.handle("desktop:get-update-state", (event) => {
     assertTrustedSender(event);
     return desktopUpdater?.getState() || null;
+  });
+  ipcMain.handle("desktop:get-skipped-update-version", (event) => {
+    assertTrustedSender(event);
+    return updatePreferences?.getSkippedVersion() || "";
+  });
+  ipcMain.handle("desktop:set-skipped-update-version", (event, version) => {
+    assertTrustedSender(event);
+    if (!updatePreferences) throw new Error("Update preferences are not ready");
+    updatePreferences.setSkippedVersion(String(version || ""));
+    return true;
+  });
+  ipcMain.handle("desktop:clear-skipped-update-version", (event) => {
+    assertTrustedSender(event);
+    if (!updatePreferences) throw new Error("Update preferences are not ready");
+    updatePreferences.clearSkippedVersion();
+    return true;
   });
   ipcMain.handle("desktop:open-external", async (event, url) => {
     assertTrustedSender(event);
@@ -435,15 +460,23 @@ if (!hasLock) {
 
   app.whenReady().then(async () => {
     settings = loadSettings();
+    updatePreferences = createUpdatePreferences(updatePreferencesFilePath());
     desktopUpdater = createDesktopUpdateService({
       app,
       autoUpdater,
       net,
       onStateChange: (state) => {
         mainWindow?.webContents.send("desktop:update-event", state);
-        const notify = state.status === UPDATE_STATUS.AVAILABLE || state.status === UPDATE_STATUS.DOWNLOADED;
         const notifyKey = `${state.status}:${state.latestVersion}`;
-        if (!notify || notifiedUpdateKeys.has(notifyKey) || mainWindow?.isFocused() || !Notification.isSupported()) return;
+        if (
+          !shouldNotifyUpdate(
+            state,
+            updatePreferences?.getSkippedVersion() || "",
+            Boolean(mainWindow?.isFocused()),
+            Notification.isSupported(),
+            notifiedUpdateKeys,
+          )
+        ) return;
         notifiedUpdateKeys.add(notifyKey);
         const notification = new Notification({
           title: state.status === UPDATE_STATUS.DOWNLOADED ? "Create 更新已下载" : "Create 有新版本",

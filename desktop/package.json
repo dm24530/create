@@ -1,13 +1,13 @@
 {
   "name": "create-desktop",
-  "version": "0.1.0",
+  "version": "0.1.13",
   "private": true,
   "description": "Create desktop application",
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
     "test": "node --test test/*.test.js",
-    "check": "node --check src/main.js && node --check src/preload.js && node --check src/update-service.js && node --check src/security.js && node --check src/save-directory.js && npm test",
+    "check": "node --check src/main.js && node --check src/preload.js && node --check src/update-service.js && node --check src/update-preferences.js && node --check src/security.js && node --check src/save-directory.js && npm test",
     "dist:dir": "electron-builder --dir --config.electronDist=node_modules/electron/dist",
     "predist:win:x64": "node ../scripts/sync-version-from-web.mjs",
     "dist:win:x64": "electron-builder --win nsis --x64 --publish never --config.directories.output=release/win-x64",
@@ -27,7 +27,9 @@
     "dist:dir:local": "npm run dist:dir",
     "test:mock-image": "node test/mock-image-generation-smoke.js",
     "test:mock-video": "node test/mock-video-generation-smoke.js",
-    "test:mock-canvas": "node test/mock-canvas-generation-smoke.js"
+    "test:mock-canvas": "node test/mock-canvas-generation-smoke.js",
+    "dist:mac:arm64:unsigned": "electron-builder --mac --arm64 --publish never --config electron-builder.unsigned-mac.js --config.directories.output=release/mac-arm64",
+    "dist:mac:x64:unsigned": "electron-builder --mac --x64 --publish never --config electron-builder.unsigned-mac.js --config.directories.output=release/mac-x64"
   },
   "devDependencies": {
     "electron": "^45.3.2",
@@ -56,7 +58,8 @@
       "target": [
         "nsis"
       ],
-      "icon": "assets/icon.png"
+      "icon": "assets/icon.png",
+      "artifactName": "Create-Setup-${version}-win-${arch}.${ext}"
     },
     "mac": {
       "target": [
@@ -64,14 +67,24 @@
         "zip"
       ],
       "category": "public.app-category.graphics-design",
-      "icon": "assets/icon.png"
+      "icon": "assets/icon.png",
+      "artifactName": "Create-${version}-mac-${arch}.${ext}",
+      "hardenedRuntime": true,
+      "notarize": true
     },
     "publish": [
       {
         "provider": "generic",
         "url": "https://downloads.example.com/create/"
       }
-    ]
+    ],
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "deleteAppDataOnUninstall": false
+    }
   },
   "author": "Create",
   "dependencies": {

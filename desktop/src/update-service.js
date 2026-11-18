@@ -142,7 +142,7 @@ function createDesktopUpdateService(options) {
     onStateChange,
     setIntervalFn = setInterval,
     clearIntervalFn = clearInterval,
-    intervalMs = 4 * 60 * 60 * 1000,
+    intervalMs = 30 * 60 * 1000,
     platform = process.platform,
     arch = process.arch,
   } = options;

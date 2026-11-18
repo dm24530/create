@@ -198,3 +198,25 @@ test("desktop update logger ignores broken stdout pipes", () => {
     console.info = originalInfo;
   }
 });
+
+
+test("periodic update checks default to every 30 minutes", () => {
+  const autoUpdater = new EventEmitter();
+  autoUpdater.setFeedURL = () => undefined;
+  let scheduledDelay = 0;
+  const service = createDesktopUpdateService({
+    app: { isPackaged: true, getVersion: () => "0.1.0" },
+    autoUpdater,
+    net: { fetch: async () => ({ ok: true, json: async () => ({}) }) },
+    onStateChange: () => undefined,
+    platform: "win32",
+    setIntervalFn: (_callback, delay) => {
+      scheduledDelay = delay;
+      return 1;
+    },
+    clearIntervalFn: () => undefined,
+  });
+
+  service.startPeriodicCheck("https://api.example.com/api/v1/public/create-client-release");
+  assert.equal(scheduledDelay, 30 * 60 * 1000);
+});
