@@ -39,7 +39,7 @@ test("external navigation is limited to HTTP(S)", () => {
 });
 
 test("asset resolution stays within the packaged web root", () => {
-  const root = path.join("C:", "app", "web-dist");
+  const root = path.resolve("create-desktop-test-root", "web-dist");
   assert.equal(resolveAppAssetPath(root, "app://create/assets/app.js"), path.join(root, "assets", "app.js"));
   assert.throws(() => resolveAppAssetPath(root, "app://create/%2e%2e%2fsecret.txt"));
 });

@@ -7,11 +7,12 @@ const {
   saveDirectoryForKind,
 } = require("../src/save-directory");
 
+const root = path.resolve("create-desktop-test-root");
 const settings = {
-  imageDir: path.join("C:", "Create", "Images"),
-  videoDir: path.join("C:", "Create", "Videos"),
-  canvasDir: path.join("C:", "Create", "Canvas"),
-  otherDir: path.join("C:", "Create", "Other"),
+  imageDir: path.join(root, "Images"),
+  videoDir: path.join(root, "Videos"),
+  canvasDir: path.join(root, "Canvas"),
+  otherDir: path.join(root, "Other"),
 };
 
 test("settings actions can use the canvas root without a canvas folder", () => {
@@ -28,7 +29,7 @@ test("canvas file saves still require a valid child canvas folder", () => {
     /Canvas folder name is invalid/,
   );
   assert.throws(
-    () => saveDirectoryForKind(settings, "canvas", "..\\outside"),
+    () => saveDirectoryForKind(settings, "canvas", path.join("..", "outside")),
     /Canvas folder name is invalid/,
   );
 });

@@ -8,8 +8,8 @@ const {
   validateSettings,
 } = require("../src/settings-store");
 
-const picturesPath = path.join("C:", "Users", "tester", "Pictures");
-const downloadsPath = path.join("C:", "Users", "tester", "Downloads");
+const picturesPath = path.resolve("create-desktop-test-root", "Pictures");
+const downloadsPath = path.resolve("create-desktop-test-root", "Downloads");
 
 test("creates local save defaults without a configurable web URL", () => {
   const settings = createDefaultSettings({
@@ -29,13 +29,13 @@ test("creates local save defaults without a configurable web URL", () => {
 test("merges persisted values over defaults", () => {
   const defaults = createDefaultSettings({ picturesPath, downloadsPath, env: {} });
   const settings = mergeSettings(defaults, {
-    imageDir: path.join("D:", "Create", "Images"),
-    canvasDir: path.join("D:", "Create", "Canvas"),
+    imageDir: path.resolve("create-desktop-test-root", "Images"),
+    canvasDir: path.resolve("create-desktop-test-root", "Canvas"),
     openFolderAfterSave: true,
   });
 
-  assert.equal(settings.imageDir, path.join("D:", "Create", "Images"));
-  assert.equal(settings.canvasDir, path.join("D:", "Create", "Canvas"));
+  assert.equal(settings.imageDir, path.resolve("create-desktop-test-root", "Images"));
+  assert.equal(settings.canvasDir, path.resolve("create-desktop-test-root", "Canvas"));
   assert.equal(settings.openFolderAfterSave, true);
 });
 

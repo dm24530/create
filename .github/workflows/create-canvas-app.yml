@@ -58,19 +58,15 @@ jobs:
           path: create-canvas-app/web/dist
           if-no-files-found: error
 
-  package-desktop:
+  package-windows:
     needs: web-build
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: windows-latest
-            script: dist:win
-            artifact: create-canvas-windows
-          - os: macos-latest
-            script: dist:mac
-            artifact: create-canvas-macos
-    runs-on: ${{ matrix.os }}
+        arch:
+          - x64
+          - arm64
+    runs-on: windows-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -98,10 +94,84 @@ jobs:
 
       - name: Verify Desktop shell
         working-directory: create-canvas-app/desktop
-        run: npm run check
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run check 2>&1 | tee desktop-check.log
 
-      - name: Package Desktop App
+      - name: Package Windows ${{ matrix.arch }}
         working-directory: create-canvas-app/desktop
+        shell: bash
+        env:
+          CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+          CSC_IDENTITY_AUTO_DISCOVERY: ${{ secrets.WIN_CSC_LINK != '' && 'true' || 'false' }}
+        run: |
+          set -o pipefail
+          npm run dist:win:${{ matrix.arch }} 2>&1 | tee desktop-package.log
+
+      - name: Upload Windows ${{ matrix.arch }} package
+        uses: actions/upload-artifact@v4
+        with:
+          name: create-canvas-windows-${{ matrix.arch }}
+          path: |
+            create-canvas-app/desktop/release/win-${{ matrix.arch }}/*.exe
+            create-canvas-app/desktop/release/win-${{ matrix.arch }}/*.blockmap
+            create-canvas-app/desktop/release/win-${{ matrix.arch }}/*.yml
+          if-no-files-found: error
+
+      - name: Upload Windows ${{ matrix.arch }} diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: create-canvas-windows-${{ matrix.arch }}-build-log
+          path: create-canvas-app/desktop/*.log
+          if-no-files-found: ignore
+
+  package-macos:
+    needs: web-build
+    strategy:
+      fail-fast: false
+      matrix:
+        arch:
+          - arm64
+          - x64
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Sync tagged app version
+        if: startsWith(github.ref, 'refs/tags/create-canvas-v')
+        run: node create-canvas-app/scripts/sync-version-from-web.mjs
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: create-canvas-app/desktop/package-lock.json
+
+      - name: Restore Desktop Web assets
+        uses: actions/download-artifact@v4
+        with:
+          name: create-canvas-desktop-web
+          path: create-canvas-app/web/dist-desktop
+
+      - name: Install Desktop dependencies
+        working-directory: create-canvas-app/desktop
+        run: npm install --legacy-peer-deps --no-audit --no-fund
+
+      - name: Verify Desktop shell
+        working-directory: create-canvas-app/desktop
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run check 2>&1 | tee desktop-check.log
+
+      - name: Package macOS ${{ matrix.arch }}
+        working-directory: create-canvas-app/desktop
+        shell: bash
         env:
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
@@ -109,14 +179,24 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           CSC_IDENTITY_AUTO_DISCOVERY: ${{ secrets.CSC_LINK != '' && 'true' || 'false' }}
-        run: npm run ${{ matrix.script }}
+        run: |
+          set -o pipefail
+          npm run dist:mac:${{ matrix.arch }} 2>&1 | tee desktop-package.log
 
-      - name: Upload Desktop package
+      - name: Upload macOS ${{ matrix.arch }} package
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact }}
-          path: create-canvas-app/desktop/release/**
+          name: create-canvas-macos-${{ matrix.arch }}
+          path: |
+            create-canvas-app/desktop/release/mac-${{ matrix.arch }}/*.dmg
+            create-canvas-app/desktop/release/mac-${{ matrix.arch }}/*.zip
+            create-canvas-app/desktop/release/mac-${{ matrix.arch }}/*.yml
           if-no-files-found: error
 
-
-
+      - name: Upload macOS ${{ matrix.arch }} diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: create-canvas-macos-${{ matrix.arch }}-build-log
+          path: create-canvas-app/desktop/*.log
+          if-no-files-found: ignore
