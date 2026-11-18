@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="create-local-token" content="{{TOKEN}}" />
+    <title>Create 本地保存设置</title>
+    <style>
+      :root { color: #292524; background: #f7f7f5; font-family: "Segoe UI", "Microsoft YaHei", sans-serif; }
+      * { box-sizing: border-box; }
+      body { margin: 0; min-height: 100vh; background: radial-gradient(circle at top right, rgba(249,115,22,.12), transparent 32%), #f7f7f5; }
+      main { max-width: 780px; margin: 0 auto; padding: 30px 22px 44px; }
+      header { display: flex; justify-content: space-between; gap: 20px; align-items: flex-start; margin-bottom: 22px; }
+      h1 { margin: 0; font-size: 26px; }
+      p { margin: 7px 0 0; color: #78716c; font-size: 13px; line-height: 1.7; }
+      .card { border: 1px solid #e7e5e4; border-radius: 12px; background: rgba(255,255,255,.94); padding: 20px; box-shadow: 0 18px 50px rgba(41,37,36,.08); }
+      .server { display: flex; justify-content: space-between; gap: 12px; padding: 12px 14px; border: 1px solid #e7e5e4; border-radius: 9px; background: #fafaf9; color: #78716c; font-size: 12px; }
+      code { color: #292524; font-family: Consolas, monospace; }
+      .row { display: grid; grid-template-columns: 130px minmax(0, 1fr) auto auto; gap: 10px; align-items: center; margin-top: 14px; }
+      label { font-size: 13px; font-weight: 700; }
+      input[type="text"] { min-width: 0; border: 1px solid #d6d3d1; border-radius: 8px; padding: 10px 12px; font: inherit; font-size: 12px; background: #fff; }
+      button { border: 1px solid #fb923c; border-radius: 8px; background: #f97316; padding: 9px 13px; color: #111827; font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; }
+      button.secondary { border-color: #d6d3d1; background: #fff; color: #57534e; }
+      .toggle { display: flex; align-items: center; gap: 8px; margin-top: 18px; color: #57534e; font-size: 12px; }
+      .actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; border-top: 1px solid #f1f0ef; padding-top: 18px; }
+      #status { min-height: 20px; margin-top: 12px; color: #78716c; font-size: 12px; }
+      @media (max-width: 720px) { .row { grid-template-columns: 1fr auto auto; } .row label { grid-column: 1 / -1; } header { display: block; } }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <div>
+          <h1>本地保存设置</h1>
+          <p>所有图片、视频和项目文件都保存在当前电脑。Create 服务器只处理登录、额度、公告和模型中转。</p>
+        </div>
+      </header>
+      <form id="settings-form" class="card">
+        <div class="server"><span>固定服务器</span><code>https://create.superai.sbs</code></div>
+        <div class="row">
+          <label for="image-dir">图片目录</label>
+          <input id="image-dir" type="text" readonly />
+          <button type="button" data-choose="image">选择</button>
+          <button type="button" class="secondary" data-open="image">打开</button>
+        </div>
+        <div class="row">
+          <label for="video-dir">视频目录</label>
+          <input id="video-dir" type="text" readonly />
+          <button type="button" data-choose="video">选择</button>
+          <button type="button" class="secondary" data-open="video">打开</button>
+        </div>
+        <div class="row">
+          <label for="other-dir">其他下载</label>
+          <input id="other-dir" type="text" readonly />
+          <button type="button" data-choose="other">选择</button>
+          <button type="button" class="secondary" data-open="other">打开</button>
+        </div>
+        <label class="toggle"><input id="open-folder-after-save" type="checkbox" /> 保存后在文件夹中显示文件</label>
+        <p id="status"></p>
+        <div class="actions">
+          <button type="button" id="close" class="secondary">关闭</button>
+          <button type="submit">保存设置</button>
+        </div>
+      </form>
+    </main>
+    <script src="/__local/settings.js"></script>
+  </body>
+</html>

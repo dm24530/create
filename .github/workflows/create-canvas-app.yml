@@ -1,0 +1,287 @@
+name: Create App
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "create-canvas-v*"
+permissions:
+  contents: read
+
+jobs:
+  web-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Sync tagged app version
+        if: startsWith(github.ref, 'refs/tags/create-canvas-v')
+        shell: bash
+        run: |
+          set -o pipefail
+          set +e
+          node scripts/sync-version-from-web.mjs 2>&1 | tee create-canvas-version-sync.log
+          status=${PIPESTATUS[0]}
+          set -e
+          if [ "$status" -ne 0 ]; then
+            message=$(tr '\n' ' ' < create-canvas-version-sync.log | cut -c1-3500)
+            echo "::error title=Version sync failed::$message"
+            exit "$status"
+          fi
+
+      - name: Upload version sync diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: create-canvas-version-sync-log
+          path: create-canvas-version-sync.log
+          if-no-files-found: ignore
+
+      - name: Install Web dependencies
+        working-directory: web
+        run: npm install --legacy-peer-deps --no-audit --no-fund
+
+      - name: Typecheck
+        working-directory: web
+        run: npm run typecheck
+
+      - name: Test
+        working-directory: web
+        run: npm test
+
+      - name: Build Web and Desktop assets
+        working-directory: web
+        run: |
+          npm run build
+          npm run build:desktop
+
+      - name: Upload Desktop Web assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: create-canvas-desktop-web
+          path: web/dist-desktop
+          if-no-files-found: error
+
+      - name: Upload Web build
+        uses: actions/upload-artifact@v4
+        with:
+          name: create-canvas-web
+          path: web/dist
+          if-no-files-found: error
+
+  package-windows:
+    needs: web-build
+    strategy:
+      fail-fast: false
+      matrix:
+        arch:
+          - x64
+          - arm64
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Sync tagged app version
+        if: startsWith(github.ref, 'refs/tags/create-canvas-v')
+        run: node scripts/sync-version-from-web.mjs
+
+      - name: Restore Desktop Web assets
+        uses: actions/download-artifact@v4
+        with:
+          name: create-canvas-desktop-web
+          path: web/dist-desktop
+
+      - name: Install Desktop dependencies
+        working-directory: desktop
+        run: npm install --legacy-peer-deps --no-audit --no-fund
+
+      - name: Verify Desktop shell
+        working-directory: desktop
+        shell: bash
+        run: |
+          set -o pipefail
+          set +e
+          npm run check 2>&1 | tee desktop-check.log
+          status=${PIPESTATUS[0]}
+          set -e
+          if [ "$status" -ne 0 ]; then
+            message=$(tr '\n' ' ' < desktop-check.log | cut -c1-3500)
+            echo "::error title=Desktop shell check failed::$message"
+            {
+              echo '### Desktop shell check failed'
+              echo '```text'
+              tail -n 120 desktop-check.log
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit "$status"
+          fi
+
+      - name: Package Windows ${{ matrix.arch }}
+        working-directory: desktop
+        shell: bash
+        env:
+          CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+          CSC_IDENTITY_AUTO_DISCOVERY: ${{ secrets.WIN_CSC_LINK != '' && 'true' || 'false' }}
+        run: |
+          set -o pipefail
+          [ -n "${CSC_LINK:-}" ] || unset CSC_LINK
+          [ -n "${CSC_KEY_PASSWORD:-}" ] || unset CSC_KEY_PASSWORD
+          [ -n "${APPLE_ID:-}" ] || unset APPLE_ID
+          [ -n "${APPLE_APP_SPECIFIC_PASSWORD:-}" ] || unset APPLE_APP_SPECIFIC_PASSWORD
+          [ -n "${APPLE_TEAM_ID:-}" ] || unset APPLE_TEAM_ID
+          set +e
+          npm run dist:win:${{ matrix.arch }} 2>&1 | tee desktop-package.log
+          status=${PIPESTATUS[0]}
+          set -e
+          if [ "$status" -ne 0 ]; then
+            message=$(tr '\n' ' ' < desktop-package.log | cut -c1-3500)
+            echo "::error title=Desktop package failed (${{ matrix.arch }})::$message"
+            {
+              echo '### Desktop package failed (${{ matrix.arch }})'
+              echo '```text'
+              tail -n 160 desktop-package.log
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit "$status"
+          fi
+
+      - name: Upload Windows ${{ matrix.arch }} package
+        uses: actions/upload-artifact@v4
+        with:
+          name: create-canvas-windows-${{ matrix.arch }}
+          path: |
+            desktop/release/win-${{ matrix.arch }}/*.exe
+            desktop/release/win-${{ matrix.arch }}/*.blockmap
+            desktop/release/win-${{ matrix.arch }}/*.yml
+          if-no-files-found: error
+
+      - name: Upload Windows ${{ matrix.arch }} diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: create-canvas-windows-${{ matrix.arch }}-build-log
+          path: desktop/*.log
+          if-no-files-found: ignore
+
+  package-macos:
+    needs: web-build
+    strategy:
+      fail-fast: false
+      matrix:
+        arch:
+          - arm64
+          - x64
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Sync tagged app version
+        if: startsWith(github.ref, 'refs/tags/create-canvas-v')
+        run: node scripts/sync-version-from-web.mjs
+
+      - name: Restore Desktop Web assets
+        uses: actions/download-artifact@v4
+        with:
+          name: create-canvas-desktop-web
+          path: web/dist-desktop
+
+      - name: Install Desktop dependencies
+        working-directory: desktop
+        run: npm install --legacy-peer-deps --no-audit --no-fund
+
+      - name: Verify Desktop shell
+        working-directory: desktop
+        shell: bash
+        run: |
+          set -o pipefail
+          set +e
+          npm run check 2>&1 | tee desktop-check.log
+          status=${PIPESTATUS[0]}
+          set -e
+          if [ "$status" -ne 0 ]; then
+            message=$(tr '\n' ' ' < desktop-check.log | cut -c1-3500)
+            echo "::error title=Desktop shell check failed::$message"
+            {
+              echo '### Desktop shell check failed'
+              echo '```text'
+              tail -n 120 desktop-check.log
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit "$status"
+          fi
+
+      - name: Package macOS ${{ matrix.arch }}
+        working-directory: desktop
+        shell: bash
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          CSC_IDENTITY_AUTO_DISCOVERY: ${{ secrets.CSC_LINK != '' && 'true' || 'false' }}
+        run: |
+          set -o pipefail
+          [ -n "${CSC_LINK:-}" ] || unset CSC_LINK
+          [ -n "${CSC_KEY_PASSWORD:-}" ] || unset CSC_KEY_PASSWORD
+          [ -n "${APPLE_ID:-}" ] || unset APPLE_ID
+          [ -n "${APPLE_APP_SPECIFIC_PASSWORD:-}" ] || unset APPLE_APP_SPECIFIC_PASSWORD
+          [ -n "${APPLE_TEAM_ID:-}" ] || unset APPLE_TEAM_ID
+          set +e
+          npm run dist:mac:${{ matrix.arch }} 2>&1 | tee desktop-package.log
+          status=${PIPESTATUS[0]}
+          set -e
+          if [ "$status" -ne 0 ]; then
+            message=$(tr '\n' ' ' < desktop-package.log | cut -c1-3500)
+            echo "::error title=Desktop package failed (${{ matrix.arch }})::$message"
+            {
+              echo '### Desktop package failed (${{ matrix.arch }})'
+              echo '```text'
+              tail -n 160 desktop-package.log
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit "$status"
+          fi
+
+      - name: Upload macOS ${{ matrix.arch }} package
+        uses: actions/upload-artifact@v4
+        with:
+          name: create-canvas-macos-${{ matrix.arch }}
+          path: |
+            desktop/release/mac-${{ matrix.arch }}/*.dmg
+            desktop/release/mac-${{ matrix.arch }}/*.zip
+            desktop/release/mac-${{ matrix.arch }}/*.yml
+          if-no-files-found: error
+
+      - name: Upload macOS ${{ matrix.arch }} diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: create-canvas-macos-${{ matrix.arch }}-build-log
+          path: desktop/*.log
+          if-no-files-found: ignore

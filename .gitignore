@@ -1,0 +1,15 @@
+web/node_modules/
+web/node_modules.partial-*/
+web/dist/
+web/dist-desktop/
+web/.vite/
+web/*.tsbuildinfo
+desktop/node_modules/
+desktop/release/
+desktop/dist/
+desktop/test-results/
+.local-run/
+
+legacy/desktop/node_modules/
+legacy/desktop/release/
+legacy/local-client/dist/

@@ -1,0 +1,76 @@
+{
+  "name": "create-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Create desktop application",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/*.test.js",
+    "check": "node --check src/main.js && node --check src/preload.js && node --check src/update-service.js && node --check src/security.js && node --check src/save-directory.js && npm test",
+    "dist:dir": "electron-builder --dir",
+    "predist:win:x64": "node ../scripts/sync-version-from-web.mjs",
+    "dist:win:x64": "electron-builder --win nsis --x64 --publish never --config.directories.output=release/win-x64",
+    "predist:win:arm64": "node ../scripts/sync-version-from-web.mjs",
+    "dist:win:arm64": "electron-builder --win nsis --arm64 --publish never --config.directories.output=release/win-arm64",
+    "predist:mac:arm64": "node ../scripts/sync-version-from-web.mjs",
+    "dist:mac:arm64": "electron-builder --mac --arm64 --publish never --config.directories.output=release/mac-arm64",
+    "predist:mac:x64": "node ../scripts/sync-version-from-web.mjs",
+    "dist:mac:x64": "electron-builder --mac --x64 --publish never --config.directories.output=release/mac-x64",
+    "test:smoke": "node test/smoke.js",
+    "test:packaged": "node test/packaged-smoke.js",
+    "test:mock-login": "node test/mock-login-smoke.js",
+    "test:mock-account": "node test/mock-account-smoke.js",
+    "test:local-billing": "node test/local-billing-smoke.js",
+    "test:direct-image": "node test/direct-image-smoke.js",
+    "test:save-settings": "node test/local-save-settings-smoke.js"
+  },
+  "devDependencies": {
+    "electron": "^45.3.2",
+    "electron-builder": "^26.0.0",
+    "playwright-core": "^1.56.0"
+  },
+  "build": {
+    "appId": "com.create.desktop",
+    "productName": "Create",
+    "asar": true,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "src/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../web/dist-desktop",
+        "to": "web-dist"
+      }
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "assets/icon.png"
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.graphics-design",
+      "icon": "assets/icon.png"
+    },
+    "publish": [
+      {
+        "provider": "generic",
+        "url": "https://downloads.example.com/create/"
+      }
+    ]
+  },
+  "author": "Create",
+  "dependencies": {
+    "electron-updater": "^6.8.11"
+  }
+}

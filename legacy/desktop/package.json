@@ -1,0 +1,69 @@
+{
+  "name": "create-desktop",
+  "version": "0.1.2",
+  "private": true,
+  "author": "Create",
+  "description": "Create desktop shell for the hosted Create web application",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/*.test.js",
+    "check": "node --check src/main.js && node --check src/preload.js && node --check src/settings-preload.js && node --check src/app-config.js && node --check src/download-policy.js && node --check src/settings-store.js && node --check settings/settings.js && npm test",
+    "icon": "electron scripts/build-icon.js",
+    "smoke": "node scripts/smoke.js",
+    "smoke:live": "node scripts/smoke-live.js",
+    "dist:dir": "electron-builder --win --dir",
+    "dist": "electron-builder --win nsis",
+    "release:win": "electron-builder --win nsis --publish always"
+  },
+  "dependencies": {
+    "electron-updater": "^6.6.2"
+  },
+  "devDependencies": {
+    "electron": "^45.3.2",
+    "electron-builder": "^26.0.0",
+    "playwright-core": "^1.56.0"
+  },
+  "build": {
+    "appId": "com.create.desktop",
+    "productName": "Create",
+    "asar": true,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "src/**/*",
+      "settings/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "win": {
+      "icon": "assets/icon.png",
+      "target": [
+        "nsis"
+      ],
+      "artifactName": "Create-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "diminglucky",
+        "repo": "create",
+        "releaseType": "release"
+      }
+    ],
+    "mac": {
+      "icon": "assets/icon.png",
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.graphics-design"
+    }
+  }
+}

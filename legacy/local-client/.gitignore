@@ -1,0 +1,5 @@
+dist/
+internal/webassets/dist/*
+!internal/webassets/dist/.gitkeep
+test-output/
+.tmp-local-acceptance/
