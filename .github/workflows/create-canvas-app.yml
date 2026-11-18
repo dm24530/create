@@ -15,6 +15,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: create-canvas-app/web/package-lock.json
+
       - name: Sync tagged app version
         if: startsWith(github.ref, 'refs/tags/create-canvas-v')
         shell: bash
@@ -29,13 +36,6 @@ jobs:
           name: create-canvas-version-sync-log
           path: create-canvas-version-sync.log
           if-no-files-found: ignore
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: create-canvas-app/web/package-lock.json
 
       - name: Install Web dependencies
         working-directory: create-canvas-app/web
@@ -82,16 +82,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Sync tagged app version
-        if: startsWith(github.ref, 'refs/tags/create-canvas-v')
-        run: node create-canvas-app/scripts/sync-version-from-web.mjs
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: npm
           cache-dependency-path: create-canvas-app/desktop/package-lock.json
+
+      - name: Sync tagged app version
+        if: startsWith(github.ref, 'refs/tags/create-canvas-v')
+        run: node create-canvas-app/scripts/sync-version-from-web.mjs
 
       - name: Restore Desktop Web assets
         uses: actions/download-artifact@v4
@@ -152,16 +152,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Sync tagged app version
-        if: startsWith(github.ref, 'refs/tags/create-canvas-v')
-        run: node create-canvas-app/scripts/sync-version-from-web.mjs
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: npm
           cache-dependency-path: create-canvas-app/desktop/package-lock.json
+
+      - name: Sync tagged app version
+        if: startsWith(github.ref, 'refs/tags/create-canvas-v')
+        run: node create-canvas-app/scripts/sync-version-from-web.mjs
 
       - name: Restore Desktop Web assets
         uses: actions/download-artifact@v4
