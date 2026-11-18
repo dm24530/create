@@ -141,6 +141,11 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: ${{ secrets.WIN_CSC_LINK != '' && 'true' || 'false' }}
         run: |
           set -o pipefail
+          [ -n "${CSC_LINK:-}" ] || unset CSC_LINK
+          [ -n "${CSC_KEY_PASSWORD:-}" ] || unset CSC_KEY_PASSWORD
+          [ -n "${APPLE_ID:-}" ] || unset APPLE_ID
+          [ -n "${APPLE_APP_SPECIFIC_PASSWORD:-}" ] || unset APPLE_APP_SPECIFIC_PASSWORD
+          [ -n "${APPLE_TEAM_ID:-}" ] || unset APPLE_TEAM_ID
           set +e
           npm run dist:win:${{ matrix.arch }} 2>&1 | tee desktop-package.log
           status=${PIPESTATUS[0]}
@@ -242,6 +247,11 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: ${{ secrets.CSC_LINK != '' && 'true' || 'false' }}
         run: |
           set -o pipefail
+          [ -n "${CSC_LINK:-}" ] || unset CSC_LINK
+          [ -n "${CSC_KEY_PASSWORD:-}" ] || unset CSC_KEY_PASSWORD
+          [ -n "${APPLE_ID:-}" ] || unset APPLE_ID
+          [ -n "${APPLE_APP_SPECIFIC_PASSWORD:-}" ] || unset APPLE_APP_SPECIFIC_PASSWORD
+          [ -n "${APPLE_TEAM_ID:-}" ] || unset APPLE_TEAM_ID
           set +e
           npm run dist:mac:${{ matrix.arch }} 2>&1 | tee desktop-package.log
           status=${PIPESTATUS[0]}
