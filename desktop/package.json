@@ -24,7 +24,10 @@
     "test:local-billing": "node test/local-billing-smoke.js",
     "test:direct-image": "node test/direct-image-smoke.js",
     "test:save-settings": "node test/local-save-settings-smoke.js",
-    "dist:dir:local": "npm run dist:dir"
+    "dist:dir:local": "npm run dist:dir",
+    "test:mock-image": "node test/mock-image-generation-smoke.js",
+    "test:mock-video": "node test/mock-video-generation-smoke.js",
+    "test:mock-canvas": "node test/mock-canvas-generation-smoke.js"
   },
   "devDependencies": {
     "electron": "^45.3.2",

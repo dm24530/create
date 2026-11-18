@@ -8,9 +8,8 @@ desktop/node_modules/
 desktop/release/
 desktop/dist/
 desktop/test-results/
-.local-run/
+.local-run*/
 
 legacy/desktop/node_modules/
 legacy/desktop/release/
 legacy/local-client/dist/
-.local-run-audit/

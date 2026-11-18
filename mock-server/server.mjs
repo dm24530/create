@@ -149,6 +149,21 @@ const server = http.createServer(async (request, response) => {
   if (path === "/v1/images/generations" && method === "POST") {
     return send(response, 200, { created: Math.floor(Date.now() / 1000), data: [{ url: `data:image/png;base64,${png}` }] });
   }
+  if ((path === "/v1/videos/generations" || path === "/v1/videos" || path === "/v1/video/generations") && method === "POST") {
+    return send(response, 200, { id: "mock-video-task", object: "video", status: "pending" });
+  }
+  if (path === "/v1/videos/mock-video-task" && method === "GET") {
+    return send(response, 200, { id: "mock-video-task", object: "video", status: "completed" });
+  }
+  if (path === "/v1/videos/mock-video-task/content" && method === "GET") {
+    response.writeHead(200, {
+      "Content-Type": "video/mp4",
+      "Content-Length": "18",
+      "Access-Control-Allow-Origin": "*",
+    });
+    response.end(Buffer.from("mock-video-content"));
+    return;
+  }
 
   if (path === "/api/v1/canvas/projects" && method === "GET") {
     return send(response, 200, { code: 0, data: Array.from(projects.values()).map(({ graph, ...item }) => item) });

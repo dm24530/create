@@ -114,6 +114,17 @@ npm run check
 npm run test:smoke
 ```
 
+For the complete local mock suite (login, API key switching, image generation,
+video task polling/download, canvas generation, auto-save, and restart
+persistence), run from the repository root:
+
+```powershell
+.\scripts\test-local-mock.ps1
+```
+
+The suite uses the local mock upstream only and does not call paid image/video
+providers.
+
 `test:smoke` launches Electron against `web/dist-desktop` and verifies that the
 Create login screen renders through the `app://create` protocol.
 
