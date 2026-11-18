@@ -501,6 +501,7 @@ export interface SystemSettings {
   create_client_release_enabled: boolean;
   create_client_release_version: string;
   create_client_release_windows_url: string;
+  create_client_release_windows_arm64_url: string;
   create_client_release_macos_arm64_url: string;
   create_client_release_macos_x64_url: string;
   create_client_release_notes: string;
@@ -872,6 +873,7 @@ export interface UpdateSettingsRequest {
   create_client_release_enabled?: boolean;
   create_client_release_version?: string;
   create_client_release_windows_url?: string;
+  create_client_release_windows_arm64_url?: string;
   create_client_release_macos_arm64_url?: string;
   create_client_release_macos_x64_url?: string;
   create_client_release_notes?: string;

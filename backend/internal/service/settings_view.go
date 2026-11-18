@@ -174,15 +174,16 @@ type SystemSettings struct {
 
 	// Create desktop client release metadata. Binaries stay in R2/CDN and are
 	// linked directly; this server only stores and serves release metadata.
-	CreateClientReleaseEnabled       bool
-	CreateClientReleaseVersion       string
-	CreateClientReleaseWindowsURL    string
-	CreateClientReleaseMacOSARM64URL string
-	CreateClientReleaseMacOSX64URL   string
-	CreateClientReleaseNotes         string
-	CreateClientReleasePublishedAt   string
-	CreateClientReleaseMinVersion    string
-	CreateClientReleaseUpdateBaseURL string
+	CreateClientReleaseEnabled         bool
+	CreateClientReleaseVersion         string
+	CreateClientReleaseWindowsURL      string
+	CreateClientReleaseWindowsARM64URL string
+	CreateClientReleaseMacOSARM64URL   string
+	CreateClientReleaseMacOSX64URL     string
+	CreateClientReleaseNotes           string
+	CreateClientReleasePublishedAt     string
+	CreateClientReleaseMinVersion      string
+	CreateClientReleaseUpdateBaseURL   string
 
 	DefaultConcurrency           int
 	DefaultBalance               float64

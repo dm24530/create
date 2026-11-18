@@ -161,15 +161,16 @@ func TestSettingHandler_GetCreateClientRelease_ReturnsSanitizedPublicManifest(t 
 
 	repo := &settingHandlerPublicRepoStub{
 		values: map[string]string{
-			service.SettingKeyCreateClientReleaseEnabled:       "true",
-			service.SettingKeyCreateClientReleaseVersion:       "0.2.0",
-			service.SettingKeyCreateClientReleasePublishedAt:   "2026-11-17",
-			service.SettingKeyCreateClientReleaseMinVersion:    "0.1.0",
-			service.SettingKeyCreateClientReleaseNotes:         "Local-first release",
-			service.SettingKeyCreateClientReleaseWindowsURL:    "https://downloads.example.com/Create-Setup-0.2.0.exe",
-			service.SettingKeyCreateClientReleaseMacOSARM64URL: "https://downloads.example.com/Create-0.2.0-arm64.dmg",
-			service.SettingKeyCreateClientReleaseMacOSX64URL:   "javascript:alert(1)",
-			service.SettingKeyCreateClientReleaseUpdateBaseURL: "https://downloads.example.com/create/",
+			service.SettingKeyCreateClientReleaseEnabled:         "true",
+			service.SettingKeyCreateClientReleaseVersion:         "0.2.0",
+			service.SettingKeyCreateClientReleasePublishedAt:     "2026-11-17",
+			service.SettingKeyCreateClientReleaseMinVersion:      "0.1.0",
+			service.SettingKeyCreateClientReleaseNotes:           "Local-first release",
+			service.SettingKeyCreateClientReleaseWindowsURL:      "https://downloads.example.com/Create-Setup-0.2.0.exe",
+			service.SettingKeyCreateClientReleaseWindowsARM64URL: "https://downloads.example.com/Create-Setup-0.2.0-arm64.exe",
+			service.SettingKeyCreateClientReleaseMacOSARM64URL:   "https://downloads.example.com/Create-0.2.0-arm64.dmg",
+			service.SettingKeyCreateClientReleaseMacOSX64URL:     "javascript:alert(1)",
+			service.SettingKeyCreateClientReleaseUpdateBaseURL:   "https://downloads.example.com/create/",
 		},
 	}
 	h := NewSettingHandler(service.NewSettingService(repo, &config.Config{}), "test-version")
@@ -193,9 +194,10 @@ func TestSettingHandler_GetCreateClientRelease_ReturnsSanitizedPublicManifest(t 
 			Notes          string `json:"notes"`
 			UpdateBaseURL  string `json:"update_base_url"`
 			Downloads      struct {
-				WindowsX64 string `json:"windows_x64"`
-				MacOSARM64 string `json:"macos_arm64"`
-				MacOSX64   string `json:"macos_x64"`
+				WindowsX64   string `json:"windows_x64"`
+				WindowsARM64 string `json:"windows_arm64"`
+				MacOSARM64   string `json:"macos_arm64"`
+				MacOSX64     string `json:"macos_x64"`
 			} `json:"downloads"`
 		} `json:"data"`
 	}
@@ -207,6 +209,7 @@ func TestSettingHandler_GetCreateClientRelease_ReturnsSanitizedPublicManifest(t 
 	require.Equal(t, "0.1.0", resp.Data.MinimumVersion)
 	require.Equal(t, "Local-first release", resp.Data.Notes)
 	require.Equal(t, "https://downloads.example.com/Create-Setup-0.2.0.exe", resp.Data.Downloads.WindowsX64)
+	require.Equal(t, "https://downloads.example.com/Create-Setup-0.2.0-arm64.exe", resp.Data.Downloads.WindowsARM64)
 	require.Equal(t, "https://downloads.example.com/Create-0.2.0-arm64.dmg", resp.Data.Downloads.MacOSARM64)
 	require.Empty(t, resp.Data.Downloads.MacOSX64)
 	require.Equal(t, "https://downloads.example.com/create/", resp.Data.UpdateBaseURL)

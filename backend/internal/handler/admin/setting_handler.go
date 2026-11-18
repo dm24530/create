@@ -270,6 +270,7 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		CreateClientReleaseEnabled:                             settings.CreateClientReleaseEnabled,
 		CreateClientReleaseVersion:                             settings.CreateClientReleaseVersion,
 		CreateClientReleaseWindowsURL:                          settings.CreateClientReleaseWindowsURL,
+		CreateClientReleaseWindowsARM64URL:                     settings.CreateClientReleaseWindowsARM64URL,
 		CreateClientReleaseMacOSARM64URL:                       settings.CreateClientReleaseMacOSARM64URL,
 		CreateClientReleaseMacOSX64URL:                         settings.CreateClientReleaseMacOSX64URL,
 		CreateClientReleaseNotes:                               settings.CreateClientReleaseNotes,

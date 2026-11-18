@@ -13,15 +13,16 @@ import (
 
 func TestGetCreateClientRelease_SanitizesDirectURLs(t *testing.T) {
 	repo := &settingPublicRepoStub{values: map[string]string{
-		SettingKeyCreateClientReleaseEnabled:       "true",
-		SettingKeyCreateClientReleaseVersion:       "0.2.0",
-		SettingKeyCreateClientReleasePublishedAt:   "2026-11-17",
-		SettingKeyCreateClientReleaseMinVersion:    "0.1.0",
-		SettingKeyCreateClientReleaseNotes:         "Local rendering and persistence.",
-		SettingKeyCreateClientReleaseWindowsURL:    "https://downloads.example.com/Create-Setup-0.2.0.exe",
-		SettingKeyCreateClientReleaseMacOSARM64URL: "https://downloads.example.com/Create-0.2.0-arm64.dmg",
-		SettingKeyCreateClientReleaseMacOSX64URL:   "javascript:alert(1)",
-		SettingKeyCreateClientReleaseUpdateBaseURL: "https://downloads.example.com/create/",
+		SettingKeyCreateClientReleaseEnabled:         "true",
+		SettingKeyCreateClientReleaseVersion:         "0.2.0",
+		SettingKeyCreateClientReleasePublishedAt:     "2026-11-17",
+		SettingKeyCreateClientReleaseMinVersion:      "0.1.0",
+		SettingKeyCreateClientReleaseNotes:           "Local rendering and persistence.",
+		SettingKeyCreateClientReleaseWindowsURL:      "https://downloads.example.com/Create-Setup-0.2.0.exe",
+		SettingKeyCreateClientReleaseWindowsARM64URL: "https://downloads.example.com/Create-Setup-0.2.0-arm64.exe",
+		SettingKeyCreateClientReleaseMacOSARM64URL:   "https://downloads.example.com/Create-0.2.0-arm64.dmg",
+		SettingKeyCreateClientReleaseMacOSX64URL:     "javascript:alert(1)",
+		SettingKeyCreateClientReleaseUpdateBaseURL:   "https://downloads.example.com/create/",
 	}}
 	svc := NewSettingService(repo, &config.Config{})
 
@@ -32,6 +33,7 @@ func TestGetCreateClientRelease_SanitizesDirectURLs(t *testing.T) {
 	require.Equal(t, "2026-11-17", release.PublishedAt)
 	require.Equal(t, "0.1.0", release.MinimumVersion)
 	require.Equal(t, "https://downloads.example.com/Create-Setup-0.2.0.exe", release.Downloads.WindowsX64)
+	require.Equal(t, "https://downloads.example.com/Create-Setup-0.2.0-arm64.exe", release.Downloads.WindowsARM64)
 	require.Equal(t, "https://downloads.example.com/Create-0.2.0-arm64.dmg", release.Downloads.MacOSARM64)
 	require.Empty(t, release.Downloads.MacOSX64)
 	require.Equal(t, "https://downloads.example.com/create/", release.UpdateBaseURL)
@@ -70,21 +72,23 @@ func TestUpdateSettings_PersistsCreateClientReleaseFields(t *testing.T) {
 	svc := NewSettingService(repo, &config.Config{})
 
 	err := svc.UpdateSettings(context.Background(), &SystemSettings{
-		CreateClientReleaseEnabled:       true,
-		CreateClientReleaseVersion:       "0.2.0",
-		CreateClientReleaseWindowsURL:    "https://downloads.example.com/Create-Setup-0.2.0.exe",
-		CreateClientReleaseMacOSARM64URL: "https://downloads.example.com/Create-0.2.0-arm64.dmg",
-		CreateClientReleaseMacOSX64URL:   "https://downloads.example.com/Create-0.2.0-x64.dmg",
-		CreateClientReleaseNotes:         "Local-first release",
-		CreateClientReleasePublishedAt:   "2026-11-17",
-		CreateClientReleaseMinVersion:    "0.1.0",
-		CreateClientReleaseUpdateBaseURL: "https://downloads.example.com/create/",
+		CreateClientReleaseEnabled:         true,
+		CreateClientReleaseVersion:         "0.2.0",
+		CreateClientReleaseWindowsURL:      "https://downloads.example.com/Create-Setup-0.2.0.exe",
+		CreateClientReleaseWindowsARM64URL: "https://downloads.example.com/Create-Setup-0.2.0-arm64.exe",
+		CreateClientReleaseMacOSARM64URL:   "https://downloads.example.com/Create-0.2.0-arm64.dmg",
+		CreateClientReleaseMacOSX64URL:     "https://downloads.example.com/Create-0.2.0-x64.dmg",
+		CreateClientReleaseNotes:           "Local-first release",
+		CreateClientReleasePublishedAt:     "2026-11-17",
+		CreateClientReleaseMinVersion:      "0.1.0",
+		CreateClientReleaseUpdateBaseURL:   "https://downloads.example.com/create/",
 	})
 	require.NoError(t, err)
 
 	require.Equal(t, "true", repo.updates[SettingKeyCreateClientReleaseEnabled])
 	require.Equal(t, "0.2.0", repo.updates[SettingKeyCreateClientReleaseVersion])
 	require.Equal(t, "https://downloads.example.com/Create-Setup-0.2.0.exe", repo.updates[SettingKeyCreateClientReleaseWindowsURL])
+	require.Equal(t, "https://downloads.example.com/Create-Setup-0.2.0-arm64.exe", repo.updates[SettingKeyCreateClientReleaseWindowsARM64URL])
 	require.Equal(t, "https://downloads.example.com/Create-0.2.0-arm64.dmg", repo.updates[SettingKeyCreateClientReleaseMacOSARM64URL])
 	require.Equal(t, "https://downloads.example.com/Create-0.2.0-x64.dmg", repo.updates[SettingKeyCreateClientReleaseMacOSX64URL])
 	require.Equal(t, "Local-first release", repo.updates[SettingKeyCreateClientReleaseNotes])
@@ -95,11 +99,12 @@ func TestUpdateSettings_PersistsCreateClientReleaseFields(t *testing.T) {
 
 func TestGetCreateClientRelease_DoesNotAdvertiseWithoutUsableInstaller(t *testing.T) {
 	repo := &settingPublicRepoStub{values: map[string]string{
-		SettingKeyCreateClientReleaseEnabled:       "true",
-		SettingKeyCreateClientReleaseVersion:       "0.2.0",
-		SettingKeyCreateClientReleaseWindowsURL:    "javascript:alert(1)",
-		SettingKeyCreateClientReleaseMacOSARM64URL: "",
-		SettingKeyCreateClientReleaseMacOSX64URL:   "ftp://downloads.example.com/file.dmg",
+		SettingKeyCreateClientReleaseEnabled:         "true",
+		SettingKeyCreateClientReleaseVersion:         "0.2.0",
+		SettingKeyCreateClientReleaseWindowsURL:      "javascript:alert(1)",
+		SettingKeyCreateClientReleaseWindowsARM64URL: "ftp://downloads.example.com/file.exe",
+		SettingKeyCreateClientReleaseMacOSARM64URL:   "",
+		SettingKeyCreateClientReleaseMacOSX64URL:     "ftp://downloads.example.com/file.dmg",
 	}}
 	svc := NewSettingService(repo, &config.Config{})
 

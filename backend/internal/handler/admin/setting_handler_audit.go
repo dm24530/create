@@ -461,6 +461,9 @@ func diffSettings(before *service.SystemSettings, after *service.SystemSettings,
 	if before.CreateClientReleaseWindowsURL != after.CreateClientReleaseWindowsURL {
 		changed = append(changed, "create_client_release_windows_url")
 	}
+	if before.CreateClientReleaseWindowsARM64URL != after.CreateClientReleaseWindowsARM64URL {
+		changed = append(changed, "create_client_release_windows_arm64_url")
+	}
 	if before.CreateClientReleaseMacOSARM64URL != after.CreateClientReleaseMacOSARM64URL {
 		changed = append(changed, "create_client_release_macos_arm64_url")
 	}

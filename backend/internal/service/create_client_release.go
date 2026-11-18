@@ -10,9 +10,10 @@ import (
 // CreateClientReleaseDownloads contains direct object-storage URLs. The API
 // server must never proxy installer bytes for these routes.
 type CreateClientReleaseDownloads struct {
-	WindowsX64 string `json:"windows_x64"`
-	MacOSARM64 string `json:"macos_arm64"`
-	MacOSX64   string `json:"macos_x64"`
+	WindowsX64   string `json:"windows_x64"`
+	WindowsARM64 string `json:"windows_arm64"`
+	MacOSARM64   string `json:"macos_arm64"`
+	MacOSX64     string `json:"macos_x64"`
 }
 
 // CreateClientRelease is the public release manifest consumed by the download
@@ -57,6 +58,7 @@ func (s *SettingService) GetCreateClientRelease(ctx context.Context) (*CreateCli
 		SettingKeyCreateClientReleaseEnabled,
 		SettingKeyCreateClientReleaseVersion,
 		SettingKeyCreateClientReleaseWindowsURL,
+		SettingKeyCreateClientReleaseWindowsARM64URL,
 		SettingKeyCreateClientReleaseMacOSARM64URL,
 		SettingKeyCreateClientReleaseMacOSX64URL,
 		SettingKeyCreateClientReleaseNotes,
@@ -70,15 +72,16 @@ func (s *SettingService) GetCreateClientRelease(ctx context.Context) (*CreateCli
 	}
 	version := strings.TrimSpace(values[SettingKeyCreateClientReleaseVersion])
 	downloads := CreateClientReleaseDownloads{
-		WindowsX64: sanitizeCreateClientReleaseURL(values[SettingKeyCreateClientReleaseWindowsURL]),
-		MacOSARM64: sanitizeCreateClientReleaseURL(values[SettingKeyCreateClientReleaseMacOSARM64URL]),
-		MacOSX64:   sanitizeCreateClientReleaseURL(values[SettingKeyCreateClientReleaseMacOSX64URL]),
+		WindowsX64:   sanitizeCreateClientReleaseURL(values[SettingKeyCreateClientReleaseWindowsURL]),
+		WindowsARM64: sanitizeCreateClientReleaseURL(values[SettingKeyCreateClientReleaseWindowsARM64URL]),
+		MacOSARM64:   sanitizeCreateClientReleaseURL(values[SettingKeyCreateClientReleaseMacOSARM64URL]),
+		MacOSX64:     sanitizeCreateClientReleaseURL(values[SettingKeyCreateClientReleaseMacOSX64URL]),
 	}
 	// `enabled` is the public availability contract, not merely the raw admin
 	// switch. Never advertise a release that has no version or usable installer.
 	enabled := values[SettingKeyCreateClientReleaseEnabled] == "true" &&
 		version != "" &&
-		(downloads.WindowsX64 != "" || downloads.MacOSARM64 != "" || downloads.MacOSX64 != "")
+		(downloads.WindowsX64 != "" || downloads.WindowsARM64 != "" || downloads.MacOSARM64 != "" || downloads.MacOSX64 != "")
 	return &CreateClientRelease{
 		Enabled:        enabled,
 		Version:        version,

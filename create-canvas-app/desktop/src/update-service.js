@@ -121,6 +121,19 @@ function normalizeReleaseMetadata(payload, currentVersion) {
   };
 }
 
+function resolveUpdateFeedUrl(baseUrl, platform, arch) {
+  const normalizedBaseUrl = String(baseUrl || "").trim().replace(/\/+$/, "");
+  if (!isHttpUrl(normalizedBaseUrl)) return "";
+  const platformDir = platform === "win32" ? "windows" : platform === "darwin" ? "macos" : "";
+  const archDir = arch === "arm64" ? "arm64" : arch === "x64" ? "x64" : "";
+  if (!platformDir || !archDir) return normalizedBaseUrl;
+  const url = new URL(normalizedBaseUrl);
+  const basePath = url.pathname.replace(/\/+$/, "");
+  if (basePath.endsWith(`/${platformDir}/${archDir}`)) return url.toString().replace(/\/$/, "");
+  url.pathname = `${basePath}/${platformDir}/${archDir}`;
+  return url.toString().replace(/\/$/, "");
+}
+
 function createDesktopUpdateService(options) {
   const {
     app,
@@ -131,6 +144,7 @@ function createDesktopUpdateService(options) {
     clearIntervalFn = clearInterval,
     intervalMs = 4 * 60 * 60 * 1000,
     platform = process.platform,
+    arch = process.arch,
   } = options;
 
   autoUpdater.autoDownload = false;
@@ -256,15 +270,23 @@ function createDesktopUpdateService(options) {
         return publish({ ...metadata, progress: null, error: metadata.error || "" });
       }
 
-      const runtimeConfigPath = ensureRuntimeUpdateConfig(app, metadata.updateBaseUrl);
+      const feedUrl = resolveUpdateFeedUrl(metadata.updateBaseUrl, platform, arch);
+      if (!feedUrl) {
+        return eventState(UPDATE_STATUS.ERROR, {
+          error: "unsupported update platform or architecture",
+          progress: null,
+        });
+      }
+      latestMetadata = { ...metadata, updateBaseUrl: feedUrl };
+      const runtimeConfigPath = ensureRuntimeUpdateConfig(app, feedUrl);
       if (runtimeConfigPath) autoUpdater.updateConfigPath = runtimeConfigPath;
-      autoUpdater.setFeedURL({ provider: "generic", url: metadata.updateBaseUrl });
+      autoUpdater.setFeedURL({ provider: "generic", url: feedUrl });
       const result = await autoUpdater.checkForUpdates();
       const infoVersion = normalizeVersion(result?.updateInfo?.version || metadata.latestVersion);
       if (compareVersions(infoVersion, app.getVersion()) <= 0) {
-        return publish({ ...metadata, status: UPDATE_STATUS.CURRENT, latestVersion: infoVersion, progress: null });
+        return publish({ ...latestMetadata, status: UPDATE_STATUS.CURRENT, latestVersion: infoVersion, progress: null });
       }
-      return publish({ ...metadata, latestVersion: infoVersion, status: UPDATE_STATUS.AVAILABLE });
+      return publish({ ...latestMetadata, latestVersion: infoVersion, status: UPDATE_STATUS.AVAILABLE });
     } catch (error) {
       return eventState(UPDATE_STATUS.ERROR, {
         error: error instanceof Error ? error.message : String(error),
@@ -326,5 +348,6 @@ module.exports = {
   UPDATE_STATUS,
   compareVersions,
   normalizeReleaseMetadata,
+  resolveUpdateFeedUrl,
   createDesktopUpdateService,
 };

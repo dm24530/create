@@ -2,6 +2,7 @@ import { apiClient } from "./client";
 
 export interface CreateClientReleaseDownloads {
   windows_x64: string;
+  windows_arm64: string;
   macos_arm64: string;
   macos_x64: string;
 }

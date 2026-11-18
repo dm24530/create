@@ -9222,8 +9222,8 @@
                 <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
                   {{
                     localText(
-                      "预留给桌面端自动更新清单（latest.yml / latest-mac.yml）的公开目录。",
-                      "Reserved for the public directory containing latest.yml / latest-mac.yml.",
+                      "填写自动更新根目录。客户端会自动追加 windows/x64、windows/arm64、macos/arm64 或 macos/x64。",
+                      "Enter the update root. The desktop app automatically appends windows/x64, windows/arm64, macos/arm64, or macos/x64.",
                     )
                   }}
                 </p>
@@ -9255,6 +9255,17 @@
                   type="url"
                   class="input font-mono text-sm"
                   placeholder="https://downloads.example.com/create/Create-Setup-0.2.0.exe"
+                />
+              </div>
+              <div>
+                <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                  Windows ARM64
+                </label>
+                <input
+                  v-model="form.create_client_release_windows_arm64_url"
+                  type="url"
+                  class="input font-mono text-sm"
+                  placeholder="https://downloads.example.com/create/Create-Setup-0.2.0-arm64.exe"
                 />
               </div>
               <div>
@@ -10321,6 +10332,7 @@ const form = reactive<SettingsForm>({
   create_client_release_enabled: false,
   create_client_release_version: "",
   create_client_release_windows_url: "",
+  create_client_release_windows_arm64_url: "",
   create_client_release_macos_arm64_url: "",
   create_client_release_macos_x64_url: "",
   create_client_release_notes: "",
@@ -12009,6 +12021,7 @@ async function saveSettings() {
     if (!isValidHttpUrl(form.doc_url)) form.doc_url = "";
     const createClientReleaseURLs = [
       form.create_client_release_windows_url,
+      form.create_client_release_windows_arm64_url,
       form.create_client_release_macos_arm64_url,
       form.create_client_release_macos_x64_url,
       form.create_client_release_update_base_url,
@@ -12087,6 +12100,7 @@ async function saveSettings() {
       form.create_client_release_enabled &&
       ![
         form.create_client_release_windows_url,
+        form.create_client_release_windows_arm64_url,
         form.create_client_release_macos_arm64_url,
         form.create_client_release_macos_x64_url,
       ].some((url) => url.trim())
@@ -12179,6 +12193,7 @@ async function saveSettings() {
       create_client_release_enabled: form.create_client_release_enabled,
       create_client_release_version: form.create_client_release_version.trim(),
       create_client_release_windows_url: form.create_client_release_windows_url.trim(),
+      create_client_release_windows_arm64_url: form.create_client_release_windows_arm64_url.trim(),
       create_client_release_macos_arm64_url: form.create_client_release_macos_arm64_url.trim(),
       create_client_release_macos_x64_url: form.create_client_release_macos_x64_url.trim(),
       create_client_release_notes: form.create_client_release_notes.trim(),

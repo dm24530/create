@@ -139,7 +139,7 @@
           >
             <div class="download-platform-head">
               <div class="download-platform-icon" :class="`platform-${item.key}`">
-                <span v-if="item.key === 'windows_x64'">WIN</span>
+                <span v-if="item.key.startsWith('windows_')">WIN</span>
                 <span v-else>MAC</span>
               </div>
               <span v-if="item.key === primaryKey" class="download-recommended">
@@ -181,7 +181,7 @@
           <p class="download-section-kicker">03 / SYSTEM NOTES</p>
           <h2>{{ localText("安装前请确认", "Before installing") }}</h2>
           <ul>
-            <li>{{ localText("Windows 建议使用 Windows 10/11 x64。", "Windows 10/11 x64 is recommended.") }}</li>
+            <li>{{ localText("Windows 10/11 请按设备选择 x64 或 ARM64。", "Choose x64 or ARM64 for your Windows 10/11 device.") }}</li>
             <li>{{ localText("Apple Silicon 与 Intel Mac 请选择对应安装包。", "Choose the correct Apple Silicon or Intel Mac build.") }}</li>
             <li>{{ localText("首次登录仍使用你的 Create 云端账号。", "Sign in with your existing Create cloud account.") }}</li>
             <li>{{ localText("生成结果保存在你配置的本地目录。", "Generated media is saved to the local directory you configure.") }}</li>
@@ -227,7 +227,7 @@ import { FeatureFlags, isFeatureFlagEnabled } from "@/utils/featureFlags";
 import { normalizeSiteName } from "@/constants/brand";
 import { sanitizeUrl } from "@/utils/url";
 
-type PlatformKey = "windows_x64" | "macos_arm64" | "macos_x64";
+type PlatformKey = "windows_x64" | "windows_arm64" | "macos_arm64" | "macos_x64";
 
 const { locale } = useI18n();
 const appStore = useAppStore();
@@ -243,11 +243,13 @@ const release = ref<CreateClientRelease>({
   update_base_url: "",
   downloads: {
     windows_x64: "",
+    windows_arm64: "",
     macos_arm64: "",
     macos_x64: "",
   },
 });
 const detectedPlatform = ref<"windows" | "macos" | "unknown">("unknown");
+const detectedWindowsArch = ref<"x64" | "arm64">("x64");
 
 const isZh = computed(() => locale.value.startsWith("zh"));
 const siteName = computed(() =>
@@ -276,6 +278,7 @@ const releaseAvailable = computed(
     Boolean(release.value.version) &&
     Boolean(
       release.value.downloads.windows_x64 ||
+        release.value.downloads.windows_arm64 ||
         release.value.downloads.macos_arm64 ||
         release.value.downloads.macos_x64,
     ),
@@ -285,9 +288,15 @@ const currentYear = computed(() => new Date().getFullYear());
 const downloadItems = computed(() => [
   {
     key: "windows_x64" as PlatformKey,
-    title: "Windows 10 / 11",
-    description: localText("64 位安装包 · .exe", "64-bit installer · .exe"),
+    title: "Windows 10 / 11 · x64",
+    description: localText("Intel / AMD 64 位安装包 · .exe", "Intel / AMD 64-bit installer · .exe"),
     url: release.value.downloads.windows_x64,
+  },
+  {
+    key: "windows_arm64" as PlatformKey,
+    title: "Windows 11 · ARM64",
+    description: localText("骁龙等 ARM 设备安装包 · .exe", "Windows on ARM installer · .exe"),
+    url: release.value.downloads.windows_arm64,
   },
   {
     key: "macos_arm64" as PlatformKey,
@@ -304,8 +313,12 @@ const downloadItems = computed(() => [
 ]);
 
 const primaryKey = computed<PlatformKey | null>(() => {
-  if (detectedPlatform.value === "windows" && release.value.downloads.windows_x64) {
-    return "windows_x64";
+  if (detectedPlatform.value === "windows") {
+    if (detectedWindowsArch.value === "arm64" && release.value.downloads.windows_arm64) {
+      return "windows_arm64";
+    }
+    if (release.value.downloads.windows_x64) return "windows_x64";
+    if (release.value.downloads.windows_arm64) return "windows_arm64";
   }
   if (detectedPlatform.value === "macos") {
     if (release.value.downloads.macos_arm64) return "macos_arm64";
@@ -321,6 +334,8 @@ const primaryLabel = computed(() => {
   switch (primaryKey.value) {
     case "windows_x64":
       return localText("Windows x64 客户端", "Create for Windows x64");
+    case "windows_arm64":
+      return localText("Windows ARM64 客户端", "Create for Windows ARM64");
     case "macos_arm64":
       return localText("macOS Apple Silicon 客户端", "Create for Apple Silicon");
     case "macos_x64":
@@ -338,6 +353,10 @@ function detectPlatform() {
   const userAgent = navigator.userAgent.toLowerCase();
   if (userAgent.includes("windows")) {
     detectedPlatform.value = "windows";
+    const architecture = String(
+      (navigator as Navigator & { userAgentData?: { architecture?: string } }).userAgentData?.architecture || "",
+    ).toLowerCase();
+    detectedWindowsArch.value = architecture === "arm64" ? "arm64" : "x64";
   } else if (userAgent.includes("macintosh") || userAgent.includes("mac os")) {
     detectedPlatform.value = "macos";
   } else {
@@ -760,6 +779,7 @@ onMounted(async () => {
   letter-spacing: 0.05em;
 }
 .platform-windows_x64 { background: linear-gradient(135deg, #1675d1, #55b9ff); }
+.platform-windows_arm64 { background: linear-gradient(135deg, #155ea5, #2a8ce8); }
 .platform-macos_arm64 { background: linear-gradient(135deg, #5a5f68, #22252b); }
 .platform-macos_x64 { background: linear-gradient(135deg, #77716a, #3f3b38); }
 .download-recommended {

@@ -398,15 +398,16 @@ const (
 	SettingKeyCustomEndpoints             = "custom_endpoints"              // 自定义端点列表（JSON 数组）
 
 	// Create 桌面客户端发布信息（安装包由 R2/CDN 直链分发，服务器不代理文件）
-	SettingKeyCreateClientReleaseEnabled       = "create_client_release_enabled"
-	SettingKeyCreateClientReleaseVersion       = "create_client_release_version"
-	SettingKeyCreateClientReleaseWindowsURL    = "create_client_release_windows_url"
-	SettingKeyCreateClientReleaseMacOSARM64URL = "create_client_release_macos_arm64_url"
-	SettingKeyCreateClientReleaseMacOSX64URL   = "create_client_release_macos_x64_url"
-	SettingKeyCreateClientReleaseNotes         = "create_client_release_notes"
-	SettingKeyCreateClientReleasePublishedAt   = "create_client_release_published_at"
-	SettingKeyCreateClientReleaseMinVersion    = "create_client_release_min_version"
-	SettingKeyCreateClientReleaseUpdateBaseURL = "create_client_release_update_base_url"
+	SettingKeyCreateClientReleaseEnabled         = "create_client_release_enabled"
+	SettingKeyCreateClientReleaseVersion         = "create_client_release_version"
+	SettingKeyCreateClientReleaseWindowsURL      = "create_client_release_windows_url"
+	SettingKeyCreateClientReleaseWindowsARM64URL = "create_client_release_windows_arm64_url"
+	SettingKeyCreateClientReleaseMacOSARM64URL   = "create_client_release_macos_arm64_url"
+	SettingKeyCreateClientReleaseMacOSX64URL     = "create_client_release_macos_x64_url"
+	SettingKeyCreateClientReleaseNotes           = "create_client_release_notes"
+	SettingKeyCreateClientReleasePublishedAt     = "create_client_release_published_at"
+	SettingKeyCreateClientReleaseMinVersion      = "create_client_release_min_version"
+	SettingKeyCreateClientReleaseUpdateBaseURL   = "create_client_release_update_base_url"
 
 	// 默认配置
 	SettingKeyDefaultConcurrency   = "default_concurrency"    // 新用户默认并发量

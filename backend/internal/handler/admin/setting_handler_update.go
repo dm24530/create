@@ -178,15 +178,16 @@ type UpdateSettingsRequest struct {
 	CustomEndpoints             *[]dto.CustomEndpoint `json:"custom_endpoints"`
 
 	// Create desktop client release metadata (R2/CDN direct links).
-	CreateClientReleaseEnabled       bool   `json:"create_client_release_enabled"`
-	CreateClientReleaseVersion       string `json:"create_client_release_version"`
-	CreateClientReleaseWindowsURL    string `json:"create_client_release_windows_url"`
-	CreateClientReleaseMacOSARM64URL string `json:"create_client_release_macos_arm64_url"`
-	CreateClientReleaseMacOSX64URL   string `json:"create_client_release_macos_x64_url"`
-	CreateClientReleaseNotes         string `json:"create_client_release_notes"`
-	CreateClientReleasePublishedAt   string `json:"create_client_release_published_at"`
-	CreateClientReleaseMinVersion    string `json:"create_client_release_min_version"`
-	CreateClientReleaseUpdateBaseURL string `json:"create_client_release_update_base_url"`
+	CreateClientReleaseEnabled         bool   `json:"create_client_release_enabled"`
+	CreateClientReleaseVersion         string `json:"create_client_release_version"`
+	CreateClientReleaseWindowsURL      string `json:"create_client_release_windows_url"`
+	CreateClientReleaseWindowsARM64URL string `json:"create_client_release_windows_arm64_url"`
+	CreateClientReleaseMacOSARM64URL   string `json:"create_client_release_macos_arm64_url"`
+	CreateClientReleaseMacOSX64URL     string `json:"create_client_release_macos_x64_url"`
+	CreateClientReleaseNotes           string `json:"create_client_release_notes"`
+	CreateClientReleasePublishedAt     string `json:"create_client_release_published_at"`
+	CreateClientReleaseMinVersion      string `json:"create_client_release_min_version"`
+	CreateClientReleaseUpdateBaseURL   string `json:"create_client_release_update_base_url"`
 
 	// 默认配置
 	DefaultConcurrency                        int                               `json:"default_concurrency"`
@@ -1478,6 +1479,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		value *string
 	}{
 		{"create_client_release_windows_url", &req.CreateClientReleaseWindowsURL},
+		{"create_client_release_windows_arm64_url", &req.CreateClientReleaseWindowsARM64URL},
 		{"create_client_release_macos_arm64_url", &req.CreateClientReleaseMacOSARM64URL},
 		{"create_client_release_macos_x64_url", &req.CreateClientReleaseMacOSX64URL},
 		{"create_client_release_update_base_url", &req.CreateClientReleaseUpdateBaseURL},
@@ -1503,6 +1505,10 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		if _, sent := sentFields["create_client_release_windows_url"]; !sent {
 			effectiveWindowsURL = previousSettings.CreateClientReleaseWindowsURL
 		}
+		effectiveWindowsARM64URL := req.CreateClientReleaseWindowsARM64URL
+		if _, sent := sentFields["create_client_release_windows_arm64_url"]; !sent {
+			effectiveWindowsARM64URL = previousSettings.CreateClientReleaseWindowsARM64URL
+		}
 		effectiveMacOSARM64URL := req.CreateClientReleaseMacOSARM64URL
 		if _, sent := sentFields["create_client_release_macos_arm64_url"]; !sent {
 			effectiveMacOSARM64URL = previousSettings.CreateClientReleaseMacOSARM64URL
@@ -1515,7 +1521,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			response.BadRequest(c, "create_client_release_version is required when the client release is enabled")
 			return
 		}
-		if effectiveWindowsURL == "" && effectiveMacOSARM64URL == "" && effectiveMacOSX64URL == "" {
+		if effectiveWindowsURL == "" && effectiveWindowsARM64URL == "" && effectiveMacOSARM64URL == "" && effectiveMacOSX64URL == "" {
 			response.BadRequest(c, "at least one Create client download URL is required when the client release is enabled")
 			return
 		}
@@ -1782,6 +1788,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		CreateClientReleaseEnabled:             req.CreateClientReleaseEnabled,
 		CreateClientReleaseVersion:             req.CreateClientReleaseVersion,
 		CreateClientReleaseWindowsURL:          req.CreateClientReleaseWindowsURL,
+		CreateClientReleaseWindowsARM64URL:     req.CreateClientReleaseWindowsARM64URL,
 		CreateClientReleaseMacOSARM64URL:       req.CreateClientReleaseMacOSARM64URL,
 		CreateClientReleaseMacOSX64URL:         req.CreateClientReleaseMacOSX64URL,
 		CreateClientReleaseNotes:               req.CreateClientReleaseNotes,
@@ -2468,6 +2475,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		CreateClientReleaseEnabled:                             updatedSettings.CreateClientReleaseEnabled,
 		CreateClientReleaseVersion:                             updatedSettings.CreateClientReleaseVersion,
 		CreateClientReleaseWindowsURL:                          updatedSettings.CreateClientReleaseWindowsURL,
+		CreateClientReleaseWindowsARM64URL:                     updatedSettings.CreateClientReleaseWindowsARM64URL,
 		CreateClientReleaseMacOSARM64URL:                       updatedSettings.CreateClientReleaseMacOSARM64URL,
 		CreateClientReleaseMacOSX64URL:                         updatedSettings.CreateClientReleaseMacOSX64URL,
 		CreateClientReleaseNotes:                               updatedSettings.CreateClientReleaseNotes,

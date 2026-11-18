@@ -436,6 +436,7 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	updates[SettingKeyCreateClientReleaseEnabled] = strconv.FormatBool(settings.CreateClientReleaseEnabled)
 	updates[SettingKeyCreateClientReleaseVersion] = strings.TrimSpace(settings.CreateClientReleaseVersion)
 	updates[SettingKeyCreateClientReleaseWindowsURL] = strings.TrimSpace(settings.CreateClientReleaseWindowsURL)
+	updates[SettingKeyCreateClientReleaseWindowsARM64URL] = strings.TrimSpace(settings.CreateClientReleaseWindowsARM64URL)
 	updates[SettingKeyCreateClientReleaseMacOSARM64URL] = strings.TrimSpace(settings.CreateClientReleaseMacOSARM64URL)
 	updates[SettingKeyCreateClientReleaseMacOSX64URL] = strings.TrimSpace(settings.CreateClientReleaseMacOSX64URL)
 	updates[SettingKeyCreateClientReleaseNotes] = strings.TrimSpace(settings.CreateClientReleaseNotes)

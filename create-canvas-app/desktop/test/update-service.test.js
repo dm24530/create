@@ -9,6 +9,7 @@ const {
   UPDATE_STATUS,
   compareVersions,
   normalizeReleaseMetadata,
+  resolveUpdateFeedUrl,
   createDesktopUpdateService,
 } = require("../src/update-service");
 
@@ -53,6 +54,25 @@ test("normalizeReleaseMetadata rejects missing update feed URL", () => {
 
   assert.equal(result.status, UPDATE_STATUS.ERROR);
   assert.match(result.error, /update_base_url/);
+});
+
+test("resolves architecture-specific update feeds", () => {
+  assert.equal(
+    resolveUpdateFeedUrl("https://downloads.example.com/create/", "win32", "x64"),
+    "https://downloads.example.com/create/windows/x64",
+  );
+  assert.equal(
+    resolveUpdateFeedUrl("https://downloads.example.com/create/", "win32", "arm64"),
+    "https://downloads.example.com/create/windows/arm64",
+  );
+  assert.equal(
+    resolveUpdateFeedUrl("https://downloads.example.com/create/", "darwin", "arm64"),
+    "https://downloads.example.com/create/macos/arm64",
+  );
+  assert.equal(
+    resolveUpdateFeedUrl("https://downloads.example.com/create/", "darwin", "x64"),
+    "https://downloads.example.com/create/macos/x64",
+  );
 });
 
 test("desktop update service never enables silent download", () => {
@@ -100,11 +120,12 @@ test("desktop update service checks, downloads, and installs only after explicit
     net: { fetch: async () => ({ ok: true, json: async () => ({ data: { enabled: true, version: "0.21.0", notes: "notes", update_base_url: "https://downloads.example.com/create/" } }) }) },
     onStateChange: (state) => states.push(state.status),
     platform: "win32",
+    arch: "x64",
   });
 
   const checked = await service.checkForUpdates("https://api.example.com/api/v1/public/create-client-release");
   assert.equal(checked.status, UPDATE_STATUS.AVAILABLE);
-  assert.equal(feedUrl, "https://downloads.example.com/create/");
+  assert.equal(feedUrl, "https://downloads.example.com/create/windows/x64");
   assert.equal(states.includes(UPDATE_STATUS.DOWNLOADING), false);
 
   await service.downloadUpdate();
