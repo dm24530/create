@@ -88,6 +88,29 @@ describe("image request parameter forwarding", () => {
         });
     });
 
+    it("notifies when the image response download starts", async () => {
+        const onDownloadStart = vi.fn();
+        vi.mocked(axios.post).mockImplementationOnce(async (_url, _body, options) => {
+            options?.onDownloadProgress?.({ loaded: 1, total: 10 });
+            return { data: { data: [{ b64_json: "aW1hZ2U=", mime_type: "image/png" }] } };
+        });
+
+        await requestGeneration(config({}), "draw a cat", { onDownloadStart });
+
+        expect(onDownloadStart).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps the server request id for usage timing correlation", async () => {
+        vi.mocked(axios.post).mockResolvedValueOnce({
+            data: { data: [{ b64_json: "aW1hZ2U=", mime_type: "image/png" }] },
+            headers: { "x-client-request-id": "server-request-1" },
+        });
+
+        const [image] = await requestGeneration(config({}), "draw a cat");
+
+        expect(image?.serverRequestId).toBe("server-request-1");
+    });
+
     it("maps a 4K Gemini selection to aspectRatio and imageSize", async () => {
         vi.mocked(axios.post).mockResolvedValueOnce({
             data: {

@@ -15,6 +15,9 @@ export type GeneratedMediaDetailData = {
     width?: number;
     height?: number;
     durationMs?: number;
+    prepareDurationMs?: number;
+    generationDurationMs?: number;
+    downloadDurationMs?: number;
     bytes?: number;
 };
 
@@ -247,9 +250,27 @@ export function GeneratedMediaDetailModal({ data, onClose, onDownload }: Generat
                                     <dd className="mt-1 font-medium tabular-nums text-stone-900 dark:text-stone-100">{formatBytes(data.bytes)}</dd>
                                 </div>
                             ) : null}
-                            {data.durationMs ? (
+                            {data.prepareDurationMs ? (
+                                <div>
+                                    <dt className="text-xs text-stone-500 dark:text-stone-400">{t("workbench.prepareDuration")}</dt>
+                                    <dd className="mt-1 font-medium tabular-nums text-stone-900 dark:text-stone-100">{formatDuration(data.prepareDurationMs)}</dd>
+                                </div>
+                            ) : null}
+                            {data.generationDurationMs ? (
                                 <div>
                                     <dt className="text-xs text-stone-500 dark:text-stone-400">{t("workbench.generationDuration")}</dt>
+                                    <dd className="mt-1 font-medium tabular-nums text-stone-900 dark:text-stone-100">{formatDuration(data.generationDurationMs)}</dd>
+                                </div>
+                            ) : null}
+                            {data.downloadDurationMs && data.downloadDurationMs > 0 ? (
+                                <div>
+                                    <dt className="text-xs text-stone-500 dark:text-stone-400">{t("workbench.downloadDuration")}</dt>
+                                    <dd className="mt-1 font-medium tabular-nums text-stone-900 dark:text-stone-100">{formatDuration(data.downloadDurationMs)}</dd>
+                                </div>
+                            ) : null}
+                            {data.durationMs ? (
+                                <div>
+                                    <dt className="text-xs text-stone-500 dark:text-stone-400">{t("workbench.totalDuration")}</dt>
                                     <dd className="mt-1 font-medium tabular-nums text-stone-900 dark:text-stone-100">{formatDuration(data.durationMs)}</dd>
                                 </div>
                             ) : null}

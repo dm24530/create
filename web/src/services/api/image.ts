@@ -101,12 +101,13 @@ type GeminiPayload = {
     promptFeedback?: { blockReason?: string };
 };
 type GeminiStreamState = { buffer: string; text: string; toolCalls: ResponseToolCall[]; error?: string };
-export type GeneratedImageResult = { id: string; dataUrl: string; previewDataUrl?: string; objectKey?: string };
+export type GeneratedImageResult = { id: string; dataUrl: string; previewDataUrl?: string; objectKey?: string; serverRequestId?: string };
 type RequestOptions = {
     signal?: AbortSignal;
     onPreview?: (images: GeneratedImageResult[]) => void;
     startedAt?: number;
     clientRequestId?: string;
+    onDownloadStart?: () => void;
 };
 
 const IMAGE_QUALITY_VALUES = ["low", "medium", "high", "xhigh", "max"];
@@ -250,6 +251,23 @@ function resolveImagePreviewSource(item: Record<string, unknown>) {
         if (typeof value === "string" && value) return value;
     }
     return undefined;
+}
+
+function responseRequestId(headers: unknown) {
+    if (!headers) return "";
+    const getter = (headers as { get?: (name: string) => unknown }).get;
+    if (typeof getter === "function") {
+        const value = getter.call(headers, "x-client-request-id");
+        if (typeof value === "string" && value.trim()) return value.trim();
+    }
+    const record = headers as Record<string, unknown>;
+    const value = record["x-client-request-id"] ?? record["X-Client-Request-ID"];
+    return typeof value === "string" ? value.trim() : "";
+}
+
+function attachServerRequestId(images: GeneratedImageResult[], headers: unknown) {
+    const requestId = responseRequestId(headers);
+    return requestId ? images.map((image) => ({ ...image, serverRequestId: requestId })) : images;
 }
 
 function parseImagePayload(payload: ImageApiResponse, fallbackOutputFormat?: string) {
@@ -433,6 +451,16 @@ function readStatusError(status: number | undefined, fallback: string) {
 function withSystemPrompt(config: AiConfig, prompt: string) {
     const systemPrompt = config.systemPrompt.trim();
     return systemPrompt ? `${systemPrompt}\n\n${prompt}` : prompt;
+}
+
+
+function createDownloadStartNotifier(options?: RequestOptions) {
+    let notified = false;
+    return () => {
+        if (notified) return;
+        notified = true;
+        options?.onDownloadStart?.();
+    };
 }
 
 function aiApiUrl(config: AiConfig, path: string) {
@@ -805,9 +833,9 @@ async function requestGeminiImagesOnce(config: AiConfig, prompt: string, referen
         const response = await axios.post<GeminiPayload>(
             geminiApiUrl(config, "generateContent"),
             request,
-            { headers: geminiHeaders(config, options?.clientRequestId), signal: options?.signal, timeout: IMAGE_REQUEST_TIMEOUT_MS },
+            { headers: geminiHeaders(config, options?.clientRequestId), signal: options?.signal, timeout: IMAGE_REQUEST_TIMEOUT_MS, onDownloadProgress: createDownloadStartNotifier(options) },
         );
-        return parseGeminiImagePayload(response.data);
+        return attachServerRequestId(parseGeminiImagePayload(response.data), response.headers);
     } catch (error) {
         throw new Error(readAxiosError(error, apiText("requestFailed")));
     }
@@ -1050,7 +1078,7 @@ async function pollImageTask(
                 await waitForAsyncImagePoll(500, options?.signal)
                 continue
             }
-            const images = parseImagePayload(result as ImageApiResponse, config.outputFormat)
+            const images = attachServerRequestId(parseImagePayload(result as ImageApiResponse, config.outputFormat), response.headers)
             reportCanvasImageDisplay(taskId, options?.startedAt)
             return images
         }
@@ -1060,7 +1088,7 @@ async function pollImageTask(
                 if (images.length) {
                     previewDelivered = true
                     reportCanvasImageDisplay(taskId, options?.startedAt)
-                    options?.onPreview?.(images)
+                    options?.onPreview?.(attachServerRequestId(images, response.headers))
                 }
             } catch {
                 // Keep polling for the final persisted image.
@@ -1179,9 +1207,10 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
                 headers: aiHeaders(requestConfig, "application/json", options?.clientRequestId),
                 signal: options?.signal,
                 timeout: IMAGE_REQUEST_TIMEOUT_MS,
+                onDownloadProgress: createDownloadStartNotifier(options),
             },
         );
-        const images = await parseImagePayload(response.data, outputFormat);
+        const images = attachServerRequestId(await parseImagePayload(response.data, outputFormat), response.headers);
         return normalizeGeneratedImages(images, outputFormat);
     } catch (error) {
         throw new Error(readAxiosError(error, apiText("requestFailed")));
@@ -1259,8 +1288,8 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     files.forEach((file) => formData.append(imageField, file));
 
     try {
-        const response = await axios.post<ImageApiResponse>(aiApiUrl(requestConfig, "/images/edits"), formData, { headers: aiHeaders(requestConfig, undefined, options?.clientRequestId), signal: options?.signal, timeout: IMAGE_REQUEST_TIMEOUT_MS });
-        const images = await parseImagePayload(response.data, outputFormat);
+        const response = await axios.post<ImageApiResponse>(aiApiUrl(requestConfig, "/images/edits"), formData, { headers: aiHeaders(requestConfig, undefined, options?.clientRequestId), signal: options?.signal, timeout: IMAGE_REQUEST_TIMEOUT_MS, onDownloadProgress: createDownloadStartNotifier(options) });
+        const images = attachServerRequestId(await parseImagePayload(response.data, outputFormat), response.headers);
         return normalizeGeneratedImages(images, outputFormat);
     } catch (error) {
         throw new Error(readAxiosError(error, apiText("requestFailed")));

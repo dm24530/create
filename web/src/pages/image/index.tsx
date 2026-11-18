@@ -19,7 +19,7 @@ import { autoSaveGeneratedFile, deleteGeneratedFile, generatedFileExtension, rea
 import { formatBytes, formatDuration } from "@/lib/image-utils";
 import { requestEdit, requestGeneration, submitPersistentImageTask, waitForPersistentImageTask } from "@/services/api/image";
 import { deleteStoredImages, ensureImagePreview, getImageBlob, getImagePreviewRevision, prepareReferenceImagesForRequest, previewUrlFor, resolveImageUrl, setImageBlob, subscribeImagePreviews, uploadImage } from "@/services/image-storage";
-import { saveClientRequestTiming } from "@/services/client-request-timing";
+import { buildClientRequestTiming, saveClientRequestTiming } from "@/services/client-request-timing";
 import { createUserWorkbenchLogStore } from "@/services/workbench-log-storage";
 import { configureCreateWorkspace, getManagedKeySelection, listCreateManagedKeys, managedKeySupportsImage, switchManagedKey, type CreateManagedKey } from "@/services/create-managed-channel";
 import { WorkbenchModelSelect } from "@/components/workbench/model-select";
@@ -44,6 +44,7 @@ type GeneratedImage = {
     model?: string;
     prepareDurationMs?: number;
     generationDurationMs?: number;
+    downloadDurationMs?: number;
 };
 
 type GenerationResult = {
@@ -56,7 +57,7 @@ type GenerationResult = {
     model?: string;
     config?: AiConfig;
     references?: ReferenceImage[];
-    phase?: "compressing" | "generating";
+    phase?: "compressing" | "generating" | "downloading";
     phaseStartedAt?: number;
     prepareDurationMs?: number;
     clientRequestId?: string;
@@ -629,8 +630,17 @@ export default function ImagePage() {
             const requestStartedAt = performance.now();
             const prepareDurationMs = requestStartedAt - prepareStartedAt;
             setResults((value) => updateResultById(value, resultId, { phase: "generating", phaseStartedAt: requestStartedAt, prepareDurationMs }));
+            let downloadStartedAt: number | null = null;
             const requestOptions = {
                 clientRequestId,
+                onDownloadStart: () => {
+                    if (downloadStartedAt) return;
+                    downloadStartedAt = performance.now();
+                    setResults((value) => updateResultById(value, resultId, {
+                        phase: "downloading",
+                        phaseStartedAt: downloadStartedAt || performance.now(),
+                    }));
+                },
                 onPreview: (previewImages: Array<{ id: string; dataUrl: string }>) => {
                     const preview = previewImages[0];
                     if (!preview) return;
@@ -644,6 +654,7 @@ export default function ImagePage() {
                                 durationMs: previewAt - prepareStartedAt,
                                 prepareDurationMs,
                                 generationDurationMs: previewAt - requestStartedAt,
+                                downloadDurationMs: 0,
                                 width: 0,
                                 height: 0,
                                 bytes: 0,
@@ -662,17 +673,27 @@ export default function ImagePage() {
                   ? await requestEdit(snapshot.config, snapshot.text, requestReferences, requestOptions)
                   : await requestGeneration(snapshot.config, snapshot.text, requestOptions);
             const requestCompletedAt = performance.now();
-            const generationDurationMs = requestCompletedAt - requestStartedAt;
-            const totalDurationMs = requestCompletedAt - prepareStartedAt;
+            const phaseTiming = buildClientRequestTiming({
+                prepareStartedAt,
+                requestStartedAt,
+                downloadStartedAt,
+                completedAt: requestCompletedAt,
+            });
+            const { generationMs: generationDurationMs, downloadMs: downloadDurationMs, totalMs: totalDurationMs } = phaseTiming;
             const image = result[0];
             if (!image) throw new Error(t("imageWorkbench.missingResult"));
-            saveClientRequestTiming(clientRequestId, { prepareMs: prepareDurationMs, generationMs: generationDurationMs, totalMs: totalDurationMs });
+            saveClientRequestTiming(clientRequestId, phaseTiming);
+            const serverRequestId = result[0]?.serverRequestId;
+            if (serverRequestId && serverRequestId !== clientRequestId) {
+                saveClientRequestTiming(serverRequestId, phaseTiming);
+            }
             const immediateImage: GeneratedImage = {
                 id: image.id,
                 dataUrl: image.previewDataUrl || image.dataUrl,
                 durationMs: totalDurationMs,
                 prepareDurationMs,
                 generationDurationMs,
+                downloadDurationMs,
                 width: 0,
                 height: 0,
                 bytes: 0,
@@ -713,6 +734,7 @@ export default function ImagePage() {
                     durationMs: totalDurationMs,
                     prepareDurationMs,
                     generationDurationMs,
+                    downloadDurationMs,
                     width: stored.width,
                     height: stored.height,
                     bytes: stored.bytes,
@@ -1351,7 +1373,7 @@ function ResultImageCard({
                 className="group relative block w-full cursor-zoom-in overflow-hidden"
                 title={t("common.details")}
                 aria-label={t("common.details")}
-                onClick={() => onPreview({ kind: "image", src: currentImage.dataUrl, prompt: currentImage.prompt, model: currentImage.model, width: currentImage.width, height: currentImage.height, durationMs: currentImage.durationMs, bytes: currentImage.bytes })}
+                onClick={() => onPreview({ kind: "image", src: currentImage.dataUrl, prompt: currentImage.prompt, model: currentImage.model, width: currentImage.width, height: currentImage.height, durationMs: currentImage.durationMs, prepareDurationMs: currentImage.prepareDurationMs, generationDurationMs: currentImage.generationDurationMs, downloadDurationMs: currentImage.downloadDurationMs, bytes: currentImage.bytes })}
             >
                 <Image src={imageSource} preview={false} alt={t("imageWorkbench.resultAlt", { count: index + 1 })} className="aspect-square w-full object-cover" onError={() => void recoverImage()} />
                 <span className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/0 text-xs font-medium text-white opacity-0 transition group-hover:bg-black/20 group-hover:opacity-100">{t("common.details")}</span>
@@ -1362,9 +1384,10 @@ function ResultImageCard({
                         {image.width}x{image.height}
                     </span>
                     <span>{formatBytes(image.bytes)}</span>
-                    {image.prepareDurationMs ? <span title="本地压缩耗时">压缩 {formatDuration(image.prepareDurationMs)}</span> : null}
-                    <span title="发送到上游后的生成耗时">生成 {formatDuration(image.generationDurationMs || image.durationMs)}</span>
-                    <span title="从开始压缩到生成完成">总计 {formatDuration(image.durationMs)}</span>
+                    {image.prepareDurationMs ? <span title={t("workbench.prepareDuration")}>{t("workbench.prepareDuration")} {formatDuration(image.prepareDurationMs)}</span> : null}
+                    <span title={t("workbench.generationDuration")}>{t("workbench.generationDuration")} {formatDuration(image.generationDurationMs || image.durationMs)}</span>
+                    {image.downloadDurationMs && image.downloadDurationMs > 0 ? <span title={t("workbench.downloadDuration")}>{t("workbench.downloadDuration")} {formatDuration(image.downloadDurationMs)}</span> : null}
+                    <span title={t("workbench.totalDuration")}>{t("workbench.totalDuration")} {formatDuration(image.durationMs)}</span>
                 </div>
                 <div className="grid min-w-0 grid-cols-4 gap-2">
                     <Tooltip title={t("common.addToAssets")}>
@@ -1398,6 +1421,11 @@ function PendingImageCard({ result, clockNow }: { result: GenerationResult; cloc
     const phase = result.phase || "generating";
     const phaseStartedAt = result.phaseStartedAt || clockNow;
     const phaseElapsedMs = Math.max(0, clockNow - phaseStartedAt);
+    const phaseLabel = phase === "compressing"
+        ? t("workbench.compressing")
+        : phase === "downloading"
+          ? t("workbench.downloading")
+          : t("workbench.generating");
     return (
         <div className="relative aspect-square overflow-hidden rounded-lg border border-dashed border-stone-300 bg-stone-50 dark:border-stone-700 dark:bg-stone-900">
             <div
@@ -1409,7 +1437,7 @@ function PendingImageCard({ result, clockNow }: { result: GenerationResult; cloc
             />
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-sm text-stone-500 dark:text-stone-400">
                 <LoaderCircle className="size-6 animate-spin" />
-                <span>{phase === "compressing" ? t("workbench.compressing") : t("workbench.generating")}</span>
+                <span>{phaseLabel}</span>
                 <span className="text-xs tabular-nums">{t("workbench.elapsed", { time: formatDuration(phaseElapsedMs) })}</span>
             </div>
         </div>

@@ -211,6 +211,10 @@ function LatencyCell({ row }: { row: CreateUsageLog }) {
                     <span>{clientTiming ? formatDuration(clientTiming.prepareMs) : "-"}</span>
                 </div>
                 <div className="flex gap-2">
+                    <span className="w-16 text-stone-500 dark:text-stone-400">下载耗时</span>
+                    <span>{clientTiming && clientTiming.downloadMs > 0 ? formatDuration(clientTiming.downloadMs) : "-"}</span>
+                </div>
+                <div className="flex gap-2">
                     <span className="w-12 text-stone-500 dark:text-stone-400">输出 TPS</span>
                     <span>{tps}</span>
                 </div>
