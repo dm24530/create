@@ -127,6 +127,8 @@ CLAUDE.md
 scripts
 !backend/scripts/
 !backend/scripts/resolve-version.sh
+!create-canvas-app/scripts/
+!create-canvas-app/scripts/**
 .code-review-state
 #openspec/
 code-reviews/
