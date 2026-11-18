@@ -1,0 +1,8 @@
+version: 0.1.15
+files:
+  - url: https://github.com/dm24530/create/releases/download/create-canvas-v0.1.15/Create-Setup-0.1.15-win-arm64.exe
+    sha512: 59AnLasLn+uHEodrGoQRAHjnJml1UnFjX8ipOzL6YrF2rxjeI71fq6lxQj/h9H/oSmUKcBvWrxIjrD1ukaD1vg==
+    size: 119344578
+path: https://github.com/dm24530/create/releases/download/create-canvas-v0.1.15/Create-Setup-0.1.15-win-arm64.exe
+sha512: 59AnLasLn+uHEodrGoQRAHjnJml1UnFjX8ipOzL6YrF2rxjeI71fq6lxQj/h9H/oSmUKcBvWrxIjrD1ukaD1vg==
+releaseDate: '2026-11-18T10:48:00.106Z'
