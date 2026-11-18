@@ -116,7 +116,15 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
+          set +e
           npm run check 2>&1 | tee desktop-check.log
+          status=${PIPESTATUS[0]}
+          set -e
+          if [ "$status" -ne 0 ]; then
+            message=$(tr '\n' ' ' < desktop-check.log | cut -c1-3500)
+            echo "::error title=Desktop shell check failed::$message"
+            exit "$status"
+          fi
 
       - name: Package Windows ${{ matrix.arch }}
         working-directory: create-canvas-app/desktop
@@ -127,7 +135,15 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: ${{ secrets.WIN_CSC_LINK != '' && 'true' || 'false' }}
         run: |
           set -o pipefail
+          set +e
           npm run dist:win:${{ matrix.arch }} 2>&1 | tee desktop-package.log
+          status=${PIPESTATUS[0]}
+          set -e
+          if [ "$status" -ne 0 ]; then
+            message=$(tr '\n' ' ' < desktop-package.log | cut -c1-3500)
+            echo "::error title=Desktop package failed (${{ matrix.arch }})::$message"
+            exit "$status"
+          fi
 
       - name: Upload Windows ${{ matrix.arch }} package
         uses: actions/upload-artifact@v4
@@ -186,7 +202,15 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
+          set +e
           npm run check 2>&1 | tee desktop-check.log
+          status=${PIPESTATUS[0]}
+          set -e
+          if [ "$status" -ne 0 ]; then
+            message=$(tr '\n' ' ' < desktop-check.log | cut -c1-3500)
+            echo "::error title=Desktop shell check failed::$message"
+            exit "$status"
+          fi
 
       - name: Package macOS ${{ matrix.arch }}
         working-directory: create-canvas-app/desktop
@@ -200,7 +224,15 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: ${{ secrets.CSC_LINK != '' && 'true' || 'false' }}
         run: |
           set -o pipefail
+          set +e
           npm run dist:mac:${{ matrix.arch }} 2>&1 | tee desktop-package.log
+          status=${PIPESTATUS[0]}
+          set -e
+          if [ "$status" -ne 0 ]; then
+            message=$(tr '\n' ' ' < desktop-package.log | cut -c1-3500)
+            echo "::error title=Desktop package failed (${{ matrix.arch }})::$message"
+            exit "$status"
+          fi
 
       - name: Upload macOS ${{ matrix.arch }} package
         uses: actions/upload-artifact@v4
