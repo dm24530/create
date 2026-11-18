@@ -123,6 +123,12 @@ jobs:
           if [ "$status" -ne 0 ]; then
             message=$(tr '\n' ' ' < desktop-check.log | cut -c1-3500)
             echo "::error title=Desktop shell check failed::$message"
+            {
+              echo '### Desktop shell check failed'
+              echo '```text'
+              tail -n 120 desktop-check.log
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
             exit "$status"
           fi
 
@@ -142,6 +148,12 @@ jobs:
           if [ "$status" -ne 0 ]; then
             message=$(tr '\n' ' ' < desktop-package.log | cut -c1-3500)
             echo "::error title=Desktop package failed (${{ matrix.arch }})::$message"
+            {
+              echo '### Desktop package failed (${{ matrix.arch }})'
+              echo '```text'
+              tail -n 160 desktop-package.log
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
             exit "$status"
           fi
 
@@ -209,6 +221,12 @@ jobs:
           if [ "$status" -ne 0 ]; then
             message=$(tr '\n' ' ' < desktop-check.log | cut -c1-3500)
             echo "::error title=Desktop shell check failed::$message"
+            {
+              echo '### Desktop shell check failed'
+              echo '```text'
+              tail -n 120 desktop-check.log
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
             exit "$status"
           fi
 
@@ -231,6 +249,12 @@ jobs:
           if [ "$status" -ne 0 ]; then
             message=$(tr '\n' ' ' < desktop-package.log | cut -c1-3500)
             echo "::error title=Desktop package failed (${{ matrix.arch }})::$message"
+            {
+              echo '### Desktop package failed (${{ matrix.arch }})'
+              echo '```text'
+              tail -n 160 desktop-package.log
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
             exit "$status"
           fi
 
