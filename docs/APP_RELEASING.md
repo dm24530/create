@@ -1,10 +1,10 @@
 # Create Desktop Release Guide
 
-This repository publishes user-facing installers through GitHub Actions.
+This repository builds user-facing installers in GitHub Actions and publishes them to the dedicated Cloudflare R2 bucket behind `https://download.superai.sbs`.
 
 ## Release outputs
 
-After a tag such as `create-canvas-v0.1.13` passes all jobs, the GitHub Release contains:
+After a tag such as `create-canvas-v0.1.21` passes all jobs, the R2 release folder contains:
 
 - `Create-Setup-<version>-win-x64.exe`
 - `Create-Setup-<version>-win-arm64.exe`
@@ -15,7 +15,7 @@ After a tag such as `create-canvas-v0.1.13` passes all jobs, the GitHub Release 
 
 Users download an installer directly. They never download server deployment archives or run shell commands.
 
-The workflow also retains `latest.yml`, `latest-mac.yml`, and blockmap files in Actions artifacts for upload to the generic update server or R2.
+The workflow also uploads `latest.yml`, `latest-mac.yml`, and blockmap files to the R2 update feed. GitHub Release assets are not used for installer distribution.
 
 ## Unsigned macOS fallback
 
@@ -121,14 +121,14 @@ Unsigned Windows test builds can still be produced, but SmartScreen may display 
 2. Create and push a tag:
 
 ```bash
-git tag create-canvas-v0.1.13
-git push origin create-canvas-v0.1.13
+git tag create-canvas-v0.1.21
+git push origin create-canvas-v0.1.21
 ```
 
 3. The workflow builds Windows x64/ARM64 and macOS arm64/x64 packages.
 4. Tagged macOS builds use Developer ID signing and notarization when credentials exist; otherwise they use the ad-hoc fallback.
 5. When Developer ID credentials exist, the workflow verifies the macOS signature with `codesign`, validates the stapled notarization ticket, and runs `spctl`.
-6. A GitHub Release is created with the installers and `SHA256SUMS.txt`.
+6. Installers and `SHA256SUMS.txt` are uploaded to R2 under `app-releases/v<version>/`; the four architecture-specific update manifests are uploaded under `app-releases/`; the workflow then verifies the public URLs before reporting success.
 
 ## Verify a macOS build
 
@@ -140,21 +140,27 @@ spctl --assess --type execute --verbose=4 "/Applications/Create.app"
 
 Expected result: signature valid, notarization ticket present, and Gatekeeper assessment accepted.
 
-## Update server or R2
+## R2 download and update feed
 
-The GitHub Release is the user download location. For in-app automatic updates, upload the generated update metadata to the configured generic update base:
+R2 is the only public installer and updater location:
 
 ```text
-windows/x64/latest.yml
-windows/x64/<installer>.exe
-windows/x64/<installer>.exe.blockmap
-windows/arm64/latest.yml
-windows/arm64/<installer>.exe
-windows/arm64/<installer>.exe.blockmap
-macos/arm64/latest-mac.yml
-macos/arm64/<update>.zip
-macos/x64/latest-mac.yml
-macos/x64/<update>.zip
+app-releases/v<version>/<installer files>
+app-releases/windows/x64/latest.yml
+app-releases/windows/arm64/latest.yml
+app-releases/macos/arm64/latest-mac.yml
+app-releases/macos/x64/latest-mac.yml
 ```
 
-The client version used in Web admin release settings must match the App installer version, for example `0.1.13`. It must not use the Web server version such as `0.2.70`.
+The Web admin client-release settings must use:
+
+```text
+version: <app version>
+update_base_url: https://download.superai.sbs/app-releases
+windows_x64: https://download.superai.sbs/app-releases/v<version>/Create-Setup-<version>-win-x64.exe
+windows_arm64: https://download.superai.sbs/app-releases/v<version>/Create-Setup-<version>-win-arm64.exe
+macos_arm64: https://download.superai.sbs/app-releases/v<version>/Create-<version>-mac-arm64.dmg
+macos_x64: https://download.superai.sbs/app-releases/v<version>/Create-<version>-mac-x64.dmg
+```
+
+The client version must match the App installer version, not the Web server version.

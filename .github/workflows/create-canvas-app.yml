@@ -478,7 +478,7 @@ jobs:
             fi
           done
 
-      - name: Upload release files to R2
+      - name: Upload release assets to R2
         shell: bash
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
@@ -494,10 +494,78 @@ jobs:
           endpoint="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
           release_prefix="app-releases/v${version}"
           aws s3 cp release-assets/ "s3://${R2_BUCKET}/${release_prefix}/" --recursive --endpoint-url "${endpoint}" --only-show-errors --cache-control "public,max-age=31536000,immutable"
-          aws s3 cp update-site/ "s3://${R2_BUCKET}/app-releases/" --recursive --endpoint-url "${endpoint}" --only-show-errors --cache-control "no-cache,max-age=0"
+
+      - name: Upload update manifests to R2
+        shell: bash
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          AWS_S3_ADDRESSING_STYLE: path
+          AWS_EC2_METADATA_DISABLED: "true"
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: |
+          set -euo pipefail
+          endpoint="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+          mappings=(
+            "update-site/windows/x64/latest.yml:app-releases/windows/x64/latest.yml"
+            "update-site/windows/arm64/latest.yml:app-releases/windows/arm64/latest.yml"
+            "update-site/macos/arm64/latest-mac.yml:app-releases/macos/arm64/latest-mac.yml"
+            "update-site/macos/x64/latest-mac.yml:app-releases/macos/x64/latest-mac.yml"
+          )
+          for mapping in "${mappings[@]}"; do
+            source="${mapping%%:*}"
+            key="${mapping#*:}"
+            echo "Uploading ${source} -> s3://${R2_BUCKET}/${key}"
+            aws s3 cp "${source}" "s3://${R2_BUCKET}/${key}" --endpoint-url "${endpoint}" --only-show-errors --cache-control "no-cache,max-age=0"
+            aws s3api head-object --bucket "${R2_BUCKET}" --key "${key}" --endpoint-url "${endpoint}" >/dev/null
+          done
+
+      - name: Verify public R2 release
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="${RELEASE_VERSION#create-canvas-v}"
+          release_base_url="https://download.superai.sbs/app-releases/v${version}"
+          manifests=(
+            "https://download.superai.sbs/app-releases/windows/x64/latest.yml"
+            "https://download.superai.sbs/app-releases/windows/arm64/latest.yml"
+            "https://download.superai.sbs/app-releases/macos/arm64/latest-mac.yml"
+            "https://download.superai.sbs/app-releases/macos/x64/latest-mac.yml"
+          )
+          for url in "${manifests[@]}"; do
+            manifest_file="$(mktemp)"
+            downloaded=false
+            for attempt in $(seq 1 12); do
+              if curl --fail --silent --show-error --location --max-time 20 "$url" -o "$manifest_file"; then
+                downloaded=true
+                break
+              fi
+              echo "Manifest not public yet (attempt ${attempt}/12): ${url}"
+              sleep 5
+            done
+            test "$downloaded" = true
+            grep -q "version: ${version}" "$manifest_file"
+            grep -q "${release_base_url}/" "$manifest_file"
+            echo "Verified manifest: ${url}"
+          done
+          installers=(
+            "${release_base_url}/Create-Setup-${version}-win-x64.exe"
+            "${release_base_url}/Create-Setup-${version}-win-arm64.exe"
+            "${release_base_url}/Create-${version}-mac-arm64.dmg"
+            "${release_base_url}/Create-${version}-mac-x64.dmg"
+          )
+          for url in "${installers[@]}"; do
+            curl --fail --silent --show-error --location --head --retry 6 --retry-delay 3 --retry-all-errors --max-time 30 "$url" >/dev/null
+            echo "Verified installer: ${url}"
+          done
           {
             echo "## Create ${version} published to R2"
             echo ""
-            echo "Download base: https://download.superai.sbs/app-releases/v${version}/"
+            echo "Download base: ${release_base_url}/"
             echo "Update manifest base: https://download.superai.sbs/app-releases/"
+            echo "All four update manifests and installers were verified publicly."
           } >> "$GITHUB_STEP_SUMMARY"
