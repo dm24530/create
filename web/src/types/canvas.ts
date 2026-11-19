@@ -64,6 +64,8 @@ export type CanvasNodeMetadata = {
     generationStartedAt?: number;
     /** Wall-clock generation time, separate from media playback durationMs. */
     generationDurationMs?: number;
+    /** Set when upstream generation finished and the local app is downloading the image body. */
+    downloadStartedAt?: number;
     errorDetails?: string;
     fontSize?: number;
     generationMode?: CanvasGenerationMode;

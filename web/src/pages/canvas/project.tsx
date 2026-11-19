@@ -389,6 +389,14 @@ function InfiniteCanvasPage() {
         if (request?.controller === controller) generationRequestsRef.current.delete(targetNodeId);
     }, []);
 
+    const markNodeDownloadStarted = useCallback((nodeId: string) => {
+        setNodes((prev) => prev.map((node) => (
+            node.id === nodeId
+                ? { ...node, metadata: { ...node.metadata, downloadStartedAt: Date.now() } }
+                : node
+        )));
+    }, []);
+
     const completeVideoNodeTask = useCallback(
         async (nodeId: string, config: Parameters<typeof buildGenerationConfig>[0], prompt: string, images: Parameters<typeof createVideoGenerationTask>[2], signal: AbortSignal, extra: CanvasNodeData["metadata"] = {}, videos: ReferenceVideo[] = [], audios: ReferenceAudio[] = []) => {
             const task = await createVideoGenerationTask(config, prompt, images, { signal, videos, audios });
@@ -3004,6 +3012,7 @@ function InfiniteCanvasPage() {
                     const requestOptions = {
                         signal: controller.signal,
                         startedAt: generationStartedAt,
+                        onDownloadStart: () => markNodeDownloadStarted(nodeId),
                         onPreview: (previewImages: Array<{ dataUrl: string }>) => {
                             const preview = previewImages[0];
                             if (!preview) return;
@@ -3041,7 +3050,7 @@ function InfiniteCanvasPage() {
                           : await requestGeneration(taskConfig, context.prompt, requestOptions).then((items) => items[0]);
                     const displayUrl = image.previewDataUrl || image.dataUrl;
                     setNodes((prev) =>
-                        prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, content: displayUrl, previewOnly: Boolean(image.previewDataUrl), cloudSourceObjectKey: image.objectKey, storageKey: undefined, naturalWidth: undefined, naturalHeight: undefined, bytes: undefined, mimeType: undefined, prompt: scene, model: generationConfig.model, status: NODE_STATUS_SUCCESS, errorDetails: undefined } } : node)),
+                        prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, content: displayUrl, previewOnly: Boolean(image.previewDataUrl), cloudSourceObjectKey: image.objectKey, storageKey: undefined, naturalWidth: undefined, naturalHeight: undefined, bytes: undefined, mimeType: undefined, prompt: scene, model: generationConfig.model, status: NODE_STATUS_SUCCESS, errorDetails: undefined, downloadStartedAt: undefined } } : node)),
                     );
                     void persistGeneratedCanvasImage(image.dataUrl, canvasAssetFolderRef.current, controller.signal)
                         .then((uploaded) => {
@@ -3250,6 +3259,7 @@ function InfiniteCanvasPage() {
                                 const requestOptions = {
                                     signal: controller.signal,
                                     startedAt: generationStartedAt,
+                                    onDownloadStart: () => markNodeDownloadStarted(rootId),
                                     onPreview: applyPreview,
                                 };
                                 const taskConfig = { ...generationConfig, count: "1" };
@@ -3402,7 +3412,7 @@ function InfiniteCanvasPage() {
                             node.id === nodeId && isConfigNode
                                 ? { ...node, metadata: { ...node.metadata, status: hasSuccess ? NODE_STATUS_SUCCESS : NODE_STATUS_ERROR, errorDetails: hasSuccess ? undefined : t("canvas.projectPage.generationFailed") } }
                                 : node.id === rootId
-                                  ? { ...node, metadata: { ...node.metadata, status: hasSuccess ? NODE_STATUS_SUCCESS : NODE_STATUS_ERROR, errorDetails: hasSuccess ? undefined : t("canvas.projectPage.allFailed") } }
+                                  ? { ...node, metadata: { ...node.metadata, status: hasSuccess ? NODE_STATUS_SUCCESS : NODE_STATUS_ERROR, errorDetails: hasSuccess ? undefined : t("canvas.projectPage.allFailed"), downloadStartedAt: undefined } }
                                     : node,
                         ),
                     );
@@ -3636,7 +3646,7 @@ function InfiniteCanvasPage() {
                 setRunningNodeIds((current) => removeRunningNodeId(current, nodeId));
             }
         },
-        [completeVideoNodeTask, effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, startGenerationRequest, t],
+        [completeVideoNodeTask, effectiveConfig, finishGenerationRequest, isAiConfigReady, markNodeDownloadStarted, message, openConfigDialog, startGenerationRequest, t],
     );
     useEffect(() => {
         generateNodeRef.current = handleGenerateNode;

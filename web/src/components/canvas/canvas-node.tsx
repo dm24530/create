@@ -512,7 +512,10 @@ function LoadingContent({ node, theme }: Pick<NodeContentRendererProps, "node" |
     return (
         <div className="flex h-full w-full flex-col items-center justify-center gap-3" style={{ color: theme.node.activeStroke }}>
             <div className="size-10 animate-spin rounded-full border-2" style={{ borderColor: theme.node.stroke, borderTopColor: theme.node.activeStroke }} />
-            <GenerationTimingLabel startedAt={node.metadata?.generationStartedAt} label={t("canvas.node.generating")} />
+            <GenerationTimingLabel
+                startedAt={node.metadata?.generationStartedAt}
+                label={t(node.metadata?.downloadStartedAt ? "workbench.downloading" : "canvas.node.generating")}
+            />
         </div>
     );
 }

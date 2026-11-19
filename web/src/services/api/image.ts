@@ -123,8 +123,10 @@ const IMAGE_MIN_PIXELS = 655360;
 const IMAGE_MAX_PIXELS = 8294400;
 const IMAGE_MAX_EDGE = 3840;
 const IMAGE_MAX_RATIO = 3;
-// 与 image-storage 的下载超时保持一致，避免接口挂起时节点一直停在生成中。
-const IMAGE_REQUEST_TIMEOUT_MS = 4 * 60_000;
+// A 4K Gemini response can include a large inline image. Keep the HTTP
+// request budget aligned with the local image download/decode budget so a
+// slow response body is not reported as an upstream generation failure.
+export const IMAGE_REQUEST_TIMEOUT_MS = 10 * 60_000;
 // Async submission must upload the full request body before the server can
 // return a task. Reference images may legitimately take longer than 30 seconds
 // on mobile or tunneled connections; timing out here looked like a server-side

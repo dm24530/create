@@ -33,6 +33,7 @@ function config(overrides: Partial<AiConfig>): AiConfig {
 
 describe("image request parameter forwarding", () => {
     let requestGeneration: typeof import("../image").requestGeneration;
+    let IMAGE_REQUEST_TIMEOUT_MS: typeof import("../image").IMAGE_REQUEST_TIMEOUT_MS;
 
     beforeEach(async () => {
         const values = new Map<string, string>();
@@ -46,12 +47,16 @@ describe("image request parameter forwarding", () => {
             createDesktop: { isDesktop: true },
             location: { origin: "http://localhost:3001" },
         });
-        ({ requestGeneration } = await import("../image"));
+        ({ requestGeneration, IMAGE_REQUEST_TIMEOUT_MS } = await import("../image"));
     });
 
     afterEach(() => {
         vi.clearAllMocks();
         vi.unstubAllGlobals();
+    });
+
+    it("allows slow 4K image responses and downloads for ten minutes", () => {
+        expect(IMAGE_REQUEST_TIMEOUT_MS).toBe(10 * 60_000);
     });
 
     it("forwards exact image size and format through the OpenAI-compatible image endpoint", async () => {
