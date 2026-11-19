@@ -1,11 +1,11 @@
-version: 0.1.16
+version: 0.1.17
 files:
-  - url: https://github.com/dm24530/create/releases/download/create-canvas-v0.1.16/Create-0.1.16-mac-x64.zip
-    sha512: NONxH0iieQ6mpqiohDnXsFdBqksKe/EdX5+w2VklOI4Fo5VH25LOfTa/6RWAieV0rf3h2KpdA26htpELRr1cmA==
-    size: 128063233
-  - url: https://github.com/dm24530/create/releases/download/create-canvas-v0.1.16/Create-0.1.16-mac-x64.dmg
-    sha512: Rpg54JsUSfCv224gwyCxnzN4VigpnlrAqDeHJJG9NU+MQ/zhRlK9JCajUr2jTqVe2D4tkDlbDx8dtTYTy2GlGA==
-    size: 132712462
-path: https://github.com/dm24530/create/releases/download/create-canvas-v0.1.16/Create-0.1.16-mac-x64.zip
-sha512: NONxH0iieQ6mpqiohDnXsFdBqksKe/EdX5+w2VklOI4Fo5VH25LOfTa/6RWAieV0rf3h2KpdA26htpELRr1cmA==
-releaseDate: '2026-11-18T12:02:38.232Z'
+  - url: https://github.com/dm24530/create/releases/download/create-canvas-v0.1.17/Create-0.1.17-mac-x64.zip
+    sha512: i6RWKEYo25Q5vO6pD+KDF+wbsvJhxp1osiecHvc6DRvIfjv2Gg7ojVCfyHl+3X1i7cisnQCNtRQp1vULPCJdNQ==
+    size: 128063398
+  - url: https://github.com/dm24530/create/releases/download/create-canvas-v0.1.17/Create-0.1.17-mac-x64.dmg
+    sha512: xc5WqfaODfcylyAEVLClDIp312OjY5XikyPP6E2CdyCHrW+j3GsCVnGP8khxBP7JVLrmM4bpgXB8DALz98F08w==
+    size: 132716218
+path: https://github.com/dm24530/create/releases/download/create-canvas-v0.1.17/Create-0.1.17-mac-x64.zip
+sha512: i6RWKEYo25Q5vO6pD+KDF+wbsvJhxp1osiecHvc6DRvIfjv2Gg7ojVCfyHl+3X1i7cisnQCNtRQp1vULPCJdNQ==
+releaseDate: '2026-11-19T01:26:20.901Z'

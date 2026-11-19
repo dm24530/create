@@ -1,8 +1,8 @@
-version: 0.1.16
+version: 0.1.17
 files:
-  - url: https://github.com/dm24530/create/releases/download/create-canvas-v0.1.16/Create-Setup-0.1.16-win-arm64.exe
-    sha512: PLvlvkeuuoDW4mrnWoBVvyjQ4GCNxk4t2KzuFKQ0pOPX7KjV+FLZATKEMBzDrmV1cL6Y0ufU5+bXqNg7/5E1xw==
-    size: 119345431
-path: https://github.com/dm24530/create/releases/download/create-canvas-v0.1.16/Create-Setup-0.1.16-win-arm64.exe
-sha512: PLvlvkeuuoDW4mrnWoBVvyjQ4GCNxk4t2KzuFKQ0pOPX7KjV+FLZATKEMBzDrmV1cL6Y0ufU5+bXqNg7/5E1xw==
-releaseDate: '2026-11-18T12:02:47.761Z'
+  - url: https://github.com/dm24530/create/releases/download/create-canvas-v0.1.17/Create-Setup-0.1.17-win-arm64.exe
+    sha512: Rpb0GN4hF0XhtUFrQTfXAdNnOhF5wE3FCeKbq/gl/AkMybqxOMCDODrVjNO40Hvqt/Qkdklm2sRoYVQtKV3Lfg==
+    size: 119345419
+path: https://github.com/dm24530/create/releases/download/create-canvas-v0.1.17/Create-Setup-0.1.17-win-arm64.exe
+sha512: Rpb0GN4hF0XhtUFrQTfXAdNnOhF5wE3FCeKbq/gl/AkMybqxOMCDODrVjNO40Hvqt/Qkdklm2sRoYVQtKV3Lfg==
+releaseDate: '2026-11-19T01:26:07.597Z'
