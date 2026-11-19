@@ -322,7 +322,7 @@ function createDesktopUpdateService(options) {
     if (state.status !== UPDATE_STATUS.DOWNLOADED) throw new Error("The update has not finished downloading");
     setImmediate(() => {
       try {
-        autoUpdater.quitAndInstall(false, true);
+        autoUpdater.quitAndInstall(true, true);
       } catch (error) {
         eventState(UPDATE_STATUS.ERROR, {
           error: error instanceof Error ? error.message : String(error),

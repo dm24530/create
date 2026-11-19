@@ -101,6 +101,7 @@ test("desktop update service checks, downloads, and installs only after explicit
   const autoUpdater = new EventEmitter();
   let feedUrl = "";
   let installed = false;
+  let installArgs = [];
   autoUpdater.checkForUpdates = async () => {
     autoUpdater.emit("update-available", { version: "0.21.0" });
     return { updateInfo: { version: "0.21.0" } };
@@ -111,7 +112,7 @@ test("desktop update service checks, downloads, and installs only after explicit
     return [];
   };
   autoUpdater.setFeedURL = (options) => { feedUrl = options.url; };
-  autoUpdater.quitAndInstall = () => { installed = true; };
+  autoUpdater.quitAndInstall = (...args) => { installed = true; installArgs = args; };
 
   const states = [];
   const service = createDesktopUpdateService({
@@ -135,6 +136,7 @@ test("desktop update service checks, downloads, and installs only after explicit
   service.installUpdate();
   await new Promise((resolve) => setTimeout(resolve, 20));
   assert.equal(installed, true);
+  assert.deepEqual(installArgs, [true, true]);
 });
 
 test("server metadata alone is not enough when the update manifest still has the old version", async () => {
