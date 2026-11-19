@@ -45,6 +45,7 @@ type GeneratedImage = {
     prepareDurationMs?: number;
     generationDurationMs?: number;
     downloadDurationMs?: number;
+    previewOnly?: boolean;
 };
 
 type GenerationResult = {
@@ -460,6 +461,10 @@ export default function ImagePage() {
     }, [autoRunToken]);
 
     const downloadImage = async (image: GeneratedImage, index: number) => {
+        if (image.previewOnly) {
+            message.warning(t("canvas.node.originalProcessing"));
+            return;
+        }
         try {
             const blob = await resolveGeneratedImageBlob(image);
             const mimeType = blob.type || image.mimeType || "image/png";
@@ -738,6 +743,7 @@ export default function ImagePage() {
                 height: 0,
                 bytes: 0,
                 mimeType: "",
+                previewOnly: Boolean(image.previewDataUrl),
                 prompt: snapshot.text,
                 model: modelOptionName(snapshot.config.model),
             };
@@ -779,6 +785,7 @@ export default function ImagePage() {
                     height: stored.height,
                     bytes: stored.bytes,
                     mimeType: stored.mimeType,
+                    previewOnly: false,
                     prompt: snapshot.text,
                     model: modelOptionName(snapshot.config.model),
                 };
@@ -793,6 +800,7 @@ export default function ImagePage() {
                     ...(localPath ? { localPath } : {}),
                     bytes: durableBlob.size,
                     mimeType: durableBlob.type || "image/png",
+                    previewOnly: false,
                 };
                 setResults((value) => updateResultById(value, resultId, { status: "success", image: nextImage }));
                 return nextImage;
@@ -1402,6 +1410,7 @@ function ResultImageCard({
     useEffect(() => setRecoveredImage(null), [image.id, image.storageKey, image.dataUrl]);
     const currentImage = recoveredImage || image;
     const imageSource = previewUrlFor(currentImage.storageKey) || currentImage.dataUrl;
+    const previewOnly = Boolean(currentImage.previewOnly);
     const recoverImage = async () => {
         const recovered = await resolveStoredLogImage(currentImage).catch(() => currentImage);
         if (recovered.dataUrl || recovered.storageKey) setRecoveredImage(recovered);
@@ -1414,8 +1423,14 @@ function ResultImageCard({
                 title={t("common.details")}
                 aria-label={t("common.details")}
                 onClick={() => onPreview({ kind: "image", src: currentImage.dataUrl, prompt: currentImage.prompt, model: currentImage.model, width: currentImage.width, height: currentImage.height, durationMs: currentImage.durationMs, prepareDurationMs: currentImage.prepareDurationMs, generationDurationMs: currentImage.generationDurationMs, downloadDurationMs: currentImage.downloadDurationMs, bytes: currentImage.bytes })}
+                onContextMenu={(event) => event.preventDefault()}
             >
                 <Image src={imageSource} preview={false} alt={t("imageWorkbench.resultAlt", { count: index + 1 })} className="aspect-square w-full object-cover" onError={() => void recoverImage()} />
+                {previewOnly ? (
+                    <span className="pointer-events-none absolute left-2 top-2 rounded-md bg-black/65 px-2 py-1 text-[10px] font-medium text-white">
+                        {t("canvas.node.thumbnailPreview")}
+                    </span>
+                ) : null}
                 <span className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/0 text-xs font-medium text-white opacity-0 transition group-hover:bg-black/20 group-hover:opacity-100">{t("common.details")}</span>
             </button>
             <div className="space-y-2 border-t border-stone-200 px-3 py-2.5 dark:border-stone-800">
@@ -1440,8 +1455,8 @@ function ResultImageCard({
                             {t("imageWorkbench.referenceShort")}
                         </Button>
                     </Tooltip>
-                    <Tooltip title={t("common.download")}>
-                        <Button className={RESULT_ACTION_BUTTON_CLASS} size="small" icon={<Download className="size-3.5" />} onClick={() => void onDownload(currentImage, index)}>
+                    <Tooltip title={previewOnly ? t("canvas.node.originalProcessing") : t("common.download")}>
+                        <Button className={RESULT_ACTION_BUTTON_CLASS} size="small" disabled={previewOnly} icon={<Download className="size-3.5" />} onClick={() => void onDownload(currentImage, index)}>
                             {t("common.download")}
                         </Button>
                     </Tooltip>
