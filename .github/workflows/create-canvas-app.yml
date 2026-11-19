@@ -447,50 +447,57 @@ jobs:
           sha256sum * > SHA256SUMS.txt
           ls -lh
 
-      - name: Prepare update manifests
+      - name: Prepare R2 update manifests
+        shell: bash
         env:
-          RELEASE_BASE_URL: https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}
           UPDATE_SITE_DIR: update-site
           WINDOWS_X64_DIR: artifacts/windows-x64
           WINDOWS_ARM64_DIR: artifacts/windows-arm64
           MACOS_ARM64_DIR: artifacts/macos-arm64
           MACOS_X64_DIR: artifacts/macos-x64
-        run: node scripts/prepare-update-site.mjs
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#create-canvas-v}"
+          export RELEASE_BASE_URL="https://download.superai.sbs/app-releases/v${version}"
+          node scripts/prepare-update-site.mjs
 
-      - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: release-assets/*
-          fail_on_unmatched_files: true
-          generate_release_notes: true
-          draft: false
-          prerelease: false
-          body: |
-            ## Create Desktop
+      - name: Validate R2 configuration
+        shell: bash
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: |
+          set -euo pipefail
+          for name in R2_ACCOUNT_ID R2_BUCKET R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY; do
+            value="${!name:-}"
+            if [ -z "$value" ]; then
+              echo "::error title=R2 configuration missing::$name is not configured in repository secrets"
+              exit 1
+            fi
+          done
 
-            Download the installer for your platform:
-
-            - Windows x64: `Create-Setup-*-win-x64.exe`
-            - Windows ARM64: `Create-Setup-*-win-arm64.exe`
-            - macOS Apple Silicon: `Create-*-mac-arm64.dmg`
-            - macOS Intel: `Create-*-mac-x64.dmg`
-
-            `SHA256SUMS.txt` contains integrity hashes for every published file.
-
-            Windows builds use code signing when `WIN_CSC_LINK` is configured.
-
-            If macOS Developer ID secrets are not configured, macOS installers use ad-hoc signing and are not notarized. On first launch, open System Settings > Privacy & Security > Open Anyway, or run:
-
-            ```bash
-            xattr -dr com.apple.quarantine /Applications/Create.app
-            ```
-
-      - name: Publish update manifests
-        uses: peaceiris/actions-gh-pages@v4
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_branch: gh-pages
-          publish_dir: update-site
-          force_orphan: false
-          user_name: github-actions[bot]
-          user_email: 41898282+github-actions[bot]@users.noreply.github.com
+      - name: Upload release files to R2
+        shell: bash
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          AWS_S3_ADDRESSING_STYLE: path
+          AWS_EC2_METADATA_DISABLED: "true"
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#create-canvas-v}"
+          endpoint="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+          release_prefix="app-releases/v${version}"
+          aws s3 cp release-assets/ "s3://${R2_BUCKET}/${release_prefix}/" --recursive --endpoint-url "${endpoint}" --only-show-errors --cache-control "public,max-age=31536000,immutable"
+          aws s3 cp update-site/ "s3://${R2_BUCKET}/app-releases/" --recursive --endpoint-url "${endpoint}" --only-show-errors --cache-control "no-cache,max-age=0"
+          {
+            echo "## Create ${version} published to R2"
+            echo ""
+            echo "Download base: https://download.superai.sbs/app-releases/v${version}/"
+            echo "Update manifest base: https://download.superai.sbs/app-releases/"
+          } >> "$GITHUB_STEP_SUMMARY"
