@@ -134,6 +134,51 @@ export const IMAGE_REQUEST_TIMEOUT_MS = 10 * 60_000;
 const IMAGE_TASK_SUBMIT_TIMEOUT_MS = 3 * 60_000;
 const IMAGE_MODEL_READ_TIMEOUT_MS = 15_000;
 const GEMINI_IMAGE_REQUEST_CONCURRENCY = 12;
+const IMAGE_NETWORK_RETRY_ATTEMPTS = 5;
+const IMAGE_NETWORK_RETRY_BASE_DELAY_MS = 800;
+const RETRYABLE_IMAGE_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
+
+function isRetryableImageRequestError(error: unknown) {
+    const axiosLike = Boolean(error && typeof error === "object" && (error as { isAxiosError?: boolean }).isAxiosError === true) || axios.isAxiosError(error);
+    if (axios.isCancel(error) || !axiosLike) return false;
+    const axiosError = error as { response?: { status?: number }; code?: string };
+    const status = axiosError.response?.status;
+    if (status && !RETRYABLE_IMAGE_STATUSES.has(status)) return false;
+    if (!axiosError.response) {
+        return ["ERR_NETWORK", "ECONNABORTED", "ETIMEDOUT", "ECONNRESET", "ENOTFOUND", "EAI_AGAIN"].includes(String(axiosError.code || ""));
+    }
+    return RETRYABLE_IMAGE_STATUSES.has(status || 0);
+}
+
+async function waitForImageRetry(attempt: number, signal?: AbortSignal) {
+    const delay = IMAGE_NETWORK_RETRY_BASE_DELAY_MS * Math.min(8, 2 ** attempt);
+    await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(resolve, delay);
+        signal?.addEventListener("abort", () => {
+            clearTimeout(timer);
+            reject(new DOMException("The operation was aborted.", "AbortError"));
+        }, { once: true });
+    });
+}
+
+async function postImageWithNetworkRetry<T>(
+    url: string,
+    data: unknown,
+    config: Parameters<typeof axios.post<T>>[2],
+) {
+    let lastError: unknown;
+    for (let attempt = 0; attempt < IMAGE_NETWORK_RETRY_ATTEMPTS; attempt += 1) {
+        if (config?.signal?.aborted) throw new DOMException("The operation was aborted.", "AbortError");
+        try {
+            return await axios.post<T>(url, data, config);
+        } catch (error) {
+            lastError = error;
+            if (!isRetryableImageRequestError(error) || attempt === IMAGE_NETWORK_RETRY_ATTEMPTS - 1) throw error;
+            await waitForImageRetry(attempt, config?.signal as AbortSignal | undefined);
+        }
+    }
+    throw lastError;
+}
 
 const GEMINI_SUPPORTED_RATIOS = ["1:1", "1:4", "1:8", "2:3", "3:2", "3:4", "4:1", "4:3", "4:5", "5:4", "8:1", "9:16", "16:9", "21:9"];
 
@@ -439,7 +484,7 @@ function readAxiosError(error: unknown, fallback: string) {
     if (axios.isCancel(error)) return apiText("requestCanceled");
     if (axios.isAxiosError(error)) {
         if (error.code === "ECONNABORTED" || error.code === "ETIMEDOUT") return apiText("imageTimeout");
-        if (!error.response && error.code === "ERR_NETWORK") return apiText("requestFailed");
+        if (!error.response && ["ERR_NETWORK", "ECONNRESET", "ETIMEDOUT", "ECONNABORTED", "ENOTFOUND", "EAI_AGAIN"].includes(String(error.code || ""))) return apiText("networkError");
         const responseData = error.response?.data;
         // Prefer the API error from the response body.
         const apiMsg = readApiErrorMessage(responseData);
@@ -850,11 +895,12 @@ async function requestGeminiImagesOnce(config: AiConfig, prompt: string, referen
     };
     const asyncResult = isLocalImagePassthrough() ? null : await requestGeminiImagesAsync(config, request, options);
     if (asyncResult) return asyncResult;
+    const clientRequestId = options?.clientRequestId || nanoid();
     try {
-        const response = await axios.post<GeminiPayload>(
+        const response = await postImageWithNetworkRetry<GeminiPayload>(
             geminiApiUrl(config, "generateContent"),
             request,
-            { headers: geminiHeaders(config, options?.clientRequestId), signal: options?.signal, timeout: IMAGE_REQUEST_TIMEOUT_MS, onDownloadProgress: createDownloadProgressHandler(options) },
+            { headers: geminiHeaders(config, clientRequestId), signal: options?.signal, timeout: IMAGE_REQUEST_TIMEOUT_MS, onDownloadProgress: createDownloadProgressHandler(options) },
         );
         return attachServerRequestId(parseGeminiImagePayload(response.data), response.headers);
     } catch (error) {
@@ -985,7 +1031,7 @@ async function submitAsyncImageTask(
             {
                 headers: {
                     ...aiHeaders(config, contentType || undefined, options?.clientRequestId),
-                    "Idempotency-Key": nanoid(),
+                    "Idempotency-Key": options?.clientRequestId || nanoid(),
                 },
                 signal: options?.signal,
                 timeout: IMAGE_TASK_SUBMIT_TIMEOUT_MS,
@@ -1028,7 +1074,7 @@ async function requestGeminiImagesAsync(
             {
                 headers: {
                     ...aiHeaders(config, "application/json", options?.clientRequestId),
-                    "Idempotency-Key": nanoid(),
+                    "Idempotency-Key": options?.clientRequestId || nanoid(),
                 },
                 signal: options?.signal,
                 timeout: IMAGE_TASK_SUBMIT_TIMEOUT_MS,
@@ -1078,6 +1124,10 @@ async function pollImageTask(
                 timeout: Math.min(30_000, Math.max(1, deadline - Date.now())),
             })
         } catch (error) {
+            if (isRetryableImageRequestError(error) && Date.now() < deadline) {
+                await waitForAsyncImagePoll(1000, options?.signal)
+                continue
+            }
             throw new Error(readAxiosError(error, apiText("requestFailed")))
         }
         const task = response.data
@@ -1210,8 +1260,9 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
     }
     const quality = normalizeQuality(config.quality);
     const requestSize = resolveRequestSize(config.size);
+    const clientRequestId = options?.clientRequestId || nanoid();
     try {
-        const response = await axios.post<ImageApiResponse>(
+        const response = await postImageWithNetworkRetry<ImageApiResponse>(
             aiApiUrl(requestConfig, "/images/generations"),
             {
                 model: requestConfig.model,
@@ -1225,7 +1276,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
                 output_format: outputFormat,
             },
             {
-                headers: aiHeaders(requestConfig, "application/json", options?.clientRequestId),
+                headers: aiHeaders(requestConfig, "application/json", clientRequestId),
                 signal: options?.signal,
                 timeout: IMAGE_REQUEST_TIMEOUT_MS,
                 onDownloadProgress: createDownloadProgressHandler(options),
@@ -1281,6 +1332,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
 
     const quality = normalizeQuality(config.quality);
     const requestSize = resolveRequestSize(config.size);
+    const clientRequestId = options?.clientRequestId || nanoid();
     const formData = new FormData();
     formData.set("model", requestConfig.model);
     formData.set("prompt", withSystemPrompt(requestConfig, requestPrompt));
@@ -1309,7 +1361,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     files.forEach((file) => formData.append(imageField, file));
 
     try {
-        const response = await axios.post<ImageApiResponse>(aiApiUrl(requestConfig, "/images/edits"), formData, { headers: aiHeaders(requestConfig, undefined, options?.clientRequestId), signal: options?.signal, timeout: IMAGE_REQUEST_TIMEOUT_MS, onDownloadProgress: createDownloadProgressHandler(options) });
+        const response = await postImageWithNetworkRetry<ImageApiResponse>(aiApiUrl(requestConfig, "/images/edits"), formData, { headers: aiHeaders(requestConfig, undefined, clientRequestId), signal: options?.signal, timeout: IMAGE_REQUEST_TIMEOUT_MS, onDownloadProgress: createDownloadProgressHandler(options) });
         const images = attachServerRequestId(await parseImagePayload(response.data, outputFormat), response.headers);
         return normalizeGeneratedImages(images, outputFormat);
     } catch (error) {

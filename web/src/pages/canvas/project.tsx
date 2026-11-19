@@ -3019,6 +3019,7 @@ function InfiniteCanvasPage() {
                     const refs = await prepareCanvasReferenceImagesForRequest(projectId, context.referenceImages);
                     const requestOptions = {
                         signal: controller.signal,
+                        clientRequestId: nanoid(),
                         startedAt: generationStartedAt,
                         onDownloadStart: () => markNodeDownloadStarted(nodeId),
                         onPreview: (previewImages: Array<{ dataUrl: string }>) => {
@@ -3268,6 +3269,7 @@ function InfiniteCanvasPage() {
                                 };
                                 const requestOptions = {
                                     signal: controller.signal,
+                                    clientRequestId: nanoid(),
                                     startedAt: generationStartedAt,
                                     onDownloadStart: () => markNodeDownloadStarted(rootId),
                                     onPreview: applyPreview,

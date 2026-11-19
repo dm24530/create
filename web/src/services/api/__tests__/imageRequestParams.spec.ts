@@ -7,6 +7,8 @@ vi.mock("axios", () => ({
     default: {
         get: vi.fn(),
         post: vi.fn(),
+        isCancel: vi.fn(() => false),
+        isAxiosError: vi.fn(() => false),
     },
     isCancel: vi.fn(() => false),
     isAxiosError: vi.fn(() => false),
@@ -164,6 +166,23 @@ describe("image request parameter forwarding", () => {
         if (!preview) throw new Error("expected preview image");
         expect(preview.dataUrl).toBe("data:image/jpeg;base64,cHJldmlldw==");
         expect(preview.previewOnly).toBe(true);
+    });
+
+
+    it("retries a transient network failure without changing the request id", async () => {
+        const networkError = Object.assign(new Error("network unavailable"), { code: "ERR_NETWORK", isAxiosError: true });
+        vi.mocked(axios.post)
+            .mockRejectedValueOnce(networkError)
+            .mockResolvedValueOnce({
+                data: { data: [{ b64_json: "aW1hZ2U=", mime_type: "image/png" }] },
+            });
+
+        await requestGeneration(config({}), "draw a cat", { clientRequestId: "stable-network-request" });
+
+        expect(axios.post).toHaveBeenCalledTimes(2);
+        for (const call of vi.mocked(axios.post).mock.calls) {
+            expect(call[2]?.headers).toMatchObject({ "X-Client-Request-ID": "stable-network-request" });
+        }
     });
 
     it("maps a 4K Gemini selection to aspectRatio and imageSize", async () => {
