@@ -132,6 +132,40 @@ describe("image request parameter forwarding", () => {
         });
     });
 
+
+    it("prefers a full url over a render preview and marks preview-only responses", async () => {
+        vi.mocked(axios.post)
+            .mockResolvedValueOnce({
+                data: {
+                    data: [{
+                        url: "https://cdn.example.com/full.png",
+                        display_url: "data:image/jpeg;base64,cHJldmlldw==",
+                        preview_data_url: "data:image/jpeg;base64,cHJldmlldw==",
+                        mime_type: "image/png",
+                    }],
+                },
+            })
+            .mockResolvedValueOnce({
+                data: {
+                    data: [{
+                        display_url: "data:image/jpeg;base64,cHJldmlldw==",
+                        preview_data_url: "data:image/jpeg;base64,cHJldmlldw==",
+                        mime_type: "image/jpeg",
+                    }],
+                },
+            });
+
+        const [preferred] = await requestGeneration(config({ outputFormat: "png" }), "draw a cat");
+        if (!preferred) throw new Error("expected preferred image");
+        expect(preferred.dataUrl).toBe("https://cdn.example.com/full.png");
+        expect(preferred.previewOnly).toBe(false);
+
+        const [preview] = await requestGeneration(config({ outputFormat: "jpeg" }), "draw a cat");
+        if (!preview) throw new Error("expected preview image");
+        expect(preview.dataUrl).toBe("data:image/jpeg;base64,cHJldmlldw==");
+        expect(preview.previewOnly).toBe(true);
+    });
+
     it("maps a 4K Gemini selection to aspectRatio and imageSize", async () => {
         vi.mocked(axios.post).mockResolvedValueOnce({
             data: {

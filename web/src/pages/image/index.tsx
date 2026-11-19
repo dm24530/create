@@ -477,12 +477,14 @@ export default function ImagePage() {
     };
 
     const addResultToReferences = async (image: GeneratedImage, index: number) => {
+        if (image.previewOnly) { message.warning(t("canvas.node.originalProcessing")); return; }
         const stored = await uploadImage(image.dataUrl);
         setReferences((value) => [...value, { id: nanoid(), name: `result-${index + 1}.png`, type: stored.mimeType, dataUrl: stored.url, storageKey: stored.storageKey }]);
         message.success(t("imageWorkbench.addedReference"));
     };
 
     const saveResultToAssets = async (image: GeneratedImage, index: number) => {
+        if (image.previewOnly) { message.warning(t("canvas.node.originalProcessing")); return; }
         const stored = await uploadImage(image.dataUrl);
         addAsset({
             kind: "image",
@@ -743,13 +745,15 @@ export default function ImagePage() {
                 height: 0,
                 bytes: 0,
                 mimeType: "",
-                previewOnly: Boolean(image.previewDataUrl),
+                previewOnly: Boolean(image.previewOnly || image.previewDataUrl),
                 prompt: snapshot.text,
                 model: modelOptionName(snapshot.config.model),
             };
             // Match the canvas behavior: paint the returned image first, then
-            // persist it to local storage in the background.
+            // persist it to local storage in the background. A preview-only
+            // response must never be persisted as the original artifact.
             setResults((value) => updateResultById(value, resultId, { status: "success", image: immediateImage }));
+            if (image.previewOnly) return immediateImage;
             let stored: Awaited<ReturnType<typeof uploadImage>> | null = null;
             let durableBlob: Blob | null = null;
             try {
@@ -1712,6 +1716,7 @@ async function pruneStoredLogs() {
 }
 
 async function resolveStoredLogImage(image: GeneratedImage): Promise<GeneratedImage> {
+    if (image.previewOnly) return image;
     let storageKey = image.storageKey?.trim() || "";
     let localPath = image.localPath?.trim() || "";
     let blob = storageKey ? await getImageBlob(storageKey).catch(() => null) : null;

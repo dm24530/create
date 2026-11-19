@@ -101,7 +101,7 @@ type GeminiPayload = {
     promptFeedback?: { blockReason?: string };
 };
 type GeminiStreamState = { buffer: string; text: string; toolCalls: ResponseToolCall[]; error?: string };
-export type GeneratedImageResult = { id: string; dataUrl: string; previewDataUrl?: string; objectKey?: string; serverRequestId?: string };
+export type GeneratedImageResult = { id: string; dataUrl: string; previewDataUrl?: string; previewOnly?: boolean; objectKey?: string; serverRequestId?: string };
 type DownloadProgress = {
     loaded: number;
     total: number;
@@ -232,7 +232,7 @@ function resolveGeminiImageSize(dimensions: { width: number; height: number } | 
     return "4K";
 }
 
-function resolveImageSource(item: Record<string, unknown>, fallbackOutputFormat: string | undefined) {
+function resolveFullImageSource(item: Record<string, unknown>, fallbackOutputFormat: string | undefined) {
     if (typeof item.b64_json === "string" && item.b64_json) {
         const declaredMime = [item.mime_type, item.mimeType]
             .find((value): value is string => typeof value === "string" && /^image\//i.test(value.trim()))
@@ -243,18 +243,22 @@ function resolveImageSource(item: Record<string, unknown>, fallbackOutputFormat:
         const mimeType = declaredMime || imageOutputMimeType(typeof itemFormat === "string" ? itemFormat : fallbackOutputFormat);
         return `data:${mimeType};base64,${item.b64_json}`;
     }
-    for (const key of ["url", "display_url", "image_url"]) {
+    for (const key of ["url", "image_url", "download_url", "source_url"]) {
         if (typeof item[key] === "string" && item[key]) {
             return item[key] as string;
         }
     }
-    const preview = resolveImagePreviewSource(item);
-    if (preview) return preview;
+    // `display_url` is used by the gateway as a render-optimized URL and can
+    // point at a preview. Only use it as an original fallback when no preview
+    // field is present.
+    if (!resolveImagePreviewSource(item) && typeof item.display_url === "string" && item.display_url) {
+        return item.display_url;
+    }
     return null;
 }
 
 function resolveImagePreviewSource(item: Record<string, unknown>) {
-    for (const key of ["preview_data_url", "preview_url", "previewDataUrl"]) {
+    for (const key of ["preview_data_url", "preview_url", "previewDataUrl", "display_url", "thumb_url", "thumbnail_url"]) {
         const value = item[key];
         if (typeof value === "string" && value) return value;
     }
@@ -289,11 +293,14 @@ function parseImagePayload(payload: ImageApiResponse, fallbackOutputFormat?: str
         || [];
     const images: GeneratedImageResult[] = [];
     for (const item of imageList) {
-        const dataUrl = resolveImageSource(item, fallbackOutputFormat);
+        const previewDataUrl = resolveImagePreviewSource(item);
+        const fullDataUrl = resolveFullImageSource(item, fallbackOutputFormat);
+        const dataUrl = fullDataUrl || previewDataUrl;
         if (dataUrl) images.push({
             id: nanoid(),
             dataUrl,
-            previewDataUrl: resolveImagePreviewSource(item),
+            previewDataUrl,
+            previewOnly: !fullDataUrl && Boolean(previewDataUrl),
             objectKey: typeof item.object_key === "string" && item.object_key.trim() ? item.object_key.trim() : undefined,
         });
     }

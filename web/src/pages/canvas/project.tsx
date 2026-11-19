@@ -2525,6 +2525,7 @@ function InfiniteCanvasPage() {
                 return;
             }
             if (!node.metadata?.content) return message.error(t("canvas.projectPage.noImageToSave"));
+            if (canvasNodeImageIsPreviewOnly(node)) { message.warning(t("canvas.node.originalProcessing")); return; }
             const dataUrl = node.metadata.storageKey ? "" : node.metadata.content;
             addAsset({
                 kind: "image",
@@ -2588,6 +2589,7 @@ function InfiniteCanvasPage() {
 
     const cropImageNode = useCallback(async (node: CanvasNodeData, crop: CanvasImageCropRect) => {
         if (!node.metadata?.content) return;
+        if (canvasNodeImageIsPreviewOnly(node)) { message.warning(t("canvas.node.originalProcessing")); return; }
         const cropped = await cropDataUrl(node.metadata.content, crop);
         const image = await persistGeneratedCanvasImage(cropped, canvasAssetFolderRef.current);
         const width = Math.min(node.width, Math.max(220, image.width));
@@ -2614,6 +2616,7 @@ function InfiniteCanvasPage() {
     const splitImageNode = useCallback(
         async (node: CanvasNodeData, params: CanvasImageSplitParams) => {
             if (!node.metadata?.content) return;
+            if (canvasNodeImageIsPreviewOnly(node)) { message.warning(t("canvas.node.originalProcessing")); return; }
             setSplitNodeId(null);
             const pieces = await splitDataUrl(node.metadata.content, params);
             const gap = 16;
@@ -2652,6 +2655,7 @@ function InfiniteCanvasPage() {
     const maskEditImageNode = useCallback(
         async (node: CanvasNodeData, payload: CanvasImageMaskEditPayload) => {
             if (!node.metadata?.content) return;
+            if (canvasNodeImageIsPreviewOnly(node)) { message.warning(t("canvas.node.originalProcessing")); return; }
             const generationConfig = { ...buildGenerationConfig(effectiveConfig, node, "image"), count: "1", size: node.metadata?.size || "auto" };
             if (payload.generate && !isAiConfigReady(generationConfig, generationConfig.model)) {
                 openConfigDialog(true);
@@ -2703,6 +2707,7 @@ function InfiniteCanvasPage() {
             try {
                 const requestReferences = await prepareCanvasReferenceImagesForRequest(projectId, references);
                 const image = await requestEdit(generationConfig, prompt, requestReferences, { signal: controller.signal }).then((items) => items[0]);
+                if (image.previewOnly) throw new Error(t("canvas.node.originalProcessing"));
                 const uploaded = await persistGeneratedCanvasImage(image.dataUrl, canvasAssetFolderRef.current, controller.signal);
                 const size = fitNodeSize(uploaded.width, uploaded.height, node.width, node.height);
                 setNodes((prev) => prev.map((item) => (item.id === childId ? { ...item, width: size.width, height: size.height, metadata: { ...item.metadata, ...imageMetadata(uploaded), prompt, ...generationMetadata } } : item)));
@@ -2721,6 +2726,7 @@ function InfiniteCanvasPage() {
 
     const upscaleImageNode = useCallback(async (node: CanvasNodeData, params: CanvasImageUpscaleParams) => {
         if (!node.metadata?.content) return;
+        if (canvasNodeImageIsPreviewOnly(node)) { message.warning(t("canvas.node.originalProcessing")); return; }
         setUpscaleNodeId(null);
         const upscaled = await upscaleDataUrl(node.metadata.content, params);
         const image = await persistGeneratedCanvasImage(upscaled, canvasAssetFolderRef.current);
@@ -2747,6 +2753,7 @@ function InfiniteCanvasPage() {
     const generateAngleNode = useCallback(
         async (node: CanvasNodeData, params: CanvasImageAngleParams) => {
             if (!node.metadata?.content) return;
+            if (canvasNodeImageIsPreviewOnly(node)) { message.warning(t("canvas.node.originalProcessing")); return; }
             const generationConfig = { ...buildGenerationConfig(effectiveConfig, node, "image"), count: "1" };
             if (!isAiConfigReady(generationConfig, generationConfig.model)) {
                 openConfigDialog(true);
@@ -2784,6 +2791,7 @@ function InfiniteCanvasPage() {
                     requestReferences,
                     { signal: controller.signal },
                 ).then((items) => items[0]);
+                if (image.previewOnly) throw new Error(t("canvas.node.originalProcessing"));
                 const uploaded = await persistGeneratedCanvasImage(image.dataUrl, canvasAssetFolderRef.current, controller.signal);
                 const size = fitNodeSize(uploaded.width, uploaded.height, imageConfig.width, imageConfig.height);
                 setNodes((prev) => prev.map((item) => (item.id === childId ? { ...item, width: size.width, height: size.height, metadata: { ...item.metadata, ...imageMetadata(uploaded), prompt, ...generationMetadata } } : item)));
@@ -3050,19 +3058,21 @@ function InfiniteCanvasPage() {
                           : await requestGeneration(taskConfig, context.prompt, requestOptions).then((items) => items[0]);
                     const displayUrl = image.previewDataUrl || image.dataUrl;
                     setNodes((prev) =>
-                        prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, content: displayUrl, previewOnly: Boolean(image.previewDataUrl), cloudSourceObjectKey: image.objectKey, storageKey: undefined, naturalWidth: undefined, naturalHeight: undefined, bytes: undefined, mimeType: undefined, prompt: scene, model: generationConfig.model, status: NODE_STATUS_SUCCESS, errorDetails: undefined, downloadStartedAt: undefined } } : node)),
+                        prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, content: displayUrl, previewOnly: Boolean(image.previewOnly || image.previewDataUrl), cloudSourceObjectKey: image.objectKey, storageKey: undefined, naturalWidth: undefined, naturalHeight: undefined, bytes: undefined, mimeType: undefined, prompt: scene, model: generationConfig.model, status: NODE_STATUS_SUCCESS, errorDetails: undefined, downloadStartedAt: undefined } } : node)),
                     );
-                    void persistGeneratedCanvasImage(image.dataUrl, canvasAssetFolderRef.current, controller.signal)
-                        .then((uploaded) => {
+                    if (!image.previewOnly) {
+                        void persistGeneratedCanvasImage(image.dataUrl, canvasAssetFolderRef.current, controller.signal)
+                            .then((uploaded) => {
                                         clearPendingImageTask(projectId, nodeId, pendingImageId);
-                            setNodes((prev) =>
-                                prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, ...imageMetadata(uploaded), prompt: scene, model: generationConfig.model, status: NODE_STATUS_SUCCESS, errorDetails: undefined } } : node)),
-                            );
-                        })
-                        .catch((error) => {
-                            clearPendingImageTask(projectId, nodeId, pendingImageId);
-                            console.warn("Failed to cache generated image", error);
-                        });
+                                setNodes((prev) =>
+                                    prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, ...imageMetadata(uploaded), prompt: scene, model: generationConfig.model, status: NODE_STATUS_SUCCESS, errorDetails: undefined } } : node)),
+                                );
+                            })
+                            .catch((error) => {
+                                clearPendingImageTask(projectId, nodeId, pendingImageId);
+                                console.warn("Failed to cache generated image", error);
+                            });
+                    }
                     setDialogNodeId(null);
                 } catch (error) {
                     if (!isGenerationCanceled(error)) {
@@ -3297,7 +3307,7 @@ function InfiniteCanvasPage() {
                                     id: imageId,
                                     status: NODE_STATUS_SUCCESS,
                                     content: displayUrl,
-                                    previewOnly: Boolean(image.previewDataUrl),
+                                    previewOnly: Boolean(image.previewOnly || image.previewDataUrl),
                                     cloudSourceObjectKey: image.objectKey,
                                     naturalWidth: 0,
                                     naturalHeight: 0,
@@ -3314,7 +3324,7 @@ function InfiniteCanvasPage() {
                                             metadata: {
                                                 ...node.metadata,
                                                 content: item.content,
-                                                previewOnly: Boolean(image.previewDataUrl),
+                                                previewOnly: Boolean(image.previewOnly || image.previewDataUrl),
                                                 cloudSourceObjectKey: image.objectKey,
                                                 storageKey: undefined,
                                                 naturalWidth: undefined,
@@ -3329,8 +3339,9 @@ function InfiniteCanvasPage() {
                                 );
                                 hasSuccess = true;
                                 if (isConfigNode) setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_SUCCESS, errorDetails: undefined } } : node)));
-                                void persistGeneratedCanvasImage(image.dataUrl, canvasAssetFolderRef.current, controller.signal)
-                                    .then((uploaded) => {
+                                if (!image.previewOnly) {
+                                    void persistGeneratedCanvasImage(image.dataUrl, canvasAssetFolderRef.current, controller.signal)
+                                        .then((uploaded) => {
                                         clearPendingImageTask(projectId, rootId, imageId);
                                         const imageSize = fitNodeSize(uploaded.width, uploaded.height, imageConfig.width, imageConfig.height);
                                         const cachedItem: CanvasNodeImage = {
@@ -3382,11 +3393,12 @@ function InfiniteCanvasPage() {
                                                 },
                                             };
                                         }));
-                                    })
-                                    .catch((error) => {
-                                        clearPendingImageTask(projectId, rootId, imageId);
-                                        console.warn("Failed to cache generated image", error);
-                                    });
+                                        })
+                                        .catch((error) => {
+                                            clearPendingImageTask(projectId, rootId, imageId);
+                                            console.warn("Failed to cache generated image", error);
+                                        });
+                                }
                                 return true;
                             } catch (error) {
                                 if (isGenerationCanceled(error)) return false;
@@ -3806,6 +3818,7 @@ function InfiniteCanvasPage() {
                         : await requestGeneration(taskConfig, prompt, { signal: controller.signal }).then((items) => items[0]);
                 }
                 if (!image) throw new Error(t("apiErrors.noImageReturned"));
+                if (image.previewOnly) return true;
                 const previewDataUrl = image.previewDataUrl;
                 if (previewDataUrl) {
                     setNodes((prev) =>
