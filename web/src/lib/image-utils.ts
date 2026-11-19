@@ -34,6 +34,18 @@ export function formatPreciseDuration(ms: number) {
         : i18n.t("common.durationSeconds", { seconds });
 }
 
+export function formatDownloadSpeed(bytesPerSecond: number) {
+    if (!Number.isFinite(bytesPerSecond) || bytesPerSecond <= 0) return "-";
+    const units = ["B/s", "KB/s", "MB/s", "GB/s"];
+    let value = bytesPerSecond;
+    let unitIndex = 0;
+    while (value >= 1024 && unitIndex < units.length - 1) {
+        value /= 1024;
+        unitIndex += 1;
+    }
+    return `${value.toFixed(1)} ${units[unitIndex]}`;
+}
+
 export function getDataUrlByteSize(dataUrl: string) {
     const base64 = dataUrl.split(",", 2)[1];
     if (!base64) {

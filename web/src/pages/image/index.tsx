@@ -16,7 +16,7 @@ import { computeMediaSize, inferMediaRatio, inferMediaScale, mediaRatioOptions, 
 import { encodeChannelModel, modelOptionName, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { nanoid } from "nanoid";
 import { autoSaveGeneratedFile, deleteGeneratedFile, generatedFileExtension, readGeneratedFileAsset, saveGeneratedFile } from "@/lib/desktop-save";
-import { formatBytes, formatDuration, formatPreciseDuration } from "@/lib/image-utils";
+import { formatBytes, formatDownloadSpeed, formatDuration, formatPreciseDuration } from "@/lib/image-utils";
 import { requestEdit, requestGeneration, submitPersistentImageTask, waitForPersistentImageTask } from "@/services/api/image";
 import { deleteStoredImages, ensureImagePreview, getImageBlob, getImagePreviewRevision, prepareReferenceImagesForRequest, previewUrlFor, resolveImageUrl, setImageBlob, subscribeImagePreviews, uploadImage } from "@/services/image-storage";
 import { buildClientRequestTiming, saveClientRequestTiming } from "@/services/client-request-timing";
@@ -61,6 +61,12 @@ type GenerationResult = {
     phaseStartedAt?: number;
     prepareDurationMs?: number;
     clientRequestId?: string;
+    downloadProgress?: {
+        percent: number;
+        loaded: number;
+        total: number;
+        bytesPerSecond: number;
+    };
 };
 
 type GenerationLog = {
@@ -631,6 +637,9 @@ export default function ImagePage() {
             const prepareDurationMs = requestStartedAt - prepareStartedAt;
             setResults((value) => updateResultById(value, resultId, { phase: "generating", phaseStartedAt: requestStartedAt, prepareDurationMs }));
             let downloadStartedAt: number | null = null;
+            let lastProgressLoaded = 0;
+            let lastProgressAt = 0;
+            let lastProgressRate = 0;
             const requestOptions = {
                 clientRequestId,
                 onDownloadStart: () => {
@@ -639,6 +648,37 @@ export default function ImagePage() {
                     setResults((value) => updateResultById(value, resultId, {
                         phase: "downloading",
                         phaseStartedAt: downloadStartedAt || performance.now(),
+                        downloadProgress: { percent: 0, loaded: 0, total: 0, bytesPerSecond: 0 },
+                    }));
+                },
+                onDownloadProgress: (progress: { loaded: number; total: number; bytesPerSecond: number }) => {
+                    if (!downloadStartedAt) {
+                        downloadStartedAt = performance.now();
+                    }
+                    const now = performance.now();
+                    if (!lastProgressAt) lastProgressAt = now;
+                    const elapsedSeconds = Math.max(0.001, (now - lastProgressAt) / 1000);
+                    const instantRate = Math.max(0, progress.loaded - lastProgressLoaded) / elapsedSeconds;
+                    const bytesPerSecond = progress.bytesPerSecond > 0
+                        ? progress.bytesPerSecond
+                        : instantRate > 0
+                          ? instantRate
+                          : lastProgressRate;
+                    lastProgressLoaded = Math.max(lastProgressLoaded, progress.loaded);
+                    lastProgressAt = now;
+                    lastProgressRate = bytesPerSecond;
+                    const percent = progress.total > 0
+                        ? Math.min(100, Math.max(0, (progress.loaded / progress.total) * 100))
+                        : 0;
+                    setResults((value) => updateResultById(value, resultId, {
+                        phase: "downloading",
+                        phaseStartedAt: downloadStartedAt || now,
+                        downloadProgress: {
+                            percent,
+                            loaded: progress.loaded,
+                            total: progress.total,
+                            bytesPerSecond,
+                        },
                     }));
                 },
                 onPreview: (previewImages: Array<{ id: string; dataUrl: string }>) => {
@@ -1435,10 +1475,24 @@ function PendingImageCard({ result, clockNow }: { result: GenerationResult; cloc
                     backgroundSize: "16px 16px",
                 }}
             />
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-sm text-stone-500 dark:text-stone-400">
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-6 text-sm text-stone-500 dark:text-stone-400">
                 <LoaderCircle className="size-6 animate-spin" />
                 <span>{phaseLabel}</span>
                 <span className="text-xs tabular-nums">{t("workbench.elapsed", { time: formatPreciseDuration(phaseElapsedMs) })}</span>
+                {phase === "downloading" ? (
+                    <div className="mt-1 flex w-full max-w-48 flex-col gap-1.5">
+                        <div className="h-1.5 w-full overflow-hidden rounded-full bg-stone-200 dark:bg-stone-800">
+                            <div
+                                className="h-full rounded-full bg-emerald-500 transition-[width] duration-200"
+                                style={{ width: `${result.downloadProgress?.percent ?? 0}%` }}
+                            />
+                        </div>
+                        <div className="flex justify-between text-[11px] tabular-nums">
+                            <span>{result.downloadProgress?.total ? `${result.downloadProgress.percent.toFixed(1)}%` : "--%"}</span>
+                            <span>{formatDownloadSpeed(result.downloadProgress?.bytesPerSecond ?? 0)}</span>
+                        </div>
+                    </div>
+                ) : null}
             </div>
         </div>
     );

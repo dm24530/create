@@ -111,6 +111,22 @@ describe("image request parameter forwarding", () => {
         expect(image?.serverRequestId).toBe("server-request-1");
     });
 
+    it("forwards download bytes, total, and rate", async () => {
+        const onDownloadProgress = vi.fn();
+        vi.mocked(axios.post).mockImplementationOnce(async (_url, _body, options) => {
+            options?.onDownloadProgress?.({ loaded: 5_000_000, total: 10_000_000, rate: 2_000_000 });
+            return { data: { data: [{ b64_json: "aW1hZ2U=", mime_type: "image/png" }] } };
+        });
+
+        await requestGeneration(config({}), "draw a cat", { onDownloadProgress });
+
+        expect(onDownloadProgress).toHaveBeenCalledWith({
+            loaded: 5_000_000,
+            total: 10_000_000,
+            bytesPerSecond: 2_000_000,
+        });
+    });
+
     it("maps a 4K Gemini selection to aspectRatio and imageSize", async () => {
         vi.mocked(axios.post).mockResolvedValueOnce({
             data: {

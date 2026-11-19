@@ -102,12 +102,18 @@ type GeminiPayload = {
 };
 type GeminiStreamState = { buffer: string; text: string; toolCalls: ResponseToolCall[]; error?: string };
 export type GeneratedImageResult = { id: string; dataUrl: string; previewDataUrl?: string; objectKey?: string; serverRequestId?: string };
+type DownloadProgress = {
+    loaded: number;
+    total: number;
+    bytesPerSecond: number;
+};
 type RequestOptions = {
     signal?: AbortSignal;
     onPreview?: (images: GeneratedImageResult[]) => void;
     startedAt?: number;
     clientRequestId?: string;
     onDownloadStart?: () => void;
+    onDownloadProgress?: (progress: DownloadProgress) => void;
 };
 
 const IMAGE_QUALITY_VALUES = ["low", "medium", "high", "xhigh", "max"];
@@ -454,12 +460,18 @@ function withSystemPrompt(config: AiConfig, prompt: string) {
 }
 
 
-function createDownloadStartNotifier(options?: RequestOptions) {
+function createDownloadProgressHandler(options?: RequestOptions) {
     let notified = false;
-    return () => {
-        if (notified) return;
-        notified = true;
-        options?.onDownloadStart?.();
+    return (event?: { loaded?: number; total?: number; rate?: number }) => {
+        if (!notified) {
+            notified = true;
+            options?.onDownloadStart?.();
+        }
+        options?.onDownloadProgress?.({
+            loaded: Math.max(0, Number(event?.loaded) || 0),
+            total: Math.max(0, Number(event?.total) || 0),
+            bytesPerSecond: Math.max(0, Number(event?.rate) || 0),
+        });
     };
 }
 
@@ -833,7 +845,7 @@ async function requestGeminiImagesOnce(config: AiConfig, prompt: string, referen
         const response = await axios.post<GeminiPayload>(
             geminiApiUrl(config, "generateContent"),
             request,
-            { headers: geminiHeaders(config, options?.clientRequestId), signal: options?.signal, timeout: IMAGE_REQUEST_TIMEOUT_MS, onDownloadProgress: createDownloadStartNotifier(options) },
+            { headers: geminiHeaders(config, options?.clientRequestId), signal: options?.signal, timeout: IMAGE_REQUEST_TIMEOUT_MS, onDownloadProgress: createDownloadProgressHandler(options) },
         );
         return attachServerRequestId(parseGeminiImagePayload(response.data), response.headers);
     } catch (error) {
@@ -1207,7 +1219,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
                 headers: aiHeaders(requestConfig, "application/json", options?.clientRequestId),
                 signal: options?.signal,
                 timeout: IMAGE_REQUEST_TIMEOUT_MS,
-                onDownloadProgress: createDownloadStartNotifier(options),
+                onDownloadProgress: createDownloadProgressHandler(options),
             },
         );
         const images = attachServerRequestId(await parseImagePayload(response.data, outputFormat), response.headers);
@@ -1288,7 +1300,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     files.forEach((file) => formData.append(imageField, file));
 
     try {
-        const response = await axios.post<ImageApiResponse>(aiApiUrl(requestConfig, "/images/edits"), formData, { headers: aiHeaders(requestConfig, undefined, options?.clientRequestId), signal: options?.signal, timeout: IMAGE_REQUEST_TIMEOUT_MS, onDownloadProgress: createDownloadStartNotifier(options) });
+        const response = await axios.post<ImageApiResponse>(aiApiUrl(requestConfig, "/images/edits"), formData, { headers: aiHeaders(requestConfig, undefined, options?.clientRequestId), signal: options?.signal, timeout: IMAGE_REQUEST_TIMEOUT_MS, onDownloadProgress: createDownloadProgressHandler(options) });
         const images = attachServerRequestId(await parseImagePayload(response.data, outputFormat), response.headers);
         return normalizeGeneratedImages(images, outputFormat);
     } catch (error) {
