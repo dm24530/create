@@ -22,6 +22,18 @@ export function formatDuration(ms: number) {
     return minutes ? i18n.t("common.durationMinutes", { minutes, seconds: String(seconds).padStart(2, "0") }) : i18n.t("common.durationSeconds", { seconds });
 }
 
+export function formatPreciseDuration(ms: number) {
+    const safeMs = Number.isFinite(ms) ? Math.max(0, ms) : 0;
+    const totalSeconds = safeMs / 1000;
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = minutes > 0
+        ? (totalSeconds % 60).toFixed(1).padStart(4, "0")
+        : totalSeconds.toFixed(1);
+    return minutes
+        ? i18n.t("common.durationMinutes", { minutes, seconds })
+        : i18n.t("common.durationSeconds", { seconds });
+}
+
 export function getDataUrlByteSize(dataUrl: string) {
     const base64 = dataUrl.split(",", 2)[1];
     if (!base64) {

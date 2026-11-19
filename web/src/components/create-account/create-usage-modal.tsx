@@ -7,6 +7,7 @@ import { getCreateUsageStats, listCreateUsage, type CreateUsageLog, type CreateU
 import type { CreateSession } from "@/services/create-auth";
 import type { CreateManagedKey } from "@/services/create-managed-channel";
 import { resolveCreateServiceUrl } from "@/lib/create-product";
+import { formatPreciseDuration } from "@/lib/image-utils";
 import { cn } from "@/lib/utils";
 import { getClientRequestTiming } from "@/services/client-request-timing";
 
@@ -200,19 +201,19 @@ function LatencyCell({ row }: { row: CreateUsageLog }) {
                 </div>
                 <div className="flex gap-2">
                     <span className="w-16 text-stone-500 dark:text-stone-400">发送后</span>
-                    <span className="text-orange-600 dark:text-orange-400">{formatDuration(sentMs)}</span>
+                    <span className="text-orange-600 dark:text-orange-400">{formatPreciseDuration(sentMs)}</span>
                 </div>
                 <div className="flex gap-2">
                     <span className="w-16 text-stone-500 dark:text-stone-400">从压缩开始</span>
-                    <span>{clientTiming ? formatDuration(clientTiming.totalMs) : "-"}</span>
+                    <span>{clientTiming ? formatPreciseDuration(clientTiming.totalMs) : "-"}</span>
                 </div>
                 <div className="flex gap-2">
                     <span className="w-16 text-stone-500 dark:text-stone-400">压缩耗时</span>
-                    <span>{clientTiming ? formatDuration(clientTiming.prepareMs) : "-"}</span>
+                    <span>{clientTiming ? formatPreciseDuration(clientTiming.prepareMs) : "-"}</span>
                 </div>
                 <div className="flex gap-2">
                     <span className="w-16 text-stone-500 dark:text-stone-400">下载耗时</span>
-                    <span>{clientTiming && clientTiming.downloadMs > 0 ? formatDuration(clientTiming.downloadMs) : "-"}</span>
+                    <span>{clientTiming && clientTiming.downloadMs > 0 ? formatPreciseDuration(clientTiming.downloadMs) : "-"}</span>
                 </div>
                 <div className="flex gap-2">
                     <span className="w-12 text-stone-500 dark:text-stone-400">输出 TPS</span>

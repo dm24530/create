@@ -16,7 +16,7 @@ import { computeMediaSize, inferMediaRatio, inferMediaScale, mediaRatioOptions, 
 import { encodeChannelModel, modelOptionName, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { nanoid } from "nanoid";
 import { autoSaveGeneratedFile, deleteGeneratedFile, generatedFileExtension, readGeneratedFileAsset, saveGeneratedFile } from "@/lib/desktop-save";
-import { formatBytes, formatDuration } from "@/lib/image-utils";
+import { formatBytes, formatDuration, formatPreciseDuration } from "@/lib/image-utils";
 import { requestEdit, requestGeneration, submitPersistentImageTask, waitForPersistentImageTask } from "@/services/api/image";
 import { deleteStoredImages, ensureImagePreview, getImageBlob, getImagePreviewRevision, prepareReferenceImagesForRequest, previewUrlFor, resolveImageUrl, setImageBlob, subscribeImagePreviews, uploadImage } from "@/services/image-storage";
 import { buildClientRequestTiming, saveClientRequestTiming } from "@/services/client-request-timing";
@@ -1384,10 +1384,10 @@ function ResultImageCard({
                         {image.width}x{image.height}
                     </span>
                     <span>{formatBytes(image.bytes)}</span>
-                    {image.prepareDurationMs ? <span title={t("workbench.prepareDuration")}>{t("workbench.prepareDuration")} {formatDuration(image.prepareDurationMs)}</span> : null}
-                    <span title={t("workbench.generationDuration")}>{t("workbench.generationDuration")} {formatDuration(image.generationDurationMs || image.durationMs)}</span>
-                    {image.downloadDurationMs && image.downloadDurationMs > 0 ? <span title={t("workbench.downloadDuration")}>{t("workbench.downloadDuration")} {formatDuration(image.downloadDurationMs)}</span> : null}
-                    <span title={t("workbench.totalDuration")}>{t("workbench.totalDuration")} {formatDuration(image.durationMs)}</span>
+                    {image.prepareDurationMs ? <span title={t("workbench.prepareDuration")}>{t("workbench.prepareDuration")} {formatPreciseDuration(image.prepareDurationMs)}</span> : null}
+                    <span title={t("workbench.generationDuration")}>{t("workbench.generationDuration")} {formatPreciseDuration(image.generationDurationMs || image.durationMs)}</span>
+                    {image.downloadDurationMs && image.downloadDurationMs > 0 ? <span title={t("workbench.downloadDuration")}>{t("workbench.downloadDuration")} {formatPreciseDuration(image.downloadDurationMs)}</span> : null}
+                    <span title={t("workbench.totalDuration")}>{t("workbench.totalDuration")} {formatPreciseDuration(image.durationMs)}</span>
                 </div>
                 <div className="grid min-w-0 grid-cols-4 gap-2">
                     <Tooltip title={t("common.addToAssets")}>
@@ -1438,7 +1438,7 @@ function PendingImageCard({ result, clockNow }: { result: GenerationResult; cloc
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-sm text-stone-500 dark:text-stone-400">
                 <LoaderCircle className="size-6 animate-spin" />
                 <span>{phaseLabel}</span>
-                <span className="text-xs tabular-nums">{t("workbench.elapsed", { time: formatDuration(phaseElapsedMs) })}</span>
+                <span className="text-xs tabular-nums">{t("workbench.elapsed", { time: formatPreciseDuration(phaseElapsedMs) })}</span>
             </div>
         </div>
     );

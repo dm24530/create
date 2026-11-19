@@ -4,7 +4,7 @@ import { Button } from "antd";
 import { Copy, Download, Minus, Plus, RotateCcw, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
-import { formatBytes, formatDuration } from "@/lib/image-utils";
+import { formatBytes, formatPreciseDuration } from "@/lib/image-utils";
 import { useCopyText } from "@/hooks/use-copy-text";
 
 export type GeneratedMediaDetailData = {
@@ -253,25 +253,25 @@ export function GeneratedMediaDetailModal({ data, onClose, onDownload }: Generat
                             {data.prepareDurationMs ? (
                                 <div>
                                     <dt className="text-xs text-stone-500 dark:text-stone-400">{t("workbench.prepareDuration")}</dt>
-                                    <dd className="mt-1 font-medium tabular-nums text-stone-900 dark:text-stone-100">{formatDuration(data.prepareDurationMs)}</dd>
+                                    <dd className="mt-1 font-medium tabular-nums text-stone-900 dark:text-stone-100">{formatPreciseDuration(data.prepareDurationMs)}</dd>
                                 </div>
                             ) : null}
                             {data.generationDurationMs ? (
                                 <div>
                                     <dt className="text-xs text-stone-500 dark:text-stone-400">{t("workbench.generationDuration")}</dt>
-                                    <dd className="mt-1 font-medium tabular-nums text-stone-900 dark:text-stone-100">{formatDuration(data.generationDurationMs)}</dd>
+                                    <dd className="mt-1 font-medium tabular-nums text-stone-900 dark:text-stone-100">{formatPreciseDuration(data.generationDurationMs)}</dd>
                                 </div>
                             ) : null}
                             {data.downloadDurationMs && data.downloadDurationMs > 0 ? (
                                 <div>
                                     <dt className="text-xs text-stone-500 dark:text-stone-400">{t("workbench.downloadDuration")}</dt>
-                                    <dd className="mt-1 font-medium tabular-nums text-stone-900 dark:text-stone-100">{formatDuration(data.downloadDurationMs)}</dd>
+                                    <dd className="mt-1 font-medium tabular-nums text-stone-900 dark:text-stone-100">{formatPreciseDuration(data.downloadDurationMs)}</dd>
                                 </div>
                             ) : null}
                             {data.durationMs ? (
                                 <div>
                                     <dt className="text-xs text-stone-500 dark:text-stone-400">{t("workbench.totalDuration")}</dt>
-                                    <dd className="mt-1 font-medium tabular-nums text-stone-900 dark:text-stone-100">{formatDuration(data.durationMs)}</dd>
+                                    <dd className="mt-1 font-medium tabular-nums text-stone-900 dark:text-stone-100">{formatPreciseDuration(data.durationMs)}</dd>
                                 </div>
                             ) : null}
                         </dl>
