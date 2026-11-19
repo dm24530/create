@@ -1,6 +1,6 @@
 {
   "name": "create-app",
-  "version": "0.1.26",
+  "version": "0.1.27",
   "private": true,
   "description": "Standalone Create desktop application",
   "main": "desktop/src/main.js",

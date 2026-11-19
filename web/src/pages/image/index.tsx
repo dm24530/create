@@ -9,6 +9,7 @@ import { FailedTaskDetailModal, type FailedTaskDetail } from "@/components/workb
 import { GeneratedMediaDetailModal, type GeneratedMediaDetailData } from "@/components/workbench/generated-media-detail-modal";
 import { resolveGeneratedImageBlob } from "@/lib/generated-image-download";
 import { generationFailureReason } from "@/lib/generation-error";
+import { matchingFailedTaskLogIds } from "@/lib/workbench-failed-task-deletion";
 import { isCreateProductMode } from "@/lib/create-product";
 import { imageReferenceLabel } from "@/lib/image-reference-prompt";
 import { normalizeImageBackground, normalizeImageOutputFormat, supportsTransparentImageBackground } from "@/lib/image-output-format";
@@ -571,13 +572,8 @@ export default function ImagePage() {
             okButtonProps: { danger: true },
             cancelText: t("common.cancel"),
             onOk: async () => {
-                const logIds = new Set([result.id, result.logId].filter((id): id is string => Boolean(id)));
-                const matchingLogs = logs.filter((log) => logIds.has(log.id) || (
-                    log.status === "failed" &&
-                    log.prompt === result.prompt &&
-                    (log.error || "") === (result.error || "")
-                ));
-                await Promise.all(matchingLogs.map((log) => logStore.removeItem(log.id)));
+                const matchingLogIds = matchingFailedTaskLogIds(logs, result);
+                await Promise.all(matchingLogIds.map((id) => logStore.removeItem(id)));
                 setResults((value) => value.filter((item) => item.id !== result.id));
                 setFailedDetail((current) => current?.id === result.id ? null : current);
                 await refreshLogs();
