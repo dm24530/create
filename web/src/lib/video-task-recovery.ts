@@ -20,3 +20,7 @@ export function mergeVideoBatch<T extends { id: string }>(current: T[], batch: T
     const updates = new Map(batch.map((item) => [item.id, item]));
     return current.map((item) => updates.get(item.id) || item);
 }
+export function videoTaskElapsedMs(createdAt: number | undefined, now = Date.now()) {
+    if (!createdAt || !Number.isFinite(createdAt)) return 0;
+    return Math.max(0, now - createdAt);
+}

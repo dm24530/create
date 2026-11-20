@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { appendVideoBatch, canResumeVideoTask, mergeVideoBatch, VIDEO_TASK_CONTENT_TIMEOUT_MS, VIDEO_TASK_POLL_TIMEOUT_MS } from "@/lib/video-task-recovery";
+import { appendVideoBatch, canResumeVideoTask, mergeVideoBatch, videoTaskElapsedMs, VIDEO_TASK_CONTENT_TIMEOUT_MS, VIDEO_TASK_POLL_TIMEOUT_MS } from "@/lib/video-task-recovery";
 
 describe("video task recovery", () => {
     it("allows Slow video providers at least forty-five minutes to finish", () => {
@@ -30,4 +30,11 @@ describe("video task recovery", () => {
         const next = mergeVideoBatch(current, [{ id: "task-b", status: "success" }]);
         expect(next).toEqual([{ id: "task-a", status: "pending" }, { id: "task-b", status: "success" }]);
     });
+    it("calculates elapsed time independently for each task", () => {
+        const now = 10_000;
+        expect(videoTaskElapsedMs(1_000, now)).toBe(9_000);
+        expect(videoTaskElapsedMs(8_000, now)).toBe(2_000);
+        expect(videoTaskElapsedMs(undefined, now)).toBe(0);
+    });
+
 });

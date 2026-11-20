@@ -12,7 +12,7 @@ import { GeneratedMediaDetailModal, type GeneratedMediaDetailData } from "@/comp
 import { generationFailureReason } from "@/lib/generation-error";
 import { matchingFailedTaskLogIds } from "@/lib/workbench-failed-task-deletion";
 import { isCreateProductMode } from "@/lib/create-product";
-import { appendVideoBatch, canResumeVideoTask, mergeVideoBatch, VIDEO_TASK_POLL_INTERVAL_MS, VIDEO_TASK_POLL_TIMEOUT_MS } from "@/lib/video-task-recovery";
+import { appendVideoBatch, canResumeVideoTask, mergeVideoBatch, videoTaskElapsedMs, VIDEO_TASK_POLL_INTERVAL_MS, VIDEO_TASK_POLL_TIMEOUT_MS } from "@/lib/video-task-recovery";
 import { normalizeVideoResolutionValue } from "@/components/video-settings-panel";
 import { computeVideoSize, inferVideoRatio, parsePixelSize, parseVideoResolution, readVideoDimensions, videoRatioOptions } from "@/lib/media-size";
 import { clampVideoSecondsForProfile, getVideoModelProfile, isVideoDurationOptionAllowed, isVideoRatioSupported, isVideoResolutionSupported, supportsVideoGenerateAudioToggle } from "@/lib/video-model-profile";
@@ -60,6 +60,7 @@ type VideoRequestSnapshot = {
 type GenerationResult = {
     id: string;
     logId?: string;
+    createdAt?: number;
     status: "pending" | "success" | "failed";
     phase?: VideoGenerationPhase;
     downloadProgress?: VideoDownloadProgress;
@@ -138,8 +139,7 @@ export default function VideoPage() {
     const [running, setRunning] = useState(false);
     const [logsOpen, setLogsOpen] = useState(false);
     const [assetPickerOpen, setAssetPickerOpen] = useState(false);
-    const [startedAt, setStartedAt] = useState(0);
-    const [elapsedMs, setElapsedMs] = useState(0);
+    const [clockNow, setClockNow] = useState(() => Date.now());
     const [selectedLogIds, setSelectedLogIds] = useState<string[]>([]);
     const [previewLog, setPreviewLog] = useState<GenerationLog | null>(null);
     const [previewMedia, setPreviewMedia] = useState<GeneratedMediaDetailData | null>(null);
@@ -256,10 +256,11 @@ export default function VideoPage() {
     }, [loadVideoKeys]);
 
     useEffect(() => {
-        if (!running || !startedAt) return;
-        const timer = window.setInterval(() => setElapsedMs(performance.now() - startedAt), 1000);
+        setClockNow(Date.now());
+        if (!running) return;
+        const timer = window.setInterval(() => setClockNow(Date.now()), 1000);
         return () => window.clearInterval(timer);
-    }, [running, startedAt]);
+    }, [running]);
 
     useEffect(() => {
         const nextResolution = isVideoResolutionSupported(videoProfile, resolution) ? resolution : videoProfile.resolutions[0] || "720";
@@ -425,13 +426,14 @@ export default function VideoPage() {
             if (agentTaskId) updateAgentTask(agentTaskId, { status: "failed", error: t("videoWorkbench.invalidParams") });
             return;
         }
-        setElapsedMs(0);
         setRunning(true);
         if (agentTaskId) updateAgentTask(agentTaskId, { status: "running", error: undefined });
         setPreviewLog(null);
         const requestedCount = Math.max(1, Math.min(MAX_VIDEO_TASKS, taskCount));
+        const batchCreatedAt = Date.now();
         const resultSlots: GenerationResult[] = Array.from({ length: requestedCount }, () => ({
             id: nanoid(),
+            createdAt: batchCreatedAt,
             status: "pending",
             phase: "queued",
             prompt: snapshot.text,
@@ -443,7 +445,6 @@ export default function VideoPage() {
         }));
         setResults((current) => appendVideoBatch(current, resultSlots));
         const batchStartedAt = performance.now();
-        setStartedAt(batchStartedAt);
 
         const settled = await Promise.allSettled(
             Array.from({ length: requestedCount }, () =>
@@ -619,8 +620,7 @@ export default function VideoPage() {
         setReferenceVideos([]);
         setReferenceAudios([]);
         setResults([]);
-        setElapsedMs(0);
-        setStartedAt(0);
+        setClockNow(Date.now());
         setSelectedLogIds([]);
         setPreviewLog(null);
         setPreviewMedia(null);
@@ -727,8 +727,7 @@ export default function VideoPage() {
         };
         activeLogIdsRef.current.add(log.id);
         setRunning(true);
-        setStartedAt((value) => value || performance.now());
-        setResults((value) => (value.some((item) => item.id === resultId) ? value : [...value, { id: resultId, status: "pending" }]));
+        setResults((value) => (value.some((item) => item.id === resultId) ? value : [...value, { id: resultId, createdAt: log.createdAt, status: "pending" }]));
         const taskConfig = buildVideoConfig({ ...effectiveConfig, ...log.config }, log.task.model || log.model);
         try {
             const deadline = Date.now() + VIDEO_TASK_POLL_TIMEOUT_MS;
@@ -810,7 +809,6 @@ export default function VideoPage() {
             activeLogIdsRef.current.delete(log.id);
             if (!activeLogIdsRef.current.size) {
                 setRunning(false);
-                setStartedAt(0);
             }
         }
     };
@@ -829,7 +827,7 @@ export default function VideoPage() {
         if (log.config.videoGenerateAudio) updateConfig("videoGenerateAudio", log.config.videoGenerateAudio);
         if (log.config.videoWatermark) updateConfig("videoWatermark", log.config.videoWatermark);
         if (log.config.videoMode) updateConfig("videoMode", log.config.videoMode);
-        setResults(log.status === "pending" ? [{ id: log.id, status: "pending", task: log.task, prompt: log.prompt, model: log.model }] : log.video ? [{ id: log.video.id, status: "success", video: { ...log.video, prompt: log.video.prompt || log.prompt, model: log.video.model || modelOptionName(log.model) } }] : [{ id: log.id, logId: log.id, status: "failed", prompt: log.prompt, model: log.model, error: generationFailureReason(log.error, t("workbench.failureReasonUnavailable")), references: log.references, referenceVideos: log.referenceVideos, referenceAudios: log.referenceAudios, task: log.task }]);
+        setResults(log.status === "pending" ? [{ id: log.id, createdAt: log.createdAt, status: "pending", task: log.task, prompt: log.prompt, model: log.model }] : log.video ? [{ id: log.video.id, createdAt: log.createdAt, status: "success", video: { ...log.video, prompt: log.video.prompt || log.prompt, model: log.video.model || modelOptionName(log.model) } }] : [{ id: log.id, logId: log.id, createdAt: log.createdAt, status: "failed", prompt: log.prompt, model: log.model, error: generationFailureReason(log.error, t("workbench.failureReasonUnavailable")), references: log.references, referenceVideos: log.referenceVideos, referenceAudios: log.referenceAudios, task: log.task }]);
     };
 
     const displayedResults: GenerationResult[] = [...results];
@@ -862,6 +860,8 @@ export default function VideoPage() {
             video: { ...log.video, prompt: log.video.prompt || log.prompt, model: log.video.model || modelOptionName(log.model) },
         });
     }
+
+    const activeElapsedMs = results.reduce((max, result) => result.status === "pending" ? Math.max(max, videoTaskElapsedMs(result.createdAt, clockNow)) : max, 0);
 
     return (
         <div className="flex h-full flex-col overflow-hidden bg-stone-50 text-stone-900 dark:bg-stone-950 dark:text-stone-100">
@@ -1227,7 +1227,7 @@ export default function VideoPage() {
                         <div className="mb-4 flex items-center justify-between gap-3">
                             <h2 className="text-xl font-semibold">{t("workbench.results")}</h2>
                             <div className="flex items-center gap-2">
-                                {running ? <Tag className="m-0 px-2 py-1">{t("workbench.waiting", { time: formatDuration(elapsedMs) })}</Tag> : null}
+                                {running ? <Tag className="m-0 px-2 py-1">{t("workbench.waiting", { time: formatDuration(activeElapsedMs) })}</Tag> : null}
                                 <Button size="small" icon={<History className="size-3.5" />} onClick={() => setLogsOpen(true)}>
                                     {t("workbench.logs")}
                                 </Button>
@@ -1248,7 +1248,7 @@ export default function VideoPage() {
                                             onDelete={() => deleteFailedResult(result)}
                                         />
                                     ) : (
-                                        <PendingVideoCard key={result.id} elapsedMs={elapsedMs} phase={result.phase} progress={result.downloadProgress} />
+                                        <PendingVideoCard key={result.id} elapsedMs={videoTaskElapsedMs(result.createdAt, clockNow)} phase={result.phase} progress={result.downloadProgress} />
                                     ),
                                 )}
                             </div>
