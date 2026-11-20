@@ -967,9 +967,6 @@ export default function VideoPage() {
                                     </button>
                                 </div>
                             </div>
-                            <div className="px-3 pb-2 text-right text-[11px] text-stone-500">
-                                {prompt.length}/{MAX_PROMPT_LENGTH}
-                            </div>
                         </div>
 
                         <div className="mt-3 min-w-0">
