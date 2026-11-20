@@ -6,6 +6,7 @@ import { mergeProductBrief } from "@/lib/product-detail/brief";
 import { removeProject, removeSkill, selectProject, upsertProject, upsertSkill } from "@/lib/product-detail/workspace";
 import { loadProductDetailWorkspace, saveProductDetailWorkspace } from "@/services/product-detail/storage";
 import { useUserStore } from "@/stores/use-user-store";
+import { useConfigStore } from "@/stores/use-config-store";
 import type {
     ProductBriefPatch,
     ProductDetailAsset,
@@ -35,11 +36,13 @@ type ProductDetailStore = {
     setStoryboard: (projectId: string, storyboard: Storyboard) => void;
     confirmStoryboard: (projectId: string) => void;
     addAsset: (projectId: string, asset: ProductDetailAsset) => void;
+    removeAsset: (projectId: string, assetId: string) => void;
     createSkill: (input?: Partial<UserDesignSkill>) => string;
     updateSkill: (skillId: string, patch: Partial<UserDesignSkill>) => void;
     deleteSkill: (skillId: string) => void;
     toggleSkill: (skillId: string, enabled: boolean) => void;
     attachSkill: (projectId: string, skillId: string) => void;
+    setProjectModel: (projectId: string, capability: "text" | "image", model: string) => void;
 };
 
 let saveQueue: Promise<void> = Promise.resolve();
@@ -87,6 +90,8 @@ export const useProductDetailStore = create<ProductDetailStore>((set, get) => ({
             brief: createEmptyBrief(platform),
             skillIds: [],
             conversationId: nanoid(),
+            textModel: useConfigStore.getState().config.textModel,
+            imageModel: useConfigStore.getState().config.imageModel,
             messages: [],
             pageSpecs: [],
             assets: [],
@@ -148,6 +153,17 @@ export const useProductDetailStore = create<ProductDetailStore>((set, get) => ({
             status: "storyboard_confirmed",
         }) : project);
     },
+    removeAsset: (projectId, assetId) => {
+        get().updateProject(projectId, (project) => ({
+            ...project,
+            assets: project.assets.filter((asset) => asset.id !== assetId),
+            brief: {
+                ...project.brief,
+                productAssetIds: project.brief.productAssetIds.filter((id) => id !== assetId),
+                referenceAssetIds: project.brief.referenceAssetIds.filter((id) => id !== assetId),
+            },
+        }));
+    },
     addAsset: (projectId, asset) => {
         get().updateProject(projectId, (project) => ({ ...project, assets: [...project.assets, asset] }));
     },
@@ -171,6 +187,9 @@ export const useProductDetailStore = create<ProductDetailStore>((set, get) => ({
         void queueSave(workspace, set);
     },
     toggleSkill: (skillId, enabled) => get().updateSkill(skillId, { enabled }),
+    setProjectModel: (projectId, capability, model) => {
+        get().updateProject(projectId, (project) => capability === "text" ? { ...project, textModel: model } : { ...project, imageModel: model });
+    },
     attachSkill: (projectId, skillId) => {
         get().updateProject(projectId, (project) => ({
             ...project,

@@ -1,6 +1,7 @@
 import { nanoid } from "nanoid";
 
 import { buildNoTextImagePrompt, buildNoTextNegativePrompt } from "@/lib/product-detail/image-prompt";
+import { resolveProductDetailImageModel } from "@/lib/product-detail/models";
 import { requestEdit, requestGeneration } from "@/services/api/image";
 import { uploadImage } from "@/services/image-storage";
 import type { AiConfig } from "@/stores/use-config-store";
@@ -30,7 +31,8 @@ export async function generateStoryboardImage(
             height: asset.height,
             bytes: asset.bytes,
         }));
-    const imageConfig: AiConfig = { ...config, model: config.imageModel || config.model, count: "1" };
+    const imageModel = resolveProductDetailImageModel(project, config);
+    const imageConfig: AiConfig = { ...config, model: imageModel, imageModel, count: "1" };
     const results = references.length
         ? await requestEdit(imageConfig, prompt, references, { signal })
         : await requestGeneration(imageConfig, prompt, { signal });

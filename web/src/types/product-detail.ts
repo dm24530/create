@@ -178,6 +178,8 @@ export type ProductDetailProject = {
     skillIds: string[];
     selectedTemplateId?: string;
     conversationId: string;
+    textModel?: string;
+    imageModel?: string;
     messages: ProductDetailConversationMessage[];
     storyboard?: Storyboard;
     pageSpecs: PageSpec[];

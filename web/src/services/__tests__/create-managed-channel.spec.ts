@@ -81,6 +81,17 @@ describe("managed Create credentials", () => {
         expect(config.videoModel).toContain("grok-imagine-video");
     });
 
+    it("configures text models from the composite managed group", async () => {
+        await configureCreateWorkspace(session, {
+            listKeys: vi.fn().mockResolvedValue([key(1, compositeGroup)]),
+            listGroups: vi.fn().mockResolvedValue([compositeGroup]),
+            createKey: vi.fn(),
+            loadModels: vi.fn().mockResolvedValue(["gpt-image-2", "gpt-5.5", "grok-imagine-video"]),
+        });
+        const config = useConfigStore.getState().config;
+        expect(config.textModel).toContain("gpt-5.5");
+        expect(config.channels[0]?.models.some((model) => model.name === "gpt-5.5" && model.capability === "text")).toBe(true);
+    });
     it("keeps image and video channels scoped to their own capabilities", async () => {
         const deps = {
             listKeys: vi.fn().mockResolvedValue([key(1, imageGroup), key(2, videoGroup)]),

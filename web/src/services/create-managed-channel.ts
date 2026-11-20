@@ -83,6 +83,10 @@ export function managedKeySupportsImage(group?: CreateManagedGroup | null) {
     return group?.allow_image_generation === true;
 }
 
+export function managedKeySupportsText(group?: CreateManagedGroup | null) {
+    return group?.platform === "composite";
+}
+
 export function managedKeySupportsVideo(group?: CreateManagedGroup | null) {
     if (!group) return false;
     return Boolean(group.video_capable || group.platform === "composite" || group.video_price_480p != null || group.video_price_720p != null || group.video_price_1080p != null);
@@ -312,7 +316,7 @@ async function configureCreateWorkspaceInternal(session: CreateSession, override
             imageGroupName,
             imageKey.key,
             Array.from(new Set([...imageModels, ...videoModels])),
-            ["image", "video"],
+            ["image", "video", "text"],
         ));
     } else {
         if (imageModels.length) {

@@ -4,7 +4,7 @@ import { PackageSearch, Plus, Sparkles } from "lucide-react";
 import { nanoid } from "nanoid";
 import { useTranslation } from "react-i18next";
 
-import { BriefPanel } from "@/components/product-detail/brief-panel";
+import { BriefSummaryPanel } from "@/components/product-detail/brief-summary-panel";
 import { ConversationPanel } from "@/components/product-detail/conversation-panel";
 import { ProjectRail } from "@/components/product-detail/project-rail";
 import { SkillManagerModal } from "@/components/product-detail/skill-manager";
@@ -13,12 +13,13 @@ import { RenderPreview } from "@/components/product-detail/render-preview";
 import { createEmptyBrief, isProductBriefReady } from "@/lib/product-detail/brief";
 import { createPage, reorderStoryboard, updateStoryboardPage } from "@/lib/product-detail/storyboard";
 import { buildSkillCandidate } from "@/lib/product-detail/skills";
+import { resolveProductDetailTextModel } from "@/lib/product-detail/models";
 import { useProductDetailStore } from "@/stores/use-product-detail-store";
-import { useEffectiveConfig } from "@/stores/use-config-store";
+import { modelOptionName, selectableModelsByCapability, useEffectiveConfig } from "@/stores/use-config-store";
 import { requestProductDetailTurn } from "@/services/product-detail/conversation";
 import { requestProductDetailStoryboard } from "@/services/product-detail/storyboard";
 import { generateStoryboardImage } from "@/services/product-detail/image-generation";
-import { uploadImage } from "@/services/image-storage";
+import { deleteStoredImages, uploadImage } from "@/services/image-storage";
 import type { ProductDetailAsset, ProductDetailConversationMessage, ProductDetailPlatform, StoryboardPage } from "@/types/product-detail";
 
 const PLATFORM_OPTIONS = [
@@ -34,7 +35,7 @@ export default function ProductDetailPage() {
     const config = useEffectiveConfig();
     const {
         workspace, load, createProject, selectProject, deleteProject, updateBrief, appendMessage,
-        setStoryboard, confirmStoryboard, addAsset, createSkill, deleteSkill, toggleSkill, attachSkill,
+        setStoryboard, confirmStoryboard, addAsset, removeAsset, createSkill, deleteSkill, toggleSkill, attachSkill, setProjectModel,
     } = useProductDetailStore();
     const [createOpen, setCreateOpen] = useState(false);
     const [skillOpen, setSkillOpen] = useState(false);
@@ -55,7 +56,9 @@ export default function ProductDetailPage() {
         if (!activeProject) return workspace.skills.find((skill) => skill.enabled);
         return workspace.skills.find((skill) => activeProject.skillIds.includes(skill.id) && skill.enabled) || workspace.skills.find((skill) => skill.enabled);
     }, [activeProject, workspace.skills]);
-    const productAssets = useMemo(() => activeProject?.assets.filter((asset) => asset.kind === "product") || [], [activeProject]);
+    const attachments = activeProject?.assets.filter((asset) => asset.kind === "product" || asset.kind === "reference") || [];
+    const textModels = useMemo(() => selectableModelsByCapability(config, "text").map((value) => ({ value, label: modelOptionName(value) })), [config]);
+    const textModelValue = activeProject ? resolveProductDetailTextModel(activeProject, config) : "";
 
     const create = () => {
         const id = createProject(projectName, newProjectPlatform);
@@ -66,12 +69,13 @@ export default function ProductDetailPage() {
 
     const send = async () => {
         if (!activeProject || !prompt.trim() || busy) return;
+        if (!textModelValue) { message.warning("后台创作分组还没有配置文本模型，请先在管理后台添加文本模型。"); return; }
         const userMessage: ProductDetailConversationMessage = { id: nanoid(), role: "user", content: prompt.trim(), createdAt: Date.now() };
         appendMessage(activeProject.id, userMessage);
         setPrompt("");
         setBusy(true);
         try {
-            const turn = await requestProductDetailTurn(config, { brief: activeProject.brief, messages: [...activeProject.messages, userMessage], skill: activeSkill, userMessage: userMessage.content });
+            const turn = await requestProductDetailTurn({ ...config, model: textModelValue, textModel: textModelValue }, { brief: activeProject.brief, messages: [...activeProject.messages, userMessage], skill: activeSkill, userMessage: userMessage.content });
             if (turn.briefPatch) updateBrief(activeProject.id, turn.briefPatch);
             if (turn.storyboard) setStoryboard(activeProject.id, turn.storyboard);
             appendMessage(activeProject.id, { id: nanoid(), role: "assistant", content: turn.message, createdAt: Date.now(), turn });
@@ -83,31 +87,40 @@ export default function ProductDetailPage() {
 
     const generateStoryboard = async () => {
         if (!activeProject) return;
+        if (!textModelValue) { message.warning("后台创作分组还没有配置文本模型，请先在管理后台添加文本模型。"); return; }
         if (!isProductBriefReady(activeProject.brief)) { message.warning(t("productDetail.briefRequired")); return; }
         setStoryboardBusy(true);
         try {
-            const storyboard = await requestProductDetailStoryboard(config, activeProject.brief, activeSkill || buildSkillCandidate(activeProject));
+            const storyboard = await requestProductDetailStoryboard({ ...config, model: textModelValue, textModel: textModelValue }, activeProject.brief, activeSkill || buildSkillCandidate(activeProject));
             setStoryboard(activeProject.id, storyboard);
             setRightTab("storyboard");
         } catch (error) { message.error(error instanceof Error ? error.message : String(error)); }
         finally { setStoryboardBusy(false); }
     };
 
-    const uploadProducts = async (files: FileList | null) => {
+    const uploadAttachments = async (kind: "product" | "reference", files: FileList | null) => {
         if (!activeProject || !files?.length) return;
         setUploading(true);
         try {
             const uploaded = await Promise.all(Array.from(files).map(async (file) => {
                 const image = await uploadImage(file);
-                const asset: ProductDetailAsset = { id: nanoid(), name: file.name, kind: "product", storageKey: image.storageKey, url: image.url, mimeType: image.mimeType || "image/png", width: image.width, height: image.height, bytes: image.bytes, createdAt: Date.now() };
+                const asset: ProductDetailAsset = { id: nanoid(), name: file.name, kind, storageKey: image.storageKey, url: image.url, mimeType: image.mimeType || "image/png", width: image.width, height: image.height, bytes: image.bytes, createdAt: Date.now() };
                 addAsset(activeProject.id, asset);
                 return asset.id;
             }));
-            updateBrief(activeProject.id, { productAssetIds: [...activeProject.brief.productAssetIds, ...uploaded] });
+            updateBrief(activeProject.id, kind === "product"
+                ? { productAssetIds: [...activeProject.brief.productAssetIds, ...uploaded] }
+                : { referenceAssetIds: [...activeProject.brief.referenceAssetIds, ...uploaded] });
         } catch (error) { message.error(error instanceof Error ? error.message : String(error)); }
         finally { setUploading(false); }
     };
 
+    const removeAttachment = async (assetId: string) => {
+        if (!activeProject) return;
+        const asset = activeProject.assets.find((item) => item.id === assetId);
+        removeAsset(activeProject.id, assetId);
+        if (asset?.storageKey) await deleteStoredImages([asset.storageKey]).catch(() => undefined);
+    };
     const createSkillFromProject = () => {
         if (!activeProject) return;
         const id = createSkill(buildSkillCandidate(activeProject));
@@ -174,11 +187,11 @@ export default function ProductDetailPage() {
             <ProjectRail projects={workspace.projects} skills={workspace.skills} activeProjectId={activeProject?.id} onSelect={(id) => { selectProject(id); setRightTab("brief"); }} onCreate={() => setCreateOpen(true)} onDelete={(id) => modal.confirm({ title: t("common.delete"), content: "确定删除这个详情页项目吗？", okText: t("common.delete"), okButtonProps: { danger: true }, cancelText: t("common.cancel"), onOk: () => deleteProject(id) })} onOpenSkills={() => setSkillOpen(true)} />
             {activeProject ? (
                 <>
-                    <ConversationPanel messages={activeProject.messages} value={prompt} busy={busy} storyboardBusy={storyboardBusy} canPlan={isProductBriefReady(activeProject.brief)} onChange={setPrompt} onSend={() => void send()} onGenerateStoryboard={() => void generateStoryboard()} />
+                    <ConversationPanel messages={activeProject.messages} value={prompt} busy={busy} storyboardBusy={storyboardBusy} canPlan={isProductBriefReady(activeProject.brief)} models={textModels} modelValue={textModelValue} attachments={attachments} uploading={uploading} onChange={setPrompt} onModelChange={(model) => setProjectModel(activeProject.id, "text", model)} onUpload={(kind, files) => void uploadAttachments(kind, files)} onRemoveAttachment={(assetId) => void removeAttachment(assetId)} onSend={() => void send()} onGenerateStoryboard={() => void generateStoryboard()} />
                     <aside className="flex min-h-0 w-[430px] shrink-0 flex-col border-l border-stone-200 bg-white dark:border-stone-800 dark:bg-stone-950/60">
                         <div className="flex items-center justify-between border-b border-stone-200 px-4 py-3 dark:border-stone-800"><div className="flex items-center gap-2"><PackageSearch className="size-4 text-orange-500" /><span className="text-sm font-semibold">{activeProject.name}</span><Tag className="m-0">{PLATFORM_OPTIONS.find((item) => item.value === activeProject.platform)?.label}</Tag></div><Button size="small" type="text" icon={<Sparkles className="size-3.5" />} onClick={() => setSkillOpen(true)}>{t("productDetail.skills")}</Button></div>
                         <Tabs activeKey={rightTab} onChange={setRightTab} items={rightTabs} className="px-3 pt-2" />
-                        {rightTab === "brief" ? <BriefPanel brief={activeProject.brief} assets={productAssets} uploading={uploading} onPatch={(patch) => updateBrief(activeProject.id, patch)} onUpload={(files) => void uploadProducts(files)} /> : null}
+                        {rightTab === "brief" ? <BriefSummaryPanel brief={activeProject.brief} assets={attachments} /> : null}
                         {rightTab === "storyboard" ? <StoryboardPanel storyboard={activeProject.storyboard} assets={activeProject.assets} generatingPageId={generatingPageId} onUpdate={updatePage} onMove={movePage} onDelete={deletePage} onAdd={addPage} onConfirm={() => confirmStoryboard(activeProject.id)} onGenerate={generatePage} onGenerateAll={generateAll} generatingAll={generatingAll} /> : null}
                         {rightTab === "results" ? <RenderPreview project={activeProject} platform={activeProject.platform} skill={activeSkill || buildSkillCandidate(activeProject)} onGenerateImage={generatePage} /> : null}
                         {rightTab === "export" ? <RenderPreview project={activeProject} platform={activeProject.platform} skill={activeSkill || buildSkillCandidate(activeProject)} onGenerateImage={generatePage} /> : null}
@@ -192,10 +205,3 @@ export default function ProductDetailPage() {
         </div>
     );
 }
-
-
-
-
-
-
-
