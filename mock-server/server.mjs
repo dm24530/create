@@ -57,6 +57,15 @@ function envelope(data, status = 200, message = "ok") {
   return { status, body: { code: 0, message, data } };
 }
 
+function lastUserText(payload) {
+  const input = Array.isArray(payload?.input) ? payload.input : [];
+  const message = [...input].reverse().find((item) => item?.role === "user");
+  if (!message) return "";
+  if (typeof message.content === "string") return message.content;
+  if (!Array.isArray(message.content)) return "";
+  return message.content.map((part) => typeof part?.text === "string" ? part.text : "").join("\n");
+}
+
 async function body(request) {
   let raw = "";
   for await (const chunk of request) raw += chunk;
@@ -144,7 +153,51 @@ const server = http.createServer(async (request, response) => {
     return send(response, 200, { object: "list", data: [
       { id: "gpt-image-2", object: "model" },
       { id: "grok-imagine-video", object: "model" },
+      { id: "gpt-5.5", object: "model" },
     ]});
+  }
+  if (path === "/v1/responses" && method === "POST") {
+    const payload = await body(request);
+    const current = lastUserText(payload);
+    const detailed = current.includes("便携榨汁杯");
+    const briefPatch = detailed
+      ? {
+          productName: "便携榨汁杯",
+          category: "厨房小家电",
+          targetAudience: ["通勤上班族", "健身人群"],
+          sellingPoints: [{ id: "fact-1", text: "一键榨汁，杯身便携", source: "user" }],
+          scenarios: ["办公室", "健身后"],
+          visualStyle: ["清爽", "高级"],
+          colorPreference: ["#111111", "#F5F0E8"],
+          copyTone: ["直接", "可信"],
+          forbiddenContent: ["绝对化承诺"],
+        }
+      : current.includes("京东")
+        ? { platform: "jd" }
+        : current.includes("拼多多")
+          ? { platform: "pdd" }
+          : current.includes("淘宝") || current.includes("天猫")
+            ? { platform: "taobao" }
+            : {};
+    const answer = {
+      message: detailed ? "商品信息已经足够，可以生成 6 页页面分镜了。" : Object.keys(briefPatch).length ? "平台已记录。继续告诉我商品名称和类目，也可以直接上传商品图。" : "我听到了。继续补充商品名称、类目、目标人群和已确认卖点。",
+      briefPatch,
+      ...(detailed ? {} : { question: { field: "productName", prompt: "商品名称是什么？", options: ["我上传商品图", "我直接描述商品"] } }),
+      readyToPlan: detailed,
+      assumptions: detailed ? ["商品图尚未上传，底图会仅按文字 Brief 策划"] : [],
+      risks: [],
+      actions: detailed ? [{ type: "plan_storyboard", label: "生成页面分镜" }] : [],
+    };
+    const text = JSON.stringify(answer);
+    response.writeHead(200, {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache",
+      "Access-Control-Allow-Origin": "*",
+    });
+    response.write(`data: ${JSON.stringify({ type: "response.output_text.delta", delta: text })}\n\n`);
+    response.write(`data: ${JSON.stringify({ type: "response.completed", response: { output_text: text } })}\n\n`);
+    response.end();
+    return;
   }
   if (path === "/v1/images/generations" && method === "POST") {
     return send(response, 200, { created: Math.floor(Date.now() / 1000), data: [{ url: `data:image/png;base64,${png}` }] });

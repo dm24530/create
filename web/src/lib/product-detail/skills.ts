@@ -1,7 +1,7 @@
 import { nanoid } from "nanoid";
 
 import { mergeProductBrief } from "@/lib/product-detail/brief";
-import type { ProductBrief, ProductDetailProject, UserDesignSkill } from "@/types/product-detail";
+import type { ProductBrief, ProductDetailProject, UserDesignSkill, UserDesignSkillPatch } from "@/types/product-detail";
 
 export function buildSkillCandidate(project: ProductDetailProject): UserDesignSkill {
     const now = Date.now();
@@ -13,7 +13,7 @@ export function buildSkillCandidate(project: ProductDetailProject): UserDesignSk
         enabled: true,
         scope: "global",
         category: project.brief.category || undefined,
-        platform: project.platform,
+        platform: project.brief.platform || project.platform,
         brand: {
             colors: [...project.brief.colorPreference],
             fonts: [],
@@ -39,6 +39,22 @@ export function buildSkillCandidate(project: ProductDetailProject): UserDesignSk
     };
 }
 
+export function mergeSkillCandidate(base: UserDesignSkill, patch?: UserDesignSkillPatch): UserDesignSkill {
+    if (!patch) return base;
+    return {
+        ...base,
+        ...patch,
+        id: base.id,
+        userId: base.userId,
+        revision: base.revision,
+        createdAt: base.createdAt,
+        updatedAt: Date.now(),
+        brand: { ...base.brand, ...(patch.brand || {}) },
+        copy: { ...base.copy, ...(patch.copy || {}) },
+        layout: { ...base.layout, ...(patch.layout || {}) },
+        sourceProjectIds: Array.from(new Set([...(base.sourceProjectIds || []), ...(patch.sourceProjectIds || [])])),
+    };
+}
 export function applyDesignSkill(brief: ProductBrief, skill: UserDesignSkill): ProductBrief {
     const patch = {
         colorPreference: brief.colorPreference.length ? brief.colorPreference : skill.brand.colors,

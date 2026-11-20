@@ -3,6 +3,7 @@ import { nanoid } from "nanoid";
 
 import { createEmptyBrief, createEmptySkill, createEmptyWorkspace } from "@/lib/product-detail/defaults";
 import { mergeProductBrief } from "@/lib/product-detail/brief";
+import { createProductDetailWelcomeMessage } from "@/lib/product-detail/conversation";
 import { removeProject, removeSkill, selectProject, upsertProject, upsertSkill } from "@/lib/product-detail/workspace";
 import { loadProductDetailWorkspace, saveProductDetailWorkspace } from "@/services/product-detail/storage";
 import { useUserStore } from "@/stores/use-user-store";
@@ -92,7 +93,7 @@ export const useProductDetailStore = create<ProductDetailStore>((set, get) => ({
             conversationId: nanoid(),
             textModel: useConfigStore.getState().config.textModel,
             imageModel: useConfigStore.getState().config.imageModel,
-            messages: [],
+            messages: [createProductDetailWelcomeMessage(now)],
             pageSpecs: [],
             assets: [],
             createdAt: now,
@@ -125,7 +126,11 @@ export const useProductDetailStore = create<ProductDetailStore>((set, get) => ({
         const project = get().workspace.projects.find((item) => item.id === projectId);
         if (!project) return;
         const brief = mergeProductBrief(project.brief, patch);
-        get().updateProject(projectId, (current) => ({ ...current, brief, status: "discovery" }));
+        const previousProductName = project.brief.productName.trim();
+        const nextProductName = brief.productName.trim();
+        const canAutoRename = project.name === "新商品详情页" || (previousProductName && project.name === previousProductName);
+        const name = canAutoRename && nextProductName ? nextProductName : project.name;
+        get().updateProject(projectId, (current) => ({ ...current, name, platform: brief.platform, brief, status: "discovery" }));
     },
     setProjectStatus: (projectId, status) => {
         get().updateProject(projectId, (project) => ({ ...project, status }));

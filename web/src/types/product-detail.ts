@@ -99,6 +99,11 @@ export type Storyboard = {
 
 export type ProductDetailConversationRole = "user" | "assistant";
 
+export type ProductDetailAgentAction = {
+    type: "plan_storyboard" | "generate_all_images" | "open_results" | "open_export" | "save_skill";
+    label?: string;
+};
+
 export type ProductDetailAssistantTurn = {
     message: string;
     briefPatch?: ProductBriefPatch;
@@ -112,6 +117,7 @@ export type ProductDetailAssistantTurn = {
     risks: string[];
     skillCandidate?: UserDesignSkillPatch;
     storyboard?: Storyboard;
+    actions?: ProductDetailAgentAction[];
 };
 
 export type ProductDetailConversationMessage = {
@@ -120,6 +126,7 @@ export type ProductDetailConversationMessage = {
     content: string;
     createdAt: number;
     turn?: ProductDetailAssistantTurn;
+    assetIds?: string[];
     error?: string;
 };
 
@@ -182,6 +189,7 @@ export type ProductDetailProject = {
     imageModel?: string;
     messages: ProductDetailConversationMessage[];
     storyboard?: Storyboard;
+    actions?: ProductDetailAgentAction[];
     pageSpecs: PageSpec[];
     assets: ProductDetailAsset[];
     createdAt: number;

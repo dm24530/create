@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { applyDesignSkill, buildSkillCandidate } from "@/lib/product-detail/skills";
+import { applyDesignSkill, buildSkillCandidate, mergeSkillCandidate } from "@/lib/product-detail/skills";
 import type { ProductDetailProject } from "@/types/product-detail";
 import { createEmptyBrief } from "@/lib/product-detail/brief";
 
@@ -48,8 +48,21 @@ describe("product detail user skill", () => {
         expect(next.visualStyle).toEqual(["清爽", "年轻"]);
         expect(next.copyTone).toEqual(["直接", "可信"]);
     });
-});
+    it("merges an Agent skill candidate without losing the project baseline", () => {
+        const base = buildSkillCandidate(project);
+        const next = mergeSkillCandidate(base, {
+            name: "高级极简风",
+            brand: { colors: ["#1A1A1A"], fonts: ["思源黑体"], visualTone: ["高级", "极简"] },
+            copy: { tone: ["克制"], preferredPhrases: [], forbiddenPhrases: ["全网第一"], density: "rich" },
+        });
 
+        expect(next.name).toBe("高级极简风");
+        expect(next.brand.colors).toEqual(["#1A1A1A"]);
+        expect(next.brand.visualTone).toEqual(["高级", "极简"]);
+        expect(next.copy.density).toBe("rich");
+        expect(next.sourceProjectIds).toEqual(["project-1"]);
+    });
+});
 function mergeSkillBrief() {
     return {
         ...createEmptyBrief("taobao"),
