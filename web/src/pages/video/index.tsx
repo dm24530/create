@@ -21,7 +21,7 @@ import { captureVideoAssetCover } from "@/lib/video-asset-cover";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
 import { deleteStoredMedia, getMediaBlob, resolveMediaUrl, setMediaBlob, uploadMediaFile } from "@/services/file-storage";
 import { resolveImageUrl, ensureImagePreview, getImagePreviewRevision, previewUrlFor, subscribeImagePreviews, uploadImage } from "@/services/image-storage";
-import { createVideoGenerationTask, isVideoTaskFailed, pollVideoGenerationTask, storeGeneratedVideo, type VideoGenerationTask } from "@/services/api/video";
+import { createVideoGenerationTask, isVideoTaskFailed, pollVideoGenerationTask, storeGeneratedVideo, type VideoDownloadProgress, type VideoGenerationPhase, type VideoGenerationTask } from "@/services/api/video";
 import { createUserWorkbenchLogStore } from "@/services/workbench-log-storage";
 import { configureCreateWorkspace, getManagedKeySelection, listCreateManagedKeys, managedKeySupportsVideo, switchManagedKey, type CreateManagedKey } from "@/services/create-managed-channel";
 import { WorkbenchModelSelect } from "@/components/workbench/model-select";
@@ -61,6 +61,8 @@ type GenerationResult = {
     id: string;
     logId?: string;
     status: "pending" | "success" | "failed";
+    phase?: VideoGenerationPhase;
+    downloadProgress?: VideoDownloadProgress;
     video?: GeneratedVideo;
     error?: string;
     prompt?: string;
@@ -431,6 +433,7 @@ export default function VideoPage() {
         const resultSlots: GenerationResult[] = Array.from({ length: requestedCount }, () => ({
             id: nanoid(),
             status: "pending",
+            phase: "queued",
             prompt: snapshot.text,
             model: snapshot.model,
             config: snapshot.config,
@@ -713,8 +716,14 @@ export default function VideoPage() {
             setResults((value) => {
                 const index = value.findIndex((item) => item.id === resultId);
                 if (index < 0) return [...value, { id: resultId, ...next }];
-                return value.map((item, itemIndex) => (itemIndex === index ? { id: resultId, ...next } : item));
+                return value.map((item, itemIndex) => (itemIndex === index ? { ...item, id: resultId, ...next } : item));
             });
+        };
+        const updatePhase = (phase: VideoGenerationPhase) => {
+            setResults((value) => value.map((item) => item.id === resultId ? { ...item, phase } : item));
+        };
+        const updateDownloadProgress = (progress: VideoDownloadProgress) => {
+            setResults((value) => value.map((item) => item.id === resultId ? { ...item, phase: "downloading", downloadProgress: progress } : item));
         };
         activeLogIdsRef.current.add(log.id);
         setRunning(true);
@@ -727,10 +736,18 @@ export default function VideoPage() {
             while (Date.now() < deadline) {
                 let state: Awaited<ReturnType<typeof pollVideoGenerationTask>>;
                 try {
-                    state = await pollVideoGenerationTask(configOverride || taskConfig, log.task);
+                    state = await pollVideoGenerationTask(configOverride || taskConfig, log.task, {
+                        onPhase: updatePhase,
+                        onDownloadProgress: updateDownloadProgress,
+                    });
                 } catch (error) {
                     if (isVideoTaskFailed(error) || Date.now() >= deadline) throw error;
                     lastPollError = error;
+                    await delay(VIDEO_TASK_POLL_INTERVAL_MS);
+                    continue;
+                }
+                if (state.status === "pending") {
+                    updatePhase(state.phase);
                     await delay(VIDEO_TASK_POLL_INTERVAL_MS);
                     continue;
                 }
@@ -1234,7 +1251,7 @@ export default function VideoPage() {
                                             onDelete={() => deleteFailedResult(result)}
                                         />
                                     ) : (
-                                        <PendingVideoCard key={result.id} elapsedMs={elapsedMs} />
+                                        <PendingVideoCard key={result.id} elapsedMs={elapsedMs} phase={result.phase} progress={result.downloadProgress} />
                                     ),
                                 )}
                             </div>
@@ -1396,13 +1413,21 @@ function ResultVideoCard({
     );
 }
 
-function PendingVideoCard({ elapsedMs }: { elapsedMs: number }) {
+function PendingVideoCard({ elapsedMs, phase = "queued", progress }: { elapsedMs: number; phase?: VideoGenerationPhase; progress?: VideoDownloadProgress }) {
     const { t } = useTranslation();
+    const label = phase === "queued"
+        ? t("workbench.videoQueued")
+        : phase === "downloading"
+            ? t("workbench.videoDownloading")
+            : t("workbench.videoGenerating");
+    const progressLabel = phase === "downloading" && progress?.total
+        ? ` · ${progress.percent}% ${formatBytes(progress.bytesPerSecond)}/s`
+        : "";
     return (
         <div className="relative aspect-video overflow-hidden rounded-lg border border-dashed border-stone-300 bg-stone-50 dark:border-stone-700 dark:bg-stone-900">
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-sm text-stone-500 dark:text-stone-400">
                 <LoaderCircle className="size-6 animate-spin" />
-                <span>{t("workbench.generating")} · 已用 {formatDuration(elapsedMs)}</span>
+                <span>{label}{progressLabel} · {t("workbench.elapsed", { time: formatDuration(elapsedMs) })}</span>
             </div>
         </div>
     );

@@ -12,7 +12,7 @@ vi.hoisted(() => {
     });
 });
 
-import { buildVideoProviderRequest, type VideoProviderRequestInput } from "../video";
+import { buildVideoProviderRequest, mapPendingVideoPhase, type VideoProviderRequestInput } from "../video";
 
 const base: VideoProviderRequestInput = {
     model: "model",
@@ -133,6 +133,28 @@ describe("vendor video request builders", () => {
         expect(seedance.body).toMatchObject({ duration: 5, resolution: "720p", aspect_ratio: "16:9" });
     });
 
+    it("resolves server-relative reference assets to absolute URLs for video providers", () => {
+        vi.stubEnv("VITE_CREATE_API_BASE_URL", "https://create.example.com/api/v1");
+        const imageUrl = "/api/v1/public/video-reference-assets/reference-token";
+        const input = {
+            ...base,
+            model: "muse-video",
+            imageUrls: [imageUrl],
+        };
+
+        const muse = buildVideoProviderRequest("muse_video", input);
+        expect(muse.body.image).toBe("https://create.example.com/api/v1/public/video-reference-assets/reference-token");
+
+        const seedance = buildVideoProviderRequest("seedance_video", {
+            ...input,
+            model: "seedance-2.0",
+            imageMode: "reference",
+        });
+        expect(seedance.body.reference_image_urls).toEqual([
+            "https://create.example.com/api/v1/public/video-reference-assets/reference-token",
+        ]);
+        vi.unstubAllEnvs();
+    });
     it("uses the MiniMax task protocol body", () => {
         const request = buildVideoProviderRequest("video_tasks", {
             ...base,
@@ -148,4 +170,12 @@ describe("vendor video request builders", () => {
             images: ["https://cdn.example.com/frame.png"],
         });
     });
+    it("maps upstream video statuses to queued and generating phases", () => {
+        expect(mapPendingVideoPhase("queued")).toBe("queued");
+        expect(mapPendingVideoPhase("submitted")).toBe("queued");
+        expect(mapPendingVideoPhase("processing")).toBe("generating");
+        expect(mapPendingVideoPhase("in_progress")).toBe("generating");
+        expect(mapPendingVideoPhase("unknown")).toBe("generating");
+    });
+
 });

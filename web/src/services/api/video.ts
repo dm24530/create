@@ -3,6 +3,7 @@ import { nanoid } from "nanoid";
 
 import i18n from "@/i18n";
 import { dataUrlToFile, readFileAsDataUrl } from "@/lib/image-utils";
+import { resolveCreateServiceUrl } from "@/lib/create-product";
 import { computeVideoSize, inferVideoRatio } from "@/lib/media-size";
 import { getMediaBlob, resolveMediaUrl, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { createRequest } from "@/services/create-api";
@@ -18,7 +19,13 @@ import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 type VideoResponse = { id: string; request_id?: string; task_id?: string; status?: string; error?: { message?: string }; url?: string; result_url?: string; video_url?: string; content?: { video_url?: string; url?: string } | null };
 type ApiVideoResponse = VideoResponse | { code?: number | string; data?: VideoResponse | null; msg?: string; message?: string; error?: { message?: string } };
 type ApiEnvelope<T> = T | { code?: number | string; data?: T | null; msg?: string; message?: string; error?: { message?: string } };
-type RequestOptions = { signal?: AbortSignal };
+export type VideoGenerationPhase = "queued" | "generating" | "downloading";
+export type VideoDownloadProgress = { percent: number; transferred: number; total: number; bytesPerSecond: number };
+type RequestOptions = {
+    signal?: AbortSignal;
+    onPhase?: (phase: VideoGenerationPhase) => void;
+    onDownloadProgress?: (progress: VideoDownloadProgress) => void;
+};
 type VideoMediaOptions = RequestOptions & { videos?: ReferenceVideo[]; audios?: ReferenceAudio[] };
 const apiText = (key: string, options?: Record<string, unknown>) => i18n.t(`apiErrors.${key}`, options);
 
@@ -31,7 +38,10 @@ type GeminiVideoOperation = {
     error?: { message?: string };
     response?: { generateVideoResponse?: { generatedSamples?: Array<{ video?: { uri?: string } }> } };
 };
-export type VideoGenerationTaskState = { status: "pending" } | { status: "completed"; result: VideoGenerationResult } | { status: "failed"; error: string };
+export type VideoGenerationTaskState =
+    | { status: "pending"; phase: "queued" | "generating" }
+    | { status: "completed"; result: VideoGenerationResult }
+    | { status: "failed"; error: string };
 
 export type VideoProviderRequestInput = {
     model: string;
@@ -48,6 +58,9 @@ export type VideoProviderRequestInput = {
 };
 
 export function buildVideoProviderRequest(provider: VideoModelProvider, input: VideoProviderRequestInput): { path: string; body: Record<string, unknown> } {
+    const imageUrls = input.imageUrls.map(resolveCreateServiceUrl);
+    const videoUrls = input.videoUrls.map(resolveCreateServiceUrl);
+    const audioUrls = input.audioUrls.map(resolveCreateServiceUrl);
     if (provider === "muse_video") {
         const body: Record<string, unknown> = {
             model: input.model,
@@ -55,8 +68,8 @@ export function buildVideoProviderRequest(provider: VideoModelProvider, input: V
             aspect_ratio: input.aspectRatio,
         };
         if (!input.durationAuto) body.seconds = input.durationSeconds;
-        if (input.imageUrls.length === 1) body.image = input.imageUrls[0];
-        if (input.imageUrls.length > 1) body.reference_images = input.imageUrls;
+        if (imageUrls.length === 1) body.image = imageUrls[0];
+        if (imageUrls.length > 1) body.reference_images = imageUrls;
         return { path: "/videos", body };
     }
 
@@ -68,9 +81,9 @@ export function buildVideoProviderRequest(provider: VideoModelProvider, input: V
             aspect_ratio: input.aspectRatio,
         };
         if (!input.durationAuto) body.duration = input.durationSeconds;
-        if (input.imageUrls.length) body.image = input.imageUrls.map((url) => ({ url }));
-        if (input.videoUrls.length) body.video = { url: input.videoUrls[0] };
-        return { path: input.videoUrls.length ? "/videos/edits" : "/videos/generations", body };
+        if (imageUrls.length) body.image = imageUrls.map((url) => ({ url }));
+        if (videoUrls.length) body.video = { url: videoUrls[0] };
+        return { path: videoUrls.length ? "/videos/edits" : "/videos/generations", body };
     }
 
     if (provider === "seedance_video") {
@@ -82,19 +95,19 @@ export function buildVideoProviderRequest(provider: VideoModelProvider, input: V
             generate_audio: input.generateAudio,
         };
         if (!input.durationAuto) body.duration = input.durationSeconds;
-        if (input.videoUrls.length) {
+        if (videoUrls.length) {
             body.mode = "reference-video";
-            body.reference_video_urls = input.videoUrls;
-        } else if (input.imageMode === "frames" && input.imageUrls.length) {
-            body.mode = input.imageUrls.length > 1 ? "first-last-frame" : "image-to-video";
-            body.images = input.imageUrls.slice(0, 2);
-        } else if (input.imageUrls.length) {
+            body.reference_video_urls = videoUrls;
+        } else if (input.imageMode === "frames" && imageUrls.length) {
+            body.mode = imageUrls.length > 1 ? "first-last-frame" : "image-to-video";
+            body.images = imageUrls.slice(0, 2);
+        } else if (imageUrls.length) {
             body.mode = "reference-images";
-            body.reference_image_urls = input.imageUrls;
+            body.reference_image_urls = imageUrls;
         } else {
             body.mode = "text-to-video";
         }
-        if (input.audioUrls.length) body.reference_audio_urls = input.audioUrls;
+        if (audioUrls.length) body.reference_audio_urls = audioUrls;
         return { path: "/video/generations", body };
     }
 
@@ -106,19 +119,19 @@ export function buildVideoProviderRequest(provider: VideoModelProvider, input: V
             ratio: input.aspectRatio,
         };
         if (!input.durationAuto) body.seconds = String(input.durationSeconds);
-        if (!input.videoUrls.length && !input.audioUrls.length && input.imageUrls.length <= 2) {
-            body.images = input.imageUrls;
-        } else if (input.imageUrls.length || input.videoUrls.length || input.audioUrls.length) {
+        if (!videoUrls.length && !audioUrls.length && imageUrls.length <= 2) {
+            body.images = imageUrls;
+        } else if (imageUrls.length || videoUrls.length || audioUrls.length) {
             const content: Array<Record<string, unknown>> = [{ type: "text", text: input.prompt }];
-            input.imageUrls.forEach((url, index) => {
+            imageUrls.forEach((url, index) => {
                 content.push({
                     type: "image_url",
                     image_url: { url },
                     role: index === 0 ? "first_frame" : index === 1 ? "last_frame" : "reference_image",
                 });
             });
-            input.videoUrls.forEach((url) => content.push({ type: "video_url", video_url: { url }, role: "reference_video" }));
-            input.audioUrls.forEach((url) => content.push({ type: "audio_url", audio_url: { url }, role: "reference_audio" }));
+            videoUrls.forEach((url) => content.push({ type: "video_url", video_url: { url }, role: "reference_video" }));
+            audioUrls.forEach((url) => content.push({ type: "audio_url", audio_url: { url }, role: "reference_audio" }));
             body.metadata = { content };
         }
         return { path: "/videos", body };
@@ -135,8 +148,8 @@ export function buildVideoProviderRequest(provider: VideoModelProvider, input: V
         body.seconds = String(input.durationSeconds);
         body.duration = input.durationSeconds;
     }
-    if (input.imageUrls[0]) body.image = { url: input.imageUrls[0] };
-    if (input.videoUrls[0]) body.video = { url: input.videoUrls[0] };
+    if (imageUrls[0]) body.image = { url: imageUrls[0] };
+    if (videoUrls[0]) body.video = { url: videoUrls[0] };
     return { path: "/videos", body };
 }
 
@@ -320,16 +333,40 @@ async function createJsonVideoTask(config: AiConfig, path: string, body: Record<
     }
 }
 
+export function mapPendingVideoPhase(status: string): "queued" | "generating" {
+    const normalized = status.trim().toLowerCase();
+    if (["queued", "queue", "pending", "submitted", "waiting", "created"].includes(normalized)) return "queued";
+    return "generating";
+}
+
+function reportDownloadProgress(options: RequestOptions | undefined, event: { loaded?: number; total?: number; rate?: number }) {
+    const transferred = Math.max(0, Number(event.loaded) || 0);
+    const total = Math.max(0, Number(event.total) || 0);
+    const percent = total > 0 ? Math.min(99, Math.max(0, Math.round((transferred / total) * 100))) : 0;
+    options?.onDownloadProgress?.({ percent, transferred, total, bytesPerSecond: Math.max(0, Number(event.rate) || 0) });
+}
+
 async function pollOpenAIVideoTask(config: AiConfig, task: VideoGenerationTask, options?: RequestOptions): Promise<VideoGenerationTaskState> {
     try {
         const video = unwrapVideoResponse((await axios.get<ApiVideoResponse>(aiApiUrl(config, `/videos/${task.id}`), { headers: aiHeaders(config), signal: options?.signal, timeout: 30_000 })).data);
-        if (video.status === "completed") {
-            const content = await axios.get<Blob>(aiApiUrl(config, `/videos/${task.id}/content`), { headers: aiHeaders(config), responseType: "blob", signal: options?.signal, timeout: VIDEO_TASK_CONTENT_TIMEOUT_MS });
+        const status = String(video.status || "").trim().toLowerCase();
+        if (status === "completed" || status === "succeeded" || status === "done") {
+            options?.onPhase?.("downloading");
+            const content = await axios.get<Blob>(aiApiUrl(config, `/videos/${task.id}/content`), {
+                headers: aiHeaders(config),
+                responseType: "blob",
+                signal: options?.signal,
+                timeout: VIDEO_TASK_CONTENT_TIMEOUT_MS,
+                onDownloadProgress: (event) => reportDownloadProgress(options, event),
+            });
+            options?.onDownloadProgress?.({ percent: 100, transferred: Number(content.data?.size) || 0, total: Number(content.data?.size) || 0, bytesPerSecond: 0 });
             await assertVideoBlob(content.data);
             return { status: "completed", result: { blob: content.data } };
         }
-        if (video.status === "failed" || video.status === "cancelled") return { status: "failed", error: readApiErrorMessage(video.error?.message) || apiText("videoGenerationFailed") };
-        return { status: "pending" };
+        if (status === "failed" || status === "cancelled" || status === "error") return { status: "failed", error: readApiErrorMessage(video.error?.message) || apiText("videoGenerationFailed") };
+        const phase = mapPendingVideoPhase(status);
+        options?.onPhase?.(phase);
+        return { status: "pending", phase };
     } catch (error) {
         throw new Error(readAxiosError(error, apiText("videoTaskQueryFailed")));
     }
@@ -374,10 +411,14 @@ async function pollGeminiVideoTask(config: AiConfig, task: VideoGenerationTask, 
     try {
         const state = unwrapEnvelope((await axios.get<ApiEnvelope<GeminiVideoOperation>>(geminiOperationUrl(config, task.id), { headers: geminiVideoHeaders(config), signal: options?.signal, timeout: 30_000 })).data, apiText("videoTaskQueryFailed"));
         if (state.error) return { status: "failed", error: readApiErrorMessage(state.error.message) || apiText("videoGenerationFailed") };
-        if (!state.done) return { status: "pending" };
+        if (!state.done) {
+            options?.onPhase?.("generating");
+            return { status: "pending", phase: "generating" };
+        }
         const uri = state.response?.generateVideoResponse?.generatedSamples?.[0]?.video?.uri;
         if (!uri) return { status: "failed", error: apiText("noPlayableVideo") };
         const url = uri.includes("key=") ? uri : `${uri}${uri.includes("?") ? "&" : "?"}key=${config.apiKey}`;
+        options?.onPhase?.("downloading");
         return { status: "completed", result: await videoResultFromUrl(url, options) };
     } catch (error) {
         throw new Error(readAxiosError(error, apiText("videoTaskQueryFailed")));
@@ -388,7 +429,13 @@ async function videoResultFromUrl(url: string, options?: RequestOptions): Promis
     if (!url.startsWith("/")) {
         throw new Error("upstream video URLs are not exposed");
     }
-    const response = await axios.get<Blob>(url, { responseType: "blob", signal: options?.signal, timeout: VIDEO_TASK_CONTENT_TIMEOUT_MS });
+    const response = await axios.get<Blob>(url, {
+        responseType: "blob",
+        signal: options?.signal,
+        timeout: VIDEO_TASK_CONTENT_TIMEOUT_MS,
+        onDownloadProgress: (event) => reportDownloadProgress(options, event),
+    });
+    options?.onDownloadProgress?.({ percent: 100, transferred: Number(response.data?.size) || 0, total: Number(response.data?.size) || 0, bytesPerSecond: 0 });
     await assertVideoBlob(response.data);
     return { blob: response.data };
 }
