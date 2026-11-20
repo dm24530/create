@@ -1,4 +1,4 @@
-import { ImagePlus, Images, Maximize2, PackageSearch, Settings2, Video } from "lucide-react";
+import { ImagePlus, Images, Maximize2, Settings2, Video } from "lucide-react";
 
 export const navigationTools = [
     {
@@ -12,10 +12,6 @@ export const navigationTools = [
     {
         slug: "canvas",
         icon: Maximize2,
-    },
-    {
-        slug: "product-detail",
-        icon: PackageSearch,
     },
     {
         slug: "assets",
