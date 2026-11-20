@@ -13,6 +13,7 @@ const AssetsPage = lazy(() => import("@/pages/assets"));
 const CanvasPage = lazy(() => import("@/pages/canvas"));
 const CanvasProjectPage = lazy(() => import("@/pages/canvas/project"));
 const ConfigPage = lazy(() => import("@/pages/config"));
+const ProductDetailPage = lazy(() => import("@/pages/product-detail"));
 const HomePage = lazy(() => import("@/pages/home"));
 const NotFound = lazy(() => import("@/pages/not-found"));
 const PromptsPage = lazy(() => import("@/pages/prompts"));
@@ -45,6 +46,7 @@ export const router = createBrowserRouter([
                 : { path: "/", element: <HomePage /> },
             { path: "/image" },
             { path: "/video" },
+            { path: "/product-detail", element: <ProductDetailPage /> },
             { path: "/assets", element: <AssetsPage /> },
             { path: "/prompts", element: <PromptsPage /> },
             { path: "/canvas", element: <CanvasPage /> },
