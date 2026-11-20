@@ -3752,7 +3752,7 @@ function InfiniteCanvasPage() {
                 const persistentTask = await submitPersistentImageTask(taskConfig, prompt, retryImages, { signal: controller.signal });
                 let image: GeneratedImageResult | undefined;
                 if (persistentTask) {
-                    rememberPendingImageTask(projectId, node.id, retryImageId, persistentTask, node.metadata?.generationStartedAt);
+                    rememberPendingImageTask(projectId, node.id, retryImageId, persistentTask, generationStartedAt);
                     setNodes((prev) =>
                         prev.map((item) =>
                             item.id === node.id
