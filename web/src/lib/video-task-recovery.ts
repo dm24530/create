@@ -13,7 +13,7 @@ export function canResumeVideoTask(result: ResumeCandidate): boolean {
     return Boolean(result.logId?.trim() && result.task?.id?.trim());
 }
 export function appendVideoBatch<T extends { id: string }>(current: T[], batch: T[]): T[] {
-    return [...current, ...batch];
+    return [...batch, ...current];
 }
 
 export function mergeVideoBatch<T extends { id: string }>(current: T[], batch: T[]): T[] {

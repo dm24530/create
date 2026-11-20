@@ -19,10 +19,10 @@ describe("video task recovery", () => {
         expect(canResumeVideoTask({ logId: "log-1" })).toBe(false);
         expect(canResumeVideoTask({ task: { id: "", provider: "openai", model: "seedance-2.0" } })).toBe(false);
     });
-    it("keeps an earlier running batch when another generation starts", () => {
+    it("puts a newly submitted batch before earlier running work", () => {
         const current = [{ id: "task-a", status: "pending" }];
         const next = appendVideoBatch(current, [{ id: "task-b", status: "pending" }]);
-        expect(next.map((item) => item.id)).toEqual(["task-a", "task-b"]);
+        expect(next.map((item) => item.id)).toEqual(["task-b", "task-a"]);
     });
 
     it("updates only the submitted batch without removing other running tasks", () => {
