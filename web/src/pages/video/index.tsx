@@ -12,6 +12,7 @@ import { GeneratedMediaDetailModal, type GeneratedMediaDetailData } from "@/comp
 import { generationFailureReason } from "@/lib/generation-error";
 import { matchingFailedTaskLogIds } from "@/lib/workbench-failed-task-deletion";
 import { isCreateProductMode } from "@/lib/create-product";
+import { appendVideoBatch, canResumeVideoTask, mergeVideoBatch, VIDEO_TASK_POLL_INTERVAL_MS, VIDEO_TASK_POLL_TIMEOUT_MS } from "@/lib/video-task-recovery";
 import { normalizeVideoResolutionValue } from "@/components/video-settings-panel";
 import { computeVideoSize, inferVideoRatio, parsePixelSize, parseVideoResolution, readVideoDimensions, videoRatioOptions } from "@/lib/media-size";
 import { clampVideoSecondsForProfile, getVideoModelProfile, isVideoDurationOptionAllowed, isVideoRatioSupported, isVideoResolutionSupported, supportsVideoGenerateAudioToggle } from "@/lib/video-model-profile";
@@ -68,6 +69,7 @@ type GenerationResult = {
     references?: ReferenceImage[];
     referenceVideos?: ReferenceVideo[];
     referenceAudios?: ReferenceAudio[];
+    task?: VideoGenerationTask;
 };
 
 type GenerationLog = {
@@ -279,7 +281,7 @@ export default function VideoPage() {
     }, [audioToggleDisabled, effectiveConfig.videoSeconds, generateAudio, maxReferenceAudios, maxReferenceImages, maxReferenceVideos, message, references, referenceAudios, referenceVideos, resolution, selectedRatio, updateConfig, videoProfile]);
 
     useEffect(() => {
-        void refreshLogs();
+        void refreshLogs(true, true);
     }, []);
 
     const addReferences = async (files?: FileList | File[] | null) => {
@@ -436,7 +438,7 @@ export default function VideoPage() {
             referenceVideos: [...snapshot.referenceVideos],
             referenceAudios: [...snapshot.referenceAudios],
         }));
-        setResults(resultSlots);
+        setResults((current) => appendVideoBatch(current, resultSlots));
         const batchStartedAt = performance.now();
         setStartedAt(batchStartedAt);
 
@@ -491,7 +493,7 @@ export default function VideoPage() {
             }
         }
 
-        setResults(nextResults);
+        setResults((current) => mergeVideoBatch(current, nextResults));
         if (!pendingLogs.length) {
             const batchError = nextResults.find((result) => result.status === "failed" && result.error)?.error || t("workbench.failureReasonUnavailable");
             if (agentTaskId) updateAgentTask(agentTaskId, { status: "failed", successCount: 0, failCount: requestedCount, error: batchError });
@@ -689,16 +691,18 @@ export default function VideoPage() {
         await refreshLogs(resumePending);
     };
 
-    const refreshLogs = async (resumePending = true) => {
+    const refreshLogs = async (resumePending = true, resumeFailed = false) => {
         const nextLogs = await readStoredLogs();
         setLogs(nextLogs);
-        if (resumePending) resumePendingLogs(nextLogs);
+        if (resumePending) resumePendingLogs(nextLogs, resumeFailed);
         return nextLogs;
     };
 
-    const resumePendingLogs = (items: GenerationLog[]) => {
+    const resumePendingLogs = (items: GenerationLog[], resumeFailed = false) => {
+        const recentCutoff = Date.now() - 24 * 60 * 60_000;
         for (const log of items) {
-            if (log.status === "pending" && log.task) void pollGenerationLog(log);
+            const shouldResume = log.status === "pending" || (resumeFailed && log.status === "failed" && log.createdAt >= recentCutoff);
+            if (shouldResume && log.task) void pollGenerationLog(log);
         }
     };
 
@@ -767,7 +771,7 @@ export default function VideoPage() {
             }
         } catch (error) {
             const errorMessage = generationFailureReason(error, t("workbench.failureReasonUnavailable"));
-            upsertResult({ status: "failed", logId: log.id, error: errorMessage, video: undefined });
+            upsertResult({ status: "failed", logId: log.id, error: errorMessage, video: undefined, task: log.task });
             if (agentTaskId) updateAgentTask(agentTaskId, { status: "failed", successCount: 0, failCount: 1, error: errorMessage });
             await saveLog({ ...log, status: "failed", durationMs: Date.now() - log.createdAt, error: errorMessage });
             message.error(errorMessage);
@@ -794,7 +798,7 @@ export default function VideoPage() {
         if (log.config.videoGenerateAudio) updateConfig("videoGenerateAudio", log.config.videoGenerateAudio);
         if (log.config.videoWatermark) updateConfig("videoWatermark", log.config.videoWatermark);
         if (log.config.videoMode) updateConfig("videoMode", log.config.videoMode);
-        setResults(log.status === "pending" ? [{ id: log.id, status: "pending" }] : log.video ? [{ id: log.video.id, status: "success", video: { ...log.video, prompt: log.video.prompt || log.prompt, model: log.video.model || modelOptionName(log.model) } }] : [{ id: log.id, status: "failed", error: generationFailureReason(log.error, t("workbench.failureReasonUnavailable")) }]);
+        setResults(log.status === "pending" ? [{ id: log.id, status: "pending", task: log.task, prompt: log.prompt, model: log.model }] : log.video ? [{ id: log.video.id, status: "success", video: { ...log.video, prompt: log.video.prompt || log.prompt, model: log.video.model || modelOptionName(log.model) } }] : [{ id: log.id, logId: log.id, status: "failed", prompt: log.prompt, model: log.model, error: generationFailureReason(log.error, t("workbench.failureReasonUnavailable")), references: log.references, referenceVideos: log.referenceVideos, referenceAudios: log.referenceAudios, task: log.task }]);
     };
 
     const displayedResults: GenerationResult[] = [...results];
@@ -814,6 +818,7 @@ export default function VideoPage() {
                 references: log.references,
                 referenceVideos: log.referenceVideos,
                 referenceAudios: log.referenceAudios,
+                task: log.task,
             });
             continue;
         }
@@ -1169,13 +1174,15 @@ export default function VideoPage() {
                                 size="large"
                                 block
                                 icon={<Sparkles className="size-4" />}
-                                loading={running}
-                                disabled={!canGenerate || running}
+                                disabled={!canGenerate}
                                 onClick={() => void generate()}
                                 className="!h-10 !rounded-xl !border-0 !bg-stone-300 !font-semibold !text-stone-950 !shadow-none hover:!bg-stone-200 disabled:!bg-stone-600 disabled:!text-stone-300"
                             >
                                 {t("workbench.generate")}
                             </Button>
+                            {results.some((item) => item.status === "pending") ? (
+                                <div className="mt-2 text-center text-[11px] leading-5 text-stone-500">已有视频任务在后台生成，可继续提交新任务；切换工作台不会中断。</div>
+                            ) : null}
                         </div>
                     </div>
 
@@ -1452,7 +1459,7 @@ function FailedVideoCard({
                 <div className="flex shrink-0 gap-2">
                     <Button size="small" onClick={onDetails}>详情</Button>
                     <Button size="small" danger onClick={onDelete}>删除</Button>
-                    <Button size="small" onClick={onRetry}>{t("workbench.retry")}</Button>
+                    <Button size="small" title={result.task ? "继续查询原任务，不会重新扣费" : undefined} onClick={onRetry}>{result.task ? "继续查询" : t("workbench.retry")}</Button>
                 </div>
             </div>
         </div>

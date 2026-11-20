@@ -46,6 +46,8 @@ const secondKey = {
 };
 const projects = new Map();
 const assets = new Map();
+const videoTasks = new Map();
+let mockVideoSequence = 0;
 const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nX0AAAAASUVORK5CYII=";
 const mockStartedAt = Date.now();
 const mockUsageLogs = [
@@ -203,12 +205,20 @@ const server = http.createServer(async (request, response) => {
     return send(response, 200, { created: Math.floor(Date.now() / 1000), data: [{ url: `data:image/png;base64,${png}` }] });
   }
   if ((path === "/v1/videos/generations" || path === "/v1/videos" || path === "/v1/video/generations") && method === "POST") {
-    return send(response, 200, { id: "mock-video-task", object: "video", status: "pending" });
+    const id = `mock-video-${++mockVideoSequence}`;
+    videoTasks.set(id, Date.now());
+    return send(response, 200, { id, object: "video", status: "pending" });
   }
-  if (path === "/v1/videos/mock-video-task" && method === "GET") {
-    return send(response, 200, { id: "mock-video-task", object: "video", status: "completed" });
+  const videoStatusMatch = path.match(/^\/v1\/videos\/([^/]+)$/);
+  if (videoStatusMatch && method === "GET") {
+    const id = videoStatusMatch[1];
+    const createdAt = videoTasks.get(id);
+    if (!createdAt) return send(response, 404, { error: { message: "Video request not found" } });
+    const status = Date.now() - createdAt >= 3000 ? "completed" : "pending";
+    return send(response, 200, { id, object: "video", status });
   }
-  if (path === "/v1/videos/mock-video-task/content" && method === "GET") {
+  const videoContentMatch = path.match(/^\/v1\/videos\/([^/]+)\/content$/);
+  if (videoContentMatch && method === "GET") {
     response.writeHead(200, {
       "Content-Type": "video/mp4",
       "Content-Length": "18",

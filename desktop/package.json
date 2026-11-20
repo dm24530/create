@@ -27,6 +27,7 @@
     "dist:dir:local": "npm run dist:dir",
     "test:mock-image": "node test/mock-image-generation-smoke.js",
     "test:mock-video": "node test/mock-video-generation-smoke.js",
+    "test:mock-video-concurrency": "node test/mock-video-concurrency-smoke.js",
     "test:mock-canvas": "node test/mock-canvas-generation-smoke.js",
     "dist:mac:arm64:unsigned": "electron-builder --mac --arm64 --publish never --config electron-builder.unsigned-mac.js --config.directories.output=release/mac-arm64",
     "dist:mac:x64:unsigned": "electron-builder --mac --x64 --publish never --config electron-builder.unsigned-mac.js --config.directories.output=release/mac-x64"

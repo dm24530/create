@@ -11,6 +11,7 @@ import { prepareImageRequestDataUrls } from "@/services/image-storage";
 import { boolConfig, buildApiUrl, modelOptionName, resolveModelRequestConfig, resolveModelScript, withLocalProxy, type AiConfig } from "@/stores/use-config-store";
 import { runModelPlugin } from "./model-plugin";
 import { clampVideoSecondsForProfile, getVideoModelProfile, type VideoModelProvider } from "@/lib/video-model-profile";
+import { VIDEO_TASK_CONTENT_TIMEOUT_MS, VIDEO_TASK_POLL_INTERVAL_MS, VIDEO_TASK_POLL_TIMEOUT_MS } from "@/lib/video-task-recovery";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 
@@ -159,13 +160,13 @@ export async function requestVideoGeneration(config: AiConfig, prompt: string, r
 }
 
 export async function waitForVideoGenerationTask(config: AiConfig, task: VideoGenerationTask, options?: RequestOptions): Promise<VideoGenerationResult> {
-    const deadline = Date.now() + 5 * 60_000;
+    const deadline = Date.now() + VIDEO_TASK_POLL_TIMEOUT_MS;
     while (Date.now() < deadline) {
         if (options?.signal?.aborted) throw new DOMException("Aborted", "AbortError");
         const state = await pollVideoGenerationTask(config, task, options);
         if (state.status === "completed") return state.result;
         if (state.status === "failed") throw videoTaskFailed(state.error);
-        await delay(Math.min(2500, Math.max(0, deadline - Date.now())), options?.signal);
+        await delay(Math.min(VIDEO_TASK_POLL_INTERVAL_MS, Math.max(0, deadline - Date.now())), options?.signal);
     }
     throw new Error(apiText("videoTimeout", { provider: "" }));
 }
@@ -316,7 +317,7 @@ async function pollOpenAIVideoTask(config: AiConfig, task: VideoGenerationTask, 
     try {
         const video = unwrapVideoResponse((await axios.get<ApiVideoResponse>(aiApiUrl(config, `/videos/${task.id}`), { headers: aiHeaders(config), signal: options?.signal, timeout: 30_000 })).data);
         if (video.status === "completed") {
-            const content = await axios.get<Blob>(aiApiUrl(config, `/videos/${task.id}/content`), { headers: aiHeaders(config), responseType: "blob", signal: options?.signal, timeout: 60_000 });
+            const content = await axios.get<Blob>(aiApiUrl(config, `/videos/${task.id}/content`), { headers: aiHeaders(config), responseType: "blob", signal: options?.signal, timeout: VIDEO_TASK_CONTENT_TIMEOUT_MS });
             await assertVideoBlob(content.data);
             return { status: "completed", result: { blob: content.data } };
         }
@@ -380,7 +381,7 @@ async function videoResultFromUrl(url: string, options?: RequestOptions): Promis
     if (!url.startsWith("/")) {
         throw new Error("upstream video URLs are not exposed");
     }
-    const response = await axios.get<Blob>(url, { responseType: "blob", signal: options?.signal, timeout: 60_000 });
+    const response = await axios.get<Blob>(url, { responseType: "blob", signal: options?.signal, timeout: VIDEO_TASK_CONTENT_TIMEOUT_MS });
     await assertVideoBlob(response.data);
     return { blob: response.data };
 }
