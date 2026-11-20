@@ -186,6 +186,112 @@
         </div>
       </div>
 
+      <!-- Temporary video reference storage -->
+      <div class="card p-6" data-testid="reference-storage">
+        <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 class="text-base font-semibold text-gray-900 dark:text-white">
+              {{ t('admin.backup.referenceStorage.title') }}
+            </h3>
+            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+              {{ t('admin.backup.referenceStorage.description') }}
+            </p>
+          </div>
+          <label class="inline-flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+            <input v-model="imageStorageForm.reference_enabled" type="checkbox" />
+            <span>{{ t('admin.backup.referenceStorage.enabled') }}</span>
+          </label>
+        </div>
+
+        <label class="inline-flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+          <input v-model="imageStorageForm.reference_reuse_backup_s3" type="checkbox" />
+          <span>{{ t('admin.backup.referenceStorage.reuseBackupS3') }}</span>
+        </label>
+
+        <p
+          v-if="referenceStorageNotReady"
+          class="mt-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-700/60 dark:bg-amber-900/20 dark:text-amber-200"
+        >
+          {{ t('admin.backup.referenceStorage.notReady') }}
+          <span v-if="referenceStorageMissingLabels.length">
+            {{ t('admin.backup.imageStorage.missingFields', { fields: referenceStorageMissingLabels.join('、') }) }}
+          </span>
+        </p>
+        <p
+          v-else-if="referenceStorageStatus && !referenceStorageStatus.enabled"
+          class="mt-3 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-600 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-300"
+        >
+          {{ t('admin.backup.referenceStorage.disabledHint') }}
+        </p>
+
+        <div class="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+          <div>
+            <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">{{ t('admin.backup.referenceStorage.bucket') }}</label>
+            <input v-model="imageStorageForm.reference_bucket" class="input w-full" placeholder="create-temp" />
+          </div>
+          <div>
+            <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">{{ t('admin.backup.referenceStorage.prefix') }}</label>
+            <input v-model="imageStorageForm.reference_prefix" class="input w-full" placeholder="video-references/" />
+          </div>
+          <div>
+            <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">{{ t('admin.backup.referenceStorage.publicBaseUrl') }}</label>
+            <input v-model="imageStorageForm.reference_public_base_url" class="input w-full" placeholder="https://ref.superai.sbs" />
+          </div>
+          <div>
+            <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">{{ t('admin.backup.referenceStorage.presignExpiryHours') }}</label>
+            <input v-model.number="imageStorageForm.reference_presign_expiry_hours" type="number" min="1" max="168" class="input w-full" />
+          </div>
+          <div>
+            <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">{{ t('admin.backup.referenceStorage.retentionHours') }}</label>
+            <input v-model.number="imageStorageForm.reference_retention_hours" type="number" min="1" max="168" class="input w-full" />
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.backup.referenceStorage.retentionHint') }}</p>
+          </div>
+
+          <template v-if="!imageStorageForm.reference_reuse_backup_s3">
+            <div>
+              <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">{{ t('admin.backup.s3.endpoint') }}</label>
+              <input v-model="imageStorageForm.reference_endpoint" class="input w-full" placeholder="https://<account_id>.r2.cloudflarestorage.com" />
+            </div>
+            <div>
+              <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">{{ t('admin.backup.s3.region') }}</label>
+              <input v-model="imageStorageForm.reference_region" class="input w-full" placeholder="auto" />
+            </div>
+            <div>
+              <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">{{ t('admin.backup.s3.accessKeyId') }}</label>
+              <input v-model="imageStorageForm.reference_access_key_id" class="input w-full" autocomplete="off" />
+            </div>
+            <div>
+              <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">{{ t('admin.backup.s3.secretAccessKey') }}</label>
+              <input
+                v-model="imageStorageForm.reference_secret_access_key"
+                type="password"
+                class="input w-full"
+                autocomplete="new-password"
+                autocapitalize="off"
+                spellcheck="false"
+                data-lpignore="true"
+                data-1p-ignore
+                :placeholder="referenceSecretConfigured ? t('admin.backup.s3.secretConfigured') : ''"
+              />
+              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.backup.referenceStorage.secretHint') }}</p>
+            </div>
+            <label class="inline-flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300 md:col-span-2">
+              <input v-model="imageStorageForm.reference_force_path_style" type="checkbox" />
+              <span>{{ t('admin.backup.s3.forcePathStyle') }}</span>
+            </label>
+          </template>
+        </div>
+
+        <div class="mt-4 flex flex-wrap gap-2">
+          <button type="button" class="btn btn-secondary btn-sm" :disabled="testingReferenceStorage" @click="testReferenceStorage">
+            {{ testingReferenceStorage ? t('common.loading') : t('admin.backup.s3.testConnection') }}
+          </button>
+          <button type="button" class="btn btn-primary btn-sm" :disabled="savingImageStorage" @click="saveImageStorageConfig">
+            {{ savingImageStorage ? t('common.loading') : t('common.save') }}
+          </button>
+        </div>
+      </div>
+
       <!-- Schedule Config -->
       <div class="card p-6" data-testid="backup-schedule">
         <div class="mb-4">
@@ -535,9 +641,23 @@ const imageStorageForm = ref<ImageStorageConfig>({
   access_key_id: '',
   secret_access_key: '',
   force_path_style: false,
+  reference_enabled: false,
+  reference_reuse_backup_s3: false,
+  reference_bucket: 'create-temp',
+  reference_prefix: 'video-references/',
+  reference_public_base_url: 'https://ref.superai.sbs',
+  reference_presign_expiry_hours: 24,
+  reference_retention_hours: 24,
+  reference_endpoint: '',
+  reference_region: 'auto',
+  reference_access_key_id: '',
+  reference_secret_access_key: '',
+  reference_force_path_style: false,
 })
 const imageStorageSecretConfigured = ref(false)
+const referenceSecretConfigured = ref(false)
 const imageStorageStatus = ref<ImageStorageStatus | null>(null)
+const referenceStorageStatus = ref<ImageStorageStatus | null>(null)
 const savingImageStorage = ref(false)
 
 // 后台必须能看出"保存成功但不会生效"：开关打开而凭证不全时，生成结果不会转存。
@@ -559,6 +679,18 @@ const imageStorageMissingLabels = computed(() =>
   }),
 )
 const testingImageStorage = ref(false)
+const testingReferenceStorage = ref(false)
+const referenceStorageNotReady = computed(
+  () => Boolean(referenceStorageStatus.value?.enabled) && !referenceStorageStatus.value?.ready,
+)
+const referenceStorageMissingLabels = computed(() =>
+  (referenceStorageStatus.value?.missing ?? []).map((field) => {
+    if (field === 'bucket') return t('admin.backup.referenceStorage.fieldBucket')
+    if (field === 'access_key_id') return t('admin.backup.referenceStorage.fieldAccessKeyId')
+    if (field === 'secret_access_key') return t('admin.backup.referenceStorage.fieldSecretAccessKey')
+    return field
+  }),
+)
 
 // Schedule config
 const scheduleForm = ref<BackupScheduleConfig>({
@@ -771,7 +903,13 @@ async function saveS3Config() {
 
 async function loadImageStorageConfig() {
   try {
-    const { config, secret_configured, status } = await adminAPI.backup.getImageStorageConfig()
+    const {
+      config,
+      secret_configured,
+      reference_secret_configured,
+      status,
+      reference_status,
+    } = await adminAPI.backup.getImageStorageConfig()
     imageStorageForm.value = {
       ...config,
       prefix: config.prefix || 'images/',
@@ -779,9 +917,18 @@ async function loadImageStorageConfig() {
       video_retention_days: config.video_retention_days || 7,
       studio_works_quota: config.studio_works_quota || 100,
       secret_access_key: '',
+      reference_prefix: config.reference_prefix || 'video-references/',
+      reference_bucket: config.reference_bucket || 'create-temp',
+      reference_public_base_url: config.reference_public_base_url || 'https://ref.superai.sbs',
+      reference_region: config.reference_region || 'auto',
+      reference_presign_expiry_hours: config.reference_presign_expiry_hours || 24,
+      reference_retention_hours: config.reference_retention_hours || 24,
+      reference_secret_access_key: '',
     }
     imageStorageSecretConfigured.value = secret_configured
+    referenceSecretConfigured.value = reference_secret_configured
     imageStorageStatus.value = status ?? null
+    referenceStorageStatus.value = reference_status ?? null
   } catch (error) {
     appStore.showError((error as { message?: string })?.message || t('errors.networkError'))
   }
@@ -817,6 +964,22 @@ async function testImageStorage() {
     appStore.showError((error as { message?: string })?.message || t('errors.networkError'))
   } finally {
     testingImageStorage.value = false
+  }
+}
+
+async function testReferenceStorage() {
+  testingReferenceStorage.value = true
+  try {
+    const result = await adminAPI.backup.testReferenceStorageConnection(imageStorageForm.value)
+    if (result.ok) {
+      appStore.showSuccess(result.message || t('admin.backup.s3.testSuccess'))
+    } else {
+      appStore.showError(result.message || t('admin.backup.s3.testFailed'))
+    }
+  } catch (error) {
+    appStore.showError((error as { message?: string })?.message || t('errors.networkError'))
+  } finally {
+    testingReferenceStorage.value = false
   }
 }
 

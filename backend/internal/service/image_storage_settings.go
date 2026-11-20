@@ -93,7 +93,35 @@ type ImageStorageSettings struct {
 	AccessKeyID     string `json:"access_key_id"`
 	SecretAccessKey string `json:"secret_access_key,omitempty"` //nolint:revive // field name follows AWS convention
 	ForcePathStyle  bool   `json:"force_path_style"`
+
+	// Temporary video reference assets use a separate bucket/domain so they can
+	// be isolated from permanent generated media and cleaned up independently.
+	ReferenceEnabled         bool   `json:"reference_enabled"`
+	ReferenceReuseBackupS3   bool   `json:"reference_reuse_backup_s3"`
+	ReferenceBucket          string `json:"reference_bucket"`
+	ReferencePrefix          string `json:"reference_prefix"`
+	ReferencePublicBaseURL   string `json:"reference_public_base_url"`
+	ReferencePresignExpiry   int    `json:"reference_presign_expiry_hours"`
+	ReferenceRetentionHours  int    `json:"reference_retention_hours"`
+	ReferenceEndpoint        string `json:"reference_endpoint"`
+	ReferenceRegion          string `json:"reference_region"`
+	ReferenceAccessKeyID     string `json:"reference_access_key_id"`
+	ReferenceSecretAccessKey string `json:"reference_secret_access_key,omitempty"`
+	ReferenceForcePathStyle  bool   `json:"reference_force_path_style"`
 }
+
+var (
+	ErrVideoReferenceStorageDisabled = infraerrors.New(
+		http.StatusServiceUnavailable,
+		"VIDEO_REFERENCE_STORAGE_DISABLED",
+		"temporary reference storage is not enabled",
+	)
+	ErrVideoReferenceStorageIncomplete = infraerrors.New(
+		http.StatusServiceUnavailable,
+		"VIDEO_REFERENCE_STORAGE_INCOMPLETE",
+		"temporary reference storage credentials are incomplete",
+	)
+)
 
 // ImageStorageSettingService 读写后台设置，并把结果解析成一个可直接使用的 uploader。
 //
@@ -120,15 +148,21 @@ type ImageStorageSettingService struct {
 	// 保证升级前已用配置文件开启该功能的部署不被打断。
 	fallback config.ImageStorageConfig
 
-	mu               sync.Mutex
-	resolved         bool
-	resolvedAt       time.Time
-	uploader         *ImageResultUploader
-	enabled          bool
-	galleryRetention time.Duration
-	videoRetention   time.Duration
-	imageURLExpiry   time.Duration
-	studioQuota      int
+	mu                  sync.Mutex
+	resolved            bool
+	resolvedAt          time.Time
+	uploader            *ImageResultUploader
+	enabled             bool
+	galleryRetention    time.Duration
+	videoRetention      time.Duration
+	imageURLExpiry      time.Duration
+	studioQuota         int
+	referenceStorage    ImageStorage
+	referenceEnabled    bool
+	referenceResolved   bool
+	referenceResolvedAt time.Time
+	referenceURLExpiry  time.Duration
+	referenceRetention  time.Duration
 	// backupConfigGeneration is the BackupService credential generation used to
 	// build the current uploader. Saving backup S3 settings invalidates the image
 	// client immediately instead of waiting for the 5-second consistency window.
@@ -891,6 +925,12 @@ func (s *ImageStorageSettingService) Invalidate() {
 	s.videoRetention = ImageStudioGalleryTTL
 	s.imageURLExpiry = 24 * time.Hour
 	s.studioQuota = StudioWorksQuotaPerUser
+	s.referenceStorage = nil
+	s.referenceEnabled = false
+	s.referenceResolved = false
+	s.referenceResolvedAt = time.Time{}
+	s.referenceURLExpiry = 24 * time.Hour
+	s.referenceRetention = 24 * time.Hour
 	s.mu.Unlock()
 	s.retryMu.Lock()
 	clear(s.retryStates)
@@ -910,6 +950,7 @@ func (s *ImageStorageSettingService) Get(ctx context.Context) (*ImageStorageSett
 		normalizeImageStorageSettings(settings)
 	}
 	settings.SecretAccessKey = ""
+	settings.ReferenceSecretAccessKey = ""
 	return settings, nil
 }
 
@@ -951,6 +992,24 @@ func (s *ImageStorageSettingService) Update(ctx context.Context, in ImageStorage
 		in.SecretAccessKey = encrypted
 	}
 
+	if in.ReferenceReuseBackupS3 {
+		in.ReferenceEndpoint, in.ReferenceRegion, in.ReferenceAccessKeyID, in.ReferenceSecretAccessKey = "", "", "", ""
+		in.ReferenceForcePathStyle = false
+	} else if in.ReferenceSecretAccessKey == "" {
+		if old, err := s.load(ctx); err == nil && old != nil {
+			in.ReferenceSecretAccessKey = old.ReferenceSecretAccessKey
+		}
+	} else {
+		if s.backup == nil || !s.backup.EncryptionKeyConfigured() {
+			return nil, ErrSecretEncryptionKeyNotConfigured
+		}
+		encrypted, err := s.encryptor.Encrypt(in.ReferenceSecretAccessKey)
+		if err != nil {
+			return nil, fmt.Errorf("encrypt reference storage secret: %w", err)
+		}
+		in.ReferenceSecretAccessKey = encrypted
+	}
+
 	data, err := json.Marshal(in)
 	if err != nil {
 		return nil, fmt.Errorf("marshal image storage settings: %w", err)
@@ -961,6 +1020,7 @@ func (s *ImageStorageSettingService) Update(ctx context.Context, in ImageStorage
 	s.Invalidate()
 
 	in.SecretAccessKey = ""
+	in.ReferenceSecretAccessKey = ""
 	return &in, nil
 }
 
@@ -1011,6 +1071,302 @@ func (s *ImageStorageSettingService) TestConnection(ctx context.Context, in Imag
 		_ = deleter.Delete(ctx, probeKey)
 	}
 	return nil
+}
+
+// ReferenceSecretConfigured reports whether temporary reference storage has
+// a usable secret. The secret itself is never returned to the browser.
+func (s *ImageStorageSettingService) ReferenceSecretConfigured(ctx context.Context) bool {
+	settings, err := s.load(ctx)
+	if err != nil || settings == nil {
+		return false
+	}
+	if settings.ReferenceReuseBackupS3 {
+		cfg, err := s.backupCredentials(ctx)
+		return err == nil && cfg != nil && cfg.SecretAccessKey != ""
+	}
+	return strings.TrimSpace(settings.ReferenceSecretAccessKey) != ""
+}
+
+// ReferenceStatus describes whether the temporary-reference bucket is ready.
+func (s *ImageStorageSettingService) ReferenceStatus(ctx context.Context) ImageStorageStatus {
+	settings, err := s.load(ctx)
+	if err != nil || settings == nil {
+		return ImageStorageStatus{Missing: missingImageStorageFields(nil)}
+	}
+	cfg, err := s.toReferenceStorageConfig(ctx, settings)
+	if err != nil || cfg == nil {
+		return ImageStorageStatus{Enabled: settings.ReferenceEnabled, Missing: missingImageStorageFields(nil)}
+	}
+	missing := missingImageStorageFields(cfg)
+	return ImageStorageStatus{
+		Ready:   cfg.Enabled && len(missing) == 0,
+		Enabled: cfg.Enabled,
+		Missing: missing,
+	}
+}
+
+// TestReferenceConnection validates credentials and performs a write/delete probe
+// against the temporary-reference bucket.
+func (s *ImageStorageSettingService) TestReferenceConnection(ctx context.Context, in ImageStorageSettings) error {
+	normalizeImageStorageSettings(&in)
+	if !in.ReferenceReuseBackupS3 && in.ReferenceSecretAccessKey == "" {
+		if old, err := s.load(ctx); err == nil && old != nil {
+			in.ReferenceSecretAccessKey = old.ReferenceSecretAccessKey
+		}
+	}
+	cfg, err := s.toReferenceStorageConfig(ctx, &in)
+	if err != nil {
+		return err
+	}
+	if !cfg.IsConfigured() {
+		return ErrVideoReferenceStorageIncomplete
+	}
+	storage, err := s.factory(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	if checker, ok := storage.(ImageStorageConnectionChecker); ok {
+		if err := checker.HeadBucket(ctx); err != nil {
+			logger.L().Warn("video_reference_storage.head_bucket_probe_failed", zap.Error(err))
+		}
+	}
+	probeKey := path.Join(in.ReferencePrefix, fmt.Sprintf(".connection-test-%d.txt", time.Now().UnixNano()))
+	if _, err := storage.Save(ctx, probeKey, "text/plain", []byte("ok")); err != nil {
+		return infraerrors.New(
+			http.StatusServiceUnavailable,
+			"VIDEO_REFERENCE_STORAGE_WRITE_TEST_FAILED",
+			"temporary reference storage write test failed: "+err.Error(),
+		)
+	}
+	if deleter, ok := storage.(ImageStorageDeleter); ok {
+		_ = deleter.Delete(ctx, probeKey)
+	}
+	return nil
+}
+
+func (s *ImageStorageSettingService) toReferenceStorageConfig(ctx context.Context, in *ImageStorageSettings) (*config.ImageStorageConfig, error) {
+	cfg := &config.ImageStorageConfig{
+		Enabled:         in.ReferenceEnabled,
+		Bucket:          in.ReferenceBucket,
+		PublicBaseURL:   in.ReferencePublicBaseURL,
+		PresignExpiry:   in.ReferencePresignExpiry,
+		MaxDownloadByte: in.MaxDownloadBytes,
+		Endpoint:        in.ReferenceEndpoint,
+		Region:          in.ReferenceRegion,
+		AccessKeyID:     in.ReferenceAccessKeyID,
+		SecretAccessKey: in.ReferenceSecretAccessKey,
+		ForcePathStyle:  in.ReferenceForcePathStyle,
+	}
+	if in.ReferenceReuseBackupS3 {
+		backupCfg, err := s.backupCredentials(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if backupCfg == nil {
+			return nil, errors.New("temporary reference storage reuses backup S3, but no backup S3 configuration exists")
+		}
+		cfg.Endpoint = backupCfg.Endpoint
+		cfg.Region = backupCfg.Region
+		cfg.AccessKeyID = backupCfg.AccessKeyID
+		cfg.SecretAccessKey = backupCfg.SecretAccessKey
+		cfg.ForcePathStyle = backupCfg.ForcePathStyle
+	} else if cfg.SecretAccessKey != "" {
+		decrypted, err := s.encryptor.Decrypt(cfg.SecretAccessKey)
+		if err != nil {
+			logger.L().Warn("video_reference_storage secret decrypt failed; treating stored value as plaintext", zap.Error(err))
+		} else {
+			cfg.SecretAccessKey = decrypted
+		}
+	}
+	return cfg, nil
+}
+
+func (s *ImageStorageSettingService) referenceUsableReason(ctx context.Context) error {
+	status := s.ReferenceStatus(ctx)
+	if status.Ready {
+		return nil
+	}
+	if !status.Enabled {
+		return ErrVideoReferenceStorageDisabled
+	}
+	if len(status.Missing) == 0 {
+		return ErrVideoReferenceStorageIncomplete
+	}
+	return infraerrors.New(
+		http.StatusServiceUnavailable,
+		"VIDEO_REFERENCE_STORAGE_INCOMPLETE",
+		"temporary reference storage credentials are incomplete; missing: "+strings.Join(status.Missing, ", "),
+	)
+}
+
+func (s *ImageStorageSettingService) resolveReferenceStorage() (ImageStorage, bool) {
+	if s == nil {
+		return nil, false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now()
+	if s.referenceResolved && s.backup != nil && s.backupConfigGeneration != s.backup.S3ConfigGeneration() {
+		s.referenceResolved = false
+	}
+	if s.referenceResolved && now.Sub(s.referenceResolvedAt) < imageStorageSettingsCacheTTL {
+		return s.referenceStorage, s.referenceEnabled
+	}
+	s.referenceResolved = true
+	s.referenceResolvedAt = now
+	s.referenceStorage = nil
+	s.referenceEnabled = false
+	s.referenceURLExpiry = 24 * time.Hour
+	s.referenceRetention = 24 * time.Hour
+	if s.backup != nil {
+		s.backupConfigGeneration = s.backup.S3ConfigGeneration()
+	}
+	settings, err := s.load(context.Background())
+	if err != nil || settings == nil || !settings.ReferenceEnabled {
+		return nil, false
+	}
+	if settings.ReferencePresignExpiry > 0 {
+		s.referenceURLExpiry = time.Duration(settings.ReferencePresignExpiry) * time.Hour
+	}
+	if settings.ReferenceRetentionHours > 0 {
+		s.referenceRetention = time.Duration(settings.ReferenceRetentionHours) * time.Hour
+	}
+	cfg, err := s.toReferenceStorageConfig(context.Background(), settings)
+	if err != nil {
+		logger.L().Warn("video_reference_storage.settings_load_failed", zap.Error(err))
+		return nil, false
+	}
+	if !cfg.IsConfigured() {
+		logger.L().Warn("video_reference_storage is enabled but not fully configured", zap.Strings("missing_keys", cfg.MissingCredentialKeys()))
+		return nil, false
+	}
+	storage, err := s.factory(context.Background(), cfg)
+	if err != nil {
+		logger.L().Error("video_reference_storage.client_build_failed", zap.Error(err))
+		return nil, false
+	}
+	s.referenceStorage = storage
+	s.referenceEnabled = true
+	return storage, true
+}
+
+func (s *ImageStorageSettingService) ReferenceKeyPrefix() string {
+	settings, err := s.load(context.Background())
+	if err != nil || settings == nil || strings.TrimSpace(settings.ReferencePrefix) == "" {
+		return "video-references/"
+	}
+	return strings.TrimRight(settings.ReferencePrefix, "/") + "/"
+}
+
+func (s *ImageStorageSettingService) SaveReferenceObject(ctx context.Context, key, contentType string, data []byte) (string, string, error) {
+	storage, enabled := s.resolveReferenceStorage()
+	if !enabled || storage == nil {
+		return "", "", s.referenceUsableReason(ctx)
+	}
+	fullKey := path.Join(s.ReferenceKeyPrefix(), strings.TrimLeft(strings.TrimSpace(key), "/"))
+	url, err := storage.Save(ctx, fullKey, contentType, data)
+	return url, fullKey, err
+}
+
+func (s *ImageStorageSettingService) PresignReferenceUpload(ctx context.Context, key, contentType string) (ImageStorageUploadRequest, string, error) {
+	storage, enabled := s.resolveReferenceStorage()
+	if !enabled || storage == nil {
+		return ImageStorageUploadRequest{}, "", s.referenceUsableReason(ctx)
+	}
+	resolver, ok := storage.(ImageStorageUploadURLResolver)
+	if !ok {
+		return ImageStorageUploadRequest{}, "", ErrVideoReferenceStorageIncomplete
+	}
+	fullKey := path.Join(s.ReferenceKeyPrefix(), strings.TrimLeft(strings.TrimSpace(key), "/"))
+	upload, err := resolver.PresignPut(ctx, fullKey, contentType, s.referenceURLExpiry)
+	return upload, fullKey, err
+}
+
+func (s *ImageStorageSettingService) StatReferenceObject(ctx context.Context, objectKey string) (ImageObjectMetadata, error) {
+	storage, enabled := s.resolveReferenceStorage()
+	if !enabled || storage == nil {
+		return ImageObjectMetadata{}, s.referenceUsableReason(ctx)
+	}
+	resolver, ok := storage.(ImageStorageObjectStatResolver)
+	if !ok {
+		return ImageObjectMetadata{}, ErrVideoReferenceStorageIncomplete
+	}
+	return resolver.Stat(ctx, objectKey)
+}
+
+func (s *ImageStorageSettingService) PresignReferenceObject(ctx context.Context, objectKey string) (string, error) {
+	storage, enabled := s.resolveReferenceStorage()
+	if !enabled || storage == nil {
+		return "", s.referenceUsableReason(ctx)
+	}
+	resolver, ok := storage.(ImageStorageURLResolver)
+	if !ok {
+		return "", ErrVideoReferenceStorageIncomplete
+	}
+	return resolver.PresignGet(ctx, objectKey)
+}
+
+func (s *ImageStorageSettingService) DeleteReferenceObject(ctx context.Context, objectKey string) error {
+	storage, enabled := s.resolveReferenceStorage()
+	if !enabled || storage == nil {
+		return s.referenceUsableReason(ctx)
+	}
+	deleter, ok := storage.(ImageStorageDeleter)
+	if !ok {
+		return ErrVideoReferenceStorageIncomplete
+	}
+	return deleter.Delete(ctx, strings.TrimSpace(objectKey))
+}
+
+// CleanupExpiredReferenceObjects removes temporary reference assets older than
+// the configured retention window. The loop is idempotent and safe with multiple
+// server instances.
+func (s *ImageStorageSettingService) CleanupExpiredReferenceObjects(ctx context.Context, now time.Time) (int, error) {
+	storage, enabled := s.resolveReferenceStorage()
+	if !enabled || storage == nil {
+		return 0, nil
+	}
+	lister, ok := storage.(ImageStorageObjectLister)
+	if !ok {
+		return 0, nil
+	}
+	retention := s.referenceRetention
+	if retention <= 0 {
+		retention = 24 * time.Hour
+	}
+	objects, err := lister.ListObjects(ctx, s.ReferenceKeyPrefix())
+	if err != nil {
+		return 0, err
+	}
+	cutoff := now.Add(-retention)
+	deleted := 0
+	for _, object := range objects {
+		if object.LastModified.After(cutoff) {
+			continue
+		}
+		if err := s.DeleteReferenceObject(ctx, object.Key); err != nil {
+			return deleted, err
+		}
+		deleted++
+	}
+	return deleted, nil
+}
+
+func (s *ImageStorageSettingService) StartReferenceCleanupLoop() {
+	if s == nil {
+		return
+	}
+	go func() {
+		timer := time.NewTimer(30 * time.Second)
+		defer timer.Stop()
+		for {
+			<-timer.C
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			_, _ = s.CleanupExpiredReferenceObjects(ctx, time.Now())
+			cancel()
+			timer.Reset(10 * time.Minute)
+		}
+	}()
 }
 
 // effectiveConfig 把后台设置（或 config.yaml 回落）解析成运行时配置。
@@ -1098,20 +1454,24 @@ func (s *ImageStorageSettingService) load(ctx context.Context) (*ImageStorageSet
 
 func settingsFromConfig(cfg config.ImageStorageConfig) *ImageStorageSettings {
 	return &ImageStorageSettings{
-		Enabled:              cfg.Enabled,
-		Bucket:               cfg.Bucket,
-		Prefix:               cfg.Prefix,
-		PublicBaseURL:        cfg.PublicBaseURL,
-		PresignExpiry:        cfg.PresignExpiry,
-		GalleryRetentionDays: cfg.GalleryRetentionDays,
-		VideoRetentionDays:   cfg.VideoRetentionDays,
-		StudioWorksQuota:     cfg.StudioWorksQuota,
-		MaxDownloadBytes:     cfg.MaxDownloadByte,
-		Endpoint:             cfg.Endpoint,
-		Region:               cfg.Region,
-		AccessKeyID:          cfg.AccessKeyID,
-		SecretAccessKey:      cfg.SecretAccessKey,
-		ForcePathStyle:       cfg.ForcePathStyle,
+		Enabled:                 cfg.Enabled,
+		Bucket:                  cfg.Bucket,
+		Prefix:                  cfg.Prefix,
+		PublicBaseURL:           cfg.PublicBaseURL,
+		PresignExpiry:           cfg.PresignExpiry,
+		GalleryRetentionDays:    cfg.GalleryRetentionDays,
+		VideoRetentionDays:      cfg.VideoRetentionDays,
+		StudioWorksQuota:        cfg.StudioWorksQuota,
+		MaxDownloadBytes:        cfg.MaxDownloadByte,
+		Endpoint:                cfg.Endpoint,
+		Region:                  cfg.Region,
+		AccessKeyID:             cfg.AccessKeyID,
+		SecretAccessKey:         cfg.SecretAccessKey,
+		ForcePathStyle:          cfg.ForcePathStyle,
+		ReferenceBucket:         "create-temp",
+		ReferencePrefix:         "video-references/",
+		ReferencePresignExpiry:  24,
+		ReferenceRetentionHours: 24,
 	}
 }
 
@@ -1157,5 +1517,34 @@ func normalizeImageStorageSettings(in *ImageStorageSettings) {
 	}
 	if in.MaxDownloadBytes <= 0 {
 		in.MaxDownloadBytes = defaultImageMaxDownloadBytes
+	}
+
+	in.ReferenceBucket = strings.TrimSpace(in.ReferenceBucket)
+	in.ReferenceEndpoint = strings.TrimSpace(in.ReferenceEndpoint)
+	in.ReferenceRegion = strings.TrimSpace(in.ReferenceRegion)
+	in.ReferenceAccessKeyID = strings.TrimSpace(in.ReferenceAccessKeyID)
+	in.ReferenceSecretAccessKey = strings.TrimSpace(in.ReferenceSecretAccessKey)
+	in.ReferencePublicBaseURL = strings.TrimRight(strings.TrimSpace(in.ReferencePublicBaseURL), "/")
+	in.ReferencePrefix = strings.TrimSpace(in.ReferencePrefix)
+	if in.ReferencePrefix == "" {
+		in.ReferencePrefix = "video-references/"
+	}
+	if !strings.HasSuffix(in.ReferencePrefix, "/") {
+		in.ReferencePrefix += "/"
+	}
+	if in.ReferenceRegion == "" {
+		in.ReferenceRegion = "auto"
+	}
+	if in.ReferencePresignExpiry <= 0 {
+		in.ReferencePresignExpiry = 24
+	}
+	if in.ReferencePresignExpiry > 168 {
+		in.ReferencePresignExpiry = 168
+	}
+	if in.ReferenceRetentionHours <= 0 {
+		in.ReferenceRetentionHours = 24
+	}
+	if in.ReferenceRetentionHours > 168 {
+		in.ReferenceRetentionHours = 168
 	}
 }

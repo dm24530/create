@@ -127,6 +127,24 @@ export default {
         fieldAccessKeyId: 'Access Key ID',
         fieldSecretAccessKey: 'Secret Access Key'
       },
+      referenceStorage: {
+        title: '临时参考素材存储',
+        description: '独立的临时桶，用于保存视频工作台的参考图、参考视频和参考音频。配置保存在数据库中，升级不会覆盖；密钥加密保存。',
+        enabled: '启用临时参考素材存储',
+        reuseBackupS3: '复用上方备份 S3 的账号凭据（不同桶/域名）',
+        bucket: '存储桶',
+        prefix: '对象前缀',
+        publicBaseUrl: '素材访问域名',
+        presignExpiryHours: '访问链接有效期（小时）',
+        retentionHours: '对象保留时间（小时）',
+        retentionHint: '建议设置 24 小时，并结合 R2 生命周期规则自动删除对象。',
+        secretHint: '留空表示沿用已保存的密钥；第一次配置必须填写 create-temp 的访问密钥。',
+        notReady: '临时参考素材存储已保存，但凭证不完整，暂时无法上传。',
+        disabledHint: '当前未启用，视频参考素材仍使用原来的对象存储。',
+        fieldBucket: '存储桶',
+        fieldAccessKeyId: 'Access Key ID',
+        fieldSecretAccessKey: 'Secret Access Key'
+      },
       schedule: {
         title: '定时备份',
         description: '配置自动定时备份',

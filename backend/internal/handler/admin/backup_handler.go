@@ -226,10 +226,12 @@ func (h *BackupHandler) GetImageStorageConfig(c *gin.Context) {
 		return
 	}
 	response.Success(c, gin.H{
-		"config":            cfg,
-		"secret_configured": h.imageStorage.SecretConfigured(ctx),
+		"config":                      cfg,
+		"secret_configured":           h.imageStorage.SecretConfigured(ctx),
+		"reference_secret_configured": h.imageStorage.ReferenceSecretConfigured(ctx),
 		// 后台要靠它区分"保存成功"和"真的生效"：开关打开但缺凭证时功能仍然不可用。
-		"status": h.imageStorage.Status(ctx),
+		"status":           h.imageStorage.Status(ctx),
+		"reference_status": h.imageStorage.ReferenceStatus(ctx),
 	})
 }
 
@@ -255,6 +257,19 @@ func (h *BackupHandler) TestImageStorageConnection(c *gin.Context) {
 	}
 	if err := h.imageStorage.TestConnection(c.Request.Context(), req); err != nil {
 		// Message() 只取面向用户的说明，避免把 "error: code=... reason=..." 的内部形式抛到后台页面上。
+		response.Success(c, gin.H{"ok": false, "message": infraerrors.Message(err)})
+		return
+	}
+	response.Success(c, gin.H{"ok": true, "message": "connection successful"})
+}
+
+func (h *BackupHandler) TestReferenceStorageConnection(c *gin.Context) {
+	var req service.ImageStorageSettings
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+	if err := h.imageStorage.TestReferenceConnection(c.Request.Context(), req); err != nil {
 		response.Success(c, gin.H{"ok": false, "message": infraerrors.Message(err)})
 		return
 	}

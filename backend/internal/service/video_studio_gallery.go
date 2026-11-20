@@ -144,17 +144,31 @@ type VideoStudioReferenceAssetPresign struct {
 	ContentType   string
 }
 
+type videoStudioReferenceStorage interface {
+	ReferenceKeyPrefix() string
+	SaveReferenceObject(ctx context.Context, key, contentType string, data []byte) (string, string, error)
+	PresignReferenceUpload(ctx context.Context, key, contentType string) (ImageStorageUploadRequest, string, error)
+	StatReferenceObject(ctx context.Context, objectKey string) (ImageObjectMetadata, error)
+	PresignReferenceObject(ctx context.Context, objectKey string) (string, error)
+	DeleteReferenceObject(ctx context.Context, objectKey string) error
+}
+
 type VideoStudioGalleryService struct {
-	store      VideoStudioGalleryStore
-	storage    VideoStudioMediaSaver
-	identities UserStorageIdentityResolver
+	store            VideoStudioGalleryStore
+	storage          VideoStudioMediaSaver
+	referenceStorage videoStudioReferenceStorage
+	identities       UserStorageIdentityResolver
 }
 
 func NewVideoStudioGalleryService(
 	store VideoStudioGalleryStore,
 	storage VideoStudioMediaSaver,
 ) *VideoStudioGalleryService {
-	return &VideoStudioGalleryService{store: store, storage: storage}
+	svc := &VideoStudioGalleryService{store: store, storage: storage}
+	if references, ok := storage.(videoStudioReferenceStorage); ok {
+		svc.referenceStorage = references
+	}
+	return svc
 }
 
 func (s *VideoStudioGalleryService) SetUserStorageIdentityResolver(
@@ -198,6 +212,31 @@ func (s *VideoStudioGalleryService) UploadReferenceAsset(
 		storageKey = resolved
 	}
 	id := strings.ReplaceAll(uuid.NewString(), "-", "")
+	relativeKey := storageKey + "/" + id
+
+	if s.referenceStorage != nil {
+		switch strings.ToLower(strings.TrimSpace(kind)) {
+		case "image":
+			url, _, err := s.referenceStorage.SaveReferenceObject(ctx, relativeKey+extensionForContentType(contentType), contentType, data)
+			return url, err
+		case "video":
+			normalizedType := normalizeVideoContentType(contentType, data)
+			if normalizedType == "" {
+				return "", ErrVideoStudioUnsupportedType
+			}
+			url, _, err := s.referenceStorage.SaveReferenceObject(ctx, relativeKey+videoExtensionForContentType(normalizedType), normalizedType, data)
+			return url, err
+		case "audio":
+			normalizedType := normalizeAudioContentType(contentType, data)
+			if normalizedType == "" {
+				return "", ErrVideoStudioUnsupportedType
+			}
+			url, _, err := s.referenceStorage.SaveReferenceObject(ctx, relativeKey+audioExtensionForContentType(normalizedType), normalizedType, data)
+			return url, err
+		default:
+			return "", ErrVideoStudioUnsupportedType
+		}
+	}
 
 	switch strings.ToLower(strings.TrimSpace(kind)) {
 	case "image":
@@ -246,8 +285,16 @@ func (s *VideoStudioGalleryService) OpenPublicReference(
 		return nil, "", ErrStudioWorkNotFound
 	}
 	objectKey := strings.Trim(string(decoded), "/")
-	if objectKey == "" || strings.Contains(objectKey, "..") || !strings.Contains(objectKey, "/video-references/") {
+	isReferenceKey := strings.HasPrefix(objectKey, "video-references/") || strings.Contains(objectKey, "/video-references/")
+	if objectKey == "" || strings.Contains(objectKey, "..") || !isReferenceKey {
 		return nil, "", ErrStudioWorkNotFound
+	}
+	if s.referenceStorage != nil && strings.HasPrefix(objectKey, "video-references/") {
+		target, err := s.referenceStorage.PresignReferenceObject(ctx, objectKey)
+		if err != nil || strings.TrimSpace(target) == "" {
+			return nil, "", ErrVideoStudioGalleryUnavailable
+		}
+		return s.storage.OpenMediaURL(ctx, target)
 	}
 	resolver, ok := s.storage.(ImageStudioObjectURLResolver)
 	if !ok {
@@ -279,10 +326,6 @@ func (s *VideoStudioGalleryService) PresignReferenceAsset(
 	if bytes <= 0 || bytes > MaxVideoReferenceAssetBytes {
 		return nil, ErrVideoStudioReferenceAssetTooLarge
 	}
-	storage, ok := s.storage.(videoStudioReferenceDirectStorage)
-	if !ok {
-		return nil, ErrVideoStudioGalleryUnavailable
-	}
 	storageKey := strconv.FormatInt(userID, 10)
 	if s.identities != nil {
 		resolved, resolveErr := s.identities.StorageKey(ctx, userID)
@@ -292,6 +335,20 @@ func (s *VideoStudioGalleryService) PresignReferenceAsset(
 		storageKey = resolved
 	}
 	id := strings.ReplaceAll(uuid.NewString(), "-", "")
+	relativeKey := storageKey + "/" + id + extension
+
+	if s.referenceStorage != nil {
+		upload, objectKey, err := s.referenceStorage.PresignReferenceUpload(ctx, relativeKey, normalizedType)
+		if err != nil {
+			return nil, err
+		}
+		return &VideoStudioReferenceAssetPresign{ObjectKey: objectKey, UploadURL: upload.URL, UploadHeaders: upload.Headers, ContentType: normalizedType}, nil
+	}
+
+	storage, ok := s.storage.(videoStudioReferenceDirectStorage)
+	if !ok {
+		return nil, ErrVideoStudioGalleryUnavailable
+	}
 	objectKey := storageKey + "/video-references/" + id + extension
 	upload, err := storage.PresignImageUpload(ctx, objectKey, normalizedType)
 	if err != nil {
@@ -305,8 +362,6 @@ func (s *VideoStudioGalleryService) PresignReferenceAsset(
 	}, nil
 }
 
-// CompleteReferenceAsset verifies the directly uploaded object and returns a
-// short-lived read URL suitable for image and video providers.
 func (s *VideoStudioGalleryService) CompleteReferenceAsset(
 	ctx context.Context,
 	userID int64,
@@ -325,10 +380,6 @@ func (s *VideoStudioGalleryService) CompleteReferenceAsset(
 	if expectedBytes <= 0 || expectedBytes > MaxVideoReferenceAssetBytes {
 		return "", ErrVideoStudioReferenceAssetTooLarge
 	}
-	storage, ok := s.storage.(videoStudioReferenceDirectStorage)
-	if !ok {
-		return "", ErrVideoStudioGalleryUnavailable
-	}
 	storageKey := strconv.FormatInt(userID, 10)
 	if s.identities != nil {
 		resolved, resolveErr := s.identities.StorageKey(ctx, userID)
@@ -337,8 +388,33 @@ func (s *VideoStudioGalleryService) CompleteReferenceAsset(
 		}
 		storageKey = resolved
 	}
-	prefix := storageKey + "/video-references/"
 	objectKey = strings.TrimSpace(objectKey)
+
+	if s.referenceStorage != nil {
+		expectedPrefix := s.referenceStorage.ReferenceKeyPrefix() + storageKey + "/"
+		if !strings.HasPrefix(objectKey, expectedPrefix) || len(objectKey) <= len(expectedPrefix) {
+			return "", ErrVideoStudioUnsupportedType
+		}
+		meta, err := s.referenceStorage.StatReferenceObject(ctx, objectKey)
+		if err != nil {
+			return "", err
+		}
+		if meta.Bytes != expectedBytes {
+			_ = s.referenceStorage.DeleteReferenceObject(ctx, objectKey)
+			return "", ErrVideoStudioReferenceAssetTooLarge
+		}
+		if !strings.EqualFold(strings.TrimSpace(strings.Split(meta.ContentType, ";")[0]), normalizedType) {
+			_ = s.referenceStorage.DeleteReferenceObject(ctx, objectKey)
+			return "", ErrVideoStudioUnsupportedType
+		}
+		return s.referenceStorage.PresignReferenceObject(ctx, objectKey)
+	}
+
+	storage, ok := s.storage.(videoStudioReferenceDirectStorage)
+	if !ok {
+		return "", ErrVideoStudioGalleryUnavailable
+	}
+	prefix := storageKey + "/video-references/"
 	if !strings.HasPrefix(objectKey, prefix) || len(objectKey) <= len(prefix) {
 		return "", ErrVideoStudioUnsupportedType
 	}

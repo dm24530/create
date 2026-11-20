@@ -462,3 +462,37 @@ func TestDecodeAudioDataURLRejectsNonAudio(t *testing.T) {
 	require.Equal(t, "audio/mpeg", contentType)
 	require.NotEmpty(t, data)
 }
+
+type referenceStorageBranchStub struct {
+	savedKey string
+	savedURL string
+}
+
+func (s *referenceStorageBranchStub) ReferenceKeyPrefix() string { return "video-references/" }
+func (s *referenceStorageBranchStub) SaveReferenceObject(_ context.Context, key, _ string, _ []byte) (string, string, error) {
+	s.savedKey = "video-references/" + key
+	s.savedURL = "https://ref.superai.sbs/" + s.savedKey
+	return s.savedURL, s.savedKey, nil
+}
+func (s *referenceStorageBranchStub) PresignReferenceUpload(context.Context, string, string) (ImageStorageUploadRequest, string, error) {
+	return ImageStorageUploadRequest{URL: "https://upload.example.com"}, s.savedKey, nil
+}
+func (s *referenceStorageBranchStub) StatReferenceObject(context.Context, string) (ImageObjectMetadata, error) {
+	return ImageObjectMetadata{Bytes: 1, ContentType: "image/webp"}, nil
+}
+func (s *referenceStorageBranchStub) PresignReferenceObject(context.Context, string) (string, error) {
+	return s.savedURL, nil
+}
+func (s *referenceStorageBranchStub) DeleteReferenceObject(context.Context, string) error { return nil }
+
+func TestVideoStudioReferenceAssetsUseDedicatedStorage(t *testing.T) {
+	svc := NewVideoStudioGalleryService(&videoGalleryStoreStub{}, &videoMediaSaverStub{})
+	refs := &referenceStorageBranchStub{}
+	svc.referenceStorage = refs
+	svc.identities = fixedUserStorageIdentityResolver{key: "user-storage"}
+
+	url, err := svc.UploadReferenceAsset(context.Background(), 42, "image", "image/webp", pngBytes)
+	require.NoError(t, err)
+	require.Equal(t, refs.savedURL, url)
+	require.Regexp(t, `^video-references/user-storage/[a-f0-9]+\.webp$`, refs.savedKey)
+}

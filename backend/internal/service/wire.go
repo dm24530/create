@@ -709,6 +709,7 @@ func ProvideImageStorageSettingService(
 	svc := NewImageStorageSettingService(settingRepo, encryptor, backup, factory, cfg.ImageStorage)
 	svc.SetUserStorageIdentityResolver(identities)
 	svc.SetLocalAssetStore(localAssets)
+	svc.StartReferenceCleanupLoop()
 	return svc
 }
 

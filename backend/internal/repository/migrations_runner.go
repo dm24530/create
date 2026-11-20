@@ -100,7 +100,11 @@ var migrationChecksumCompatibilityRules = map[string]migrationChecksumCompatibil
 	// migration 261. Accept both checksums so either already-applied variant can
 	// start the fixed image.
 	"259_backfill_canvas_assets_from_graph_urls.sql": newMigrationChecksumCompatibilityRule("0bdf0b80b494471c36f2d2f4c797421f351e9b382e0e172b7df7c0fb8b692f98", "6749c90024ed90d8fabc136ca1f31ae8a170550882e7ee8a6427d785526ec411"),
-	"263_usage_log_image_generation_timing.sql":      newMigrationChecksumCompatibilityRule("1333bdd28dea5e90e688753c9ff410548a10e368ea2d81c6fa279ee1eda5acec", "71edd1bf293eaa2f0cbba562f35f0d03b617dd72762652f9d5830b6da4c50620"),
+	// 258 is idempotent and an older deployed variant only differs in the
+	// package_name default (`无限画布体验套餐` vs `Create体验套餐`). Existing
+	// databases keep the historical hash while new databases use the current file.
+	"258_canvas_usage_rollback_compatibility.sql": newMigrationChecksumCompatibilityRule("a13f577a19344693e4f2e5d842da11107ecfd4f98b1cef939714bd48c2d944a5", "931a6c54a4e2338fdf5868436df0eb0e760fdb051988ad8d193942862f09716a"),
+	"263_usage_log_image_generation_timing.sql":   newMigrationChecksumCompatibilityRule("1333bdd28dea5e90e688753c9ff410548a10e368ea2d81c6fa279ee1eda5acec", "71edd1bf293eaa2f0cbba562f35f0d03b617dd72762652f9d5830b6da4c50620"),
 }
 
 // ApplyMigrations 将嵌入的 SQL 迁移文件应用到指定的数据库。

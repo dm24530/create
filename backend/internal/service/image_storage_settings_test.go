@@ -500,3 +500,94 @@ func TestImageStorageSettingsFallBackToConfigFile(t *testing.T) {
 	require.Equal(t, "yaml-bucket", fetched.Bucket)
 	require.Empty(t, fetched.SecretAccessKey)
 }
+
+func TestVideoReferenceStorageSettingsPersistEncryptAndResolve(t *testing.T) {
+	svc, repo, built := newImageStorageFixture(t, config.ImageStorageConfig{})
+	ctx := context.Background()
+
+	saved, err := svc.Update(ctx, ImageStorageSettings{
+		ReferenceEnabled:         true,
+		ReferenceBucket:          "create-temp",
+		ReferencePrefix:          "video-references/",
+		ReferencePublicBaseURL:   "https://ref.superai.sbs",
+		ReferencePresignExpiry:   24,
+		ReferenceRetentionHours:  24,
+		ReferenceEndpoint:        "https://acct.r2.cloudflarestorage.com",
+		ReferenceRegion:          "auto",
+		ReferenceAccessKeyID:     "ref-ak",
+		ReferenceSecretAccessKey: "ref-super-secret",
+	})
+	require.NoError(t, err)
+	require.Empty(t, saved.ReferenceSecretAccessKey)
+
+	raw, err := repo.GetValue(ctx, settingKeyImageStorageConfig)
+	require.NoError(t, err)
+	require.NotContains(t, raw, `"reference_secret_access_key":"ref-super-secret"`)
+	require.Contains(t, raw, "enc:ref-super-secret")
+
+	fetched, err := svc.Get(ctx)
+	require.NoError(t, err)
+	require.True(t, fetched.ReferenceEnabled)
+	require.Equal(t, "create-temp", fetched.ReferenceBucket)
+	require.Equal(t, "https://ref.superai.sbs", fetched.ReferencePublicBaseURL)
+	require.Empty(t, fetched.ReferenceSecretAccessKey)
+	require.True(t, svc.ReferenceSecretConfigured(ctx))
+
+	storage, enabled := svc.resolveReferenceStorage()
+	require.True(t, enabled)
+	require.NotNil(t, storage)
+	require.NotEmpty(t, *built)
+	last := (*built)[len(*built)-1]
+	require.Equal(t, "create-temp", last.Bucket)
+	require.Equal(t, "https://ref.superai.sbs", last.PublicBaseURL)
+	require.Equal(t, "ref-super-secret", last.SecretAccessKey)
+	require.Equal(t, "video-references/", svc.ReferenceKeyPrefix())
+
+	// Saving again without a secret keeps the encrypted value.
+	_, err = svc.Update(ctx, ImageStorageSettings{
+		ReferenceEnabled:       true,
+		ReferenceBucket:        "create-temp",
+		ReferencePrefix:        "video-references/",
+		ReferencePublicBaseURL: "https://ref.superai.sbs",
+		ReferenceEndpoint:      "https://acct.r2.cloudflarestorage.com",
+		ReferenceAccessKeyID:   "ref-ak",
+	})
+	require.NoError(t, err)
+	_, enabled = svc.resolveReferenceStorage()
+	require.True(t, enabled)
+}
+
+type referenceCleanupStorage struct {
+	objects []ImageObjectInfo
+	deleted []string
+}
+
+func (s *referenceCleanupStorage) Save(context.Context, string, string, []byte) (string, error) {
+	return "", nil
+}
+func (s *referenceCleanupStorage) ListObjects(context.Context, string) ([]ImageObjectInfo, error) {
+	return append([]ImageObjectInfo(nil), s.objects...), nil
+}
+func (s *referenceCleanupStorage) Delete(_ context.Context, key string) error {
+	s.deleted = append(s.deleted, key)
+	return nil
+}
+
+func TestVideoReferenceStorageCleanupDeletesExpiredObjectsOnly(t *testing.T) {
+	svc, _, _ := newImageStorageFixture(t, config.ImageStorageConfig{})
+	now := time.Now()
+	storage := &referenceCleanupStorage{objects: []ImageObjectInfo{
+		{Key: "video-references/old.webp", LastModified: now.Add(-25 * time.Hour)},
+		{Key: "video-references/new.webp", LastModified: now.Add(-23 * time.Hour)},
+	}}
+	svc.referenceStorage = storage
+	svc.referenceEnabled = true
+	svc.referenceResolved = true
+	svc.referenceResolvedAt = now
+	svc.referenceRetention = 24 * time.Hour
+
+	deleted, err := svc.CleanupExpiredReferenceObjects(context.Background(), now)
+	require.NoError(t, err)
+	require.Equal(t, 1, deleted)
+	require.Equal(t, []string{"video-references/old.webp"}, storage.deleted)
+}

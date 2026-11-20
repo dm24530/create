@@ -217,6 +217,16 @@ type ImageObjectMetadata struct {
 	ETag        string
 }
 
+// ImageObjectInfo is a lightweight listing entry used by retention jobs.
+type ImageObjectInfo struct {
+	Key          string
+	LastModified time.Time
+}
+
+type ImageStorageObjectLister interface {
+	ListObjects(ctx context.Context, prefix string) ([]ImageObjectInfo, error)
+}
+
 type ImageStorageObjectStatResolver interface {
 	Stat(ctx context.Context, key string) (ImageObjectMetadata, error)
 }

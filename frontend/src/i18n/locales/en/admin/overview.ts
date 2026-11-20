@@ -127,6 +127,24 @@ export default {
         fieldAccessKeyId: 'Access Key ID',
         fieldSecretAccessKey: 'Secret Access Key'
       },
+      referenceStorage: {
+        title: 'Temporary reference storage',
+        description: 'A dedicated temporary bucket for video reference images, videos, and audio. Settings are stored in the database and encrypted, so deployments do not overwrite them.',
+        enabled: 'Enable temporary reference storage',
+        reuseBackupS3: 'Reuse the backup S3 account credentials (separate bucket/domain)',
+        bucket: 'Bucket',
+        prefix: 'Object prefix',
+        publicBaseUrl: 'Asset base URL',
+        presignExpiryHours: 'Read URL TTL (hours)',
+        retentionHours: 'Object retention (hours)',
+        retentionHint: 'Use 24 hours with an R2 lifecycle rule to remove expired objects automatically.',
+        secretHint: 'Leave empty to keep the saved secret. The first setup must provide credentials for create-temp.',
+        notReady: 'Temporary reference storage is saved, but credentials are incomplete and uploads are unavailable.',
+        disabledHint: 'Disabled: reference assets continue to use the existing object storage.',
+        fieldBucket: 'Bucket',
+        fieldAccessKeyId: 'Access Key ID',
+        fieldSecretAccessKey: 'Secret Access Key'
+      },
       schedule: {
         title: 'Scheduled Backup',
         description: 'Configure automatic scheduled backups',

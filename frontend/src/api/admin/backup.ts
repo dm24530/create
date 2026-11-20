@@ -116,6 +116,18 @@ export interface ImageStorageConfig {
   access_key_id: string
   secret_access_key?: string
   force_path_style: boolean
+  reference_enabled: boolean
+  reference_reuse_backup_s3: boolean
+  reference_bucket: string
+  reference_prefix: string
+  reference_public_base_url: string
+  reference_presign_expiry_hours: number
+  reference_retention_hours: number
+  reference_endpoint: string
+  reference_region: string
+  reference_access_key_id: string
+  reference_secret_access_key?: string
+  reference_force_path_style: boolean
 }
 
 export interface ImageStorageStatus {
@@ -127,7 +139,9 @@ export interface ImageStorageStatus {
 export interface ImageStorageConfigResponse {
   config: ImageStorageConfig
   secret_configured: boolean
+  reference_secret_configured: boolean
   status?: ImageStorageStatus
+  reference_status?: ImageStorageStatus
 }
 
 export async function getImageStorageConfig(): Promise<ImageStorageConfigResponse> {
@@ -147,6 +161,16 @@ export async function testImageStorageConnection(
 ): Promise<TestS3Response> {
   const { data } = await apiClient.post<TestS3Response>(
     '/admin/backups/image-storage/test',
+    config,
+  )
+  return data
+}
+
+export async function testReferenceStorageConnection(
+  config: ImageStorageConfig,
+): Promise<TestS3Response> {
+  const { data } = await apiClient.post<TestS3Response>(
+    '/admin/backups/image-storage/reference-test',
     config,
   )
   return data
@@ -201,6 +225,7 @@ export const backupAPI = {
   getImageStorageConfig,
   updateImageStorageConfig,
   testImageStorageConnection,
+  testReferenceStorageConnection,
   getSchedule,
   updateSchedule,
   createBackup,

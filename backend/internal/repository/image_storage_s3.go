@@ -342,6 +342,30 @@ func (s *S3ImageStorage) ReadPrefix(ctx context.Context, key string, length int6
 	return data, nil
 }
 
+// ListObjects returns metadata for objects under a prefix. It is used by the
+// temporary-reference retention loop.
+func (s *S3ImageStorage) ListObjects(ctx context.Context, prefix string) ([]service.ImageObjectInfo, error) {
+	prefix = strings.TrimSpace(prefix)
+	paginator := s3.NewListObjectsV2Paginator(s.client, &s3.ListObjectsV2Input{
+		Bucket: &s.bucket,
+		Prefix: &prefix,
+	})
+	items := make([]service.ImageObjectInfo, 0)
+	for paginator.HasMorePages() {
+		page, err := paginator.NextPage(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("S3 ListObjectsV2: %w", err)
+		}
+		for _, item := range page.Contents {
+			if item.Key == nil || item.LastModified == nil {
+				continue
+			}
+			items = append(items, service.ImageObjectInfo{Key: *item.Key, LastModified: *item.LastModified})
+		}
+	}
+	return items, nil
+}
+
 // Copy promotes an existing task result to a durable canvas object without
 // routing the bytes through the application or the browser.
 func (s *S3ImageStorage) Copy(ctx context.Context, sourceKey, targetKey, contentType string) error {

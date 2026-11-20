@@ -161,4 +161,22 @@ func TestIsMigrationChecksumCompatible(t *testing.T) {
 		)
 		require.False(t, ok)
 	})
+	t.Run("258已发布变体checksum可兼容", func(t *testing.T) {
+		ok := isMigrationChecksumCompatible(
+			"258_canvas_usage_rollback_compatibility.sql",
+			"931a6c54a4e2338fdf5868436df0eb0e760fdb051988ad8d193942862f09716a",
+			"a13f577a19344693e4f2e5d842da11107ecfd4f98b1cef939714bd48c2d944a5",
+		)
+		require.True(t, ok)
+	})
+
+	t.Run("258未知checksum仍不兼容", func(t *testing.T) {
+		ok := isMigrationChecksumCompatible(
+			"258_canvas_usage_rollback_compatibility.sql",
+			"931a6c54a4e2338fdf5868436df0eb0e760fdb051988ad8d193942862f09716a",
+			"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+		)
+		require.False(t, ok)
+	})
+
 }
