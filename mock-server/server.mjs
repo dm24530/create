@@ -206,19 +206,24 @@ const server = http.createServer(async (request, response) => {
   }
   if ((path === "/v1/videos/generations" || path === "/v1/videos" || path === "/v1/video/generations") && method === "POST") {
     const id = `mock-video-${++mockVideoSequence}`;
-    videoTasks.set(id, Date.now());
+    videoTasks.set(id, { createdAt: Date.now(), contentAttempts: 0 });
     return send(response, 200, { id, object: "video", status: "pending" });
   }
   const videoStatusMatch = path.match(/^\/v1\/videos\/([^/]+)$/);
   if (videoStatusMatch && method === "GET") {
     const id = videoStatusMatch[1];
-    const createdAt = videoTasks.get(id);
-    if (!createdAt) return send(response, 404, { error: { message: "Video request not found" } });
-    const status = Date.now() - createdAt >= 3000 ? "completed" : "pending";
+    const task = videoTasks.get(id);
+    if (!task) return send(response, 404, { error: { message: "Video request not found" } });
+    const status = Date.now() - task.createdAt >= 3000 ? "completed" : "pending";
     return send(response, 200, { id, object: "video", status });
   }
   const videoContentMatch = path.match(/^\/v1\/videos\/([^/]+)\/content$/);
   if (videoContentMatch && method === "GET") {
+    const contentTask = videoTasks.get(videoContentMatch[1]);
+    if (contentTask) {
+      contentTask.contentAttempts += 1;
+      if (contentTask.contentAttempts === 1) return send(response, 502, { error: { message: "temporary mock content failure" } });
+    }
     response.writeHead(200, {
       "Content-Type": "video/mp4",
       "Content-Length": "18",

@@ -29,6 +29,7 @@
     "test:mock-video": "node test/mock-video-generation-smoke.js",
     "test:mock-video-concurrency": "node test/mock-video-concurrency-smoke.js",
     "test:mock-canvas": "node test/mock-canvas-generation-smoke.js",
+    "test:mock-canvas-image-video": "node test/mock-canvas-image-video-smoke.js",
     "dist:mac:arm64:unsigned": "electron-builder --mac --arm64 --publish never --config electron-builder.unsigned-mac.js --config.directories.output=release/mac-arm64",
     "dist:mac:x64:unsigned": "electron-builder --mac --x64 --publish never --config electron-builder.unsigned-mac.js --config.directories.output=release/mac-x64"
   },

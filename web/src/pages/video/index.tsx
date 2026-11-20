@@ -21,7 +21,7 @@ import { captureVideoAssetCover } from "@/lib/video-asset-cover";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
 import { deleteStoredMedia, getMediaBlob, resolveMediaUrl, setMediaBlob, uploadMediaFile } from "@/services/file-storage";
 import { resolveImageUrl, ensureImagePreview, getImagePreviewRevision, previewUrlFor, subscribeImagePreviews, uploadImage } from "@/services/image-storage";
-import { createVideoGenerationTask, pollVideoGenerationTask, storeGeneratedVideo, type VideoGenerationTask } from "@/services/api/video";
+import { createVideoGenerationTask, isVideoTaskFailed, pollVideoGenerationTask, storeGeneratedVideo, type VideoGenerationTask } from "@/services/api/video";
 import { createUserWorkbenchLogStore } from "@/services/workbench-log-storage";
 import { configureCreateWorkspace, getManagedKeySelection, listCreateManagedKeys, managedKeySupportsVideo, switchManagedKey, type CreateManagedKey } from "@/services/create-managed-channel";
 import { WorkbenchModelSelect } from "@/components/workbench/model-select";
@@ -722,8 +722,18 @@ export default function VideoPage() {
         setResults((value) => (value.some((item) => item.id === resultId) ? value : [...value, { id: resultId, status: "pending" }]));
         const taskConfig = buildVideoConfig({ ...effectiveConfig, ...log.config }, log.task.model || log.model);
         try {
-            for (let attempt = 0; attempt < 120; attempt += 1) {
-                const state = await pollVideoGenerationTask(configOverride || taskConfig, log.task);
+            const deadline = Date.now() + VIDEO_TASK_POLL_TIMEOUT_MS;
+            let lastPollError: unknown;
+            while (Date.now() < deadline) {
+                let state: Awaited<ReturnType<typeof pollVideoGenerationTask>>;
+                try {
+                    state = await pollVideoGenerationTask(configOverride || taskConfig, log.task);
+                } catch (error) {
+                    if (isVideoTaskFailed(error) || Date.now() >= deadline) throw error;
+                    lastPollError = error;
+                    await delay(VIDEO_TASK_POLL_INTERVAL_MS);
+                    continue;
+                }
                 if (state.status === "completed") {
                     let stored: Awaited<ReturnType<typeof storeGeneratedVideo>> | null = null;
                     let sourceBlob: Blob | null = state.result.blob || null;
@@ -765,10 +775,14 @@ export default function VideoPage() {
                     message.success(t("videoWorkbench.generated"));
                     return;
                 }
-                if (state.status === "failed") throw new Error(state.error);
-                if (attempt === 119) throw new Error(t("videoWorkbench.timeout"));
-                await delay(2500);
+                if (state.status === "failed") {
+                    const failed = new Error(state.error);
+                    failed.name = "VideoTaskFailed";
+                    throw failed;
+                }
             }
+            if (lastPollError) throw lastPollError;
+            throw new Error(t("videoWorkbench.timeout"));
         } catch (error) {
             const errorMessage = generationFailureReason(error, t("workbench.failureReasonUnavailable"));
             upsertResult({ status: "failed", logId: log.id, error: errorMessage, video: undefined, task: log.task });

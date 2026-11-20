@@ -161,13 +161,20 @@ export async function requestVideoGeneration(config: AiConfig, prompt: string, r
 
 export async function waitForVideoGenerationTask(config: AiConfig, task: VideoGenerationTask, options?: RequestOptions): Promise<VideoGenerationResult> {
     const deadline = Date.now() + VIDEO_TASK_POLL_TIMEOUT_MS;
+    let lastError: unknown;
     while (Date.now() < deadline) {
         if (options?.signal?.aborted) throw new DOMException("Aborted", "AbortError");
-        const state = await pollVideoGenerationTask(config, task, options);
-        if (state.status === "completed") return state.result;
-        if (state.status === "failed") throw videoTaskFailed(state.error);
+        try {
+            const state = await pollVideoGenerationTask(config, task, options);
+            if (state.status === "completed") return state.result;
+            if (state.status === "failed") throw videoTaskFailed(state.error);
+        } catch (error) {
+            if (options?.signal?.aborted || isVideoTaskFailed(error)) throw error;
+            lastError = error;
+        }
         await delay(Math.min(VIDEO_TASK_POLL_INTERVAL_MS, Math.max(0, deadline - Date.now())), options?.signal);
     }
+    if (lastError) throw lastError;
     throw new Error(apiText("videoTimeout", { provider: "" }));
 }
 
