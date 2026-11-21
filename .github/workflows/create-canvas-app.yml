@@ -285,3 +285,94 @@ jobs:
           name: create-canvas-macos-${{ matrix.arch }}-build-log
           path: create-canvas-app/desktop/*.log
           if-no-files-found: ignore
+  publish-r2:
+    if: startsWith(github.ref, 'refs/tags/create-canvas-v')
+    needs:
+      - package-windows
+      - package-macos
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Download Windows x64 package
+        uses: actions/download-artifact@v4
+        with:
+          name: create-canvas-windows-x64
+          path: artifacts/windows-x64
+
+      - name: Download Windows ARM64 package
+        uses: actions/download-artifact@v4
+        with:
+          name: create-canvas-windows-arm64
+          path: artifacts/windows-arm64
+
+      - name: Download macOS ARM64 package
+        uses: actions/download-artifact@v4
+        with:
+          name: create-canvas-macos-arm64
+          path: artifacts/macos-arm64
+
+      - name: Download macOS x64 package
+        uses: actions/download-artifact@v4
+        with:
+          name: create-canvas-macos-x64
+          path: artifacts/macos-x64
+
+      - name: Prepare versioned release and update manifests
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#create-canvas-v}"
+          node create-canvas-app/scripts/prepare-r2-release.mjs \
+            --version "$version" \
+            --artifacts artifacts \
+            --output release-output \
+            --public-base "https://download.superai.sbs/app-releases"
+
+      - name: Validate R2 credentials
+        shell: bash
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: |
+          for name in R2_ACCOUNT_ID R2_BUCKET R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error title=Missing R2 secret::$name is not configured"
+              exit 1
+            fi
+          done
+
+      - name: Upload signed and unsigned packages to R2
+        shell: bash
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+          AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+        run: |
+          endpoint="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+          version="${GITHUB_REF_NAME#create-canvas-v}"
+          aws s3 cp release-output/ "s3://${R2_BUCKET}/app-releases/" \
+            --recursive \
+            --endpoint-url "$endpoint" \
+            --exclude "*.yml" \
+            --cache-control "public,max-age=31536000,immutable"
+          aws s3 cp release-output/ "s3://${R2_BUCKET}/app-releases/" \
+            --recursive \
+            --endpoint-url "$endpoint" \
+            --exclude "*" \
+            --include "*.yml" \
+            --content-type "text/yaml; charset=utf-8" \
+            --cache-control "no-cache"
+          aws s3 ls "s3://${R2_BUCKET}/app-releases/v${version}/" --endpoint-url "$endpoint"
+          aws s3 ls "s3://${R2_BUCKET}/app-releases/windows/x64/latest.yml" --endpoint-url "$endpoint"
