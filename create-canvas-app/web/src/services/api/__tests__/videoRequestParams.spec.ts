@@ -206,11 +206,8 @@ describe("vendor video request builders", () => {
 });
 
 function loadCatalog(): Array<{ model_name: string; capabilities: VideoCapabilityProfile }> {
-    const sql = readFileSync(resolve(process.cwd(), "../../backend/migrations/276_channel_video_capabilities.sql"), "utf8");
-    const start = sql.indexOf("$catalog$") + "$catalog$".length;
-    const end = sql.indexOf("$catalog$::jsonb", start);
-    if (start < "$catalog$".length || end < 0) throw new Error("video capability catalog not found");
-    return JSON.parse(sql.slice(start, end)) as Array<{ model_name: string; capabilities: VideoCapabilityProfile }>;
+    const path = resolve(process.cwd(), "src/lib/__tests__/fixtures/video-capability-catalog.json");
+    return JSON.parse(readFileSync(path, "utf8")) as Array<{ model_name: string; capabilities: VideoCapabilityProfile }>;
 }
 
 describe("all app video models synthetic smoke", () => {
