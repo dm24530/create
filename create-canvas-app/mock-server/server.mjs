@@ -44,6 +44,19 @@ const secondKey = {
   quota_used: 0.5,
   group,
 };
+const videoCapabilities = {
+  protocol: "seedance_video",
+  min_duration: 4,
+  max_duration: 12,
+  default_duration: 8,
+  duration_options: [4, 8, 12],
+  resolutions: ["720p"],
+  aspect_ratios: ["16:9", "9:16"],
+  slots: { first_frame: 1, last_frame: 0, reference_image: 2, reference_video: 1, reference_audio: 0 },
+  supports_generate_audio: true,
+  outputs_audio: true,
+  modes: ["text-to-video", "image-to-video", "reference-images", "reference-video"],
+};
 const projects = new Map();
 const assets = new Map();
 const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nX0AAAAASUVORK5CYII=";
@@ -125,6 +138,40 @@ const server = http.createServer(async (request, response) => {
     return send(response, 200, { code: 0, data: { items: [apiKey, secondKey], total: 2, page: 1, page_size: 100, pages: 1 } });
   }
   if (path === "/api/v1/groups/available") return send(response, 200, { code: 0, data: [group] });
+  if (path === "/api/v1/models/available") {
+    return send(response, 200, { code: 0, data: [{
+      name: "Mock Composite Channel",
+      description: "Mock capability source",
+      platforms: [{
+        platform: "composite",
+        groups: [group],
+        supported_models: [
+          { name: "gpt-image-2", platform: "composite", pricing: null },
+          { name: "brand-new-video", platform: "composite", pricing: { billing_mode: "video", per_request_price: 0.32, intervals: [] }, video_capabilities: videoCapabilities },
+        ],
+      }],
+    }]});
+  }
+  if (path === "/api/v1/model-plaza") {
+    return send(response, 200, { code: 0, data: {
+      description: "Mock model plaza",
+      groups: [{
+        id: group.id,
+        name: group.name,
+        description: group.description,
+        platform: group.platform,
+        rate_multiplier: 1,
+        models: [
+          { name: "gpt-image-2", platform: "composite", description: "Mock image model", pricing: { billing_mode: "image", per_request_price: 0.02, intervals: [] } },
+          { name: "brand-new-video", platform: "composite", description: "Mock video model", video_capabilities: videoCapabilities, pricing: { billing_mode: "video", per_request_price: 0.32, intervals: [
+            { tier_label: "720p / 4s", min_tokens: 4, max_tokens: 4, per_request_price: 0.2 },
+            { tier_label: "720p / 8s", min_tokens: 8, max_tokens: 8, per_request_price: 0.32 },
+            { tier_label: "720p / 12s", min_tokens: 12, max_tokens: 12, per_request_price: 0.44 },
+          ] } },
+        ],
+      }],
+    }});
+  }
   if (path === "/api/v1/prompts") {
     return send(response, 200, { code: 0, data: { items: [], total: 0, page: 1, page_size: 12, pages: 0 } });
   }
@@ -143,7 +190,7 @@ const server = http.createServer(async (request, response) => {
   if (path === "/v1/models") {
     return send(response, 200, { object: "list", data: [
       { id: "gpt-image-2", object: "model" },
-      { id: "grok-imagine-video", object: "model" },
+      { id: "brand-new-video", object: "model" },
     ]});
   }
   if (path === "/v1/images/generations" && method === "POST") {

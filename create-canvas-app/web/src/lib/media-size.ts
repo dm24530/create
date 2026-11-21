@@ -39,9 +39,12 @@ export const videoRatioOptions = [
     { value: "1:1", width: 1, height: 1 },
     { value: "3:4", width: 3, height: 4 },
     { value: "4:3", width: 4, height: 3 },
+    { value: "3:2", width: 3, height: 2 },
+    { value: "2:3", width: 2, height: 3 },
     { value: "16:9", width: 16, height: 9 },
     { value: "9:16", width: 9, height: 16 },
     { value: "21:9", width: 21, height: 9 },
+    { value: "5:2", width: 5, height: 2 },
     { value: "auto", width: 0, height: 0 },
 ] as const;
 

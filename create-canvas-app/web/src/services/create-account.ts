@@ -1,5 +1,6 @@
 import { createRequest } from "@/services/create-api";
 import type { CreateSession } from "@/services/create-auth";
+import type { VideoCapabilityProfile } from "@/lib/video-model-profile";
 
 export type CreateUsageLog = {
     id: number;
@@ -114,8 +115,10 @@ export type CreateModelPricing = {
 export type CreateModelPlazaModel = {
     name: string;
     platform: string;
+    description?: string;
     pricing?: CreateModelPricing | null;
     official_pricing?: Record<string, unknown> | null;
+    video_capabilities?: VideoCapabilityProfile | null;
 };
 
 export type CreateModelPlazaGroup = {
@@ -123,8 +126,16 @@ export type CreateModelPlazaGroup = {
     name: string;
     description?: string;
     platform: string;
+    subscription_type?: string;
     rate_multiplier: number;
-    user_rate_multiplier?: number;
+    user_rate_multiplier?: number | null;
+    peak_rate_enabled?: boolean;
+    peak_start?: string;
+    peak_end?: string;
+    peak_rate_multiplier?: number;
+    is_exclusive?: boolean;
+    video_rate_independent?: boolean;
+    video_rate_multiplier?: number | null;
     models: CreateModelPlazaModel[];
 };
 

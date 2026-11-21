@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { prepareCanvasReferenceImagesForRequest } from "../canvas-generation-helpers";
+import { buildGenerationConfig, prepareCanvasReferenceImagesForRequest } from "../canvas-generation-helpers";
+import { createModelChannel, defaultConfig, encodeChannelModel } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
 
 vi.mock("@/services/image-storage", () => ({
@@ -25,6 +26,42 @@ vi.mock("@/services/file-storage", () => ({
     resolveMediaUrl: vi.fn(),
 }));
 
+describe("buildGenerationConfig", () => {
+    it("sanitizes canvas video parameters from the active model capability", () => {
+        const capability = {
+            protocol: "seedance_video",
+            min_duration: 5,
+            max_duration: 10,
+            default_duration: 5,
+            duration_options: [5, 10],
+            resolutions: ["720p"],
+            aspect_ratios: ["9:16"],
+            slots: { first_frame: 1, last_frame: 0, reference_image: 2, reference_video: 0, reference_audio: 0 },
+            supports_generate_audio: true,
+        };
+        const channel = createModelChannel({
+            id: "channel",
+            name: "channel",
+            baseUrl: "https://example.com/v1",
+            apiKey: "key",
+            models: [{ name: "new-video-model", capability: "video", videoCapabilities: capability }],
+        });
+        const config = {
+            ...defaultConfig,
+            channels: [channel],
+            videoModel: encodeChannelModel(channel.id, "new-video-model"),
+            vquality: "1080",
+            size: "1920x1080",
+            videoSeconds: "15",
+        };
+
+        const built = buildGenerationConfig(config, undefined, "video");
+
+        expect(built.vquality).toBe("720");
+        expect(built.videoSeconds).toBe("10");
+        expect(built.size).toBe("720x1280");
+    });
+});
 describe("prepareCanvasReferenceImagesForRequest", () => {
     it("returns locally compressed data URLs without uploading to R2 first", async () => {
         const reference = (index: number): ReferenceImage => ({

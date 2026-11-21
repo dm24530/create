@@ -1,9 +1,11 @@
-import { defaultConfig, resolveModelForCapability, type AiConfig } from "@/stores/use-config-store";
+import { defaultConfig, modelOptionName, resolveModelForCapability, videoCapabilityOf, type AiConfig } from "@/stores/use-config-store";
 import i18n from "@/i18n";
 import { claimLegacyStoredImage, ensureImagePreview, getImageBlob, prepareImageRequestDataUrls, resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { resolveMediaUrl } from "@/services/file-storage";
 import { imageMetadata, referenceUrl } from "@/lib/canvas/canvas-node-factory";
 import { normalizeImageBackground, normalizeImageOutputFormat } from "@/lib/image-output-format";
+import { computeVideoSize, inferVideoRatio } from "@/lib/media-size";
+import { clampVideoSecondsForProfile, getVideoModelProfile, isVideoRatioSupported, isVideoResolutionSupported } from "@/lib/video-model-profile";
 import type { NodeGenerationInput } from "@/components/canvas/canvas-node-generation";
 import type { CanvasNodeGenerationMode } from "@/components/canvas/canvas-node-prompt-panel";
 import type { CanvasImageAngleParams } from "@/components/canvas/canvas-node-angle-dialog";
@@ -161,16 +163,27 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
     const model = resolveModelForCapability(config, node?.metadata?.model, mode);
     const outputFormat = normalizeImageOutputFormat(node?.metadata?.outputFormat || config.outputFormat || defaultConfig.outputFormat);
     const background = normalizeImageBackground(model, node?.metadata?.background ?? config.background ?? defaultConfig.background, outputFormat);
+    const requestedSize = node?.metadata?.size || config.size || defaultConfig.size;
+    const requestedVquality = node?.metadata?.vquality || config.vquality || defaultConfig.vquality;
+    const requestedSeconds = node?.metadata?.seconds || config.videoSeconds || defaultConfig.videoSeconds;
+    const videoProfile = mode === "video" ? getVideoModelProfile(modelOptionName(model), videoCapabilityOf(config, model)) : null;
+    const requestedRatio = inferVideoRatio(requestedSize);
+    const videoResolution = videoProfile && isVideoResolutionSupported(videoProfile, requestedVquality)
+        ? requestedVquality
+        : videoProfile?.resolutions[0] || requestedVquality;
+    const videoRatio = videoProfile && isVideoRatioSupported(videoProfile, requestedRatio)
+        ? requestedRatio
+        : videoProfile?.aspectRatios[0] || requestedRatio;
     return {
         ...config,
         model,
         reasoningEffort: node?.metadata?.reasoningEffort || config.reasoningEffort || defaultConfig.reasoningEffort,
         quality: node?.metadata?.quality || config.quality || defaultConfig.quality,
-        size: node?.metadata?.size || config.size || defaultConfig.size,
+        size: videoProfile ? computeVideoSize(videoResolution, videoRatio) : requestedSize,
         background,
         outputFormat,
-        videoSeconds: node?.metadata?.seconds || config.videoSeconds || defaultConfig.videoSeconds,
-        vquality: node?.metadata?.vquality || config.vquality || defaultConfig.vquality,
+        videoSeconds: videoProfile ? clampVideoSecondsForProfile(requestedSeconds, videoProfile) : requestedSeconds,
+        vquality: videoProfile ? videoResolution : requestedVquality,
         videoGenerateAudio: node?.metadata?.generateAudio || config.videoGenerateAudio || defaultConfig.videoGenerateAudio,
         videoWatermark: node?.metadata?.watermark || config.videoWatermark || defaultConfig.videoWatermark,
         videoMode: node?.metadata?.videoMode || config.videoMode || defaultConfig.videoMode,

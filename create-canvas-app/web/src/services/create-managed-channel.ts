@@ -4,6 +4,7 @@ import type { CreateSession } from "@/services/create-auth";
 import { createGatewayBaseUrl } from "@/lib/create-product";
 import { configureCanvasCloud } from "@/services/canvas-cloud";
 import { createModelChannel, guessCapability, modelOptionsFromChannels, normalizeModelOptionValue, selectableModelsByCapability, useConfigStore, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
+import type { VideoCapabilityProfile } from "@/lib/video-model-profile";
 
 export type CreateManagedGroup = {
     id: number;
@@ -65,6 +66,7 @@ type WorkspaceDependencies = {
     listGroups: (session: CreateSession) => Promise<CreateManagedGroup[]>;
     createKey: (session: CreateSession, name: string, groupId: number) => Promise<CreateManagedKey>;
     loadModels: (apiKey: string) => Promise<string[]>;
+    loadVideoCapabilities?: (session: CreateSession, groupId: number) => Promise<Record<string, VideoCapabilityProfile>>;
 };
 
 type CreateWorkspaceConfiguration = {
@@ -72,6 +74,7 @@ type CreateWorkspaceConfiguration = {
     videoKey: CreateManagedKey | null;
     imageModels: string[];
     videoModels: string[];
+    videoCapabilities: Record<string, VideoCapabilityProfile>;
     imageChannelModels: number;
 };
 
@@ -131,7 +134,14 @@ function modelsFor(channel: ModelChannel, capability: ModelCapability) {
     return channel.models.filter((model) => model.capability === capability);
 }
 
-function channelFromModels(id: string, name: string, apiKey: string, models: string[], capabilities?: ModelCapability[]) {
+function channelFromModels(
+    id: string,
+    name: string,
+    apiKey: string,
+    models: string[],
+    capabilities?: ModelCapability[],
+    videoCapabilities: Record<string, VideoCapabilityProfile> = {},
+) {
     const allowed = capabilities ? new Set(capabilities) : null;
     return createModelChannel({
         id,
@@ -139,7 +149,15 @@ function channelFromModels(id: string, name: string, apiKey: string, models: str
         baseUrl: createGatewayBaseUrl(),
         apiKey,
         apiFormat: "openai",
-        models: models.map((model) => ({ name: model, capability: guessCapability(model) })).filter((model) => !allowed || allowed.has(model.capability)),
+        models: models.map((model) => {
+            const name = model.trim();
+            const videoCapability = videoCapabilities[name.toLowerCase()];
+            return {
+                name,
+                capability: videoCapability ? "video" as const : guessCapability(name),
+                videoCapabilities: videoCapability,
+            };
+        }).filter((model) => !allowed || allowed.has(model.capability)),
     });
 }
 
@@ -179,8 +197,43 @@ function defaultDependencies(overrides: Partial<WorkspaceDependencies> = {}): Wo
                 apiKey,
                 apiFormat: "openai",
             }),
+        loadVideoCapabilities: overrides.loadModels ? async () => ({}) : loadCreateVideoCapabilities,
         ...overrides,
     };
+}
+
+type CreateAvailableModel = {
+    name?: string;
+    video_capabilities?: VideoCapabilityProfile | null;
+};
+
+type CreateAvailableSection = {
+    groups?: Array<{ id?: number }>;
+    supported_models?: CreateAvailableModel[];
+};
+
+type CreateAvailableChannel = {
+    platforms?: CreateAvailableSection[];
+};
+
+export async function loadCreateVideoCapabilities(session: CreateSession, groupId: number): Promise<Record<string, VideoCapabilityProfile>> {
+    if (!session?.accessToken || !Number(groupId)) return {};
+    const channels = await createRequest<CreateAvailableChannel[]>("/models/available", {
+        accessToken: session.accessToken,
+        timeoutMs: WORKSPACE_REQUEST_TIMEOUT_MS,
+    });
+    const capabilities: Record<string, VideoCapabilityProfile> = {};
+    for (const channel of channels || []) {
+        for (const section of channel.platforms || []) {
+            if (!(section.groups || []).some((group) => Number(group.id) === Number(groupId))) continue;
+            for (const model of section.supported_models || []) {
+                const name = String(model.name || "").trim().toLowerCase();
+                if (!name || !model.video_capabilities || capabilities[name]) continue;
+                capabilities[name] = model.video_capabilities;
+            }
+        }
+    }
+    return capabilities;
 }
 
 export async function listCreateManagedKeys(session: CreateSession): Promise<CreateManagedKey[]> {
@@ -302,6 +355,10 @@ async function configureCreateWorkspaceInternal(session: CreateSession, override
     const deps = defaultDependencies(overrides);
     const { imageKey, videoKey } = await resolveManagedCredentials(session, deps);
     const [imageModels, videoModels] = await Promise.all([deps.loadModels(imageKey.key).catch(() => []), videoKey ? deps.loadModels(videoKey.key).catch(() => []) : Promise.resolve([])]);
+    const videoGroupId = Number(videoKey?.group?.id ?? videoKey?.group_id ?? 0);
+    const videoCapabilities = videoKey && deps.loadVideoCapabilities
+        ? await deps.loadVideoCapabilities(session, videoGroupId).catch(() => ({}))
+        : {};
 
     const imageGroupName = imageKey.group?.name?.trim() || "Create 图片";
     const videoGroupName = videoKey?.group?.name?.trim() || "Create 视频";
@@ -313,13 +370,14 @@ async function configureCreateWorkspaceInternal(session: CreateSession, override
             imageKey.key,
             Array.from(new Set([...imageModels, ...videoModels])),
             ["image", "video"],
+            videoCapabilities,
         ));
     } else {
         if (imageModels.length) {
-            channels.push(channelFromModels("create-managed-image", imageGroupName, imageKey.key, imageModels, ["image"]));
+            channels.push(channelFromModels("create-managed-image", imageGroupName, imageKey.key, imageModels, ["image"], videoCapabilities));
         }
         if (videoKey && videoModels.length) {
-            channels.push(channelFromModels("create-managed-video", videoGroupName, videoKey.key, videoModels, ["video"]));
+            channels.push(channelFromModels("create-managed-video", videoGroupName, videoKey.key, videoModels, ["video"], videoCapabilities));
         }
     }
 
@@ -332,6 +390,7 @@ async function configureCreateWorkspaceInternal(session: CreateSession, override
         videoKey,
         imageModels,
         videoModels,
+        videoCapabilities,
         imageChannelModels: channels.flatMap((channel) => modelsFor(channel, "image")).length,
     };
 }

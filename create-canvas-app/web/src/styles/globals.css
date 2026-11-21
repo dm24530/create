@@ -663,3 +663,15 @@
 .dark .ant-tooltip .ant-tooltip-arrow::before {
     background: #292524 !important;
 }
+
+/* Electron/React 19 can leave Ant Design modal enter classes stuck at opacity 0. */
+.ant-modal.ant-zoom-appear,
+.ant-modal.ant-zoom-enter,
+.ant-modal.ant-zoom-appear-start,
+.ant-modal.ant-zoom-enter-start,
+.ant-modal.ant-zoom-appear-active,
+.ant-modal.ant-zoom-enter-active {
+    animation-duration: 0s !important;
+    opacity: 1 !important;
+    transform: none !important;
+}
