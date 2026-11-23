@@ -155,3 +155,79 @@ func TestVideoModelPriceMissingTierFallsBackToFlatTierPrice(t *testing.T) {
 
 	require.InDelta(t, flat720P, result.TotalCost, 1e-9)
 }
+
+func TestVideoDurationRequestTierPriceSelectsDurationTier(t *testing.T) {
+	t.Parallel()
+	price10 := 2.5
+	price15 := 3.5
+	resolved := &ResolvedPricing{RequestTiers: []PricingInterval{
+		{TierLabel: "480p-10s", PerRequestPrice: &price10},
+		{TierLabel: "480p-15s", PerRequestPrice: &price15},
+	}}
+	require.InDelta(t, 2.5, videoDurationRequestTierPrice(resolved, "480p", 10), 1e-12)
+	require.InDelta(t, 3.5, videoDurationRequestTierPrice(resolved, "480p", 15), 1e-12)
+	require.Zero(t, videoDurationRequestTierPrice(resolved, "720p", 15))
+}
+
+func TestApplyVideoReferenceImageSurchargeUsesPerModelCapabilities(t *testing.T) {
+	t.Parallel()
+	resolved := &ResolvedPricing{channelPricing: &ChannelModelPricing{
+		VideoCapabilities: VideoModelCapabilitiesByModel{
+			"minimax H3": {
+				ReferenceImageFreeCount:  5,
+				ReferenceImageExtraPrice: 0.18,
+			},
+		},
+	}}
+	cost := &CostBreakdown{TotalCost: 1, ActualCost: 0.5}
+	applyVideoReferenceImageSurcharge(cost, resolved, "minimax H3", 9, 1, 0.5)
+	require.InDelta(t, 1.72, cost.TotalCost, 1e-12)
+	require.InDelta(t, 0.86, cost.ActualCost, 1e-12)
+	require.InDelta(t, 0.36, cost.VideoReferenceImageCost, 1e-12)
+}
+
+func TestCalculatePerRequestCostUsesVideoDurationTier(t *testing.T) {
+	t.Parallel()
+	price10 := 2.5
+	price15 := 3.5
+	resolved := &ResolvedPricing{
+		Mode: BillingModePerRequest,
+		RequestTiers: []PricingInterval{
+			{TierLabel: "480p-10s", PerRequestPrice: &price10},
+			{TierLabel: "480p-15s", PerRequestPrice: &price15},
+		},
+		DefaultPerRequestPrice: 2.5,
+	}
+	billing := &BillingService{}
+	cost, err := billing.calculatePerRequestCost(resolved, CostInput{
+		RequestCount: 1, UsageUnits: 1, SizeTier: "480p", DurationSeconds: 15, RateMultiplier: 1,
+	})
+	require.NoError(t, err)
+	require.InDelta(t, 3.5, cost.TotalCost, 1e-12)
+	require.InDelta(t, 3.5, cost.ActualCost, 1e-12)
+}
+
+func TestVideoDurationRequestTierPriceRoundsUpForLongReferenceVideo(t *testing.T) {
+	t.Parallel()
+	price10 := 2.5
+	price15 := 3.5
+	resolved := &ResolvedPricing{RequestTiers: []PricingInterval{
+		{TierLabel: "480p-10s", PerRequestPrice: &price10},
+		{TierLabel: "480p-15s", PerRequestPrice: &price15},
+	}}
+	require.InDelta(t, 3.5, videoDurationRequestTierPrice(resolved, "480p", 12), 1e-12)
+}
+
+func TestEffectiveVideoBillingDurationSecondsModes(t *testing.T) {
+	t.Parallel()
+	resolved := &ResolvedPricing{channelPricing: &ChannelModelPricing{
+		VideoCapabilities: VideoModelCapabilitiesByModel{
+			"model-max": {ReferenceVideoBillingMode: VideoReferenceBillingModeMaxSeconds},
+			"model-sum": {ReferenceVideoBillingMode: VideoReferenceBillingModeSumSeconds},
+			"model-off": {ReferenceVideoBillingMode: VideoReferenceBillingModeOff},
+		},
+	}}
+	require.Equal(t, 12, EffectiveVideoBillingDurationSeconds(resolved, "model-max", 10, 12))
+	require.Equal(t, 15, EffectiveVideoBillingDurationSeconds(resolved, "model-sum", 10, 5))
+	require.Equal(t, 10, EffectiveVideoBillingDurationSeconds(resolved, "model-off", 10, 5))
+}

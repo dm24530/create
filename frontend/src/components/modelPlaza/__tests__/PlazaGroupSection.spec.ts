@@ -115,6 +115,16 @@ describe('PlazaGroupSection 长上下文说明', () => {
     })
     wrapper.unmount()
   })
+  it('routes a per-request video model into the video table by its catalog name', () => {
+    const video = ladderModel(1)
+    video.name = 'seedance 2.0 fast-GT'
+    video.pricing!.billing_mode = 'per_request'
+    const wrapper = mountSection(group({ models: [video] }))
+
+    expect(wrapper.findComponent(PlazaVideoPricingTable).exists()).toBe(true)
+    expect(wrapper.findComponent(PlazaModelPricingTable).exists()).toBe(false)
+    wrapper.unmount()
+  })
   it('分组关闭阶梯且组内有官方阶梯模型时显示说明', () => {
     const wrapper = mountSection(group({ long_context_pricing_enabled: false }))
     expect(wrapper.text()).toContain(NOTE)

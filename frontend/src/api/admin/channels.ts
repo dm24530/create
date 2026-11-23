@@ -5,6 +5,7 @@
 
 import { apiClient } from '../client'
 import type { BillingMode, ChannelStatus, BillingModelSource } from '@/constants/channel'
+import type { VideoModelCapabilities } from '../channels'
 
 export type { BillingMode } from '@/constants/channel'
 
@@ -42,6 +43,8 @@ export interface ChannelModelPricing {
   id?: number
   platform: string
   models: string[]
+  description?: string
+  video_capabilities?: Record<string, VideoModelCapabilities> | null
   billing_mode: BillingMode
   input_price: number | null
   output_price: number | null

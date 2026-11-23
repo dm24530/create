@@ -66,6 +66,8 @@ func prepareSeedanceCompletionBilling(ctx context.Context, h *OpenAIGatewayHandl
 		billingModel = firstNonEmptyString(pending.BillingModel, pending.Model, billingModel, pending.OriginalModel)
 	}
 	perSecond := key.Group != nil && key.Group.UsesVideoSecondBilling(billingModel)
+	groupPricing := key.Group.ModelPricingFor(billingModel)
+	perRequestVideo := groupPricing != nil && groupPricing.BillingMode == service.BillingModePerRequest
 	if perSecond {
 		// Per-second billing needs the create-time request snapshot because the
 		// completed Seedance task may omit duration and resolution.
@@ -82,6 +84,16 @@ func prepareSeedanceCompletionBilling(ctx context.Context, h *OpenAIGatewayHandl
 				zap.String("request_id", taskID),
 				zap.String("model", billingModel),
 				zap.String("resolution", resolution),
+			)
+			return nil
+		}
+	} else if perRequestVideo {
+		// Per-call video pricing needs the create snapshot (duration/resolution/
+		// reference count) and must not depend on upstream token usage.
+		if pending == nil {
+			logger.L().Warn("seedance.per_request_billing_missing_pending",
+				zap.String("request_id", taskID),
+				zap.String("model", billingModel),
 			)
 			return nil
 		}
@@ -105,6 +117,12 @@ func prepareSeedanceCompletionBilling(ctx context.Context, h *OpenAIGatewayHandl
 		if merged.VideoDurationSeconds <= 0 {
 			merged.VideoDurationSeconds = pending.VideoDurationSeconds
 		}
+		if merged.VideoReferenceImageCount <= 0 {
+			merged.VideoReferenceImageCount = pending.ReferenceImageCount
+		}
+		if merged.VideoReferenceBillingSeconds <= 0 {
+			merged.VideoReferenceBillingSeconds = pending.ReferenceVideoBillingSeconds
+		}
 	}
 	if strings.TrimSpace(merged.Model) == "" {
 		merged.Model = firstNonEmptyString(merged.BillingModel, result.Model)
@@ -115,7 +133,7 @@ func prepareSeedanceCompletionBilling(ctx context.Context, h *OpenAIGatewayHandl
 	merged.UpstreamModel = firstNonEmptyString(merged.UpstreamModel, result.UpstreamModel)
 	merged.RequestID = service.StableGrokVideoBillingRequestID(taskID)
 	merged.ResponseID = taskID
-	if perSecond {
+	if perSecond || perRequestVideo {
 		merged.Usage.OutputTokens = 0
 		merged.VideoCount = 1
 		merged.ImageCount = 0

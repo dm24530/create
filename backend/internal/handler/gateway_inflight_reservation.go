@@ -111,15 +111,45 @@ func grokMediaInflightEstimate(endpoint service.GrokMediaEndpoint, model string,
 			// task whose upper-bound cost exceeds the available balance.
 			durationSeconds = service.VideoReservationMaxDurationSecondsForModel(model)
 		}
+		switch info.ReferenceVideoBillingMode {
+		case service.VideoReferenceBillingModeMaxSeconds:
+			if info.ReferenceVideoBillingSeconds > durationSeconds {
+				durationSeconds = info.ReferenceVideoBillingSeconds
+			}
+		case service.VideoReferenceBillingModeSumSeconds:
+			durationSeconds += info.ReferenceVideoBillingSeconds
+		}
 		return service.InflightEstimateRequest{
-			Model:                model,
-			BodyBytes:            len(body),
-			Kind:                 service.InflightEstimateVideo,
-			Units:                1,
-			VideoResolution:      info.Resolution,
-			VideoDurationSeconds: durationSeconds,
+			Model:                    model,
+			BodyBytes:                len(body),
+			Kind:                     service.InflightEstimateVideo,
+			Units:                    1,
+			VideoResolution:          info.Resolution,
+			VideoDurationSeconds:     durationSeconds,
+			VideoReferenceImageCount: info.ReferenceImageCount,
 		}
 	}
+}
+
+func prepareReferenceVideoBilling(ctx context.Context, h *OpenAIGatewayHandler, group *service.Group, model string, info *service.GrokMediaRequestInfo) error {
+	if h == nil || h.gatewayService == nil || group == nil || info == nil || len(info.ReferenceVideoURLs) == 0 {
+		return nil
+	}
+	capabilities := h.gatewayService.VideoCapabilitiesForModel(ctx, group, model)
+	if capabilities == nil {
+		return nil
+	}
+	mode := capabilities.ReferenceVideoBillingMode
+	info.ReferenceVideoBillingMode = mode
+	if mode == "" || mode == service.VideoReferenceBillingModeOff {
+		return nil
+	}
+	seconds, err := service.ProbeReferenceVideoBillingSeconds(ctx, info.ReferenceVideoURLs, mode)
+	if err != nil {
+		return err
+	}
+	info.ReferenceVideoBillingSeconds = seconds
+	return nil
 }
 
 // grokVoiceSTTBytesPerSecond STT 时长粗估（~128kbps 压缩音频）。

@@ -94,8 +94,9 @@ func TestToModelPlazaGroupDTO_UserRateAndFieldWhitelist(t *testing.T) {
 		SubscriptionType: "standard", RateMultiplier: 1, IsExclusive: true,
 		VideoRateIndependent: true, VideoRateMultiplier: 0.7,
 		Models: []service.PlazaModel{{
-			Name:     "claude-sonnet",
-			Platform: "anthropic",
+			Name:        "claude-sonnet",
+			Platform:    "anthropic",
+			Description: "custom display info",
 			Pricing: &service.ChannelModelPricing{
 				BillingMode: service.BillingModeToken,
 				InputPrice:  testPtr(3e-6),
@@ -134,6 +135,7 @@ func TestToModelPlazaGroupDTO_UserRateAndFieldWhitelist(t *testing.T) {
 	model := models[0].(map[string]any)
 	require.Contains(t, model, "pricing")
 	require.Contains(t, model, "official_pricing")
+	require.Equal(t, "custom display info", model["description"])
 	official := model["official_pricing"].(map[string]any)
 	require.Contains(t, official, "input_price")
 	require.Contains(t, official, "cache_read_price")
@@ -283,7 +285,7 @@ func (plazaVaryGroupRepo) ListActive(context.Context) ([]service.Group, error) {
 func TestModelPlazaHandler_VaryKeepsCORSOrigin(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	h := NewModelPlazaHandler(
-		service.NewModelPlazaService(plazaVaryChannelRepo{}, plazaVaryGroupRepo{}, nil, nil, nil),
+		service.NewModelPlazaService(plazaVaryChannelRepo{}, plazaVaryGroupRepo{}, nil, nil, nil, nil),
 		nil,
 		service.NewSettingService(plazaVarySettingRepo{}, &config.Config{}),
 	)

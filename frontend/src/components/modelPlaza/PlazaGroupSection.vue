@@ -95,10 +95,10 @@ import PlazaModelPricingTable from './PlazaModelPricingTable.vue'
 import PlazaVideoPricingTable from './PlazaVideoPricingTable.vue'
 import type { ModelPlazaGroup } from '@/api/modelPlaza'
 import type { GroupPlatform, SubscriptionType } from '@/types'
-import { BILLING_MODE_VIDEO } from '@/constants/channel'
 import { platformBorderStrongClass } from '@/utils/platformColors'
 import { hasPeakRate, formatPeakRateWindow, serverTimezoneLabel } from '@/utils/peak-rate'
 import { useAppStore } from '@/stores/app'
+import { isVideoPricingModel } from './videoModelMeta'
 
 const props = defineProps<{
   group: ModelPlazaGroup
@@ -107,12 +107,8 @@ const props = defineProps<{
 const { t } = useI18n()
 const appStore = useAppStore()
 
-const videoModels = computed(() =>
-  props.group.models.filter((model) => model.pricing?.billing_mode === BILLING_MODE_VIDEO)
-)
-const nonVideoModels = computed(() =>
-  props.group.models.filter((model) => model.pricing?.billing_mode !== BILLING_MODE_VIDEO)
-)
+const videoModels = computed(() => props.group.models.filter(isVideoPricingModel))
+const nonVideoModels = computed(() => props.group.models.filter((model) => !isVideoPricingModel(model)))
 
 /** 高峰窗口描述(含倍率与服务器时区标注);分组未启用高峰为空串。 */
 const peakWindow = computed(() => {

@@ -101,9 +101,10 @@ type userPricingIntervalDTO struct {
 
 // userSupportedModel 用户可见的支持模型条目。
 type userSupportedModel struct {
-	Name     string                     `json:"name"`
-	Platform string                     `json:"platform"`
-	Pricing  *userSupportedModelPricing `json:"pricing"`
+	Name              string                          `json:"name"`
+	Platform          string                          `json:"platform"`
+	Pricing           *userSupportedModelPricing      `json:"pricing"`
+	VideoCapabilities *service.VideoModelCapabilities `json:"video_capabilities,omitempty"`
 }
 
 // userChannelPlatformSection 单渠道内某个平台的子视图：用户可见的分组 + 该平台
@@ -361,10 +362,15 @@ func toUserSupportedModels(
 				continue
 			}
 		}
+		var videoCapabilities *service.VideoModelCapabilities
+		if m.Pricing != nil {
+			videoCapabilities = m.Pricing.VideoCapabilities.VideoCapabilitiesFor(m.Name)
+		}
 		out = append(out, userSupportedModel{
-			Name:     m.Name,
-			Platform: m.Platform,
-			Pricing:  toUserPricing(m.Pricing),
+			Name:              m.Name,
+			Platform:          m.Platform,
+			Pricing:           toUserPricing(m.Pricing),
+			VideoCapabilities: videoCapabilities,
 		})
 	}
 	return out

@@ -76,6 +76,15 @@ type ResponseApiPayload = {
     msg?: string;
 };
 type ResponseStreamState = { buffer: string; text: string; payload?: ResponseApiPayload; error?: string };
+type ChatCompletionPayload = {
+    choices?: Array<{
+        message?: { content?: string | Array<{ type?: string; text?: string }> };
+        delta?: { content?: string };
+        finish_reason?: string | null;
+    }>;
+    error?: { message?: string };
+};
+type ChatCompletionStreamState = { buffer: string; text: string; error?: string };
 
 type ImageApiResponse = {
     data?: Array<Record<string, unknown>>;
@@ -633,6 +642,95 @@ async function requestStreamingResponse(config: AiConfig, body: Record<string, u
     return { ...result, content: state.text || result.content };
 }
 
+function toChatCompletionMessages(messages: ResponseInputMessage[]) {
+    return messages.flatMap((message) => {
+        if ("type" in message) return [];
+        if (message.role === "tool") return [{ role: "user" as const, content: message.content }];
+        return [{ role: message.role, content: message.content || "" }];
+    });
+}
+
+function chatCompletionText(payload: ChatCompletionPayload) {
+    const content = payload.choices?.[0]?.message?.content;
+    if (typeof content === "string") return content;
+    if (Array.isArray(content)) return content.map((item) => item.text || "").join("");
+    return "";
+}
+
+function consumeChatCompletionStreamBlock(block: string, state: ChatCompletionStreamState, onDelta?: (text: string) => void) {
+    const data = block
+        .split(/\r?\n/)
+        .filter((line) => line.startsWith("data:"))
+        .map((line) => line.slice(5).replace(/^ /, ""))
+        .join("\n")
+        .trim();
+    if (!data || data === "[DONE]") return;
+    try {
+        const event = JSON.parse(data) as ChatCompletionPayload & Record<string, unknown>;
+        const errorMessage = responseErrorMessage(event);
+        if (errorMessage) state.error = errorMessage;
+        const delta = event.choices?.[0]?.delta?.content;
+        if (typeof delta === "string" && delta) {
+            state.text += delta;
+            onDelta?.(state.text);
+        }
+    } catch {
+        state.error = apiText("requestFailed");
+    }
+}
+
+function consumeChatCompletionStreamText(state: ChatCompletionStreamState, text: string, onDelta?: (text: string) => void, flush = false) {
+    state.buffer += text;
+    for (;;) {
+        const match = state.buffer.match(/\r?\n\r?\n/);
+        if (!match) break;
+        const index = match.index ?? 0;
+        consumeChatCompletionStreamBlock(state.buffer.slice(0, index), state, onDelta);
+        state.buffer = state.buffer.slice(index + match[0].length);
+    }
+    if (flush && state.buffer.trim()) {
+        consumeChatCompletionStreamBlock(state.buffer, state, onDelta);
+        state.buffer = "";
+    }
+}
+
+async function requestChatCompletionResponse(
+    config: AiConfig,
+    messages: ResponseInputMessage[],
+    onDelta?: (text: string) => void,
+    options?: RequestOptions,
+): Promise<string> {
+    const response = await fetch(aiApiUrl(config, "/chat/completions"), {
+        method: "POST",
+        headers: { ...aiHeaders(config, "application/json"), Accept: "text/event-stream" },
+        body: JSON.stringify({
+            model: config.model,
+            messages: toChatCompletionMessages(messages),
+            stream: true,
+        }),
+        signal: options?.signal,
+    });
+    if (!response.ok) throw new Error(await readFetchError(response, apiText("requestFailed")));
+    if (!response.body) {
+        const payload = (await response.json()) as ChatCompletionPayload;
+        const errorMessage = responseErrorMessage(payload);
+        if (errorMessage) throw new Error(errorMessage);
+        return chatCompletionText(payload);
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    const state: ChatCompletionStreamState = { buffer: "", text: "" };
+    for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        consumeChatCompletionStreamText(state, decoder.decode(value, { stream: true }), onDelta);
+        if (state.error) throw new Error(state.error);
+    }
+    consumeChatCompletionStreamText(state, decoder.decode(), onDelta, true);
+    if (state.error) throw new Error(state.error);
+    return state.text;
+}
 function toGeminiBody(config: AiConfig, messages: ResponseInputMessage[], extra?: Record<string, unknown>) {
     const systemText = [
         config.systemPrompt.trim(),
@@ -1293,13 +1391,27 @@ export async function requestImageQuestion(config: AiConfig, messages: AiTextMes
             if (answer === apiText("noContent")) onDelta(answer);
             return answer;
         }
-        const answer = (await requestStreamingResponse(requestConfig, {
-            model: requestConfig.model,
-            input: toResponseInput(withSystemMessage(requestConfig, messages)),
-            ...(requestConfig.reasoningEffort === "auto" ? {} : { reasoning: { effort: requestConfig.reasoningEffort } }),
-        }, onDelta, options)).content || apiText("noContent");
-        if (answer === apiText("noContent")) onDelta(answer);
-        return answer;
+        const responseMessages = withSystemMessage(requestConfig, messages);
+        try {
+            const answer = (await requestStreamingResponse(requestConfig, {
+                model: requestConfig.model,
+                input: toResponseInput(responseMessages),
+                ...(requestConfig.reasoningEffort === "auto" ? {} : { reasoning: { effort: requestConfig.reasoningEffort } }),
+            }, onDelta, options)).content || apiText("noContent");
+            if (answer === apiText("noContent")) onDelta(answer);
+            return answer;
+        } catch (responsesError) {
+            if (options?.signal?.aborted) throw responsesError;
+            try {
+                const answer = (await requestChatCompletionResponse(requestConfig, responseMessages, onDelta, options)).trim() || apiText("noContent");
+                if (answer === apiText("noContent")) onDelta(answer);
+                return answer;
+            } catch (chatError) {
+                const primary = readAxiosError(responsesError, apiText("requestFailed"));
+                const fallback = readAxiosError(chatError, apiText("requestFailed"));
+                throw new Error(`${primary}; Chat Completions fallback failed: ${fallback}`);
+            }
+        }
     } catch (error) {
         throw new Error(readAxiosError(error, apiText("requestFailed")));
     }

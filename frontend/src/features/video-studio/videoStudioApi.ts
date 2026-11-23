@@ -8,11 +8,14 @@
 //   - Grok（xAI 视频协议）：POST /videos/generations
 // 三种协议的状态查询与内容下载路径不同，统一在这里归一化。
 
+import type { VideoModelCapabilities } from '@/api/channels'
 import {
   uploadVideoReferenceAsset,
   type VideoReferenceAssetUpload,
   type VideoReferenceAssetUploadResult,
 } from './videoArchiveApi'
+
+type VideoCapabilities = VideoModelCapabilities
 
 export type VideoProvider = 'seedance' | 'seedance_video' | 'muse_video' | 'video_tasks' | 'grok'
 
@@ -90,8 +93,8 @@ export function isRetryableVideoPollingError(error: unknown): boolean {
   return true
 }
 
-// 视频画质档位与后端计费档位一致（480p/720p/1080p）。
-export const VIDEO_RESOLUTIONS = ['480p', '720p', '1080p'] as const
+// 常见画质档位只用于自定义渠道的兜底；平台模型以能力配置中的列表为准。
+export const VIDEO_RESOLUTIONS = ['480p', '720p', '768p', '1080p'] as const
 
 export const VIDEO_ASPECT_RATIOS = [
   { value: '16:9', css: '16 / 9', label: '16:9 横屏' },
@@ -105,6 +108,14 @@ export const VIDEO_ASPECT_RATIOS = [
   { value: '5:2', css: '5 / 2', label: '5:2 超宽屏' },
 ] as const
 
+export interface VideoReferenceSlots {
+  first_frame: number
+  last_frame: number
+  reference_image: number
+  reference_video: number
+  reference_audio: number
+}
+
 export interface VideoModelProfile {
   provider: VideoProvider
   minDuration: number
@@ -115,14 +126,28 @@ export interface VideoModelProfile {
   aspectRatios: readonly string[]
   maxImages: number
   maxVideos: number
+  maxAudios: number
+  slots: VideoReferenceSlots
+  frameReferenceExclusive: boolean
   supportsAudio: boolean
   outputsAudio?: boolean
   modes: readonly VideoMode[]
+  fileLimits?: {
+    imageBytes?: number
+    videoBytes?: number
+    audioBytes?: number
+    totalBytes?: number
+  }
 }
 
-const DOUBAO_ASPECT_RATIOS = ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'] as const
-const WAN_ASPECT_RATIOS = ['16:9', '9:16', '1:1'] as const
-const MINIMAX_H3_MODEL_PATTERN = /^minimax[\s_-]*h3(?:$|[^0-9])/
+const DEFAULT_SLOTS: VideoReferenceSlots = {
+  first_frame: 0,
+  last_frame: 0,
+  reference_image: 3,
+  reference_video: 0,
+  reference_audio: 0,
+}
+
 const DEFAULT_PROFILE: VideoModelProfile = {
   provider: 'seedance',
   minDuration: 1,
@@ -132,243 +157,150 @@ const DEFAULT_PROFILE: VideoModelProfile = {
   aspectRatios: VIDEO_ASPECT_RATIOS.map((item) => item.value),
   maxImages: 3,
   maxVideos: 1,
+  maxAudios: 0,
+  slots: DEFAULT_SLOTS,
+  frameReferenceExclusive: false,
   supportsAudio: true,
   modes: ['text-to-video', 'image-to-video', 'first-last-frame', 'reference-images', 'reference-video'],
-}
-
-const MINIMAX_H3_PROFILE: VideoModelProfile = {
-  provider: 'video_tasks',
-  minDuration: 1,
-  maxDuration: 15,
-  defaultDuration: 5,
-  resolutions: ['768P'],
-  aspectRatios: ['21:9', '16:9', '4:3', '1:1', '3:4', '9:16'],
-  maxImages: 9,
-  maxVideos: 3,
-  supportsAudio: true,
-  modes: ['text-to-video', 'image-to-video', 'first-last-frame', 'reference-images', 'reference-video'],
-}
-
-const MUSE_MODEL_PROFILES: Record<string, VideoModelProfile> = {
-  'muse-video': {
-    provider: 'muse_video',
-    minDuration: 1,
-    maxDuration: 15,
-    defaultDuration: 10,
-    resolutions: ['720p'],
-    aspectRatios: ['16:9', '9:16'],
-    maxImages: 4,
-    maxVideos: 0,
-    supportsAudio: false,
-    outputsAudio: true,
-    modes: ['text-to-video', 'image-to-video', 'reference-images'],
-  },
-  'muse-cheap': {
-    provider: 'muse_video',
-    minDuration: 1,
-    maxDuration: 30,
-    defaultDuration: 10,
-    durationOptions: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 30],
-    resolutions: ['720p'],
-    aspectRatios: ['16:9', '9:16'],
-    maxImages: 7,
-    maxVideos: 0,
-    supportsAudio: false,
-    outputsAudio: true,
-    modes: ['text-to-video', 'reference-images'],
-  },
-}
-
-const SEEDANCE_MODEL_PROFILES: Record<string, VideoModelProfile> = {
-  'grok-imagine-video': {
-    provider: 'seedance',
-    minDuration: 1,
-    maxDuration: 10,
-    defaultDuration: 8,
-    resolutions: ['480p', '720p'],
-    aspectRatios: VIDEO_ASPECT_RATIOS.map((item) => item.value),
-    maxImages: 7,
-    maxVideos: 1,
-    supportsAudio: false,
-    modes: ['text-to-video', 'image-to-video', 'reference-images', 'reference-video', 'video-edit', 'video-extension'],
-  },
-  'grok-imagine-video-1.5': {
-    provider: 'seedance',
-    minDuration: 1,
-    maxDuration: 15,
-    defaultDuration: 8,
-    resolutions: ['480p', '720p', '1080p'],
-    aspectRatios: VIDEO_ASPECT_RATIOS.map((item) => item.value),
-    maxImages: 14,
-    maxVideos: 1,
-    supportsAudio: true,
-    modes: ['text-to-video', 'image-to-video', 'first-last-frame', 'reference-images', 'reference-video'],
-  },
-  'grok-imagine-video-onece': {
-    provider: 'seedance',
-    minDuration: 1,
-    maxDuration: 10,
-    defaultDuration: 8,
-    resolutions: ['480p', '720p'],
-    aspectRatios: VIDEO_ASPECT_RATIOS.map((item) => item.value),
-    maxImages: 7,
-    maxVideos: 1,
-    supportsAudio: false,
-    modes: ['text-to-video', 'image-to-video', 'reference-images', 'reference-video', 'video-edit', 'video-extension'],
-  },
-  'seedance-2.0': {
-    provider: 'seedance',
-    minDuration: 5,
-    maxDuration: 15,
-    defaultDuration: 8,
-    resolutions: ['480p', '720p'],
-    aspectRatios: DOUBAO_ASPECT_RATIOS,
-    maxImages: 9,
-    maxVideos: 1,
-    supportsAudio: true,
-    modes: ['text-to-video', 'image-to-video', 'first-last-frame', 'reference-images', 'reference-video'],
-  },
-  'seedance-2.0-fast': {
-    provider: 'seedance',
-    minDuration: 5,
-    maxDuration: 15,
-    defaultDuration: 8,
-    resolutions: ['480p', '720p', '1080p'],
-    aspectRatios: DOUBAO_ASPECT_RATIOS,
-    maxImages: 9,
-    maxVideos: 1,
-    supportsAudio: true,
-    modes: ['text-to-video', 'image-to-video', 'first-last-frame', 'reference-images', 'reference-video'],
-  },
-  'seedance-2.5': {
-    provider: 'seedance',
-    minDuration: 5,
-    maxDuration: 30,
-    defaultDuration: 8,
-    resolutions: ['480p', '720p', '1080p'],
-    aspectRatios: DOUBAO_ASPECT_RATIOS,
-    maxImages: 30,
-    maxVideos: 1,
-    supportsAudio: true,
-    modes: ['text-to-video', 'image-to-video', 'first-last-frame', 'reference-images', 'reference-video'],
-  },
-  'wan3.0-video': {
-    provider: 'seedance',
-    minDuration: 2,
-    maxDuration: 30,
-    defaultDuration: 5,
-    resolutions: ['720p', '1080p'],
-    aspectRatios: WAN_ASPECT_RATIOS,
-    maxImages: 1,
-    maxVideos: 0,
-    supportsAudio: false,
-    modes: ['text-to-video', 'image-to-video'],
-  },
-  'wan3.0-yuanlian': {
-    provider: 'seedance',
-    minDuration: 2,
-    maxDuration: 30,
-    defaultDuration: 5,
-    resolutions: ['480p', '720p', '1080p'],
-    aspectRatios: WAN_ASPECT_RATIOS,
-    maxImages: 1,
-    maxVideos: 0,
-    supportsAudio: false,
-    modes: ['text-to-video', 'image-to-video'],
-  },
 }
 
 function normalizedModelName(model: string): string {
   return model.trim().toLowerCase()
 }
 
-function isKnownSeedanceModel(model: string): boolean {
-  return normalizedModelName(model) in SEEDANCE_MODEL_PROFILES
+function normalizeVideoProvider(value: unknown): VideoProvider | null {
+  const provider = String(value || '').trim().toLowerCase()
+  if (
+    provider === 'seedance' ||
+    provider === 'seedance_video' ||
+    provider === 'muse_video' ||
+    provider === 'video_tasks' ||
+    provider === 'grok'
+  ) {
+    return provider
+  }
+  return null
 }
 
-function isKnownMuseModel(model: string): boolean {
-  return normalizedModelName(model) in MUSE_MODEL_PROFILES
+function totalImages(slots: VideoReferenceSlots): number {
+  return Math.max(0, slots.first_frame) +
+    Math.max(0, slots.last_frame) +
+    Math.max(0, slots.reference_image)
 }
 
-function isMinimaxH3VideoModel(model: string): boolean {
-  return MINIMAX_H3_MODEL_PATTERN.test(normalizedModelName(model))
+function deriveVideoModes(slots: VideoReferenceSlots, configuredModes?: readonly string[]): VideoMode[] {
+  const modes = new Set<VideoMode>()
+  for (const mode of configuredModes || []) {
+    if (
+      mode === 'text-to-video' ||
+      mode === 'image-to-video' ||
+      mode === 'first-last-frame' ||
+      mode === 'reference-images' ||
+      mode === 'reference-video' ||
+      mode === 'video-edit' ||
+      mode === 'video-extension'
+    ) {
+      modes.add(mode)
+    }
+  }
+  modes.add('text-to-video')
+  if (slots.first_frame > 0) modes.add('image-to-video')
+  if (slots.first_frame > 0 && slots.last_frame > 0) modes.add('first-last-frame')
+  if (slots.reference_image > 0) modes.add('reference-images')
+  if (slots.reference_video > 0) modes.add('reference-video')
+  return Array.from(modes)
+}
+
+export function profileFromVideoCapabilities(
+  provider: VideoProvider,
+  capabilities?: VideoCapabilities | null,
+): VideoModelProfile | null {
+  if (!capabilities) return null
+  const slots: VideoReferenceSlots = {
+    first_frame: Math.max(0, Number(capabilities.slots?.first_frame) || 0),
+    last_frame: Math.max(0, Number(capabilities.slots?.last_frame) || 0),
+    reference_image: Math.max(0, Number(capabilities.slots?.reference_image) || 0),
+    reference_video: Math.max(0, Number(capabilities.slots?.reference_video) || 0),
+    reference_audio: Math.max(0, Number(capabilities.slots?.reference_audio) || 0),
+  }
+  const minDuration = Math.max(1, Number(capabilities.min_duration) || 1)
+  const maxDuration = Math.max(minDuration, Number(capabilities.max_duration) || minDuration)
+  const defaultDuration = Math.min(
+    maxDuration,
+    Math.max(minDuration, Number(capabilities.default_duration) || minDuration),
+  )
+  return {
+    provider,
+    minDuration,
+    maxDuration,
+    defaultDuration,
+    durationOptions: Array.isArray(capabilities.duration_options)
+      ? capabilities.duration_options.filter((value) => Number.isFinite(Number(value))).map(Number)
+      : undefined,
+    resolutions: Array.isArray(capabilities.resolutions) && capabilities.resolutions.length
+      ? capabilities.resolutions
+      : DEFAULT_PROFILE.resolutions,
+    aspectRatios: Array.isArray(capabilities.aspect_ratios) && capabilities.aspect_ratios.length
+      ? capabilities.aspect_ratios
+      : DEFAULT_PROFILE.aspectRatios,
+    maxImages: Math.max(0, Number(capabilities.max_images) || totalImages(slots)),
+    maxVideos: slots.reference_video,
+    maxAudios: slots.reference_audio,
+    slots,
+    frameReferenceExclusive: capabilities.frame_reference_exclusive === true,
+    supportsAudio: capabilities.supports_generate_audio === true,
+    outputsAudio: capabilities.outputs_audio === true,
+    modes: deriveVideoModes(slots, capabilities.modes),
+    fileLimits: capabilities.file_limits
+      ? {
+          imageBytes: capabilities.file_limits.image_bytes,
+          videoBytes: capabilities.file_limits.video_bytes,
+          audioBytes: capabilities.file_limits.audio_bytes,
+          totalBytes: capabilities.file_limits.total_bytes,
+        }
+      : undefined,
+  }
 }
 
 export function resolveVideoProvider(
-  model: string,
+  _model: string,
   hint: Partial<Pick<VideoGatewayContext, 'baseUrl' | 'platform'>> = {},
+  capabilities?: VideoCapabilities | null,
 ): VideoProvider {
-  const value = normalizedModelName(model)
+  const configuredProvider = normalizeVideoProvider(capabilities?.protocol)
+  if (configuredProvider) return configuredProvider
+
   const platform = hint.platform?.trim().toLowerCase()
   if (platform === 'grok') return 'grok'
-  if (isMinimaxH3VideoModel(value)) return 'video_tasks'
-  if (isKnownMuseModel(value)) return 'muse_video'
-  if (isKnownSeedanceModel(value) && (platform === 'openai' || platform === 'composite')) {
-    return 'seedance_video'
-  }
   try {
-    const host = new URL(hint.baseUrl || '').hostname.toLowerCase()
-    if ((host === 'openpix.cc' || host.endsWith('.openpix.cc') || host === 'momoapi.xin' || host.endsWith('.momoapi.xin')) &&
-      isKnownSeedanceModel(value)) {
-      return 'seedance_video'
-    }
+    const baseUrl = hint.baseUrl || ''
+    const host = new URL(baseUrl).hostname.toLowerCase()
+    if (host === 'x.ai' || host.endsWith('.x.ai')) return 'grok'
+    if (host.includes('volces.com') || baseUrl.toLowerCase().includes('/api/v3')) return 'seedance'
   } catch {
     // Relative platform URLs are resolved by the gateway, not the browser.
   }
-  if (isKnownSeedanceModel(value) && (platform === 'openai' || platform === 'composite')) {
-    return 'seedance'
-  }
-  if (value.includes('grok')) return 'grok'
-  if (isKnownSeedanceModel(value) || value.startsWith('wan3.0-') || value.includes('seedance')) {
-    return 'seedance'
-  }
+  if (platform === 'openai' || platform === 'composite') return 'seedance_video'
   return 'seedance'
 }
 
-export function getVideoModelProfile(model: string, provider?: VideoProvider): VideoModelProfile {
-  const value = normalizedModelName(model)
-  if (isMinimaxH3VideoModel(value)) return MINIMAX_H3_PROFILE
-  const museProfile = MUSE_MODEL_PROFILES[value]
-  if (museProfile) return museProfile
-  const seedanceProfile = SEEDANCE_MODEL_PROFILES[value]
-  if (seedanceProfile && provider !== 'grok') {
-    return seedanceProfile
-  }
-  if (provider === 'grok' || value.includes('grok')) {
-    const grokProfile = seedanceProfile || DEFAULT_PROFILE
-    return {
-      ...grokProfile,
-      provider: 'grok',
-      minDuration: 1,
-      maxDuration: value.includes('1.5') ? 15 : 10,
-      defaultDuration: 8,
-      resolutions: value.includes('1.5') ? ['480p', '720p', '1080p'] : ['480p', '720p'],
-      maxImages: value.includes('1.5') ? 14 : 7,
-      supportsAudio: value.includes('1.5'),
-      modes: value.includes('1.5')
-        ? [
-            'text-to-video',
-            'image-to-video',
-            'first-last-frame',
-            'reference-images',
-            'reference-video',
-            'video-edit',
-            'video-extension',
-          ]
-        : ['text-to-video', 'image-to-video', 'reference-images', 'reference-video', 'video-edit', 'video-extension'],
-    }
-  }
-  return DEFAULT_PROFILE
+export function getVideoModelProfile(
+  model: string,
+  provider?: VideoProvider,
+  capabilities?: VideoCapabilities | null,
+): VideoModelProfile {
+  const resolvedProvider = normalizeVideoProvider(capabilities?.protocol) || provider || resolveVideoProvider(model)
+  const configured = profileFromVideoCapabilities(resolvedProvider, capabilities)
+  if (configured) return configured
+  return { ...DEFAULT_PROFILE, provider: resolvedProvider }
 }
 
 export function isVideoModel(name: string): boolean {
   const value = normalizedModelName(name)
-  // Avoid broad matches such as "wan": Wanx image models start with "wanx".
-  return isMinimaxH3VideoModel(value) ||
-    isKnownMuseModel(value) ||
-    isKnownSeedanceModel(value) ||
-    value.includes('video') ||
-    value.includes('seedance')
+  return value.includes('video') ||
+    value.includes('seedance') ||
+    value.includes('wan3.0') ||
+    /^minimax[\s_-]*h3(?:$|[^0-9])/.test(value)
 }
 
 function joinUrl(baseUrl: string, path: string): string {
@@ -426,87 +358,67 @@ export async function materializeVideoReferences(
 export function buildVideoRequest(
   provider: VideoProvider,
   params: VideoGenerationParams,
+  capabilities?: VideoCapabilities | null,
 ): { path: string; body: Record<string, unknown> } {
-  if (provider === 'video_tasks') {
-    const body: Record<string, unknown> = {
-      model: params.model.trim(),
-      prompt: params.prompt.trim(),
-      resolution: '768P',
-      ratio: params.aspectRatio,
-    }
-    if (!params.durationAuto) body.seconds = String(params.durationSeconds)
-    const frameImages = params.images.filter((asset) => asset.role === 'first_frame' || asset.role === 'last_frame')
-    const referenceImages = params.images.filter((asset) => asset.role === 'reference_image')
-    if (frameImages.length && !referenceImages.length && params.images.length <= 2) {
-      body.images = params.images.map((asset) => asset.url)
-    } else if (params.images.length || params.videos.length || params.audios.length) {
-      const content: Array<Record<string, unknown>> = [{ type: 'text', text: params.prompt.trim() }]
-      for (const asset of params.images) {
-        content.push({
-          type: 'image_url',
-          image_url: { url: asset.url },
-          role: asset.role === 'first_frame' || asset.role === 'last_frame' ? asset.role : 'reference_image',
-        })
-      }
-      for (const asset of params.videos) {
-        content.push({ type: 'video_url', video_url: { url: asset.url }, role: 'reference_video' })
-      }
-      for (const asset of params.audios) {
-        content.push({ type: 'audio_url', audio_url: { url: asset.url }, role: 'reference_audio' })
-      }
-      body.metadata = { content }
-    }
-    return { path: '/videos', body }
-  }
+  const profile = getVideoModelProfile(params.model, provider, capabilities)
 
-  if (provider === 'muse_video') {
-    const firstFrame = params.images.find((asset) => asset.role === 'first_frame')
-    const referenceImages = params.images.filter((asset) => asset.role === 'reference_image')
+  // Native Seedance/Ark protocol carries all media in a content array.
+  if (provider === 'seedance') {
+    const content: Array<Record<string, unknown>> = [
+      { type: 'text', text: params.prompt.trim() },
+    ]
+    for (const asset of params.images) {
+      const item: Record<string, unknown> = { type: 'image_url', image_url: { url: asset.url } }
+      if (asset.role) item.role = asset.role
+      content.push(item)
+    }
+    for (const asset of params.videos) {
+      content.push({ type: 'video_url', video_url: { url: asset.url } })
+    }
+    for (const asset of params.audios) {
+      content.push({ type: 'audio_url', audio_url: { url: asset.url } })
+    }
     const body: Record<string, unknown> = {
       model: params.model.trim(),
-      prompt: params.prompt.trim(),
-      aspect_ratio: params.aspectRatio,
-    }
-    if (!params.durationAuto) body.seconds = params.durationSeconds
-    if (firstFrame) {
-      body.image = firstFrame.url
-    } else if (!referenceImages.length && params.images.length) {
-      body.image = params.images[0].url
-    }
-    if (referenceImages.length) {
-      body.reference_images = referenceImages.map((asset) => asset.url)
-    }
-    return { path: '/videos', body }
-  }
-
-  if (provider === 'seedance_video') {
-    const firstFrame = params.images.find((asset) => asset.role === 'first_frame')
-    const lastFrame = params.images.find((asset) => asset.role === 'last_frame')
-    const referenceImages = params.images.filter((asset) => asset.role === 'reference_image')
-    const frameImages = [firstFrame, lastFrame]
-      .filter((asset): asset is VideoReferenceAsset => Boolean(asset))
-      .map((asset) => asset.url)
-    const body: Record<string, unknown> = {
-      model: params.model.trim(),
-      prompt: params.prompt.trim(),
+      content,
       resolution: params.resolution,
-      aspect_ratio: params.aspectRatio,
+      ratio: params.aspectRatio,
       generate_audio: params.generateAudio,
     }
     if (!params.durationAuto) body.duration = params.durationSeconds
-    if (params.videos.length) {
-      body.mode = 'reference-video'
-      body.reference_video_urls = params.videos.map((asset) => asset.url)
-    } else if (firstFrame || lastFrame) {
-      body.mode = firstFrame && lastFrame ? 'first-last-frame' : 'image-to-video'
-    } else if (referenceImages.length) {
-      body.mode = 'reference-images'
+    return { path: '/contents/generations/tasks', body }
+  }
+
+  const firstFrame = params.images.find((asset) => asset.role === 'first_frame')
+  const lastFrame = params.images.find((asset) => asset.role === 'last_frame')
+  const referenceImages = params.images.filter((asset) => asset.role === 'reference_image')
+  const hasConfiguredFrames = profile.slots.first_frame > 0 || profile.slots.last_frame > 0
+  const canUseFrames = hasConfiguredFrames &&
+    !params.videos.length &&
+    !params.audios.length &&
+    Boolean(firstFrame || lastFrame) &&
+    !(profile.frameReferenceExclusive && referenceImages.length > 0)
+  const body: Record<string, unknown> = {
+    model: params.model.trim(),
+    prompt: params.prompt.trim(),
+    resolution: params.resolution,
+    aspect_ratio: params.aspectRatio,
+  }
+  if (!params.durationAuto) body.duration = params.durationSeconds
+  if (profile.supportsAudio) body.generate_audio = params.generateAudio
+
+  const sendMode = provider === 'seedance_video' || provider === 'grok'
+  if (params.videos.length) {
+    const singleRole = params.videos.length === 1 ? params.videos[0].role : undefined
+    if (provider === 'grok' && (singleRole === 'video_edit' || singleRole === 'video_extension')) {
+      body.mode = singleRole.replace('_', '-')
+      body.reference_video_url = params.videos[0].url
     } else {
-      body.mode = 'text-to-video'
+      if (sendMode) body.mode = 'reference-video'
+      body.reference_video_urls = params.videos.map((asset) => asset.url)
     }
-    if (frameImages.length) body.images = frameImages
-    if (referenceImages.length) {
-      body.reference_image_urls = referenceImages.map((asset) => asset.url)
+    if (params.images.length) {
+      body.reference_image_urls = params.images.map((asset) => asset.url)
     }
     if (params.audios.length) {
       body.reference_audio_urls = params.audios.map((asset) => asset.url)
@@ -514,52 +426,36 @@ export function buildVideoRequest(
     return { path: '/video/generations', body }
   }
 
-  if (provider === 'grok') {
-    const body: Record<string, unknown> = {
-      model: params.model.trim(),
-      prompt: params.prompt.trim(),
-      resolution: params.resolution,
-      aspect_ratio: params.aspectRatio,
+  if (canUseFrames) {
+    if (firstFrame && lastFrame) {
+      if (sendMode) body.mode = 'first-last-frame'
+      body.first_frame_image_url = firstFrame.url
+      body.last_frame_image_url = lastFrame.url
+    } else if (firstFrame) {
+      if (sendMode) body.mode = 'image-to-video'
+      if (provider === 'seedance_video') body.images = [firstFrame.url]
+      else body.first_frame_image_url = firstFrame.url
+    } else if (lastFrame) {
+      if (sendMode) body.mode = 'image-to-video'
+      if (provider === 'seedance_video') body.images = [lastFrame.url]
+      else body.last_frame_image_url = lastFrame.url
     }
-    if (!params.durationAuto) body.duration = params.durationSeconds
-    if (params.images.length) {
-      body.image = params.images.map((asset) => ({ url: asset.url }))
+    if (referenceImages.length && !profile.frameReferenceExclusive) {
+      body.reference_image_urls = referenceImages.map((asset) => asset.url)
     }
-    if (params.videos.length) {
-      body.video = { url: params.videos[0].url }
-    }
-    const path = params.videos.length
-      ? params.videos[0].role === 'video_extension'
-        ? '/videos/extensions'
-        : '/videos/edits'
-      : '/videos/generations'
-    return { path, body }
+    return { path: '/video/generations', body }
   }
 
-  // Seedance 用 content 数组承载多模态参考，参考图可带 first_frame/last_frame 角色。
-  const content: Array<Record<string, unknown>> = [
-    { type: 'text', text: params.prompt.trim() },
-  ]
-  for (const asset of params.images) {
-    const item: Record<string, unknown> = { type: 'image_url', image_url: { url: asset.url } }
-    if (asset.role) item.role = asset.role
-    content.push(item)
+  if (params.images.length || params.audios.length) {
+    if (sendMode) body.mode = 'reference-images'
+    body.reference_image_urls = params.images.map((asset) => asset.url)
+    if (params.audios.length) {
+      body.reference_audio_urls = params.audios.map((asset) => asset.url)
+    }
+    return { path: '/video/generations', body }
   }
-  for (const asset of params.videos) {
-    content.push({ type: 'video_url', video_url: { url: asset.url } })
-  }
-  for (const asset of params.audios) {
-    content.push({ type: 'audio_url', audio_url: { url: asset.url } })
-  }
-  const body: Record<string, unknown> = {
-    model: params.model.trim(),
-    content,
-    resolution: params.resolution,
-    ratio: params.aspectRatio,
-    generate_audio: params.generateAudio,
-  }
-  if (!params.durationAuto) body.duration = params.durationSeconds
-  return { path: '/contents/generations/tasks', body }
+
+  return { path: '/video/generations', body }
 }
 
 export function extractRequestId(payload: any): string {
@@ -582,9 +478,10 @@ export async function createVideoTask(
   context: VideoGatewayContext,
   params: VideoGenerationParams,
   resolvedProvider?: VideoProvider,
+  capabilities?: VideoCapabilities | null,
 ): Promise<{ provider: VideoProvider; requestId: string }> {
-  const provider = resolvedProvider ?? resolveVideoProvider(params.model, context)
-  const { path, body } = buildVideoRequest(provider, params)
+  const provider = resolvedProvider ?? resolveVideoProvider(params.model, context, capabilities)
+  const { path, body } = buildVideoRequest(provider, params, capabilities)
   const response = await fetch(joinUrl(context.baseUrl, path), {
     method: 'POST',
     headers: { ...authHeaders(context.apiKey), 'Content-Type': 'application/json' },
@@ -620,7 +517,7 @@ function normalizeStatus(provider: VideoProvider, raw: string): VideoTaskStatus 
 export function parseVideoTaskSnapshot(provider: VideoProvider, payload: any): VideoTaskSnapshot {
   const rawStatus = String(payload?.status ?? payload?.data?.status ?? '')
   const status = normalizeStatus(provider, rawStatus)
-  const videoUrl = provider === 'grok' || provider === 'seedance_video' || provider === 'muse_video'
+  const videoUrl = provider === 'grok' || provider === 'seedance_video' || provider === 'muse_video' || provider === 'video_tasks'
     ? String(
         payload?.video?.url ??
         payload?.metadata?.url ??
@@ -661,10 +558,10 @@ export function videoTaskPath(provider: VideoProvider, requestId: string, model 
     ? `?model=${encodeURIComponent(model.trim())}`
     : ''
   if (provider === 'video_tasks') {
-    return `/videos/${id}?model=MiniMax-H3`
+    return `/videos/${id}?model=${encodeURIComponent(model.trim() || 'MiniMax-H3')}`
   }
   if (provider === 'muse_video') {
-    return `/videos/${id}?model=muse-video`
+    return `/videos/${id}?model=${encodeURIComponent(model.trim() || 'muse-video')}`
   }
   if (provider === 'grok') return `/videos/${id}`
   if (provider === 'seedance_video') return `/videos/${id}${modelHint}`
@@ -674,10 +571,10 @@ export function videoTaskPath(provider: VideoProvider, requestId: string, model 
 function videoContentPath(provider: VideoProvider, requestId: string, model = ''): string {
   const id = encodeURIComponent(requestId)
   if (provider === 'video_tasks') {
-    return `/videos/${id}/content?model=MiniMax-H3`
+    return `/videos/${id}/content?model=${encodeURIComponent(model.trim() || 'MiniMax-H3')}`
   }
   if (provider === 'muse_video') {
-    return `/videos/${id}/content?model=muse-video`
+    return `/videos/${id}/content?model=${encodeURIComponent(model.trim() || 'muse-video')}`
   }
   if (provider === 'seedance_video') {
     const modelHint = model.trim() ? `?model=${encodeURIComponent(model.trim())}` : ''

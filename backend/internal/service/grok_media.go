@@ -64,15 +64,19 @@ func (e GrokMediaEndpoint) IsGenerationRequest() bool {
 }
 
 type GrokMediaRequestInfo struct {
-	Model           string
-	Prompt          string
-	N               int
-	Size            string
-	SizeTier        string
-	AspectRatio     string
-	ImageResolution string
-	Resolution      string
-	DurationSeconds int
+	Model                        string
+	Prompt                       string
+	N                            int
+	Size                         string
+	SizeTier                     string
+	AspectRatio                  string
+	ImageResolution              string
+	Resolution                   string
+	DurationSeconds              int
+	ReferenceImageCount          int
+	ReferenceVideoURLs           []string
+	ReferenceVideoBillingMode    string
+	ReferenceVideoBillingSeconds int
 	// DurationAuto means the caller did not pin a generation duration. The
 	// gateway reserves against the model maximum and bills the delivered
 	// duration when it is available.
@@ -201,7 +205,76 @@ func parseGrokMediaJSONRequest(body []byte, info *GrokMediaRequestInfo) {
 	appendJSONImageURLs(gjson.GetBytes(body, "image"))
 	appendJSONImageURLs(gjson.GetBytes(body, "images"))
 	appendJSONImageURLs(gjson.GetBytes(body, "reference_images"))
+	appendJSONImageURLs(gjson.GetBytes(body, "reference_image_urls"))
+	appendJSONImageURLs(gjson.GetBytes(body, "image_urls"))
+	info.ReferenceImageCount = countGrokMediaImageURLs(gjson.GetBytes(body, "reference_images")) +
+		countGrokMediaImageURLs(gjson.GetBytes(body, "reference_image_urls")) +
+		countGrokMediaImageURLs(gjson.GetBytes(body, "image_urls"))
+	seenVideos := make(map[string]struct{})
+	appendJSONVideoURLs := func(value gjson.Result) {
+		if !value.Exists() {
+			return
+		}
+		items := []gjson.Result{value}
+		if value.IsArray() {
+			items = value.Array()
+		}
+		for _, item := range items {
+			videoURL := extractGrokMediaVideoURL(item)
+			if videoURL == "" {
+				continue
+			}
+			if _, exists := seenVideos[videoURL]; exists {
+				continue
+			}
+			seenVideos[videoURL] = struct{}{}
+			info.ReferenceVideoURLs = append(info.ReferenceVideoURLs, videoURL)
+		}
+	}
+	appendJSONVideoURLs(gjson.GetBytes(body, "reference_video_urls"))
+	appendJSONVideoURLs(gjson.GetBytes(body, "video_urls"))
+	appendJSONVideoURLs(gjson.GetBytes(body, "videos"))
+	for _, item := range gjson.GetBytes(body, "content").Array() {
+		if strings.EqualFold(strings.TrimSpace(item.Get("type").String()), "video_url") {
+			appendJSONVideoURLs(item)
+		}
+	}
 	info.MaskImageURL = extractGrokMediaImageURL(gjson.GetBytes(body, "mask"))
+}
+
+func extractGrokMediaVideoURL(value gjson.Result) string {
+	if !value.Exists() {
+		return ""
+	}
+	if value.Type == gjson.String {
+		return strings.TrimSpace(value.String())
+	}
+	if videoURL := strings.TrimSpace(value.Get("video_url.url").String()); videoURL != "" {
+		return videoURL
+	}
+	if videoURL := strings.TrimSpace(value.Get("video_url").String()); videoURL != "" {
+		return videoURL
+	}
+	return strings.TrimSpace(value.Get("url").String())
+}
+
+func countGrokMediaImageURLs(value gjson.Result) int {
+	if !value.Exists() {
+		return 0
+	}
+	if value.IsArray() {
+		count := 0
+		for _, item := range value.Array() {
+			if extractGrokMediaImageURL(item) != "" {
+				count++
+			}
+		}
+		return count
+	}
+	if extractGrokMediaImageURL(value) != "" {
+		return 1
+	}
+	return 0
 }
 
 func extractGrokMediaImageURL(value gjson.Result) string {
@@ -402,15 +475,17 @@ func (s *OpenAIGatewayService) SelectMediaVideoRequestAccount(
 // video lookups and to price the first completed status/content observation.
 // Status may omit model/duration; we fall back to this snapshot, then defaults.
 type GrokVideoPendingBilling struct {
-	Model                string `json:"model"`
-	BillingModel         string `json:"billing_model,omitempty"`
-	UpstreamModel        string `json:"upstream_model,omitempty"`
-	VideoResolution      string `json:"video_resolution,omitempty"`
-	VideoDurationSeconds int    `json:"video_duration_seconds,omitempty"`
-	DurationAuto         bool   `json:"duration_auto,omitempty"`
-	OriginalModel        string `json:"original_model,omitempty"`
-	Provider             string `json:"provider,omitempty"`
-	Platform             string `json:"platform,omitempty"`
+	Model                        string `json:"model"`
+	BillingModel                 string `json:"billing_model,omitempty"`
+	UpstreamModel                string `json:"upstream_model,omitempty"`
+	VideoResolution              string `json:"video_resolution,omitempty"`
+	VideoDurationSeconds         int    `json:"video_duration_seconds,omitempty"`
+	ReferenceImageCount          int    `json:"reference_image_count,omitempty"`
+	ReferenceVideoBillingSeconds int    `json:"reference_video_billing_seconds,omitempty"`
+	DurationAuto                 bool   `json:"duration_auto,omitempty"`
+	OriginalModel                string `json:"original_model,omitempty"`
+	Provider                     string `json:"provider,omitempty"`
+	Platform                     string `json:"platform,omitempty"`
 	// CreatedAt is when the gateway accepted the async create (RFC3339Nano UTC).
 	// duration_ms for deferred billing is measured from this instant until the
 	// first official done+video.url observation (status poll or content download),

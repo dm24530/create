@@ -919,15 +919,22 @@ func (s *OpenAIGatewayService) calculateOpenAIVideoCost(
 	if subsitePrice != nil {
 		resolved = applyDownstreamPriceToResolved(resolved, *subsitePrice)
 	}
-	if resolved != nil && resolved.Source == PricingSourceGroup && resolved.Mode == BillingModeVideo {
+	durationSeconds = EffectiveVideoBillingDurationSeconds(resolved, billingModel, durationSeconds, result.VideoReferenceBillingSeconds)
+	if resolved != nil && resolved.Source == PricingSourceGroup &&
+		(resolved.Mode == BillingModeVideo || resolved.Mode == BillingModePerRequest) {
 		gid := apiKey.Group.ID
+		units := float64(videoCount)
+		if resolved.Mode == BillingModeVideo {
+			units = float64(videoCount * durationSeconds)
+		}
 		cost, err := s.billingService.CalculateCostUnified(CostInput{
 			Ctx: ctx, Model: billingModel, GroupID: &gid, Group: apiKey.Group,
-			UsageUnits: float64(videoCount * durationSeconds), SizeTier: resolution,
+			RequestCount: videoCount, UsageUnits: units, SizeTier: resolution, DurationSeconds: durationSeconds,
 			RateMultiplier: multiplier, Resolver: s.resolver, Resolved: resolved,
 			ReasoningEffort: optionalStringValue(result.ReasoningEffort),
 		})
 		if err == nil {
+			applyVideoReferenceImageSurcharge(cost, resolved, billingModel, result.VideoReferenceImageCount, videoCount, multiplier)
 			return cost
 		}
 	}
@@ -958,6 +965,7 @@ func (s *OpenAIGatewayService) calculateOpenAIVideoCost(
 			RequestCount:    videoCount,
 			UsageUnits:      units,
 			SizeTier:        resolution,
+			DurationSeconds: durationSeconds,
 			ReasoningEffort: optionalStringValue(result.ReasoningEffort),
 			RateMultiplier:  multiplier,
 			Resolver:        s.resolver,
@@ -965,12 +973,51 @@ func (s *OpenAIGatewayService) calculateOpenAIVideoCost(
 		})
 		if err == nil {
 			cost.BillingMode = string(BillingModeVideo)
+			applyVideoReferenceImageSurcharge(cost, resolved, billingModel, result.VideoReferenceImageCount, videoCount, multiplier)
 			return cost
 		}
 		logger.LegacyPrintf("service.openai_gateway", "Calculate video channel cost failed: %v", err)
 	}
 
-	return s.billingService.CalculateVideoCost(billingModel, resolution, videoCount, durationSeconds, groupConfig, multiplier)
+	cost := s.billingService.CalculateVideoCost(billingModel, resolution, videoCount, durationSeconds, groupConfig, multiplier)
+	applyVideoReferenceImageSurcharge(cost, resolved, billingModel, result.VideoReferenceImageCount, videoCount, multiplier)
+	return cost
+}
+
+func applyVideoReferenceImageSurcharge(cost *CostBreakdown, resolved *ResolvedPricing, model string, referenceImageCount, videoCount int, multiplier float64) {
+	if cost == nil {
+		return
+	}
+	baseSurcharge, actualSurcharge := videoReferenceImageSurchargeAmount(resolved, model, referenceImageCount, videoCount, multiplier)
+	if actualSurcharge <= 0 {
+		return
+	}
+	cost.VideoReferenceImageCost += actualSurcharge
+	cost.TotalCost += baseSurcharge
+	cost.ActualCost += actualSurcharge
+}
+
+func videoReferenceImageSurchargeAmount(resolved *ResolvedPricing, model string, referenceImageCount, videoCount int, multiplier float64) (float64, float64) {
+	if resolved == nil || resolved.channelPricing == nil || referenceImageCount <= 0 {
+		return 0, 0
+	}
+	capabilities := resolved.channelPricing.VideoCapabilities.VideoCapabilitiesFor(model)
+	if capabilities == nil || capabilities.ReferenceImageExtraPrice <= 0 {
+		return 0, 0
+	}
+	freeCount := capabilities.ReferenceImageFreeCount
+	if freeCount < 0 {
+		freeCount = 0
+	}
+	extraImages := referenceImageCount - freeCount
+	if extraImages <= 0 {
+		return 0, 0
+	}
+	if videoCount <= 0 {
+		videoCount = 1
+	}
+	baseSurcharge := float64(extraImages*videoCount) * capabilities.ReferenceImageExtraPrice
+	return baseSurcharge, baseSurcharge * multiplier
 }
 
 func (s *OpenAIGatewayService) apiKeyWithFreshGroupMediaPricing(ctx context.Context, apiKey *APIKey) *APIKey {

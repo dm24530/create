@@ -72,6 +72,17 @@ type PricingInput struct {
 func (r *ModelPricingResolver) Resolve(ctx context.Context, input PricingInput) *ResolvedPricing {
 	longContextPricingEnabled := input.Group == nil || input.Group.LongContextPricingEnabled
 	if groupPricing := matchGroupModelPricing(input.Group, input.Model); groupPricing != nil {
+		// Group media pricing controls the sale price, while the matching channel
+		// pricing owns model capability metadata such as reference-image surcharges.
+		if input.GroupID != nil && r.channelService != nil && len(groupPricing.VideoCapabilities) == 0 &&
+			(groupPricing.BillingMode == BillingModeVideo || groupPricing.BillingMode == BillingModePerRequest) {
+			if channelPricing := r.lookupChannelPricingNormalized(ctx, *input.GroupID, input.Model); channelPricing != nil &&
+				len(channelPricing.VideoCapabilities) > 0 {
+				cloned := groupPricing.Clone()
+				cloned.VideoCapabilities = channelPricing.VideoCapabilities
+				groupPricing = &cloned
+			}
+		}
 		// Group token cards only override the first-tier / flat rates.
 		// Long-context ladders come from official presets, gated by the checkbox.
 		if groupPricing.BillingMode == "" || groupPricing.BillingMode == BillingModeToken {

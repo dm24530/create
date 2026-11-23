@@ -167,6 +167,12 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "request_id is required")
 		return
 	}
+	if isGrokVideoCreateEndpoint(endpoint) {
+		if err := prepareReferenceVideoBilling(c.Request.Context(), h, apiKey.Group, routingModel, &requestInfo); err != nil {
+			h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "无法读取参考视频时长，请确认视频链接可公开访问且格式受支持")
+			return
+		}
+	}
 
 	reqLog = reqLog.With(zap.String("model", requestModel))
 	setOpsRequestContext(c, requestModel, false)
@@ -542,15 +548,17 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 			// model/duration/resolution so status can still price if upstream omits them.
 			// Retry once: missing pending causes silent underpricing (status omits resolution).
 			pending := service.GrokVideoPendingBilling{
-				Model:                requestModel,
-				BillingModel:         firstNonEmptyString(result.BillingModel, requestModel),
-				UpstreamModel:        result.UpstreamModel,
-				VideoResolution:      result.VideoResolution,
-				VideoDurationSeconds: result.VideoDurationSeconds,
-				DurationAuto:         requestInfo.DurationAuto,
-				OriginalModel:        clientRequestedModel(c, requestModel),
-				Provider:             grokMediaVideoProvider(endpoint),
-				Platform:             account.Platform,
+				Model:                        requestModel,
+				BillingModel:                 firstNonEmptyString(result.BillingModel, requestModel),
+				UpstreamModel:                result.UpstreamModel,
+				VideoResolution:              result.VideoResolution,
+				VideoDurationSeconds:         result.VideoDurationSeconds,
+				ReferenceImageCount:          requestInfo.ReferenceImageCount,
+				ReferenceVideoBillingSeconds: requestInfo.ReferenceVideoBillingSeconds,
+				DurationAuto:                 requestInfo.DurationAuto,
+				OriginalModel:                clientRequestedModel(c, requestModel),
+				Provider:                     grokMediaVideoProvider(endpoint),
+				Platform:                     account.Platform,
 				// Wall-clock start for usage duration_ms: create accepted → first done discovery.
 				CreatedAt: videoCreateStartedAt,
 			}
@@ -836,6 +844,12 @@ func prepareGrokVideoCompletionBilling(
 			merged.VideoDurationSeconds = pending.VideoDurationSeconds
 		} else if merged.VideoDurationSeconds <= 0 {
 			merged.VideoDurationSeconds = pending.VideoDurationSeconds
+		}
+		if merged.VideoReferenceImageCount <= 0 {
+			merged.VideoReferenceImageCount = pending.ReferenceImageCount
+		}
+		if merged.VideoReferenceBillingSeconds <= 0 {
+			merged.VideoReferenceBillingSeconds = pending.ReferenceVideoBillingSeconds
 		}
 		if strings.TrimSpace(merged.ResponseID) == "" {
 			merged.ResponseID = taskRequestID

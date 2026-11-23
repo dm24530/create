@@ -6,7 +6,11 @@ const { _electron: electron } = require("playwright-core");
   try {
     const page = await app.firstWindow();
     await page.waitForLoadState("domcontentloaded");
-    await page.getByText("登录 Create").waitFor({ timeout: 15000 });
+    await page.waitForFunction(
+      () => /登录 Create|生图工作台/.test(document.body.innerText),
+      undefined,
+      { timeout: 15000 },
+    );
     console.log("PACKAGED_SMOKE_OK");
   } finally {
     await app.close();

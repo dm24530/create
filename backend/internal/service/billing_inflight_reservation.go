@@ -316,8 +316,9 @@ type InflightEstimateRequest struct {
 	// SearchCalls 叠加的搜索次数（按分组 search_price_per_1k 计）。
 	SearchCalls int
 	// 视频：分辨率与时长（秒）。
-	VideoResolution      string
-	VideoDurationSeconds int
+	VideoResolution          string
+	VideoDurationSeconds     int
+	VideoReferenceImageCount int
 	// 音频：模式（tts/stt/realtime）与计量单位（百万字符/小时/分钟）。
 	AudioMode  string
 	AudioUnits float64
@@ -535,6 +536,10 @@ func (d inflightEstimateDeps) estimateOne(ctx context.Context, apiKey *APIKey, m
 				cost = b.ActualCost
 			}
 		}
+		_, imageSurcharge := videoReferenceImageSurchargeAmount(
+			resolved, model, req.VideoReferenceImageCount, units, math.Max(textRate, imageRate),
+		)
+		cost += imageSurcharge
 	case InflightEstimateAudio:
 		if perRequestMode && resolved.Mode == BillingModePerRequest {
 			u := req.AudioUnits

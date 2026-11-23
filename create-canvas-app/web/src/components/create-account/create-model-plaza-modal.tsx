@@ -145,17 +145,34 @@ function FilterChip({ active, label, count, onClick }: { active: boolean; label:
 
 function ModelPlazaGroupCard({ group, models, onCopy }: { group: CreateModelPlazaGroup; models: CreateModelPlazaModel[]; onCopy: (name: string) => void }) {
     const videoModels = models.filter(isVideoPricingModel);
-    const otherModels = models.filter((model) => !isVideoPricingModel(model));
+    const standardModels = models.filter((model) => !isVideoPricingModel(model));
+    const { requestModels, tokenModels } = splitStandardPricingModels(standardModels);
+    const mixedStandardPricing = requestModels.length > 0 && tokenModels.length > 0;
     return (
         <section className="overflow-hidden rounded-xl border border-teal-500/25 bg-white shadow-sm dark:border-teal-700/45 dark:bg-[#252525]">
             <div className="border-b border-stone-200 bg-stone-50/80 px-4 py-4 dark:border-stone-700 dark:bg-[#292929]">
                 <div className="inline-flex items-center rounded-md bg-cyan-50 px-2 py-1 text-sm font-medium text-cyan-700 dark:bg-cyan-950/50 dark:text-cyan-300">{group.name}</div>
                 {group.description ? <p className="mt-3 text-sm text-stone-500 dark:text-stone-300">{group.description}</p> : null}
             </div>
-            {otherModels.length ? <StandardPricingTable models={otherModels} onCopy={onCopy} /> : null}
+            {requestModels.length ? (
+                <div>
+                    {mixedStandardPricing ? <PricingSectionLabel>图片 / 按次计费</PricingSectionLabel> : null}
+                    <StandardPricingTable models={requestModels} mode="request" onCopy={onCopy} />
+                </div>
+            ) : null}
+            {tokenModels.length ? (
+                <div className={requestModels.length ? "border-t border-stone-200 dark:border-stone-700" : ""}>
+                    {mixedStandardPricing ? <PricingSectionLabel>文本 / Token 计费</PricingSectionLabel> : null}
+                    <StandardPricingTable models={tokenModels} mode="token" onCopy={onCopy} />
+                </div>
+            ) : null}
             {videoModels.length ? <VideoPricingCards group={group} models={videoModels} onCopy={onCopy} /> : null}
         </section>
     );
+}
+
+function PricingSectionLabel({ children }: { children: React.ReactNode }) {
+    return <div className="bg-stone-50/60 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-stone-500 dark:bg-stone-900/30 dark:text-stone-400">{children}</div>;
 }
 
 function VideoPricingCards({ group, models, onCopy }: { group: CreateModelPlazaGroup; models: CreateModelPlazaModel[]; onCopy: (name: string) => void }) {
@@ -219,19 +236,15 @@ function VideoPricingCards({ group, models, onCopy }: { group: CreateModelPlazaG
     );
 }
 
-function StandardPricingTable({ models, onCopy }: { models: CreateModelPlazaModel[]; onCopy: (name: string) => void }) {
-    const columns = priceColumns(models);
-    const requestPriced = models.some((model) => {
-        const mode = model.pricing?.billing_mode;
-        return mode === "image" || Number(model.pricing?.per_request_price || 0) > 0;
-    });
+function StandardPricingTable({ models, mode, onCopy }: { models: CreateModelPlazaModel[]; mode: "request" | "token"; onCopy: (name: string) => void }) {
+    const columns = mode === "request" ? requestPriceColumns(models) : tokenPriceColumns(models);
     return (
         <div className="overflow-x-auto">
             <div className="border-b border-stone-200 bg-stone-100/80 text-sm text-stone-500 dark:border-stone-700 dark:bg-[#303030] dark:text-stone-300 md:grid md:grid-cols-[minmax(300px,1.15fr)_minmax(440px,1fr)]">
                 <div className="flex items-center px-4 py-3 font-medium">模型</div>
                 <div className="px-4 py-3">
                     <div className="text-center text-sm font-semibold text-cyan-600 dark:text-cyan-300">
-                        实付价格(折后) <span className="font-normal text-stone-500 dark:text-stone-400">{requestPriced ? "$ / 次" : "$ / 1M token"}</span>
+                        实付价格(折后) <span className="font-normal text-stone-500 dark:text-stone-400">{mode === "request" ? "$ / 次" : "$ / 1M token"}</span>
                     </div>
                     <div className="mt-2 grid gap-3 overflow-x-auto" style={{ gridTemplateColumns: `repeat(${columns.length}, minmax(110px, 1fr))` }}>
                         {columns.map((column) => <span key={column.key} className="text-sm text-stone-500 dark:text-stone-400">{column.label}</span>)}
@@ -276,9 +289,16 @@ function PlatformBadge({ platform }: { platform: string }) {
 
 function BillingBadge({ model }: { model: CreateModelPlazaModel }) {
     const billingMode = model.pricing?.billing_mode || "";
+    const label = billingMode === "image"
+        ? "按图片计费"
+        : billingMode === "video"
+          ? "按秒计费"
+          : isTokenPricedModel(model)
+            ? "按 Token 计费"
+            : "按次计费";
     return (
         <span className="rounded border border-stone-200 bg-stone-50 px-1.5 py-0.5 text-xs text-stone-600 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-300">
-            {billingMode === "image" ? "按图片计费" : billingMode === "video" ? "按秒计费" : "按次计费"}
+            {label}
         </span>
     );
 }
@@ -287,8 +307,33 @@ function PriceValue({ model, column }: { model: CreateModelPlazaModel; column: P
     return <span className="inline-flex min-h-8 w-fit items-center rounded-md border border-stone-200 bg-stone-100 px-2.5 py-1 text-xs text-stone-600 dark:border-stone-700 dark:bg-stone-800/80 dark:text-stone-300">{priceForModel(model, column)}</span>;
 }
 
-function priceColumns(models: CreateModelPlazaModel[]): PriceColumn[] {
-    const labels = Array.from(new Set(models.flatMap((model) => (model.pricing?.intervals || []).map((interval) => interval.tier_label?.trim() || "").filter(Boolean))));
+export function splitStandardPricingModels(models: CreateModelPlazaModel[]) {
+    return {
+        requestModels: models.filter(isRequestPricedModel),
+        tokenModels: models.filter((model) => !isRequestPricedModel(model)),
+    };
+}
+
+export function requestPriceColumns(models: CreateModelPlazaModel[]): PriceColumn[] {
+    const labels = Array.from(new Set(models.flatMap((model) => (model.pricing?.intervals || [])
+        .filter((interval) => pricedValue(interval.per_request_price) != null)
+        .map((interval) => interval.tier_label?.trim() || "")
+        .filter(Boolean))));
+    const columns = labels.map((label) => ({ key: label, label }));
+    const hasBasePriceWithoutTier = models.some((model) => {
+        const pricing = model.pricing;
+        if (!pricing || pricedValue(pricing.per_request_price) == null) return false;
+        return !(pricing.intervals || []).some((interval) => pricedValue(interval.per_request_price) != null);
+    });
+    if (hasBasePriceWithoutTier) columns.unshift({ key: "standard", label: "标准" });
+    return columns.length ? columns : [{ key: "standard", label: "标准" }];
+}
+
+export function tokenPriceColumns(models: CreateModelPlazaModel[]): PriceColumn[] {
+    const labels = Array.from(new Set(models.flatMap((model) => (model.pricing?.intervals || [])
+        .filter(hasTokenPrice)
+        .map((interval) => interval.tier_label?.trim() || "")
+        .filter(Boolean))));
     if (labels.length) return labels.map((label) => ({ key: label, label }));
     return [
         { key: "input", label: "输入" },
@@ -300,9 +345,13 @@ function priceColumns(models: CreateModelPlazaModel[]): PriceColumn[] {
 function priceForModel(model: CreateModelPlazaModel, column: PriceColumn) {
     const pricing = model.pricing;
     if (!pricing) return "-";
+    if (column.key === "standard") {
+        const price = pricedValue(pricing.per_request_price);
+        return price == null ? "-" : `$${formatPrice(price)} / ${requestUnit(model)}`;
+    }
     const interval = findInterval(pricing.intervals || [], column.label);
     if (interval) {
-        const tierPrice = pricedValue(interval.per_request_price) ?? pricedValue(pricing.per_request_price);
+        const tierPrice = pricedValue(interval.per_request_price);
         if (tierPrice != null) return `$${formatPrice(tierPrice)} / ${requestUnit(model)}`;
         return formatIntervalTokenPrice(interval);
     }
@@ -310,6 +359,31 @@ function priceForModel(model: CreateModelPlazaModel, column: PriceColumn) {
     if (column.key === "output") return formatTokenPrice(pricing.output_price);
     if (column.key === "cache") return formatTokenPrice(pricing.cache_read_price);
     return "-";
+}
+
+function isRequestPricedModel(model: CreateModelPlazaModel) {
+    const pricing = model.pricing;
+    if (!pricing) return false;
+    const billingMode = pricing.billing_mode?.trim().toLowerCase();
+    if (billingMode === "token") return false;
+    if (billingMode === "image" || billingMode === "video" || billingMode === "per_request") return true;
+    if (isTokenPricedModel(model)) return false;
+    if (pricedValue(pricing.per_request_price) != null) return true;
+    return (pricing.intervals || []).some((interval) => pricedValue(interval.per_request_price) != null);
+}
+
+function isTokenPricedModel(model: CreateModelPlazaModel) {
+    const pricing = model.pricing;
+    if (!pricing) return false;
+    if (pricedValue(pricing.input_price) != null || pricedValue(pricing.output_price) != null || pricedValue(pricing.cache_read_price) != null) return true;
+    return (pricing.intervals || []).some(hasTokenPrice);
+}
+
+function hasTokenPrice(interval: CreateModelPricingInterval) {
+    return pricedValue(interval.input_price) != null
+        || pricedValue(interval.output_price) != null
+        || pricedValue(interval.cache_read_price) != null
+        || pricedValue(interval.cache_write_price) != null;
 }
 
 function isVideoPricingModel(model: CreateModelPlazaModel) {

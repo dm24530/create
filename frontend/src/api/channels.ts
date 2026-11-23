@@ -52,10 +52,47 @@ export interface UserSupportedModelPricing {
   intervals: UserPricingInterval[]
 }
 
+export interface VideoReferenceSlots {
+  first_frame: number
+  last_frame: number
+  reference_image: number
+  reference_video: number
+  reference_audio: number
+}
+
+export interface VideoReferenceFileLimits {
+  image_bytes?: number
+  video_bytes?: number
+  audio_bytes?: number
+  total_bytes?: number
+}
+
+/** Data-driven video metadata. The frontend must not branch on concrete model names. */
+export interface VideoModelCapabilities {
+  protocol: 'seedance' | 'seedance_video' | 'muse_video' | 'video_tasks' | 'grok'
+  min_duration: number
+  max_duration: number
+  default_duration: number
+  max_images?: number
+  reference_image_free_count?: number
+  reference_image_extra_price?: number
+  reference_video_billing_mode?: 'off' | 'max_seconds' | 'sum_seconds'
+  duration_options?: number[]
+  resolutions: string[]
+  aspect_ratios: string[]
+  slots: VideoReferenceSlots
+  supports_generate_audio?: boolean
+  outputs_audio?: boolean
+  modes?: string[]
+  frame_reference_exclusive?: boolean
+  file_limits?: VideoReferenceFileLimits
+}
+
 export interface UserSupportedModel {
   name: string
   platform: string
   pricing: UserSupportedModelPricing | null
+  video_capabilities?: VideoModelCapabilities | null
 }
 
 /**

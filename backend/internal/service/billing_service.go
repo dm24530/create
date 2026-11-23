@@ -7,6 +7,7 @@ import (
 	"log"
 	"maps"
 	"math"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -203,6 +204,7 @@ type CostBreakdown struct {
 	ImageInputCost            float64 // 图片输入 token 费用（如 gpt-image-2 图片编辑）
 	OutputCost                float64
 	ImageOutputCost           float64
+	VideoReferenceImageCost   float64 // 视频参考图超出免费额度后的附加费
 	CacheCreationCost         float64
 	CacheReadCost             float64
 	TotalCost                 float64
@@ -219,6 +221,7 @@ func applyCostBreakdownMultiplier(cost *CostBreakdown, multiplier float64) {
 	cost.ImageInputCost *= multiplier
 	cost.OutputCost *= multiplier
 	cost.ImageOutputCost *= multiplier
+	cost.VideoReferenceImageCost *= multiplier
 	cost.CacheCreationCost *= multiplier
 	cost.CacheReadCost *= multiplier
 	cost.TotalCost *= multiplier
@@ -1469,6 +1472,7 @@ type CostInput struct {
 	RequestCount              int     // 按次计费时使用
 	UsageUnits                float64 // 音频等连续计量单位（分钟/小时/百万字符）
 	SizeTier                  string  // 按次/图片模式的层级标签（"1K","2K","4K","HD" 等）
+	DurationSeconds           int     // 视频按次计费时用于匹配时长档位
 	RateMultiplier            float64
 	PricingAt                 time.Time             // 渠道分时定价使用的计费时刻
 	ServiceTier               string                // "priority","flex","" 等
@@ -1759,7 +1763,10 @@ func (s *BillingService) calculatePerRequestCost(resolved *ResolvedPricing, inpu
 
 	var unitPrice float64
 
-	if input.SizeTier != "" {
+	if resolved.Mode == BillingModePerRequest && input.DurationSeconds > 0 {
+		unitPrice = videoDurationRequestTierPrice(resolved, input.SizeTier, input.DurationSeconds)
+	}
+	if unitPrice == 0 && input.SizeTier != "" {
 		unitPrice = input.Resolver.GetRequestTierPrice(resolved, input.SizeTier)
 	}
 
@@ -1780,6 +1787,99 @@ func (s *BillingService) calculatePerRequestCost(resolved *ResolvedPricing, inpu
 		TotalCost:  totalCost,
 		ActualCost: actualCost,
 	}, nil
+}
+
+func videoDurationRequestTierPrice(resolved *ResolvedPricing, resolution string, durationSeconds int) float64 {
+	if resolved == nil || durationSeconds <= 0 {
+		return 0
+	}
+	resolution = strings.ToLower(strings.TrimSpace(resolution))
+	if resolution == "" {
+		return 0
+	}
+	prefix := resolution + "-"
+	for _, tier := range resolved.RequestTiers {
+		if tier.PerRequestPrice == nil {
+			continue
+		}
+		label := strings.ToLower(strings.TrimSpace(tier.TierLabel))
+		if !strings.HasPrefix(label, prefix) || !strings.HasSuffix(label, "s") {
+			continue
+		}
+		durationPart := strings.TrimSuffix(strings.TrimPrefix(label, prefix), "s")
+		if start, end, ok := parseVideoTierDurationRange(durationPart); ok && durationSeconds >= start && durationSeconds <= end {
+			return *tier.PerRequestPrice
+		}
+	}
+	// If a max-reference-video rule pushes the duration between configured tiers,
+	// round up to the next available duration tier instead of falling back to the
+	// cheapest/default tier.
+	bestDuration := 0
+	bestPrice := 0.0
+	for _, tier := range resolved.RequestTiers {
+		if tier.PerRequestPrice == nil {
+			continue
+		}
+		label := strings.ToLower(strings.TrimSpace(tier.TierLabel))
+		if !strings.HasPrefix(label, prefix) || !strings.HasSuffix(label, "s") {
+			continue
+		}
+		durationPart := strings.TrimSuffix(strings.TrimPrefix(label, prefix), "s")
+		_, end, ok := parseVideoTierDurationRange(durationPart)
+		if !ok || end < durationSeconds {
+			continue
+		}
+		if bestDuration == 0 || end < bestDuration {
+			bestDuration = end
+			bestPrice = *tier.PerRequestPrice
+		}
+	}
+	if bestDuration > 0 {
+		return bestPrice
+	}
+	// Resolution-only video tiers apply to any duration.
+	for _, tier := range resolved.RequestTiers {
+		if tier.PerRequestPrice != nil && strings.EqualFold(strings.TrimSpace(tier.TierLabel), resolution) {
+			return *tier.PerRequestPrice
+		}
+	}
+	return 0
+}
+
+func EffectiveVideoBillingDurationSeconds(resolved *ResolvedPricing, model string, outputSeconds, referenceVideoSeconds int) int {
+	if outputSeconds <= 0 {
+		outputSeconds = 1
+	}
+	if resolved == nil || resolved.channelPricing == nil || referenceVideoSeconds <= 0 {
+		return outputSeconds
+	}
+	capabilities := resolved.channelPricing.VideoCapabilities.VideoCapabilitiesFor(model)
+	if capabilities == nil {
+		return outputSeconds
+	}
+	switch strings.ToLower(strings.TrimSpace(capabilities.ReferenceVideoBillingMode)) {
+	case VideoReferenceBillingModeMaxSeconds:
+		if referenceVideoSeconds > outputSeconds {
+			return referenceVideoSeconds
+		}
+	case VideoReferenceBillingModeSumSeconds:
+		return outputSeconds + referenceVideoSeconds
+	}
+	return outputSeconds
+}
+
+func parseVideoTierDurationRange(value string) (int, int, bool) {
+	parts := strings.SplitN(strings.TrimSpace(value), "-", 2)
+	if len(parts) == 1 {
+		seconds, err := strconv.Atoi(parts[0])
+		return seconds, seconds, err == nil && seconds > 0
+	}
+	start, errStart := strconv.Atoi(parts[0])
+	end, errEnd := strconv.Atoi(parts[1])
+	if errStart != nil || errEnd != nil || start <= 0 || end < start {
+		return 0, 0, false
+	}
+	return start, end, true
 }
 
 // CalculateCost 计算使用费用

@@ -486,6 +486,15 @@ func TestValidateIntervals_ImageModeStillRejectsBadMaxTokens(t *testing.T) {
 	require.Contains(t, err.Error(), "must be > min_tokens")
 }
 
+func TestValidateIntervals_VideoModeAllowsLabelTiersWithEqualTokenBounds(t *testing.T) {
+	// video 模式按 tier_label 和秒数计费，min/max tokens 只是历史字段占位，
+	// 导入上游定价时常见 min=10/max=10，不应被当成 token 区间拒绝。
+	intervals := []PricingInterval{
+		{MinTokens: 10, MaxTokens: testPtrInt(10), TierLabel: "720p", PerRequestPrice: testPtrFloat64(0.06)},
+	}
+	require.NoError(t, ValidateIntervals(intervals, BillingModeVideo))
+}
+
 func TestSupportedModels_ExactKeysAndPricing(t *testing.T) {
 	ch := &Channel{
 		ModelPricing: []ChannelModelPricing{

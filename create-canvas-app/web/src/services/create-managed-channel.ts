@@ -72,8 +72,10 @@ type WorkspaceDependencies = {
 type CreateWorkspaceConfiguration = {
     imageKey: CreateManagedKey;
     videoKey: CreateManagedKey | null;
+    textKey: CreateManagedKey | null;
     imageModels: string[];
     videoModels: string[];
+    textModels: string[];
     videoCapabilities: Record<string, VideoCapabilityProfile>;
     imageChannelModels: number;
 };
@@ -290,7 +292,7 @@ export async function deleteCreateManagedKey(session: CreateSession, id: number)
     });
 }
 
-export async function resolveManagedCredentials(session: CreateSession, deps: WorkspaceDependencies): Promise<{ imageKey: CreateManagedKey; videoKey: CreateManagedKey | null; groups: CreateManagedGroup[] }> {
+export async function resolveManagedCredentials(session: CreateSession, deps: WorkspaceDependencies): Promise<{ imageKey: CreateManagedKey; videoKey: CreateManagedKey | null; groups: CreateManagedGroup[]; activeKeys: CreateManagedKey[] }> {
     const [initialKeys, groups] = await Promise.all([deps.listKeys(session), deps.listGroups(session)]);
     const activeKeys = initialKeys.filter(isActiveKey);
     const composite = chooseCompositeKey(activeKeys);
@@ -313,7 +315,7 @@ export async function resolveManagedCredentials(session: CreateSession, deps: Wo
         }
     }
 
-    return { imageKey, videoKey: videoKey || null, groups };
+    return { imageKey, videoKey: videoKey || null, groups, activeKeys };
 }
 
 export async function switchManagedKey(session: CreateSession, key: CreateManagedKey, role: ManagedKeyRole, overrides: Partial<WorkspaceDependencies> = {}) {
@@ -353,15 +355,45 @@ export async function configureCreateWorkspace(
 
 async function configureCreateWorkspaceInternal(session: CreateSession, overrides: Partial<WorkspaceDependencies>): Promise<CreateWorkspaceConfiguration> {
     const deps = defaultDependencies(overrides);
-    const { imageKey, videoKey } = await resolveManagedCredentials(session, deps);
+    const { imageKey, videoKey, activeKeys } = await resolveManagedCredentials(session, deps);
     const [imageModels, videoModels] = await Promise.all([deps.loadModels(imageKey.key).catch(() => []), videoKey ? deps.loadModels(videoKey.key).catch(() => []) : Promise.resolve([])]);
     const videoGroupId = Number(videoKey?.group?.id ?? videoKey?.group_id ?? 0);
     const videoCapabilities = videoKey && deps.loadVideoCapabilities
         ? await deps.loadVideoCapabilities(session, videoGroupId).catch(() => ({}))
         : {};
 
+    const textModelsFrom = (models: string[]) => models.filter((name) => {
+        const capability = guessCapability(name);
+        return capability === "text" || capability === "audio";
+    });
+
+    let textKey: CreateManagedKey | null = null;
+    let textModels = textModelsFrom(imageModels);
+    if (!textModels.length && videoKey) {
+        textModels = textModelsFrom(videoModels);
+        if (textModels.length) textKey = videoKey;
+    }
+    if (!textModels.length) {
+        const candidateKeys = activeKeys
+            .filter((candidate) => candidate.id !== imageKey.id && candidate.id !== videoKey?.id)
+            .filter((candidate, index, all) => {
+                const candidateGroup = candidate.group?.id ?? candidate.group_id ?? candidate.id;
+                return all.findIndex((item) => (item.group?.id ?? item.group_id ?? item.id) === candidateGroup) === index;
+            })
+            .slice(0, 10);
+        for (const candidate of candidateKeys) {
+            const candidateModels = await deps.loadModels(candidate.key).catch(() => []);
+            const candidateTextModels = textModelsFrom(candidateModels);
+            if (!candidateTextModels.length) continue;
+            textKey = candidate;
+            textModels = candidateTextModels;
+            break;
+        }
+    }
+
     const imageGroupName = imageKey.group?.name?.trim() || "Create 图片";
     const videoGroupName = videoKey?.group?.name?.trim() || "Create 视频";
+    const textGroupName = textKey?.group?.name?.trim() || "Create 文本";
     const channels: ModelChannel[] = [];
     if (videoKey && videoKey.id === imageKey.id) {
         channels.push(channelFromModels(
@@ -369,15 +401,18 @@ async function configureCreateWorkspaceInternal(session: CreateSession, override
             imageGroupName,
             imageKey.key,
             Array.from(new Set([...imageModels, ...videoModels])),
-            ["image", "video"],
+            ["image", "video", "text", "audio"],
             videoCapabilities,
         ));
     } else {
         if (imageModels.length) {
-            channels.push(channelFromModels("create-managed-image", imageGroupName, imageKey.key, imageModels, ["image"], videoCapabilities));
+            channels.push(channelFromModels("create-managed-image", imageGroupName, imageKey.key, imageModels, ["image", "text", "audio"], videoCapabilities));
         }
         if (videoKey && videoModels.length) {
             channels.push(channelFromModels("create-managed-video", videoGroupName, videoKey.key, videoModels, ["video"], videoCapabilities));
+        }
+        if (textKey && textModels.length) {
+            channels.push(channelFromModels("create-managed-text", textGroupName, textKey.key, textModels, ["text", "audio"]));
         }
     }
 
@@ -388,8 +423,10 @@ async function configureCreateWorkspaceInternal(session: CreateSession, override
     return {
         imageKey,
         videoKey,
+        textKey,
         imageModels,
         videoModels,
+        textModels,
         videoCapabilities,
         imageChannelModels: channels.flatMap((channel) => modelsFor(channel, "image")).length,
     };

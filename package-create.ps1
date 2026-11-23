@@ -144,10 +144,10 @@ $Version = $Version.Trim().TrimStart("v")
 if (-not $Version) { throw "release version lookup failed" }
 
 docker build `
-  --build-arg NODE_IMAGE=docker.m.daocloud.io/library/node:24-alpine `
-  --build-arg GOLANG_IMAGE=docker.m.daocloud.io/library/golang:1.27.2-alpine `
-  --build-arg ALPINE_IMAGE=docker.m.daocloud.io/library/alpine:3.21 `
-  --build-arg POSTGRES_IMAGE=docker.m.daocloud.io/library/postgres:18-alpine `
+  --build-arg NODE_IMAGE=node:24-alpine `
+  --build-arg GOLANG_IMAGE=golang:1.27.2-alpine `
+  --build-arg ALPINE_IMAGE=alpine:3.21 `
+  --build-arg POSTGRES_IMAGE=postgres:18-alpine `
   --build-arg NPM_CONFIG_REGISTRY=https://registry.npmmirror.com `
   --build-arg GOPROXY=https://goproxy.cn,direct `
   --build-arg GOSUMDB=sum.golang.google.cn `

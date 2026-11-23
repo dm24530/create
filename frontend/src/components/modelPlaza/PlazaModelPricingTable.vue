@@ -103,6 +103,7 @@
                 {{ t('modelPlaza.table.reasoningMultiplierBadge', { effort, multiplier }) }}
               </span>
             </div>
+            <p v-if="m.description" class="mt-1 max-h-16 overflow-y-auto overscroll-contain whitespace-pre-line break-words pr-1 text-xs leading-5 text-gray-500 dark:text-dark-400">{{ m.description }}</p>
           </td>
 
           <!-- token 计费:输入 / 输出 / 缓存(写/读),有阶梯时每档一行;档位标签只放输入列,其余列按行对齐 -->

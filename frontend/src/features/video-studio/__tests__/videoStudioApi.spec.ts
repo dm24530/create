@@ -11,6 +11,7 @@ import {
   resolveVideoProvider,
   videoTaskPath,
 } from '../videoStudioApi'
+import { capabilityFor } from './videoCapabilityFixtures'
 
 const context = { baseUrl: '/v1', apiKey: 'sk-test' }
 
@@ -32,9 +33,9 @@ describe('video model classification', () => {
     expect(isVideoModel('wan3.0-yuanlian')).toBe(true)
   })
 
-  it('recognizes Muse video models without matching Muse chat models', () => {
+  it('uses capability metadata to expose non-obvious Muse video model names', () => {
     expect(isVideoModel('muse-video')).toBe(true)
-    expect(isVideoModel('muse-cheap')).toBe(true)
+    expect(Boolean(capabilityFor('muse-cheap'))).toBe(true)
     expect(isVideoModel('muse-spark-1.3-contributor')).toBe(false)
   })
 
@@ -47,62 +48,82 @@ describe('video model classification', () => {
     expect(isVideoModel('minimax image')).toBe(false)
   })
 
-  it('uses the Seedance video protocol for documented models on OpenAI groups', () => {
-    expect(resolveVideoProvider('seedance-2.5', { platform: 'openai' })).toBe('seedance_video')
-    expect(resolveVideoProvider('wan3.0-video', { platform: 'openai' })).toBe('seedance_video')
-    expect(resolveVideoProvider('wan3.0-yuanlian')).toBe('seedance')
-    expect(resolveVideoProvider('grok-imagine-video', { platform: 'grok' })).toBe('grok')
-    expect(resolveVideoProvider('grok-imagine-video', { platform: 'openai' })).toBe('seedance_video')
-    expect(resolveVideoProvider('seedance-2-720p', { baseUrl: '/v1', platform: 'openai' })).toBe('seedance')
+  it('uses the capability protocol instead of concrete model-name routing', () => {
+    expect(resolveVideoProvider('seedance-2.5', { platform: 'openai' }, capabilityFor('seedance-2.5'))).toBe('seedance_video')
+    expect(resolveVideoProvider('wan3.0-video', { platform: 'openai' }, {
+      ...capabilityFor('seedance-2.5')!,
+      protocol: 'seedance_video',
+    })).toBe('seedance_video')
+    expect(resolveVideoProvider('wan3.0-yuanlian', {}, capabilityFor('wan3.0-yuanlian'))).toBe('seedance_video')
+    expect(resolveVideoProvider('grok-imagine-video', { platform: 'grok' }, capabilityFor('grok-imagine-video'))).toBe('grok')
+    expect(resolveVideoProvider('seedance-2-720p', { baseUrl: '/v1', platform: 'openai' }, capabilityFor('seedance-2-720p'))).toBe('seedance')
   })
 
-  it('maps every minimax H3 variant to the unified video generation protocol', () => {
-    expect(resolveVideoProvider('minimax H3', { platform: 'openai' })).toBe('video_tasks')
-    expect(resolveVideoProvider('MiniMax-H3', { platform: 'openai' })).toBe('video_tasks')
-    expect(resolveVideoProvider('MiniMax_H3')).toBe('video_tasks')
-    expect(resolveVideoProvider('minimax H3-self')).toBe('video_tasks')
-    expect(resolveVideoProvider('minimax H3-pro', { platform: 'composite' })).toBe('video_tasks')
+  it('selects the native Ark task protocol for an OpenAI Ark base URL', () => {
+    expect(resolveVideoProvider('seedance 2.5-GT', {
+      baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
+      platform: 'openai',
+    })).toBe('seedance')
   })
 
-  it('routes Muse video models to the Muse video protocol', () => {
-    expect(resolveVideoProvider('muse-video')).toBe('muse_video')
-    expect(resolveVideoProvider('muse-video', { platform: 'openai' })).toBe('muse_video')
-    expect(resolveVideoProvider('muse-cheap', { baseUrl: 'https://momoapi.xin/v1' })).toBe('muse_video')
+  it('keeps direct xAI Grok routing even when the group platform is OpenAI', () => {
+    expect(resolveVideoProvider('grok-imagine-video-1.5', {
+      baseUrl: 'https://api.x.ai/v1',
+      platform: 'openai',
+    })).toBe('grok')
+  })
+
+  it('maps every minimax H3 variant through its configured protocol', () => {
+    const minimax = capabilityFor('minimax h3')!
+    expect(resolveVideoProvider('minimax H3', { platform: 'openai' }, minimax)).toBe('video_tasks')
+    expect(resolveVideoProvider('MiniMax-H3', { platform: 'openai' }, minimax)).toBe('video_tasks')
+    expect(resolveVideoProvider('MiniMax_H3', {}, minimax)).toBe('video_tasks')
+    expect(resolveVideoProvider('minimax H3-self', {}, capabilityFor('minimax h3-self'))).toBe('video_tasks')
+    expect(resolveVideoProvider('minimax H3-pro', { platform: 'composite' }, minimax)).toBe('video_tasks')
+  })
+
+  it('routes Muse video models through their configured protocol', () => {
+    expect(resolveVideoProvider('muse-video', {}, capabilityFor('muse-video'))).toBe('muse_video')
+    expect(resolveVideoProvider('muse-video', { platform: 'openai' }, capabilityFor('muse-video'))).toBe('muse_video')
+    expect(resolveVideoProvider('muse-cheap', { baseUrl: 'https://momoapi.xin/v1' }, capabilityFor('muse-cheap'))).toBe('muse_video')
   })
 
   it('applies model-specific duration, resolution and reference limits', () => {
-    const seedance25 = getVideoModelProfile('seedance-2.5', 'seedance')
+    const seedance25 = getVideoModelProfile('seedance-2.5', 'seedance_video', capabilityFor('seedance-2.5'))
     expect(seedance25.maxDuration).toBe(30)
-    expect(seedance25.resolutions).toContain('1080p')
+    expect(seedance25.resolutions).not.toContain('1080p')
     expect(seedance25.maxImages).toBe(30)
+    expect(seedance25.maxVideos).toBe(10)
+    expect(seedance25.maxAudios).toBe(10)
 
-    const wan = getVideoModelProfile('wan3.0-video', 'seedance')
+    const wan = getVideoModelProfile('wan3.0-video', 'seedance_video', { ...capabilityFor('seedance-2.5')!, min_duration: 2, max_duration: 30, resolutions: ['480p', '720p', '1080p'], slots: { first_frame: 0, last_frame: 0, reference_image: 10, reference_video: 0, reference_audio: 5 } })
     expect(wan.minDuration).toBe(2)
     expect(wan.maxDuration).toBe(30)
-    expect(wan.resolutions).not.toContain('480p')
+    expect(wan.resolutions).toContain('480p')
     expect(wan.maxVideos).toBe(0)
 
-    const grokOfficial = getVideoModelProfile('grok-imagine-video', 'grok')
+    const grokOfficial = getVideoModelProfile('grok-imagine-video', 'grok', capabilityFor('grok-imagine-video'))
     expect(grokOfficial.maxDuration).toBe(10)
     expect(grokOfficial.resolutions).not.toContain('1080p')
 
-    const minimaxH3 = getVideoModelProfile('minimax H3-self', 'video_tasks')
+    const minimaxH3 = getVideoModelProfile('minimax H3-self', 'video_tasks', capabilityFor('minimax h3-self'))
     expect(minimaxH3.provider).toBe('video_tasks')
     expect(minimaxH3.minDuration).toBe(1)
     expect(minimaxH3.maxDuration).toBe(15)
     expect(minimaxH3.defaultDuration).toBe(5)
-    expect(minimaxH3.resolutions).toEqual(['768P'])
-    expect(minimaxH3.aspectRatios).toEqual(['21:9', '16:9', '4:3', '1:1', '3:4', '9:16'])
+    expect(minimaxH3.resolutions).toEqual(['480p', '768p'])
+    expect(minimaxH3.aspectRatios).toEqual(['16:9', '9:16'])
     expect(minimaxH3.maxImages).toBe(9)
-    expect(minimaxH3.maxVideos).toBe(3)
-    expect(minimaxH3.supportsAudio).toBe(true)
-    expect(minimaxH3.modes).toEqual(['text-to-video', 'image-to-video', 'first-last-frame', 'reference-images', 'reference-video'])
+    expect(minimaxH3.maxVideos).toBe(0)
+    expect(minimaxH3.maxAudios).toBe(3)
+    expect(minimaxH3.supportsAudio).toBe(false)
+    expect(minimaxH3.modes).toEqual(['text-to-video', 'reference-images'])
 
-    const museVideo = getVideoModelProfile('muse-video', 'muse_video')
+    const museVideo = getVideoModelProfile('muse-video', 'muse_video', capabilityFor('muse-video'))
     expect(museVideo.provider).toBe('muse_video')
     expect(museVideo.minDuration).toBe(1)
-    expect(museVideo.maxDuration).toBe(15)
-    expect(museVideo.defaultDuration).toBe(10)
+    expect(museVideo.maxDuration).toBe(60)
+    expect(museVideo.defaultDuration).toBe(6)
     expect(museVideo.resolutions).toEqual(['720p'])
     expect(museVideo.aspectRatios).toEqual(['16:9', '9:16'])
     expect(museVideo.maxImages).toBe(4)
@@ -111,13 +132,38 @@ describe('video model classification', () => {
     expect(museVideo.outputsAudio).toBe(true)
     expect(museVideo.modes).toEqual(['text-to-video', 'image-to-video', 'reference-images'])
 
-    const museCheap = getVideoModelProfile('muse-cheap', 'muse_video')
+    const museCheap = getVideoModelProfile('muse-cheap', 'muse_video', capabilityFor('muse-cheap'))
     expect(museCheap.maxDuration).toBe(30)
     expect(museCheap.defaultDuration).toBe(10)
     expect(museCheap.maxImages).toBe(7)
     expect(museCheap.outputsAudio).toBe(true)
     expect(museCheap.durationOptions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 30])
     expect(museCheap.modes).toEqual(['text-to-video', 'reference-images'])
+  })
+
+  it('applies documented limits to aliases and Wan Yuanlian', () => {
+    const gt = getVideoModelProfile('seedance 2.5-GT', 'seedance_video', capabilityFor('seedance 2.5-gt'))
+    expect(gt.minDuration).toBe(4)
+    expect(gt.maxDuration).toBe(30)
+    expect(gt.maxVideos).toBe(10)
+    expect(gt.maxAudios).toBe(10)
+
+    const yuanlian = getVideoModelProfile('wan3.0-yuanlian', 'seedance_video', capabilityFor('wan3.0-yuanlian'))
+    expect(yuanlian.maxImages).toBe(10)
+    expect(yuanlian.maxVideos).toBe(5)
+    expect(yuanlian.maxAudios).toBe(5)
+  })
+
+  it('matches documented duration defaults and presets', () => {
+    expect(getVideoModelProfile('muse-video', 'muse_video', capabilityFor('muse-video')).defaultDuration).toBe(6)
+    expect(getVideoModelProfile('grok-imagine-video-1.5', 'grok', capabilityFor('grok-imagine-video-1.5')).defaultDuration).toBe(5)
+    expect(getVideoModelProfile('minimax H3', 'video_tasks', capabilityFor('minimax h3')).defaultDuration).toBe(15)
+    expect(getVideoModelProfile('seedance 2.0 fast-GT', 'seedance_video', capabilityFor('seedance 2.0 fast-gt')).durationOptions).toEqual([10, 15])
+    expect(getVideoModelProfile('seedance 2.0 fast-GT', 'seedance_video', capabilityFor('seedance 2.0 fast-gt')).defaultDuration).toBe(15)
+    expect(getVideoModelProfile('seedance-2.0-mini-Chovy', 'seedance_video', capabilityFor('seedance-2.0-mini-chovy')).durationOptions).toEqual([5, 10, 15])
+    expect(getVideoModelProfile('seedance-2.5-alioth', 'seedance_video', capabilityFor('seedance-2.5-alioth')).defaultDuration).toBe(30)
+    expect(getVideoModelProfile('seedance-2.5-merak', 'seedance_video', capabilityFor('seedance-2.5-merak')).defaultDuration).toBe(30)
+    expect(getVideoModelProfile('wan3.0-yuanlian', 'seedance_video', capabilityFor('wan3.0-yuanlian')).defaultDuration).toBe(2)
   })
 })
 
@@ -134,9 +180,13 @@ describe('Seedance video request mapping', () => {
     videos: [],
     audios: [],
   }
+  const buildRequestWithCapabilities = (
+    provider: Parameters<typeof buildVideoRequest>[0],
+    params: Parameters<typeof buildVideoRequest>[1],
+  ) => buildVideoRequest(provider, params, capabilityFor(params.model))
 
   it('keeps duration, resolution, ratio and reference image in the Ark content body', () => {
-    const request = buildVideoRequest('seedance', {
+    const request = buildRequestWithCapabilities('seedance', {
       ...base,
       images: [{
         id: 1,
@@ -166,7 +216,7 @@ describe('Seedance video request mapping', () => {
   })
 
   it('preserves reference image and video entries in the Ark content array', () => {
-    const request = buildVideoRequest('seedance', {
+    const request = buildRequestWithCapabilities('seedance', {
       ...base,
       images: [{
         id: 1,
@@ -204,7 +254,7 @@ describe('Seedance video request mapping', () => {
   })
 
   it('sends generate_audio as an explicit boolean in the native Seedance body', () => {
-    const request = buildVideoRequest('seedance', {
+    const request = buildRequestWithCapabilities('seedance', {
       ...base,
       generateAudio: false,
     })
@@ -213,7 +263,7 @@ describe('Seedance video request mapping', () => {
   })
 
   it('omits duration fields when automatic duration is selected', () => {
-    const request = buildVideoRequest('muse_video', {
+    const request = buildRequestWithCapabilities('muse_video', {
       ...base,
       model: 'muse-video',
       durationSeconds: 10,
@@ -226,26 +276,28 @@ describe('Seedance video request mapping', () => {
   })
 
   it('builds the documented Muse text-to-video body', () => {
-    const request = buildVideoRequest('muse_video', {
+    const request = buildRequestWithCapabilities('muse_video', {
       ...base,
       model: 'muse-video',
       durationSeconds: 6,
       resolution: '720p',
     })
 
-    expect(request.path).toBe('/videos')
+    expect(request.path).toBe('/video/generations')
     expect(request.body).toEqual({
       model: 'muse-video',
       prompt: 'slow push in',
-      seconds: 6,
+      duration: 6,
+      resolution: '720p',
       aspect_ratio: '16:9',
     })
   })
 
   it('uses the Muse images array for image-to-video', () => {
-    const request = buildVideoRequest('muse_video', {
+    const request = buildRequestWithCapabilities('muse_video', {
       ...base,
       model: 'muse-video',
+      resolution: '720p',
       images: [{
         id: 1,
         kind: 'image',
@@ -257,15 +309,15 @@ describe('Seedance video request mapping', () => {
 
     expect(request.body).toMatchObject({
       model: 'muse-video',
-      image: 'https://cdn.example.com/first.png',
+      first_frame_image_url: 'https://cdn.example.com/first.png',
+      resolution: '720p',
     })
     expect(request.body).not.toHaveProperty('mode')
     expect(request.body).not.toHaveProperty('images')
-    expect(request.body).not.toHaveProperty('resolution')
   })
 
   it('uses Muse reference-image fields when first-frame and references are combined', () => {
-    const request = buildVideoRequest('muse_video', {
+    const request = buildRequestWithCapabilities('muse_video', {
       ...base,
       model: 'muse-video',
       images: [
@@ -288,16 +340,15 @@ describe('Seedance video request mapping', () => {
 
     expect(request.body).toMatchObject({
       model: 'muse-video',
-      image: 'https://cdn.example.com/first.png',
-      reference_images: ['https://cdn.example.com/ref.png'],
+      first_frame_image_url: 'https://cdn.example.com/first.png',
+      reference_image_urls: ['https://cdn.example.com/ref.png'],
     })
     expect(request.body).not.toHaveProperty('images')
     expect(request.body).not.toHaveProperty('mode')
-    expect(request.body).not.toHaveProperty('duration')
   })
 
   it('keeps Muse cheap reference images out of the first-frame image field', () => {
-    const request = buildVideoRequest('muse_video', {
+    const request = buildRequestWithCapabilities('muse_video', {
       ...base,
       model: 'muse-cheap',
       images: [{
@@ -311,9 +362,9 @@ describe('Seedance video request mapping', () => {
 
     expect(request.body).toMatchObject({
       model: 'muse-cheap',
-      reference_images: ['https://cdn.example.com/ref.png'],
+      reference_image_urls: ['https://cdn.example.com/ref.png'],
     })
-    expect(request.body).not.toHaveProperty('image')
+    expect(request.body).not.toHaveProperty('first_frame_image_url')
   })
 
   it('normalizes in-progress Seedance status responses', () => {
@@ -340,6 +391,19 @@ describe('Seedance video request mapping', () => {
     expect(completed.videoUrl).toBe('/v1/videos/task-muse/content')
   })
 
+  it('normalizes completed MiniMax unified responses with a content URL', () => {
+    const completed = parseVideoTaskSnapshot('video_tasks', {
+      id: 'task-minimax',
+      status: 'completed',
+      duration: 5,
+      metadata: { url: '/v1/videos/task-minimax/content' },
+    })
+
+    expect(completed.status).toBe('succeeded')
+    expect(completed.durationSeconds).toBe(5)
+    expect(completed.videoUrl).toBe('/v1/videos/task-minimax/content')
+  })
+
   it('preserves Muse progress while the upstream still reports queued', () => {
     const queued = parseVideoTaskSnapshot('muse_video', {
       id: 'task-muse',
@@ -352,7 +416,12 @@ describe('Seedance video request mapping', () => {
   })
 
   it('routes Muse status lookups with a model hint for composite keys', () => {
-    expect(videoTaskPath('muse_video', 'task/muse')).toBe('/videos/task%2Fmuse?model=muse-video')
+    expect(videoTaskPath('muse_video', 'task/muse', 'muse-cheap')).toBe('/videos/task%2Fmuse?model=muse-cheap')
+  })
+
+  it('keeps the exact MiniMax model when looking up unified tasks', () => {
+    expect(videoTaskPath('video_tasks', 'task/minimax', 'minimax H3-self'))
+      .toBe('/videos/task%2Fminimax?model=minimax%20H3-self')
   })
 
   it('routes Seedance video lookups with a model hint for composite keys', () => {
@@ -361,7 +430,7 @@ describe('Seedance video request mapping', () => {
   })
 
   it('builds the unified Seedance video body with reference fields', () => {
-    const request = buildVideoRequest('seedance_video', {
+    const request = buildRequestWithCapabilities('seedance_video', {
       ...base,
       model: 'dreamina-seedance-2-0-fast-260128',
       images: [{
@@ -388,14 +457,113 @@ describe('Seedance video request mapping', () => {
       resolution: '1080p',
       aspect_ratio: '16:9',
       reference_video_urls: ['https://cdn.example.com/ref.mp4'],
+    })
+    expect(request.body).toHaveProperty('reference_image_urls', ['https://cdn.example.com/ref.png'])
+  })
+
+  it('uses reference-images mode for Seedance reference audio', () => {
+    const request = buildRequestWithCapabilities('seedance_video', {
+      ...base,
+      images: [{
+        id: 1,
+        kind: 'image',
+        name: 'ref.png',
+        url: 'https://cdn.example.com/ref.png',
+        role: 'reference_image',
+      }],
+      audios: [{
+        id: 2,
+        kind: 'audio',
+        name: 'ref.mp3',
+        url: 'https://cdn.example.com/ref.mp3',
+      }],
+    })
+
+    expect(request.body).toMatchObject({
+      mode: 'reference-images',
       reference_image_urls: ['https://cdn.example.com/ref.png'],
+      reference_audio_urls: ['https://cdn.example.com/ref.mp3'],
+    })
+    expect(request.body).not.toHaveProperty('reference_video_urls')
+  })
+
+  it('uses first/last frame URL fields for unified Seedance first-last-frame mode', () => {
+    const request = buildRequestWithCapabilities('seedance_video', {
+      ...base,
+      model: 'seedance-2.0',
+      images: [
+        { id: 1, kind: 'image', name: 'first.png', url: 'https://cdn.example.com/first.png', role: 'first_frame' },
+        { id: 2, kind: 'image', name: 'last.png', url: 'https://cdn.example.com/last.png', role: 'last_frame' },
+      ],
+    })
+
+    expect(request.body).toMatchObject({
+      mode: 'first-last-frame',
+      first_frame_image_url: 'https://cdn.example.com/first.png',
+      last_frame_image_url: 'https://cdn.example.com/last.png',
+    })
+    expect(request.body).not.toHaveProperty('images')
+  })
+
+  it('does not send first/last frame images alongside Seedance reference audio', () => {
+    const request = buildRequestWithCapabilities('seedance_video', {
+      ...base,
+      images: [
+        { id: 1, kind: 'image', name: 'first.png', url: 'https://cdn.example.com/first.png', role: 'first_frame' },
+        { id: 2, kind: 'image', name: 'last.png', url: 'https://cdn.example.com/last.png', role: 'last_frame' },
+      ],
+      audios: [{ id: 3, kind: 'audio', name: 'ref.mp3', url: 'https://cdn.example.com/ref.mp3' }],
+    })
+
+    expect(request.body).toMatchObject({
+      mode: 'reference-images',
+      reference_image_urls: [
+        'https://cdn.example.com/first.png',
+        'https://cdn.example.com/last.png',
+      ],
+      reference_audio_urls: ['https://cdn.example.com/ref.mp3'],
+    })
+    expect(request.body).not.toHaveProperty('images')
+  })
+
+  it('does not send frame images alongside a Seedance reference video', () => {
+    const request = buildRequestWithCapabilities('seedance_video', {
+      ...base,
+      images: [
+        { id: 1, kind: 'image', name: 'first.png', url: 'https://cdn.example.com/first.png', role: 'first_frame' },
+        { id: 2, kind: 'image', name: 'last.png', url: 'https://cdn.example.com/last.png', role: 'last_frame' },
+      ],
+      videos: [{ id: 3, kind: 'video', name: 'ref.mp4', url: 'https://cdn.example.com/ref.mp4' }],
+    })
+
+    expect(request.body).toMatchObject({
+      mode: 'reference-video',
+      reference_video_urls: ['https://cdn.example.com/ref.mp4'],
+    })
+    expect(request.body).not.toHaveProperty('images')
+    expect(request.body.reference_image_urls).toEqual([
+      'https://cdn.example.com/first.png',
+      'https://cdn.example.com/last.png',
+    ])
+  })
+
+  it('combines Seedance reference video and reference audio when both slots are enabled', () => {
+    const request = buildRequestWithCapabilities('seedance_video', {
+      ...base,
+      videos: [{ id: 1, kind: 'video', name: 'ref.mp4', url: 'https://cdn.example.com/ref.mp4' }],
+      audios: [{ id: 2, kind: 'audio', name: 'ref.mp3', url: 'https://cdn.example.com/ref.mp3' }],
+    })
+    expect(request.body).toMatchObject({
+      mode: 'reference-video',
+      reference_video_urls: ['https://cdn.example.com/ref.mp4'],
+      reference_audio_urls: ['https://cdn.example.com/ref.mp3'],
     })
   })
 
   it('submits minimax H3 through the unified video endpoint', () => {
     const model = 'minimax H3-self'
-    const provider = resolveVideoProvider(model, { platform: 'openai' })
-    const request = buildVideoRequest(provider, {
+    const provider = resolveVideoProvider(model, { platform: 'openai' }, capabilityFor(model))
+    const request = buildRequestWithCapabilities(provider, {
       ...base,
       model,
       durationSeconds: 5,
@@ -404,75 +572,63 @@ describe('Seedance video request mapping', () => {
     })
 
     expect(provider).toBe('video_tasks')
-    expect(request.path).toBe('/videos')
+    expect(request.path).toBe('/video/generations')
     expect(request.body).toMatchObject({
       model,
-      seconds: '5',
-      resolution: '768P',
-      ratio: '9:16',
+      duration: 5,
+      resolution: '768p',
+      aspect_ratio: '9:16',
     })
     expect(request.body).not.toHaveProperty('mode')
-    expect(request.body).not.toHaveProperty('duration')
+    expect(request.body).not.toHaveProperty('seconds')
     expect(request.body).not.toHaveProperty('generate_audio')
   })
 
-  it('keeps first/last frames, reference images, videos and audio together', () => {
-    const request = buildVideoRequest('seedance_video', {
+  it('uses MiniMax reference-image fields when audio and first frames are present', () => {
+    const request = buildRequestWithCapabilities('video_tasks', {
       ...base,
-      generateAudio: false,
+      model: 'minimax H3-self',
       images: [
-        {
-          id: 1,
-          kind: 'image',
-          name: 'first.png',
-          url: 'https://cdn.example.com/first.png',
-          role: 'first_frame',
-        },
-        {
-          id: 2,
-          kind: 'image',
-          name: 'last.png',
-          url: 'https://cdn.example.com/last.png',
-          role: 'last_frame',
-        },
-        {
-          id: 3,
-          kind: 'image',
-          name: 'ref.png',
-          url: 'https://cdn.example.com/ref.png',
-          role: 'reference_image',
-        },
+        { id: 1, kind: 'image', name: 'first.png', url: 'https://cdn.example.com/first.png', role: 'first_frame' },
       ],
-      videos: [{
-        id: 4,
-        kind: 'video',
-        name: 'ref.mp4',
-        url: 'https://cdn.example.com/ref.mp4',
-        role: 'video_edit',
-      }],
-      audios: [{
-        id: 5,
-        kind: 'audio',
-        name: 'ref.mp3',
-        url: 'https://cdn.example.com/ref.mp3',
-      }],
+      audios: [
+        { id: 2, kind: 'audio', name: 'ref.mp3', url: 'https://cdn.example.com/ref.mp3' },
+      ],
     })
 
     expect(request.body).toMatchObject({
-      mode: 'reference-video',
+      reference_image_urls: ['https://cdn.example.com/first.png'],
+      reference_audio_urls: ['https://cdn.example.com/ref.mp3'],
+    })
+    expect(request.body).not.toHaveProperty('first_frame_image_url')
+  })
+
+  it('keeps image, video and audio references together in Seedance unified mode', () => {
+    const request = buildRequestWithCapabilities('seedance_video', {
+      ...base,
+      generateAudio: false,
       images: [
-        'https://cdn.example.com/first.png',
-        'https://cdn.example.com/last.png',
+        { id: 1, kind: 'image', name: 'first.png', url: 'https://cdn.example.com/first.png', role: 'first_frame' },
+        { id: 2, kind: 'image', name: 'last.png', url: 'https://cdn.example.com/last.png', role: 'last_frame' },
+        { id: 3, kind: 'image', name: 'ref.png', url: 'https://cdn.example.com/ref.png', role: 'reference_image' },
       ],
-      reference_image_urls: ['https://cdn.example.com/ref.png'],
+      videos: [{ id: 4, kind: 'video', name: 'ref.mp4', url: 'https://cdn.example.com/ref.mp4', role: 'video_edit' }],
+      audios: [{ id: 5, kind: 'audio', name: 'ref.mp3', url: 'https://cdn.example.com/ref.mp3' }],
+    })
+    expect(request.body).toMatchObject({
+      mode: 'reference-video',
       reference_video_urls: ['https://cdn.example.com/ref.mp4'],
       reference_audio_urls: ['https://cdn.example.com/ref.mp3'],
-      generate_audio: false,
     })
+    expect(request.body.reference_image_urls).toEqual([
+      'https://cdn.example.com/first.png',
+      'https://cdn.example.com/last.png',
+      'https://cdn.example.com/ref.png',
+    ])
   })
 
   it('routes Grok video edits and extensions to their documented endpoints', () => {
-    const edit = buildVideoRequest('grok', {
+    const edit = buildRequestWithCapabilities('grok', {
       ...base,
       model: 'grok-imagine-video-1.5',
       videos: [{
@@ -483,10 +639,14 @@ describe('Seedance video request mapping', () => {
         role: 'video_edit',
       }],
     })
-    expect(edit.path).toBe('/videos/edits')
-    expect(edit.body.video).toEqual({ url: 'https://cdn.example.com/source.mp4' })
+    expect(edit.path).toBe('/video/generations')
+    expect(edit.body).toMatchObject({
+      mode: 'video-edit',
+      reference_video_url: 'https://cdn.example.com/source.mp4',
+    })
+    expect(edit.body).not.toHaveProperty('video')
 
-    const extension = buildVideoRequest('grok', {
+    const extension = buildRequestWithCapabilities('grok', {
       ...base,
       model: 'grok-imagine-video-1.5',
       videos: [{
@@ -497,8 +657,32 @@ describe('Seedance video request mapping', () => {
         role: 'video_extension',
       }],
     })
-    expect(extension.path).toBe('/videos/extensions')
-    expect(extension.body.video).toEqual({ url: 'https://cdn.example.com/source.mp4' })
+    expect(extension.path).toBe('/video/generations')
+    expect(extension.body).toMatchObject({
+      mode: 'video-extension',
+      reference_video_url: 'https://cdn.example.com/source.mp4',
+    })
+    expect(extension.body).not.toHaveProperty('video')
+  })
+
+  it('does not attach frame images to a Grok reference-video request', () => {
+    const request = buildRequestWithCapabilities('grok', {
+      ...base,
+      model: 'grok-imagine-video-1.5',
+      images: [
+        { id: 1, kind: 'image', name: 'first.png', url: 'https://cdn.example.com/first.png', role: 'first_frame' },
+      ],
+      videos: [
+        { id: 2, kind: 'video', name: 'ref.mp4', url: 'https://cdn.example.com/ref.mp4' },
+      ],
+    })
+
+    expect(request.body).toMatchObject({
+      mode: 'reference-video',
+      reference_video_urls: ['https://cdn.example.com/ref.mp4'],
+    })
+    expect(request.body).not.toHaveProperty('first_frame_image_url')
+    expect(request.body.reference_image_urls).toEqual(['https://cdn.example.com/first.png'])
   })
 })
 

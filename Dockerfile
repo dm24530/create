@@ -142,6 +142,7 @@ RUN sed -i 's#https://dl-cdn.alpinelinux.org#https://mirrors.aliyun.com#g' /etc/
     krb5-libs \
     libldap \
     libedit \
+    ffmpeg \
     && rm -rf /var/cache/apk/*
 
 # Copy pg_dump and psql from the same postgres image used in docker-compose

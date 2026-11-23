@@ -728,6 +728,38 @@ export default {
       perVideo: '按视频生成',
       standard: '标准'
     },
+    videoPricing: {
+      durationLabel: '可选时长',
+      resolution: '分辨率',
+      billing: '计费方式',
+      duration: '支持时长',
+      price: '实付价格',
+      perSecond: '按秒计费',
+      perRequest: '按次计费',
+      capabilities: '生成能力',
+      referenceLimits: '参考素材',
+      referenceSamePrice: '是否使用参考素材不影响单价；按秒计费时，总价 = 每秒单价 × 生成时长。',
+      referenceImageLimit: '参考图最多 {count} 张',
+      referenceVideoLimit: '参考视频最多 {count} 个',
+      referenceAudioLimit: '参考音频最多 {count} 个',
+      noReferences: '不支持参考素材',
+      capabilityLabels: {
+        textToVideo: '文生视频',
+        imageToVideo: '图生视频',
+        referenceImages: '参考图',
+        referenceVideo: '参考视频',
+        videoEdit: '视频编辑/续写',
+        referenceAudio: '参考音频'
+      },
+      descriptions: {
+        generic: '通用视频生成模型，支持文生视频。分辨率、时长和参考素材上限以工作台实际可用选项为准。',
+        seedance: 'Seedance 视频模型，适合文生视频、图生视频和多参考素材创作。实际可用分辨率、时长及音频能力由当前分组配置决定。',
+        muse: 'Muse 视频模型，适合快速生成短视频并支持参考图输入。每段视频的可用时长以模型档位为准。',
+        grok: 'Grok 视频模型，支持文生视频、图生视频和参考素材创作，也可用于已有视频的编辑与续写。',
+        wan: 'Wan 视频模型，支持较长视频生成及图生视频；部分模型可使用参考图和参考视频。',
+        minimax: 'MiniMax 视频模型，支持文生视频、图生视频及多参考素材，适合人物和场景一致性创作。'
+      }
+    },
     nav: {
       login: '登录',
       backToDashboard: '回到后台'

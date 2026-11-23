@@ -5,7 +5,7 @@
  */
 
 import { apiClient } from './client'
-import type { UserPricingInterval, UserSupportedModelPricing } from './channels'
+import type { UserPricingInterval, UserSupportedModelPricing, VideoModelCapabilities } from './channels'
 
 /** 官方参考价（USD per token，与计费目录同源；字段缺失 = 目录未覆盖）。 */
 export interface PlazaOfficialPricing {
@@ -46,6 +46,9 @@ export interface PlazaTimePricing {
 export interface PlazaModel {
   name: string
   platform: string
+  /** 管理员在分组模型定价中填写的展示说明；空值不展示。 */
+  description?: string
+  video_capabilities?: VideoModelCapabilities | null
   /** 实收口径的展示定价：多档时 intervals 为各档绝对单价（已由计费服务折算）；均为标准时段价。 */
   pricing: UserSupportedModelPricing | null
   official_pricing: PlazaOfficialPricing | null

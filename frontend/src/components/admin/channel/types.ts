@@ -1,4 +1,5 @@
 import type { BillingMode, ChannelTimePricing, PricingInterval } from '@/api/admin/channels'
+import type { VideoModelCapabilities } from '@/api/channels'
 import { REASONING_EFFORT_LEVELS } from '@/constants/channel'
 
 type TranslateFn = (key: string, params?: Record<string, unknown>) => string
@@ -23,6 +24,8 @@ export interface IntervalFormEntry {
 export interface PricingFormEntry {
   platform?: string
   models: string[]
+  description?: string
+  video_capabilities?: Record<string, VideoModelCapabilities> | null
   billing_mode: BillingMode
   input_price: number | string | null
   output_price: number | string | null
@@ -318,7 +321,7 @@ export function validateIntervals(
   const sorted = [...intervals].sort((a, b) => a.min_tokens - b.min_tokens)
 
   for (let i = 0; i < sorted.length; i++) {
-    const err = validateSingleInterval(sorted[i], i, t)
+    const err = validateSingleInterval(sorted[i], i, mode, t)
     if (err) return err
   }
 
@@ -339,7 +342,7 @@ function intervalPriceLabel(t: TranslateFn, key: string): string {
   return t(`admin.channels.intervalValidation.price.${key}`)
 }
 
-function validateSingleInterval(iv: IntervalFormEntry, idx: number, t: TranslateFn): string | null {
+function validateSingleInterval(iv: IntervalFormEntry, idx: number, mode: BillingMode, t: TranslateFn): string | null {
   const index = idx + 1
   if (iv.min_tokens < 0) {
     return intervalValidationMessage(
@@ -356,7 +359,9 @@ function validateSingleInterval(iv: IntervalFormEntry, idx: number, t: Translate
         { index, value: iv.max_tokens },
       )
     }
-    if (iv.max_tokens <= iv.min_tokens) {
+    // Video tiers are keyed by resolution label and billed per second. Imported
+    // pricing rows can carry a placeholder min=max token value that is not a range.
+    if (mode !== 'video' && iv.max_tokens <= iv.min_tokens) {
       return intervalValidationMessage(
         t,
         'maxGreaterThanMin',

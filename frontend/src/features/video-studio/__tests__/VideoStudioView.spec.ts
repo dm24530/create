@@ -6,6 +6,7 @@ import VideoStudioView from '../VideoStudioView.vue'
 import { saveVideoWork } from '../videoWorks'
 import { resetVideoStudioDraft } from '../videoStudioDraft'
 import { useAppStore } from '@/stores/app'
+import { VIDEO_CAPABILITY_FIXTURES } from './videoCapabilityFixtures'
 
 const { listKeys, getPublicSettings, copyToClipboard, routeQuery } = vi.hoisted(() => ({
   listKeys: vi.fn(),
@@ -22,6 +23,7 @@ const {
   pinArchivedVideo,
   uploadVideoReferenceAsset,
   prepareImageReferenceImages,
+  getAvailableModels,
 } = vi.hoisted(() => ({
   archiveVideo: vi.fn(),
   deleteArchivedVideo: vi.fn(),
@@ -30,6 +32,7 @@ const {
   pinArchivedVideo: vi.fn(),
   uploadVideoReferenceAsset: vi.fn(),
   prepareImageReferenceImages: vi.fn(),
+  getAvailableModels: vi.fn(),
 }))
 
 vi.mock('../videoArchiveApi', () => ({
@@ -48,6 +51,10 @@ vi.mock('../videoArchiveApi', () => ({
 vi.mock('@/api', () => ({
   keysAPI: { list: listKeys },
   authAPI: { getPublicSettings },
+}))
+
+vi.mock('@/api/channels', () => ({
+  getAvailableModels,
 }))
 
 vi.mock('@/composables/useClipboard', () => ({
@@ -138,6 +145,34 @@ function resetMocks() {
   uploadVideoReferenceAsset.mockReset()
   listArchivedVideos.mockResolvedValue([])
   uploadVideoReferenceAsset.mockResolvedValue({ url: 'https://r2.example.com/reference.png' })
+  getAvailableModels.mockReset()
+  getAvailableModels.mockResolvedValue([
+    {
+      name: '视频渠道',
+      platforms: [
+        {
+          platform: 'openai',
+          groups: [{ id: 1 }],
+          supported_models: Object.entries(VIDEO_CAPABILITY_FIXTURES).map(([name, videoCapabilities]) => ({
+            name,
+            platform: 'openai',
+            pricing: null,
+            video_capabilities: videoCapabilities,
+          })),
+        },
+        {
+          platform: 'grok',
+          groups: [{ id: 1 }],
+          supported_models: Object.entries(VIDEO_CAPABILITY_FIXTURES).map(([name, videoCapabilities]) => ({
+            name,
+            platform: 'grok',
+            pricing: null,
+            video_capabilities: videoCapabilities,
+          })),
+        },
+      ],
+    },
+  ])
   prepareImageReferenceImages.mockReset()
   prepareImageReferenceImages.mockImplementation(async (inputs: Array<{ name: string }>) => inputs.map((input, index) => ({
     name: String(input.name || `reference-${index + 1}`).replace(/\.[^.]+$/, '') + '.webp',
@@ -707,7 +742,7 @@ describe('VideoStudioView Seedance model controls', () => {
     await flushPromises()
 
     expect(wrapper.get('[data-testid="video-resolution-control"]').attributes('style'))
-      .toContain('--video-segment-count: 3')
+      .toContain('--video-segment-count: 2')
     expect(wrapper.get('[data-testid="video-duration-control"] .video-composer__segmented').attributes('style'))
       .toContain('--video-segment-count: 6')
 
@@ -716,7 +751,7 @@ describe('VideoStudioView Seedance model controls', () => {
     await durationInput.setValue('30')
     await durationInput.trigger('blur')
     await wrapper.findAll('[data-testid="video-resolution-control"] button')
-      .find((button) => button.text() === '1080P')!
+      .find((button) => button.text() === '720P')!
       .trigger('click')
 
     await wrapper.get('[data-testid="video-reference-trigger"]').trigger('click')
@@ -736,18 +771,18 @@ describe('VideoStudioView Seedance model controls', () => {
     const payload = JSON.parse(String(createCall?.[1]?.body))
     expect(payload).toMatchObject({
       model: 'seedance-2.5',
-      mode: 'image-to-video',
+      mode: 'reference-images',
       duration: 30,
-      resolution: '1080p',
+      resolution: '720p',
       aspect_ratio: '16:9',
-      images: ['https://cdn.example.com/frame.png'],
+      reference_image_urls: ['https://cdn.example.com/frame.png'],
     })
     expect(payload.prompt).toBe('雨夜车窗外的霓虹缓慢后退')
     expect(wrapper.get('video').attributes('src')).toBe('blob:seedance-video')
     expect(wrapper.get('[data-testid="video-model-select"]').text()).toContain('seedance-2.5')
     expect((wrapper.get('[data-testid="video-duration-control"] input').element as HTMLInputElement).value).toBe('30')
     expect(wrapper.findAll('[data-testid="video-resolution-control"] button')
-      .find((button) => button.classes('is-active'))?.text()).toBe('1080P')
+      .find((button) => button.classes('is-active'))?.text()).toBe('720P')
 
     await wrapper.get('[data-testid="video-card-copy-prompt"]').trigger('click')
     expect(copyToClipboard).toHaveBeenCalledWith('雨夜车窗外的霓虹缓慢后退', '提示词已复制')
@@ -759,7 +794,7 @@ describe('VideoStudioView Seedance model controls', () => {
     fetchMock.mockImplementation(async (input, init) => {
       const url = String(input)
       if (url.endsWith('/models')) return jsonResponse({ data: [{ id: 'muse-video' }] })
-      if (url.endsWith('/videos') && init?.method === 'POST') {
+      if (url.endsWith('/video/generations') && init?.method === 'POST') {
         return jsonResponse({ id: 'task-muse', task_id: 'task-muse', status: 'queued' })
       }
       if (url.endsWith('/videos/task-muse?model=muse-video')) {
@@ -789,6 +824,7 @@ describe('VideoStudioView Seedance model controls', () => {
 
     await wrapper.get('textarea').setValue('让首帧里的海浪继续向前翻涌')
     await wrapper.get('[data-testid="video-reference-trigger"]').trigger('click')
+    await wrapper.get('[data-testid="reference-role-first_frame"]').trigger('click')
     await wrapper.get('[data-testid="reference-url-input"]').setValue('https://cdn.example.com/first.png')
     await wrapper.findAll('button').find((button) => button.text() === '添加')!.trigger('click')
     await flushPromises()
@@ -797,15 +833,16 @@ describe('VideoStudioView Seedance model controls', () => {
     await flushPromises()
 
     const createCall = fetchMock.mock.calls.find(
-      (call) => String(call[0]).endsWith('/videos') && call[1]?.method === 'POST',
+      (call) => String(call[0]).endsWith('/video/generations') && call[1]?.method === 'POST',
     )
     expect(createCall).toBeDefined()
     expect(JSON.parse(String(createCall?.[1]?.body))).toEqual({
       model: 'muse-video',
       prompt: '让首帧里的海浪继续向前翻涌',
-      seconds: 12,
+      duration: 12,
+      resolution: '720p',
       aspect_ratio: '16:9',
-      image: 'https://cdn.example.com/first.png',
+      first_frame_image_url: 'https://cdn.example.com/first.png',
     })
     expect(wrapper.get('video').attributes('src')).toBe('blob:seedance-video')
 
@@ -974,7 +1011,7 @@ describe('VideoStudioView Seedance model controls', () => {
     expect(modelButton).toBeDefined()
     await modelButton!.trigger('click')
     await first.findAll('[data-testid="video-resolution-control"] button')
-      .find((button) => button.text() === '1080P')!
+      .find((button) => button.text() === '720P')!
       .trigger('click')
     const durationInput = first.get('[data-testid="video-duration-control"] input')
     await durationInput.setValue('30')
@@ -992,7 +1029,7 @@ describe('VideoStudioView Seedance model controls', () => {
     expect(second.get('[data-testid="video-model-select"]').text()).toContain('seedance-2.5')
     expect((second.get('[data-testid="video-duration-control"] input').element as HTMLInputElement).value).toBe('30')
     expect(second.findAll('[data-testid="video-resolution-control"] button')
-      .find((button) => button.classes('is-active'))?.text()).toBe('1080P')
+      .find((button) => button.classes('is-active'))?.text()).toBe('720P')
     expect((second.get('[data-testid="video-task-count"]').element as HTMLInputElement).value).toBe('2')
     expect(second.get('[role="switch"]').attributes('aria-checked')).toBe('true')
     second.unmount()
@@ -1019,7 +1056,7 @@ describe('VideoStudioView grok generation', () => {
       if (url.endsWith('/models')) {
         return jsonResponse({ data: [{ id: 'grok-imagine-video' }] })
       }
-      if (url.endsWith('/videos/generations') && init?.method === 'POST') {
+      if (url.endsWith('/video/generations') && init?.method === 'POST') {
         return jsonResponse({ request_id: 'req-9' })
       }
       if (url.endsWith('/videos/req-9') && !url.endsWith('/content')) {
@@ -1047,7 +1084,7 @@ describe('VideoStudioView grok generation', () => {
     await flushPromises()
 
     const createCall = fetchMock.mock.calls.find(
-      (call) => String(call[0]).endsWith('/videos/generations') && call[1]?.method === 'POST',
+      (call) => String(call[0]).endsWith('/video/generations') && call[1]?.method === 'POST',
     )
     expect(createCall).toBeDefined()
     const payload = JSON.parse(String(createCall?.[1]?.body))
@@ -1119,7 +1156,7 @@ describe('VideoStudioView references', () => {
     fetchMock.mockImplementation(async (input, init) => {
       const url = String(input)
       if (url.endsWith('/models')) return jsonResponse({ data: [{ id: 'grok-imagine-video' }] })
-      if (url.endsWith('/videos/extensions') && init?.method === 'POST') {
+      if (url.endsWith('/video/generations') && init?.method === 'POST') {
         return jsonResponse({ request_id: 'task-extension' })
       }
       if (url.endsWith('/videos/task-extension')) {
@@ -1150,11 +1187,12 @@ describe('VideoStudioView references', () => {
     await flushPromises()
 
     const createCall = fetchMock.mock.calls.find(
-      (call) => String(call[0]).endsWith('/videos/extensions') && call[1]?.method === 'POST',
+      (call) => String(call[0]).endsWith('/video/generations') && call[1]?.method === 'POST',
     )
     expect(createCall).toBeDefined()
-    expect(JSON.parse(String(createCall?.[1]?.body)).video).toEqual({
-      url: 'https://cdn.example.com/source.mp4',
+    expect(JSON.parse(String(createCall?.[1]?.body))).toMatchObject({
+      mode: 'video-extension',
+      reference_video_url: 'https://cdn.example.com/source.mp4',
     })
   })
 
@@ -1164,7 +1202,7 @@ describe('VideoStudioView references', () => {
     fetchMock.mockImplementation(async (input, init) => {
       const url = String(input)
       if (url.endsWith('/models')) return jsonResponse({ data: [{ id: 'grok-imagine-video-1.5' }] })
-      if (url.endsWith('/videos/generations') && init?.method === 'POST') {
+      if (url.endsWith('/video/generations') && init?.method === 'POST') {
         return jsonResponse({ request_id: 'task-grok-local-image' })
       }
       if (url.endsWith('/videos/task-grok-local-image')) {
@@ -1183,6 +1221,7 @@ describe('VideoStudioView references', () => {
     await flushPromises()
     await flushPromises()
     await wrapper.get('[data-testid="video-reference-trigger"]').trigger('click')
+    await wrapper.get('[data-testid="reference-role-first_frame"]').trigger('click')
     const input = wrapper.get('input[type="file"]')
     Object.defineProperty(input.element, 'files', {
       value: [new File([new Uint8Array(32)], 'source.png', { type: 'image/png' })],
@@ -1203,12 +1242,11 @@ describe('VideoStudioView references', () => {
       data_url: expect.stringContaining('data:image/webp;base64,'),
     })
     const createCall = fetchMock.mock.calls.find(
-      (call) => String(call[0]).endsWith('/videos/generations') && call[1]?.method === 'POST',
+      (call) => String(call[0]).endsWith('/video/generations') && call[1]?.method === 'POST',
     )
     expect(createCall).toBeDefined()
-    expect(JSON.parse(String(createCall?.[1]?.body)).image).toEqual([
-      { url: 'https://r2.example.com/reference.png' },
-    ])
+    expect(JSON.parse(String(createCall?.[1]?.body)).first_frame_image_url)
+      .toBe('https://r2.example.com/reference.png')
   })
 
   it('keeps the prompt and reference assets when the studio remounts', async () => {

@@ -99,6 +99,45 @@
           </div>
         </div>
 
+        <div v-if="entry.billing_mode === 'video'" class="mt-3">
+          <label class="text-xs font-medium text-gray-500 dark:text-gray-400">
+            {{ t('admin.channels.form.videoCapabilities') }}
+          </label>
+          <textarea
+            ref="videoCapabilitiesTextarea"
+            :value="videoCapabilitiesDraft"
+            rows="6"
+            spellcheck="false"
+            class="input mt-1 w-full resize-y font-mono text-xs"
+            :placeholder="t('admin.channels.form.videoCapabilitiesPlaceholder')"
+            @focus="videoCapabilitiesFocused = true"
+            @blur="commitVideoCapabilities"
+            @input="videoCapabilitiesDraft = ($event.target as HTMLTextAreaElement).value; videoCapabilitiesError = ''"
+          />
+          <p v-if="videoCapabilitiesError" class="mt-1 text-xs text-red-500">
+            {{ videoCapabilitiesError }}
+          </p>
+          <p v-else class="mt-1 text-xs text-gray-400">
+            {{ t('admin.channels.form.videoCapabilitiesHint') }}
+          </p>
+        </div>
+
+        <div v-if="enableDisplayDescription" class="mt-3">
+          <label class="text-xs font-medium text-gray-500 dark:text-gray-400">
+            {{ t('admin.channels.form.displayDescription') }}
+          </label>
+          <textarea
+            data-testid="display-description"
+            :value="entry.description || ''"
+            maxlength="500"
+            rows="2"
+            class="input mt-1 w-full resize-y text-sm"
+            :placeholder="t('admin.channels.form.displayDescriptionPlaceholder')"
+            @input="emitDisplayDescription(($event.target as HTMLTextAreaElement).value)"
+          />
+          <p class="mt-1 text-xs text-gray-400">{{ t('admin.channels.form.displayDescriptionHint') }}</p>
+        </div>
+
         <!-- Token mode -->
         <div v-if="entry.billing_mode === 'token'">
           <!-- Default prices (fallback when no interval matches) -->
@@ -299,7 +338,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Select from '@/components/common/Select.vue'
 import Icon from '@/components/icons/Icon.vue'
@@ -320,10 +359,12 @@ const props = withDefaults(defineProps<{
   hideTokenIntervals?: boolean
   enableTimePricing?: boolean
   enableTierMultipliers?: boolean
+  enableDisplayDescription?: boolean
 }>(), {
   hideTokenIntervals: false,
   enableTimePricing: false,
   enableTierMultipliers: false,
+  enableDisplayDescription: false,
 })
 
 const emit = defineEmits<{
@@ -333,6 +374,43 @@ const emit = defineEmits<{
 
 // Collapse state: entries with existing models default to collapsed
 const collapsed = ref(props.entry.models.length > 0)
+const videoCapabilitiesTextarea = ref<HTMLTextAreaElement | null>(null)
+const videoCapabilitiesFocused = ref(false)
+const videoCapabilitiesError = ref('')
+const videoCapabilitiesDraft = ref(formatVideoCapabilities(props.entry.video_capabilities))
+
+function formatVideoCapabilities(value: PricingFormEntry['video_capabilities']): string {
+  return value ? JSON.stringify(value, null, 2) : ''
+}
+
+watch(
+  () => props.entry.video_capabilities,
+  (value) => {
+    if (!videoCapabilitiesFocused.value) videoCapabilitiesDraft.value = formatVideoCapabilities(value)
+  },
+  { deep: true },
+)
+
+function commitVideoCapabilities() {
+  videoCapabilitiesFocused.value = false
+  const raw = videoCapabilitiesDraft.value.trim()
+  if (!raw) {
+    videoCapabilitiesError.value = ''
+    emit('update', { ...props.entry, video_capabilities: null })
+    return
+  }
+  try {
+    const parsed = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('video capabilities must be a JSON object')
+    }
+    videoCapabilitiesError.value = ''
+    videoCapabilitiesDraft.value = JSON.stringify(parsed, null, 2)
+    emit('update', { ...props.entry, video_capabilities: parsed })
+  } catch {
+    videoCapabilitiesError.value = t('admin.channels.form.videoCapabilitiesInvalid')
+  }
+}
 
 const billingModeOptions = computed(() => [
   { value: 'token', label: t('admin.channels.billingMode.token') },
@@ -362,6 +440,10 @@ function updateReasoningEffortMultiplier(effort: ReasoningEffortLevel, value: st
 
 function emitField(field: keyof PricingFormEntry, value: string) {
   emit('update', { ...props.entry, [field]: value === '' ? null : value })
+}
+
+function emitDisplayDescription(value: string) {
+  emit('update', { ...props.entry, description: value })
 }
 
 function addInterval() {

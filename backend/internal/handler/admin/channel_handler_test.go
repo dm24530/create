@@ -46,6 +46,7 @@ func TestChannelToResponse_FullChannel(t *testing.T) {
 				ID:              10,
 				Platform:        "openai",
 				Models:          []string{"gpt-4"},
+				Description:     "面向开发者的展示说明",
 				BillingMode:     service.BillingModeToken,
 				InputPrice:      float64Ptr(0.01),
 				OutputPrice:     float64Ptr(0.03),
@@ -81,6 +82,7 @@ func TestChannelToResponse_FullChannel(t *testing.T) {
 	require.Equal(t, int64(10), p.ID)
 	require.Equal(t, "openai", p.Platform)
 	require.Equal(t, []string{"gpt-4"}, p.Models)
+	require.Equal(t, "面向开发者的展示说明", p.Description)
 	require.Equal(t, "token", p.BillingMode)
 	require.Equal(t, float64Ptr(0.01), p.InputPrice)
 	require.Equal(t, float64Ptr(0.03), p.OutputPrice)
@@ -512,9 +514,10 @@ func TestPricingToResponse_TimePricingNil(t *testing.T) {
 
 func TestPricingRequestAndResponse_ReasoningEffortMultipliers(t *testing.T) {
 	var req channelModelPricingRequest
-	require.NoError(t, json.Unmarshal([]byte(`{"models":["custom-model"],"reasoning_effort_multipliers":{"none":0.5,"high":1.5,"max":3}}`), &req))
+	require.NoError(t, json.Unmarshal([]byte(`{"models":["custom-model"],"description":"自定义展示说明","reasoning_effort_multipliers":{"none":0.5,"high":1.5,"max":3}}`), &req))
 	pricing := pricingRequestToService([]channelModelPricingRequest{req}, true)
 	got := pricingToResponse(&pricing[0])
+	require.Equal(t, "自定义展示说明", got.Description)
 	require.Equal(t, map[string]float64{"none": 0.5, "high": 1.5, "max": 3}, got.ReasoningEffortMultipliers)
 	data, err := json.Marshal(got)
 	require.NoError(t, err)

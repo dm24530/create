@@ -724,6 +724,38 @@ export default {
         perVideo: 'Video generation',
         standard: 'Standard'
     },
+    videoPricing: {
+      durationLabel: 'Available duration',
+      resolution: 'Resolution',
+      billing: 'Billing',
+      duration: 'Supported duration',
+      price: 'Your price',
+      perSecond: 'Per second',
+      perRequest: 'Per request',
+      capabilities: 'Capabilities',
+      referenceLimits: 'Reference inputs',
+      referenceSamePrice: 'Reference inputs do not change the unit price. For per-second billing, total price = unit price × generated duration.',
+      referenceImageLimit: 'Up to {count} reference images',
+      referenceVideoLimit: 'Up to {count} reference videos',
+      referenceAudioLimit: 'Up to {count} reference audios',
+      noReferences: 'No reference inputs',
+      capabilityLabels: {
+        textToVideo: 'Text to video',
+        imageToVideo: 'Image to video',
+        referenceImages: 'Reference images',
+        referenceVideo: 'Reference video',
+        videoEdit: 'Edit/extend video',
+        referenceAudio: 'Reference audio'
+      },
+      descriptions: {
+        generic: 'General-purpose video generation model with text-to-video support. Available resolutions, durations, and reference limits follow the options exposed in Video Studio.',
+        seedance: 'Seedance video model for text-to-video, image-to-video, and multi-reference creation. Available resolutions, durations, and audio support depend on the current group configuration.',
+        muse: 'Muse video model for fast short-video generation with reference images. Available duration follows the selected model tier.',
+        grok: 'Grok video model supporting text-to-video, image-to-video, and reference-based creation, including editing and extending existing video.',
+        wan: 'Wan video model supporting longer video generation and image-to-video. Some models accept reference images and videos.',
+        minimax: 'MiniMax video model supporting text-to-video, image-to-video, and multiple references for character and scene consistency.'
+      }
+    },
     nav: {
       login: 'Sign In',
       backToDashboard: 'Back to Console'

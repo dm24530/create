@@ -774,4 +774,12 @@ describe('PlazaModelPricingTable 分时计价', () => {
     expect(wrapper.findAll('tbody tr')).toHaveLength(1)
     expect(wrapper.find('[title*="modelPlaza.table.timePricingRowHint"]').exists()).toBe(false)
   })
+  it('shows the administrator-provided model description', () => {
+    const wrapper = mountTable([tokenModel({ description: '适合复杂推理与长文本任务' })], 1)
+
+    expect(wrapper.text()).toContain('适合复杂推理与长文本任务')
+    const description = wrapper.findAll('p').find((item) => item.text().includes('适合复杂推理与长文本任务'))
+    expect(description?.classes()).toContain('max-h-16')
+    expect(description?.classes()).toContain('overflow-y-auto')
+  })
 })

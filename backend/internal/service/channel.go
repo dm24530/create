@@ -88,26 +88,89 @@ type AccountStatsPricingRule struct {
 
 // ChannelModelPricing 渠道模型定价条目
 type ChannelModelPricing struct {
-	ID                         int64               `json:"id,omitempty"`
-	ChannelID                  int64               `json:"channel_id,omitempty"`
-	Platform                   string              `json:"platform"` // 所属平台（anthropic/openai/gemini/...）
-	Models                     []string            `json:"models"`
-	BillingMode                BillingMode         `json:"billing_mode"`
-	InputPrice                 *float64            `json:"input_price"`
-	OutputPrice                *float64            `json:"output_price"`
-	CacheWritePrice            *float64            `json:"cache_write_price"`
-	CacheWrite1hPrice          *float64            `json:"cache_write_1h_price"`
-	CacheReadPrice             *float64            `json:"cache_read_price"`
-	FastMultiplier             *float64            `json:"fast_multiplier"`
-	FlexMultiplier             *float64            `json:"flex_multiplier"`
-	ReasoningEffortMultipliers map[string]float64  `json:"reasoning_effort_multipliers,omitempty"`
-	ImageInputPrice            *float64            `json:"image_input_price"`
-	ImageOutputPrice           *float64            `json:"image_output_price"`
-	PerRequestPrice            *float64            `json:"per_request_price"`
-	Intervals                  []PricingInterval   `json:"intervals"`
-	TimePricing                *ChannelTimePricing `json:"time_pricing,omitempty"`
-	CreatedAt                  time.Time           `json:"created_at,omitempty"`
-	UpdatedAt                  time.Time           `json:"updated_at,omitempty"`
+	ID                         int64                         `json:"id,omitempty"`
+	ChannelID                  int64                         `json:"channel_id,omitempty"`
+	Platform                   string                        `json:"platform"` // 所属平台（anthropic/openai/gemini/...）
+	Models                     []string                      `json:"models"`
+	Description                string                        `json:"description,omitempty"`
+	VideoCapabilities          VideoModelCapabilitiesByModel `json:"video_capabilities,omitempty"`
+	BillingMode                BillingMode                   `json:"billing_mode"`
+	InputPrice                 *float64                      `json:"input_price"`
+	OutputPrice                *float64                      `json:"output_price"`
+	CacheWritePrice            *float64                      `json:"cache_write_price"`
+	CacheWrite1hPrice          *float64                      `json:"cache_write_1h_price"`
+	CacheReadPrice             *float64                      `json:"cache_read_price"`
+	FastMultiplier             *float64                      `json:"fast_multiplier"`
+	FlexMultiplier             *float64                      `json:"flex_multiplier"`
+	ReasoningEffortMultipliers map[string]float64            `json:"reasoning_effort_multipliers,omitempty"`
+	ImageInputPrice            *float64                      `json:"image_input_price"`
+	ImageOutputPrice           *float64                      `json:"image_output_price"`
+	PerRequestPrice            *float64                      `json:"per_request_price"`
+	Intervals                  []PricingInterval             `json:"intervals"`
+	TimePricing                *ChannelTimePricing           `json:"time_pricing,omitempty"`
+	CreatedAt                  time.Time                     `json:"created_at,omitempty"`
+	UpdatedAt                  time.Time                     `json:"updated_at,omitempty"`
+}
+
+// VideoModelCapabilities is data-driven video model metadata. It is intentionally
+// protocol-oriented rather than model-name-oriented so adding or renaming a model
+// only requires an admin configuration change.
+type VideoModelCapabilities struct {
+	// Protocol selects the request/polling adapter, not a concrete model.
+	// Supported values: seedance, seedance_video, muse_video, video_tasks, grok.
+	Protocol                  string                    `json:"protocol"`
+	MinDuration               int                       `json:"min_duration"`
+	MaxDuration               int                       `json:"max_duration"`
+	DefaultDuration           int                       `json:"default_duration"`
+	MaxImages                 int                       `json:"max_images,omitempty"`
+	ReferenceImageFreeCount   int                       `json:"reference_image_free_count,omitempty"`
+	ReferenceImageExtraPrice  float64                   `json:"reference_image_extra_price,omitempty"`
+	ReferenceVideoBillingMode string                    `json:"reference_video_billing_mode,omitempty"`
+	DurationOptions           []int                     `json:"duration_options,omitempty"`
+	Resolutions               []string                  `json:"resolutions,omitempty"`
+	AspectRatios              []string                  `json:"aspect_ratios,omitempty"`
+	Slots                     VideoReferenceSlots       `json:"slots"`
+	SupportsGenerateAudio     bool                      `json:"supports_generate_audio,omitempty"`
+	OutputsAudio              bool                      `json:"outputs_audio,omitempty"`
+	Modes                     []string                  `json:"modes,omitempty"`
+	FrameReferenceExclusive   bool                      `json:"frame_reference_exclusive,omitempty"`
+	FileLimits                *VideoReferenceFileLimits `json:"file_limits,omitempty"`
+}
+
+type VideoReferenceSlots struct {
+	FirstFrame     int `json:"first_frame"`
+	LastFrame      int `json:"last_frame"`
+	ReferenceImage int `json:"reference_image"`
+	ReferenceVideo int `json:"reference_video"`
+	ReferenceAudio int `json:"reference_audio"`
+}
+
+type VideoReferenceFileLimits struct {
+	ImageBytes int64 `json:"image_bytes,omitempty"`
+	VideoBytes int64 `json:"video_bytes,omitempty"`
+	AudioBytes int64 `json:"audio_bytes,omitempty"`
+	TotalBytes int64 `json:"total_bytes,omitempty"`
+}
+
+// VideoModelCapabilitiesByModel keeps capability metadata per concrete model so a
+// pricing row may safely contain multiple models with different protocols/quota.
+type VideoModelCapabilitiesByModel map[string]VideoModelCapabilities
+
+// VideoCapabilitiesFor returns the exact model capability, case-insensitively.
+func (m VideoModelCapabilitiesByModel) VideoCapabilitiesFor(model string) *VideoModelCapabilities {
+	if len(m) == 0 {
+		return nil
+	}
+	if capabilities, ok := m[model]; ok {
+		return &capabilities
+	}
+	for name, capabilities := range m {
+		if strings.EqualFold(name, model) {
+			copy := capabilities
+			return &copy
+		}
+	}
+	return nil
 }
 
 // ChannelTimePricing 渠道模型定价的分时倍率配置。
@@ -230,6 +293,21 @@ func (p ChannelModelPricing) Clone() ChannelModelPricing {
 			cp.TimePricing.Periods = append([]ChannelTimePricingPeriod(nil), p.TimePricing.Periods...)
 		}
 	}
+	if p.VideoCapabilities != nil {
+		cp.VideoCapabilities = make(VideoModelCapabilitiesByModel, len(p.VideoCapabilities))
+		for model, capabilities := range p.VideoCapabilities {
+			capabilityCopy := capabilities
+			capabilityCopy.DurationOptions = append([]int(nil), capabilities.DurationOptions...)
+			capabilityCopy.Resolutions = append([]string(nil), capabilities.Resolutions...)
+			capabilityCopy.AspectRatios = append([]string(nil), capabilities.AspectRatios...)
+			capabilityCopy.Modes = append([]string(nil), capabilities.Modes...)
+			if capabilities.FileLimits != nil {
+				fileLimits := *capabilities.FileLimits
+				capabilityCopy.FileLimits = &fileLimits
+			}
+			cp.VideoCapabilities[model] = capabilityCopy
+		}
+	}
 	return cp
 }
 
@@ -344,7 +422,7 @@ func ValidateIntervals(intervals []PricingInterval, mode BillingMode) error {
 	})
 
 	for i := range sorted {
-		if err := validateSingleInterval(&sorted[i], i); err != nil {
+		if err := validateSingleInterval(&sorted[i], i, mode); err != nil {
 			return err
 		}
 	}
@@ -357,7 +435,7 @@ func ValidateIntervals(intervals []PricingInterval, mode BillingMode) error {
 }
 
 // validateSingleInterval 校验单个区间的字段合法性
-func validateSingleInterval(iv *PricingInterval, idx int) error {
+func validateSingleInterval(iv *PricingInterval, idx int, mode BillingMode) error {
 	if iv.MinTokens < 0 {
 		return fmt.Errorf("interval #%d: min_tokens (%d) must be >= 0", idx+1, iv.MinTokens)
 	}
@@ -365,7 +443,10 @@ func validateSingleInterval(iv *PricingInterval, idx int) error {
 		if *iv.MaxTokens <= 0 {
 			return fmt.Errorf("interval #%d: max_tokens (%d) must be > 0", idx+1, *iv.MaxTokens)
 		}
-		if *iv.MaxTokens <= iv.MinTokens {
+		// Video tiers are selected by resolution label and billed per second.
+		// Imported upstream rows often retain a placeholder min=max token value;
+		// those values are not a range and must not block saving the tier price.
+		if mode != BillingModeVideo && *iv.MaxTokens <= iv.MinTokens {
 			return fmt.Errorf("interval #%d: max_tokens (%d) must be > min_tokens (%d)",
 				idx+1, *iv.MaxTokens, iv.MinTokens)
 		}

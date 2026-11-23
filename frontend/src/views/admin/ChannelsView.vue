@@ -326,6 +326,7 @@
                     :platform="entry.platform || 'composite'"
                     enable-time-pricing
                     enable-tier-multipliers
+                    enable-display-description
                     @update="updateCompositePricingEntry(index, $event)"
                     @remove="form.composite_model_pricing.splice(index, 1)"
                   />
@@ -540,6 +541,7 @@
                   :platform="section.platform"
                   enable-time-pricing
                   enable-tier-multipliers
+                  enable-display-description
                   @update="updatePricingEntry(sIdx, idx, $event)"
                   @remove="removePricingEntry(sIdx, idx)"
                 />
@@ -1003,6 +1005,8 @@ function createPricingEntry(models: string[] = [], platform?: string): PricingFo
   return {
     ...(platform ? { platform } : {}),
     models: [...models],
+    description: '',
+    video_capabilities: null,
     billing_mode: 'token',
     input_price: null,
     output_price: null,
@@ -1216,6 +1220,7 @@ function accountStatsRulesToAPI(): AccountStatsPricingRule[] {
           .map(p => ({
             platform: section.platform,
             models: p.models,
+            description: p.description || '',
             billing_mode: p.billing_mode,
             input_price: mTokToPerToken(p.input_price),
             output_price: mTokToPerToken(p.output_price),
@@ -1240,6 +1245,8 @@ function pricingFormToAPI(entry: PricingFormEntry, platform: string): ChannelMod
   return {
     platform,
     models: entry.models,
+    description: (entry.description || '').trim(),
+    video_capabilities: entry.video_capabilities || null,
     billing_mode: entry.billing_mode,
     input_price: mTokToPerToken(entry.input_price),
     output_price: mTokToPerToken(entry.output_price),
@@ -1339,6 +1346,13 @@ function channelPricingToForm(p: ChannelModelPricing): PricingFormEntry {
   return {
     platform: p.platform,
     models: p.models || [],
+    description: p.description || '',
+    video_capabilities: p.video_capabilities
+      ? Object.fromEntries(Object.entries(p.video_capabilities).map(([model, capabilities]) => [
+          model,
+          { ...capabilities, slots: { ...capabilities.slots } },
+        ]))
+      : null,
     billing_mode: p.billing_mode,
     input_price: perTokenToMTok(p.input_price),
     output_price: perTokenToMTok(p.output_price),

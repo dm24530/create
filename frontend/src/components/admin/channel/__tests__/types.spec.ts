@@ -169,6 +169,15 @@ describe('validateIntervals', () => {
       expect(validateIntervals(intervals, 'image', t)).toContain('maxGreaterThanMin')
     })
   })
+
+  describe('video mode', () => {
+    it('allows label-based resolution tiers with equal token bounds', () => {
+      const intervals: IntervalFormEntry[] = [
+        makeInterval({ tier_label: '720p', min_tokens: 10, max_tokens: 10, per_request_price: 0.06 }),
+      ]
+      expect(validateIntervals(intervals, 'video', t)).toBeNull()
+    })
+  })
 })
 
 describe('time pricing', () => {

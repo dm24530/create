@@ -593,7 +593,7 @@
         </div>
         <p v-if="referenceDialogError" class="reference-dialog__error">{{ referenceDialogError }}</p>
         <p class="reference-dialog__hint">{{ referenceLimitHint }}</p>
-        <p class="reference-dialog__hint">参考素材均可选，合计不超过 {{ MAX_REFERENCE_TOTAL_MB }}MB。</p>
+        <p class="reference-dialog__hint">参考素材均可选，合计不超过 {{ formatMegabytes(referenceTotalLimit()) }}。</p>
       </div>
     </BaseDialog>
 
@@ -688,6 +688,7 @@ import BaseDialog from '@/components/common/BaseDialog.vue'
 import Toggle from '@/components/common/Toggle.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { authAPI } from '@/api'
+import { getAvailableModels, type VideoModelCapabilities } from '@/api/channels'
 import type { ApiKey } from '@/types'
 import { useClipboard } from '@/composables/useClipboard'
 import { usePromptResize } from '@/composables/usePromptResize'
@@ -699,7 +700,6 @@ import { useAuthStore } from '@/stores/auth'
 import ImageStudioSelect from '../image-studio/ImageStudioSelect.vue'
 import {
   VIDEO_ASPECT_RATIOS,
-  VIDEO_RESOLUTIONS,
   cancelVideoTask,
   createVideoTask,
   fetchVideoPlayableUrl,
@@ -773,7 +773,6 @@ const MAX_VIDEO_BYTES = 20 * 1024 * 1024
 const MAX_AUDIO_BYTES = 8 * 1024 * 1024
 const MAX_REFERENCE_TOTAL_BYTES = 30 * 1024 * 1024
 const MAX_PROMPT_CHARS = 5000
-const MAX_REFERENCE_TOTAL_MB = MAX_REFERENCE_TOTAL_BYTES / (1024 * 1024)
 
 const ACCEPTED_TYPES: Record<'image' | 'video' | 'audio', string[]> = {
   image: ['image/png', 'image/jpeg', 'image/webp'],
@@ -854,6 +853,7 @@ const customModels = ref<string[]>([])
 const customLoadingModels = ref(false)
 const videoModel = ref(typeof storedPreferences.videoModel === 'string' ? storedPreferences.videoModel : '')
 const videoModels = ref<string[]>([])
+const videoCapabilitiesByModel = ref<Record<string, VideoModelCapabilities>>({})
 const loadingModels = ref(false)
 const refreshing = ref(false)
 const loadingResults = ref(false)
@@ -970,22 +970,23 @@ const providerHint = computed(() => ({
   baseUrl: effectiveBaseUrl.value,
   platform: providerMode.value === 'platform' ? selectedKey.value?.group?.platform : '',
 }))
-const effectiveProvider = computed(() => resolveVideoProvider(effectiveModel.value, providerHint.value))
-const videoModelProfile = computed(() => getVideoModelProfile(effectiveModel.value, effectiveProvider.value))
+const effectiveVideoCapabilities = computed(() =>
+  providerMode.value === 'platform'
+    ? videoCapabilitiesByModel.value[effectiveModel.value.trim().toLowerCase()] || null
+    : null,
+)
+const effectiveProvider = computed(() =>
+  resolveVideoProvider(effectiveModel.value, providerHint.value, effectiveVideoCapabilities.value),
+)
+const videoModelProfile = computed(() =>
+  getVideoModelProfile(effectiveModel.value, effectiveProvider.value, effectiveVideoCapabilities.value),
+)
 const MIN_DURATION = computed(() => videoModelProfile.value.minDuration)
 const MAX_DURATION = computed(() => videoModelProfile.value.maxDuration)
 const maxImages = computed(() => videoModelProfile.value.maxImages)
 const maxVideos = computed(() => videoModelProfile.value.maxVideos)
-const maxAudios = computed(() =>
-  (effectiveProvider.value === 'seedance' || effectiveProvider.value === 'seedance_video' || effectiveProvider.value === 'video_tasks') &&
-    videoModelProfile.value.supportsAudio
-    ? 1
-    : 0,
-)
-const supportsGenerateAudioToggle = computed(() =>
-  (effectiveProvider.value === 'seedance' || effectiveProvider.value === 'seedance_video') &&
-    videoModelProfile.value.supportsAudio,
-)
+const maxAudios = computed(() => videoModelProfile.value.maxAudios)
+const supportsGenerateAudioToggle = computed(() => videoModelProfile.value.supportsAudio)
 const durationPresetOptions = computed(() => {
   const allowed = videoModelProfile.value.durationOptions
   const defaultPresets = [5, 8, 10, 15, 30]
@@ -1029,19 +1030,16 @@ watch(
   { immediate: true },
 )
 
+const ratioMeta = new Map<string, (typeof VIDEO_ASPECT_RATIOS)[number]>(VIDEO_ASPECT_RATIOS.map((item) => [item.value, item]))
 const aspectRatioOptions = computed(() =>
-  VIDEO_ASPECT_RATIOS
-    .filter((item) => videoModelProfile.value.aspectRatios.includes(item.value))
-    .map((item) => ({
-    value: item.value,
-    label: videoSizeLabel(item.value, resolution.value),
-    preview: item.css,
-    })),
+  videoModelProfile.value.aspectRatios.map((value) => ({
+    value,
+    label: videoSizeLabel(value, resolution.value),
+    preview: ratioMeta.get(value)?.css || value.replace(':', ' / '),
+  })),
 )
 const resolutionOptions = computed(() =>
-  VIDEO_RESOLUTIONS
-    .filter((item) => videoModelProfile.value.resolutions.includes(item))
-    .map((item) => ({ value: item, label: item.toUpperCase() })),
+  videoModelProfile.value.resolutions.map((value) => ({ value, label: value.toUpperCase() })),
 )
 
 const allReferenceKindOptions = [
@@ -1063,9 +1061,9 @@ const allImageRoleOptions = [
 ]
 const imageRoleOptions = computed(() =>
   allImageRoleOptions.filter((option) => {
-    if (option.value === 'first_frame') return videoModelProfile.value.modes.includes('image-to-video')
-    if (option.value === 'last_frame') return videoModelProfile.value.modes.includes('first-last-frame')
-    return videoModelProfile.value.modes.includes('reference-images')
+    if (option.value === 'first_frame') return videoModelProfile.value.slots.first_frame > 0
+    if (option.value === 'last_frame') return videoModelProfile.value.slots.last_frame > 0
+    return videoModelProfile.value.slots.reference_image > 0
   }),
 )
 const videoRoleOptions = computed(() =>
@@ -1106,8 +1104,10 @@ const referenceLimitHint = computed(() => {
   if (referenceKind.value === 'image') {
     return `参考图最多 ${maxImages.value} 张，本地图片会自动压缩，压缩后每张不超过 1MB。`
   }
-  if (referenceKind.value === 'video') return `参考视频最多 ${maxVideos.value} 个，不超过 20MB，可上传本地视频或粘贴链接。`
-  return `参考音频最多 ${maxAudios.value} 个，不超过 8MB，可上传本地音频或粘贴链接。`
+  if (referenceKind.value === 'video') {
+    return `参考视频最多 ${maxVideos.value} 个，不超过 ${formatMegabytes(referenceSizeLimit('video'))}，可上传本地视频或粘贴链接。`
+  }
+  return `参考音频最多 ${maxAudios.value} 个，不超过 ${formatMegabytes(referenceSizeLimit('audio'))}，可上传本地音频或粘贴链接。`
 })
 
 function resolveEndpoint(configured: string) {
@@ -1485,8 +1485,17 @@ async function loadModels() {
 
   try {
     const names = await fetchModelNames(`${endpoint}/models`, key.key)
+    let capabilities: Record<string, VideoModelCapabilities> = {}
+    try {
+      capabilities = await loadVideoCapabilities(key.group?.id ?? key.group_id ?? undefined)
+    } catch {
+      // Capability metadata is an enhancement; the model list must still load.
+    }
     if (requestId !== modelRequestId) return
-    videoModels.value = deduplicateModelNames(names.filter(isVideoModel))
+    videoCapabilitiesByModel.value = capabilities
+    videoModels.value = deduplicateModelNames(
+      names.filter((name) => Boolean(capabilities[name.trim().toLowerCase()]) || isVideoModel(name)),
+    )
     videoModel.value = videoModels.value.includes(preferredModel)
       ? preferredModel
       : videoModels.value[0] || ''
@@ -1553,6 +1562,23 @@ async function loadArchivedResults() {
   }
 }
 
+async function loadVideoCapabilities(groupId?: number): Promise<Record<string, VideoModelCapabilities>> {
+  if (!groupId) return {}
+  const channels = await getAvailableModels()
+  const result: Record<string, VideoModelCapabilities> = {}
+  for (const channel of channels) {
+    for (const section of channel.platforms || []) {
+      if (!(section.groups || []).some((group) => group.id === groupId)) continue
+      for (const model of section.supported_models || []) {
+        if (!model.video_capabilities) continue
+        const key = model.name.trim().toLowerCase()
+        if (key && !result[key]) result[key] = model.video_capabilities
+      }
+    }
+  }
+  return result
+}
+
 // 自定义渠道：用用户自己的地址与密钥拉一次模型列表，拉不到也不阻断手写模型名。
 async function loadCustomModels() {
   const baseUrl = normalizeBaseUrl(customBaseUrl.value)
@@ -1562,6 +1588,7 @@ async function loadCustomModels() {
     return
   }
   customLoadingModels.value = true
+  videoCapabilitiesByModel.value = {}
   try {
     const names = deduplicateModelNames(await fetchModelNames(`${baseUrl}/models`, apiKey))
     const videoOnly = names.filter(isVideoModel)
@@ -1668,12 +1695,36 @@ function referenceTotalBytes(): number {
 }
 
 function referenceSizeLimit(kind: 'image' | 'video' | 'audio'): number {
-  if (kind === 'image') return MAX_IMAGE_BYTES
-  return kind === 'video' ? MAX_VIDEO_BYTES : MAX_AUDIO_BYTES
+  const limits = videoModelProfile.value.fileLimits
+  if (kind === 'image') return limits?.imageBytes || MAX_IMAGE_BYTES
+  if (kind === 'video') return limits?.videoBytes || MAX_VIDEO_BYTES
+  return limits?.audioBytes || MAX_AUDIO_BYTES
+}
+
+function referenceTotalLimit(): number {
+  return videoModelProfile.value.fileLimits?.totalBytes || MAX_REFERENCE_TOTAL_BYTES
+}
+
+function formatMegabytes(bytes: number): string {
+  return `${Math.round((bytes / (1024 * 1024)) * 10) / 10}MB`
 }
 
 function referenceSizeLimitLabel(kind: 'image' | 'video' | 'audio'): string {
-  return `${referenceSizeLimit(kind) / (1024 * 1024)}MB`
+  return formatMegabytes(referenceSizeLimit(kind))
+}
+
+function referenceRoleLimit(asset: Omit<VideoReferenceAsset, 'id'>): number {
+  if (asset.kind !== 'image') return Number.POSITIVE_INFINITY
+  if (asset.role === 'first_frame') return videoModelProfile.value.slots.first_frame
+  if (asset.role === 'last_frame') return videoModelProfile.value.slots.last_frame
+  return videoModelProfile.value.slots.reference_image
+}
+
+function referenceRoleCount(asset: Omit<VideoReferenceAsset, 'id'>): number {
+  if (asset.kind !== 'image') return 0
+  return references.value.filter((item) =>
+    item.kind === 'image' && (item.role || 'reference_image') === (asset.role || 'reference_image'),
+  ).length
 }
 
 function addReference(asset: Omit<VideoReferenceAsset, 'id'>): boolean {
@@ -1689,12 +1740,16 @@ function addReference(asset: Omit<VideoReferenceAsset, 'id'>): boolean {
     referenceDialogError.value = `参考音频最多 ${maxAudios.value} 个。`
     return false
   }
+  if (referenceRoleCount(asset) >= referenceRoleLimit(asset)) {
+    referenceDialogError.value = `${asset.role === 'first_frame' ? '首帧' : asset.role === 'last_frame' ? '尾帧' : '参考图'}数量已达到上限。`
+    return false
+  }
   if (asset.sizeBytes && asset.sizeBytes > referenceSizeLimit(asset.kind)) {
     referenceDialogError.value = `单个${kindName(asset.kind)}不能超过 ${referenceSizeLimitLabel(asset.kind)}。`
     return false
   }
-  if (referenceTotalBytes() + (asset.sizeBytes || 0) > MAX_REFERENCE_TOTAL_BYTES) {
-    referenceDialogError.value = `参考素材合计不能超过 ${MAX_REFERENCE_TOTAL_MB}MB。`
+  if (referenceTotalBytes() + (asset.sizeBytes || 0) > referenceTotalLimit()) {
+    referenceDialogError.value = `参考素材合计不能超过 ${formatMegabytes(referenceTotalLimit())}。`
     return false
   }
   references.value.push({ ...asset, id: nextReferenceId++ })
@@ -1846,9 +1901,21 @@ function applyVideoModelConstraints() {
       }
       return { ...asset, role }
     })
-    .filter((asset) => asset.kind !== 'video' || profile.maxVideos > 0)
-    .filter((asset) => asset.kind !== 'audio' || maxAudios.value > 0)
-    .slice(0, profile.maxImages + profile.maxVideos + maxAudios.value)
+    .filter((() => {
+      let videoCount = 0
+      let audioCount = 0
+      return (asset: VideoReferenceAsset) => {
+        if (asset.kind === 'video') {
+          if (videoCount >= profile.maxVideos) return false
+          videoCount += 1
+        }
+        if (asset.kind === 'audio') {
+          if (audioCount >= maxAudios.value) return false
+          audioCount += 1
+        }
+        return true
+      }
+    })())
 
   if (!supportsGenerateAudioToggle.value) generateAudio.value = false
   if (!referenceKindOptions.value.some((option) => option.value === referenceKind.value)) {
@@ -1921,7 +1988,7 @@ async function generate() {
   const provider = resolveVideoProvider(model, {
     baseUrl,
     platform: providerMode.value === 'platform' ? selectedKey.value?.group?.platform : '',
-  })
+  }, effectiveVideoCapabilities.value)
   const platformKey = providerMode.value === 'platform' ? selectedKey.value : null
   const apiKeyRef = effectiveApiKey.value
   const count = clampTaskCount(Number(taskCount.value))
@@ -2035,7 +2102,7 @@ async function runTask(
         images: (submission?.references || []).filter((asset) => asset.kind === 'image'),
         videos: (submission?.references || []).filter((asset) => asset.kind === 'video'),
         audios: (submission?.references || []).filter((asset) => asset.kind === 'audio'),
-      }, task.provider)
+      }, task.provider, videoCapabilitiesByModel.value[task.model.trim().toLowerCase()] || null)
       task.requestId = created.requestId
       task.provider = created.provider
       task.sourceId = archiveSourceID(task.provider, task.requestId, task.localId)
@@ -2282,7 +2349,12 @@ watch([selectedKeyId, apiBaseUrl, () => selectedKey.value?.key], () => {
   void loadModels()
 })
 
-watch(videoModelProfile, applyVideoModelConstraints, { immediate: true })
+watch(videoModelProfile, () => {
+  // Platform models are capability-driven. Do not clamp stored preferences against
+  // the fallback profile before the model's capabilities have arrived.
+  if (providerMode.value === 'platform' && videoModel.value && !effectiveVideoCapabilities.value) return
+  applyVideoModelConstraints()
+}, { immediate: true })
 
 watch(selectedKeyId, (keyId) => {
   writePreferredKeyId(keyId)

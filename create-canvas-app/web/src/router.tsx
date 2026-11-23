@@ -15,6 +15,7 @@ const CanvasProjectPage = lazy(() => import("@/pages/canvas/project"));
 const ConfigPage = lazy(() => import("@/pages/config"));
 const HomePage = lazy(() => import("@/pages/home"));
 const NotFound = lazy(() => import("@/pages/not-found"));
+const ProductDetailPage = lazy(() => import("@/pages/product-detail"));
 const PromptsPage = lazy(() => import("@/pages/prompts"));
 
 function RouteLoading() {
@@ -45,6 +46,7 @@ export const router = createBrowserRouter([
                 : { path: "/", element: <HomePage /> },
             { path: "/image" },
             { path: "/video" },
+            { path: "/product-detail", element: <ProductDetailPage /> },
             { path: "/assets", element: <AssetsPage /> },
             { path: "/prompts", element: <PromptsPage /> },
             { path: "/canvas", element: <CanvasPage /> },
