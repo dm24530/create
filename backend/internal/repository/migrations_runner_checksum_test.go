@@ -179,22 +179,22 @@ func TestIsMigrationChecksumCompatible(t *testing.T) {
 		require.False(t, ok)
 	})
 
-	t.Run("272生产变体checksum可兼容", func(t *testing.T) {
-		ok := isMigrationChecksumCompatible(
-			"272_sync_video_catalog_and_merge_groups.sql",
-			"98a82fd11005a4a16ae47c848a3f76e8ed665e91561ae4fa4af639caacd0e9b1",
-			"d9781e2cd93bcd374ec1d01ebc99e2aa3e22dd5903e4def644fd0918e505b0ec",
-		)
-		require.True(t, ok)
-	})
-
-	t.Run("272未知checksum仍不兼容", func(t *testing.T) {
-		ok := isMigrationChecksumCompatible(
-			"272_sync_video_catalog_and_merge_groups.sql",
-			"98a82fd11005a4a16ae47c848a3f76e8ed665e91561ae4fa4af639caacd0e9b1",
-			"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
-		)
-		require.False(t, ok)
-	})
+	productionVariants := map[string][2]string{
+		"272_sync_video_catalog_and_merge_groups.sql": {"98a82fd11005a4a16ae47c848a3f76e8ed665e91561ae4fa4af639caacd0e9b1", "d9781e2cd93bcd374ec1d01ebc99e2aa3e22dd5903e4def644fd0918e505b0ec"},
+		"273_apply_momo_video_prices.sql":             {"b6a6f46ea945c58e5d84fb02efd7822b7b37a19e28995240a74a373d8c85f0cf", "432693a4f43a641a11824a59f0f37a951bfa4ff6b4f9d58bf44c344da1d3611a"},
+		"274_chinese_video_descriptions.sql":          {"10703d7ed1b02d524884052cb256203e239cbd164d0b0b0c4ad6cb35f04b4067", "23614a7e6b97ca372f3bba8151a544be63190d181e0e466f9eb24932fed05936"},
+		"275_apply_video_price_margin.sql":            {"3b22f3a57c1a725f05d0de0607fbe423dfb0244ebad452fd0bf656865b53838b", "088b9fcb426736783597c9a28f52a97bc7e983737fa714c7547f12ca9c62d40f"},
+		"276_channel_video_capabilities.sql":          {"5d2bbf13f35453c6770b4082da7b699702d68abc92a46ae2299c364235cbea44", "3be8ff3d88815733e20efa29d54d727c6b74d9e26cb05d284bf162825c8c31ab"},
+	}
+	for filename, checksums := range productionVariants {
+		t.Run(filename+"生产变体checksum可兼容", func(t *testing.T) {
+			ok := isMigrationChecksumCompatible(filename, checksums[0], checksums[1])
+			require.True(t, ok)
+		})
+		t.Run(filename+"未知checksum仍不兼容", func(t *testing.T) {
+			ok := isMigrationChecksumCompatible(filename, checksums[0], "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
+			require.False(t, ok)
+		})
+	}
 
 }

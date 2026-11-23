@@ -105,10 +105,14 @@ var migrationChecksumCompatibilityRules = map[string]migrationChecksumCompatibil
 	// databases keep the historical hash while new databases use the current file.
 	"258_canvas_usage_rollback_compatibility.sql": newMigrationChecksumCompatibilityRule("a13f577a19344693e4f2e5d842da11107ecfd4f98b1cef939714bd48c2d944a5", "931a6c54a4e2338fdf5868436df0eb0e760fdb051988ad8d193942862f09716a"),
 	"263_usage_log_image_generation_timing.sql":   newMigrationChecksumCompatibilityRule("1333bdd28dea5e90e688753c9ff410548a10e368ea2d81c6fa279ee1eda5acec", "71edd1bf293eaa2f0cbba562f35f0d03b617dd72762652f9d5830b6da4c50620"),
-	// 272 was already applied by the 0.2.72 production image from an earlier
-	// catalog seed. Accept that exact checksum for the committed immutable
-	// migration so upgraded databases can start.
+	// 272-276 were already applied by the 0.2.72 production image from an
+	// earlier pre-release catalog variant. Each rule accepts only that exact
+	// historical checksum for the committed immutable file.
 	"272_sync_video_catalog_and_merge_groups.sql": newMigrationChecksumCompatibilityRule("d9781e2cd93bcd374ec1d01ebc99e2aa3e22dd5903e4def644fd0918e505b0ec", "98a82fd11005a4a16ae47c848a3f76e8ed665e91561ae4fa4af639caacd0e9b1"),
+	"273_apply_momo_video_prices.sql":             newMigrationChecksumCompatibilityRule("432693a4f43a641a11824a59f0f37a951bfa4ff6b4f9d58bf44c344da1d3611a", "b6a6f46ea945c58e5d84fb02efd7822b7b37a19e28995240a74a373d8c85f0cf"),
+	"274_chinese_video_descriptions.sql":          newMigrationChecksumCompatibilityRule("23614a7e6b97ca372f3bba8151a544be63190d181e0e466f9eb24932fed05936", "10703d7ed1b02d524884052cb256203e239cbd164d0b0b0c4ad6cb35f04b4067"),
+	"275_apply_video_price_margin.sql":            newMigrationChecksumCompatibilityRule("088b9fcb426736783597c9a28f52a97bc7e983737fa714c7547f12ca9c62d40f", "3b22f3a57c1a725f05d0de0607fbe423dfb0244ebad452fd0bf656865b53838b"),
+	"276_channel_video_capabilities.sql":          newMigrationChecksumCompatibilityRule("3be8ff3d88815733e20efa29d54d727c6b74d9e26cb05d284bf162825c8c31ab", "5d2bbf13f35453c6770b4082da7b699702d68abc92a46ae2299c364235cbea44"),
 }
 
 // ApplyMigrations 将嵌入的 SQL 迁移文件应用到指定的数据库。
