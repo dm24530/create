@@ -142,7 +142,7 @@ function createDesktopUpdateService(options) {
     onStateChange,
     setIntervalFn = setInterval,
     clearIntervalFn = clearInterval,
-    intervalMs = 30 * 60 * 1000,
+    intervalMs = 4 * 60 * 60 * 1000,
     platform = process.platform,
     arch = process.arch,
   } = options;
@@ -322,7 +322,7 @@ function createDesktopUpdateService(options) {
     if (state.status !== UPDATE_STATUS.DOWNLOADED) throw new Error("The update has not finished downloading");
     setImmediate(() => {
       try {
-        autoUpdater.quitAndInstall(true, true);
+        autoUpdater.quitAndInstall(false, true);
       } catch (error) {
         eventState(UPDATE_STATUS.ERROR, {
           error: error instanceof Error ? error.message : String(error),

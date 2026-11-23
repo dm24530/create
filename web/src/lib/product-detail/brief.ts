@@ -80,16 +80,18 @@ export function mergeProductBrief(brief: ProductBrief, patch: ProductBriefPatch)
     return next;
 }
 
-export function isProductBriefReady(brief: ProductBrief): boolean {
-    return Boolean(
-        brief.productName.trim()
-        && brief.category.trim()
-        && brief.platform
-        && brief.targetAudience.some((item) => item.trim())
-        && brief.sellingPoints.some((item) => item.source !== "unconfirmed" && item.text.trim()),
-    );
+export function missingProductBriefFields(brief: ProductBrief): string[] {
+    const missing: string[] = [];
+    if (!brief.productName.trim()) missing.push("商品名称");
+    if (!brief.category.trim()) missing.push("商品类目");
+    if (!brief.targetAudience.some((item) => item.trim())) missing.push("目标人群");
+    if (!brief.sellingPoints.some((item) => item.source !== "unconfirmed" && item.text.trim())) missing.push("核心卖点");
+    return missing;
 }
 
+export function isProductBriefReady(brief: ProductBrief): boolean {
+    return missingProductBriefFields(brief).length === 0;
+}
 export function briefWithPlatform(platform: ProductDetailPlatform): ProductBrief {
     return createEmptyBrief(platform);
 }
@@ -129,6 +131,16 @@ function sanitizeFactItems(value: unknown[]): ProductFactItem[] {
     const seenIds = new Set<string>();
     const result: ProductFactItem[] = [];
     for (const [index, item] of value.entries()) {
+        if (typeof item === "string") {
+            const text = item.trim();
+            if (!text || seenText.has(text)) continue;
+            seenText.add(text);
+            const id = `fact-${index + 1}`;
+            if (seenIds.has(id)) continue;
+            seenIds.add(id);
+            result.push({ id, text, source: "user" });
+            continue;
+        }
         if (!item || typeof item !== "object" || Array.isArray(item)) continue;
         const record = item as Record<string, unknown>;
         const text = typeof record.text === "string" ? record.text.trim() : "";

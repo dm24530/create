@@ -1,37 +1,33 @@
 {
   "name": "create-desktop",
-  "version": "0.1.31",
+  "version": "0.1.35",
   "private": true,
   "description": "Create desktop application",
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
     "test": "node --test test/*.test.js",
-    "check": "node --check src/main.js && node --check src/preload.js && node --check src/update-service.js && node --check src/update-preferences.js && node --check src/security.js && node --check src/save-directory.js && npm test",
-    "dist:dir": "electron-builder --dir --config.electronDist=node_modules/electron/dist",
+    "check": "node --check electron-builder.unsigned-mac.js && node --check src/main.js && node --check src/preload.js && node --check src/update-service.js && node --check src/security.js && node --check src/save-directory.js && npm test",
+    "dist:dir": "electron-builder --dir",
     "predist:win:x64": "node ../scripts/sync-version-from-web.mjs",
     "dist:win:x64": "electron-builder --win nsis --x64 --publish never --config.directories.output=release/win-x64",
     "predist:win:arm64": "node ../scripts/sync-version-from-web.mjs",
     "dist:win:arm64": "electron-builder --win nsis --arm64 --publish never --config.directories.output=release/win-arm64",
     "predist:mac:arm64": "node ../scripts/sync-version-from-web.mjs",
     "dist:mac:arm64": "electron-builder --mac --arm64 --publish never --config.directories.output=release/mac-arm64",
+    "predist:mac:arm64:unsigned": "node ../scripts/sync-version-from-web.mjs",
+    "dist:mac:arm64:unsigned": "electron-builder --mac --arm64 --publish never --config electron-builder.unsigned-mac.js --config.directories.output=release/mac-arm64",
     "predist:mac:x64": "node ../scripts/sync-version-from-web.mjs",
     "dist:mac:x64": "electron-builder --mac --x64 --publish never --config.directories.output=release/mac-x64",
+    "predist:mac:x64:unsigned": "node ../scripts/sync-version-from-web.mjs",
+    "dist:mac:x64:unsigned": "electron-builder --mac --x64 --publish never --config electron-builder.unsigned-mac.js --config.directories.output=release/mac-x64",
     "test:smoke": "node test/smoke.js",
     "test:packaged": "node test/packaged-smoke.js",
     "test:mock-login": "node test/mock-login-smoke.js",
     "test:mock-account": "node test/mock-account-smoke.js",
     "test:local-billing": "node test/local-billing-smoke.js",
     "test:direct-image": "node test/direct-image-smoke.js",
-    "test:save-settings": "node test/local-save-settings-smoke.js",
-    "dist:dir:local": "npm run dist:dir",
-    "test:mock-image": "node test/mock-image-generation-smoke.js",
-    "test:mock-video": "node test/mock-video-generation-smoke.js",
-    "test:mock-video-concurrency": "node test/mock-video-concurrency-smoke.js",
-    "test:mock-canvas": "node test/mock-canvas-generation-smoke.js",
-    "test:mock-canvas-image-video": "node test/mock-canvas-image-video-smoke.js",
-    "dist:mac:arm64:unsigned": "electron-builder --mac --arm64 --publish never --config electron-builder.unsigned-mac.js --config.directories.output=release/mac-arm64",
-    "dist:mac:x64:unsigned": "electron-builder --mac --x64 --publish never --config electron-builder.unsigned-mac.js --config.directories.output=release/mac-x64"
+    "test:save-settings": "node test/local-save-settings-smoke.js"
   },
   "devDependencies": {
     "electron": "^45.3.2",
@@ -60,8 +56,7 @@
       "target": [
         "nsis"
       ],
-      "icon": "assets/icon.png",
-      "artifactName": "Create-Setup-${version}-win-${arch}.${ext}"
+      "icon": "assets/icon.png"
     },
     "mac": {
       "target": [
@@ -69,24 +64,14 @@
         "zip"
       ],
       "category": "public.app-category.graphics-design",
-      "icon": "assets/icon.png",
-      "artifactName": "Create-${version}-mac-${arch}.${ext}",
-      "hardenedRuntime": true,
-      "notarize": true
+      "icon": "assets/icon.png"
     },
     "publish": [
       {
         "provider": "generic",
         "url": "https://downloads.example.com/create/"
       }
-    ],
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true,
-      "createStartMenuShortcut": true,
-      "deleteAppDataOnUninstall": false
-    }
+    ]
   },
   "author": "Create",
   "dependencies": {

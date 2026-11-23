@@ -95,6 +95,8 @@ export type Storyboard = {
     revision: number;
     status: "draft" | "confirmed";
     pages: StoryboardPage[];
+    briefRevision?: number;
+    warning?: string;
 };
 
 export type ProductDetailConversationRole = "user" | "assistant";

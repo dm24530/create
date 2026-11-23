@@ -49,6 +49,26 @@ export function getAntThemeConfig(dark: boolean): ThemeConfig {
         components: {
             Button: {
                 primaryShadow: "none",
+                primaryColor: color.primaryText,
+                defaultColor: dark ? "#e7e5e4" : "#292524",
+                defaultBg: dark ? "rgba(255, 255, 255, 0.04)" : "#ffffff",
+                defaultBorderColor: dark ? "rgba(255, 255, 255, 0.12)" : "#d6d3d1",
+                defaultHoverBg: dark ? "rgba(255, 255, 255, 0.10)" : "#f5f5f4",
+                defaultHoverColor: dark ? "#ffffff" : "#0c0a09",
+                defaultHoverBorderColor: dark ? "rgba(255, 255, 255, 0.20)" : "#a8a29e",
+                textTextColor: dark ? "#d6d3d1" : "#57534e",
+                textTextHoverColor: dark ? "#ffffff" : "#0c0a09",
+                textTextActiveColor: dark ? "#ffffff" : "#0c0a09",
+                textHoverBg: dark ? "rgba(255, 255, 255, 0.08)" : "rgba(0, 0, 0, 0.06)",
+            },
+            Segmented: {
+                itemColor: dark ? "#d6d3d1" : "#57534e",
+                itemHoverColor: dark ? "#ffffff" : "#0c0a09",
+                itemHoverBg: dark ? "rgba(255, 255, 255, 0.08)" : "rgba(0, 0, 0, 0.06)",
+                itemActiveBg: dark ? "rgba(255, 255, 255, 0.12)" : "rgba(0, 0, 0, 0.10)",
+                itemSelectedBg: dark ? "#292524" : "#ffffff",
+                itemSelectedColor: dark ? "#fafaf9" : "#171717",
+                trackBg: dark ? "rgba(255, 255, 255, 0.05)" : "#f5f5f4",
             },
             Tooltip: {
                 colorBgSpotlight: dark ? "#292524" : "#ffffff",

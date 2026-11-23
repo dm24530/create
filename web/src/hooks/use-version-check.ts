@@ -3,16 +3,15 @@ import { App } from "antd";
 import { useTranslation } from "react-i18next";
 import { APP_VERSION } from "@/constant/env";
 import {
-    clearSkippedUpdateVersion as clearStoredSkippedUpdateVersion,
     desktopUpdateMetadataUrl,
     getDesktopUpdateBridge,
-    normalizeUpdateVersion,
     readSkippedUpdateVersion,
     shouldAutoPromptForUpdate,
-    UPDATE_CHECK_THROTTLE_MS,
-    writeSkippedUpdateVersion as writeStoredSkippedUpdateVersion,
+    writeSkippedUpdateVersion,
     type DesktopUpdateState,
 } from "@/lib/desktop-update";
+
+const CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000;
 
 const INITIAL_STATE: DesktopUpdateState = {
     status: "idle",
@@ -33,49 +32,23 @@ export function useVersionCheck() {
     const [state, setState] = useState<DesktopUpdateState>(INITIAL_STATE);
     const [open, setOpen] = useState(false);
     const [checking, setChecking] = useState(false);
-    const [skippedVersion, setSkippedVersionState] = useState(readSkippedUpdateVersion);
     const promptedVersionRef = useRef("");
-    const skippedVersionRef = useRef(skippedVersion);
-    const lastCheckAtRef = useRef(0);
 
     const applyState = useCallback((next: DesktopUpdateState, prompt = true) => {
         setState(next);
         if (
             prompt &&
-            shouldAutoPromptForUpdate(
-                next,
-                skippedVersionRef.current,
-                promptedVersionRef.current,
-            )
+            next.latestVersion &&
+            promptedVersionRef.current !== next.latestVersion &&
+            shouldAutoPromptForUpdate(next, readSkippedUpdateVersion(), APP_VERSION)
         ) {
-            promptedVersionRef.current = normalizeUpdateVersion(next.latestVersion);
+            promptedVersionRef.current = next.latestVersion;
             setOpen(true);
         }
     }, []);
 
-    const persistSkippedVersion = useCallback((version: string, persistToDesktop = true) => {
-        const normalized = normalizeUpdateVersion(version);
-        skippedVersionRef.current = normalized;
-        setSkippedVersionState(normalized);
-        writeStoredSkippedUpdateVersion(normalized);
-        if (persistToDesktop && bridge?.setSkippedUpdateVersion) {
-            void bridge.setSkippedUpdateVersion(normalized).catch(() => undefined);
-        }
-        return normalized;
-    }, [bridge]);
-
-    const clearSkippedVersion = useCallback(() => {
-        skippedVersionRef.current = "";
-        setSkippedVersionState("");
-        clearStoredSkippedUpdateVersion();
-        if (bridge?.clearSkippedUpdateVersion) {
-            void bridge.clearSkippedUpdateVersion().catch(() => undefined);
-        }
-    }, [bridge]);
-
     const checkLatestRelease = useCallback(
         async (showMessage = false) => {
-            lastCheckAtRef.current = Date.now();
             if (!bridge) {
                 const unsupported = {
                     ...INITIAL_STATE,
@@ -110,7 +83,6 @@ export function useVersionCheck() {
 
     const downloadUpdate = useCallback(async () => {
         if (!bridge) throw new Error(t("version.desktopOnly"));
-        clearSkippedVersion();
         setState((previous) => ({
             ...previous,
             status: "downloading",
@@ -124,17 +96,17 @@ export function useVersionCheck() {
             setState((previous) => ({ ...previous, status: "error", error: nextError }));
             throw error;
         }
-    }, [bridge, clearSkippedVersion, t]);
+    }, [bridge, t]);
 
     const installUpdate = useCallback(async () => {
         if (!bridge) throw new Error(t("version.desktopOnly"));
         return bridge.installUpdate();
     }, [bridge, t]);
 
-    const skipVersion = useCallback((version = state.latestVersion) => {
-        persistSkippedVersion(version);
+    const skipUpdate = useCallback(() => {
+        writeSkippedUpdateVersion(state.latestVersion);
         setOpen(false);
-    }, [persistSkippedVersion, state.latestVersion]);
+    }, [state.latestVersion]);
 
     const openReleaseModal = useCallback(() => {
         setOpen(true);
@@ -146,52 +118,18 @@ export function useVersionCheck() {
     useEffect(() => {
         if (!bridge) return;
         let disposed = false;
-        let unsubscribe: () => void = () => undefined;
-
-        const loadPreferencesAndCheck = async () => {
-            let skipped = readSkippedUpdateVersion();
-            try {
-                const desktopSkipped = await bridge.getSkippedUpdateVersion?.();
-                if (desktopSkipped) {
-                    skipped = normalizeUpdateVersion(desktopSkipped);
-                    writeStoredSkippedUpdateVersion(skipped);
-                } else if (skipped && bridge.setSkippedUpdateVersion) {
-                    await bridge.setSkippedUpdateVersion(skipped);
-                }
-            } catch {
-                // Keep the renderer preference if the desktop bridge is temporarily unavailable.
-            }
-            if (disposed) return;
-            skippedVersionRef.current = skipped;
-            setSkippedVersionState(skipped);
-            unsubscribe = bridge.onUpdateEvent((next) => {
-                if (!disposed) applyState(next);
-            });
-
-            const current = await bridge.getUpdateState().catch(() => null);
+        void bridge.getUpdateState().then((current) => {
             if (!disposed && current) applyState(current);
-            if (!disposed) await checkLatestRelease();
-        };
-
-        void loadPreferencesAndCheck();
-
-        const runBackgroundCheck = () => {
-            if (Date.now() - lastCheckAtRef.current < UPDATE_CHECK_THROTTLE_MS) return;
-            void checkLatestRelease();
-        };
-        const onVisibilityChange = () => {
-            if (document.visibilityState === "visible") runBackgroundCheck();
-        };
-
-        window.addEventListener("focus", runBackgroundCheck);
-        window.addEventListener("online", runBackgroundCheck);
-        document.addEventListener("visibilitychange", onVisibilityChange);
+        });
+        const unsubscribe = bridge.onUpdateEvent((next) => {
+            if (!disposed) applyState(next);
+        });
+        void checkLatestRelease();
+        const timer = window.setInterval(() => void checkLatestRelease(), CHECK_INTERVAL_MS);
         return () => {
             disposed = true;
             unsubscribe();
-            window.removeEventListener("focus", runBackgroundCheck);
-            window.removeEventListener("online", runBackgroundCheck);
-            document.removeEventListener("visibilitychange", onVisibilityChange);
+            window.clearInterval(timer);
         };
     }, [applyState, bridge, checkLatestRelease]);
 
@@ -203,6 +141,7 @@ export function useVersionCheck() {
     return {
         open,
         setOpen,
+        skipUpdate,
         openReleaseModal,
         latestVersion: state.latestVersion,
         currentVersion: state.currentVersion,
@@ -214,11 +153,8 @@ export function useVersionCheck() {
         error: state.error,
         checking,
         hasNewVersion,
-        skippedVersion,
         checkLatestRelease,
         downloadUpdate,
         installUpdate,
-        skipVersion,
-        clearSkippedVersion,
     };
 }

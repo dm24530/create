@@ -1,5 +1,6 @@
 import { buildProductDetailConversationMessages, fallbackProductDetailTurn, parseProductDetailAssistantTurn } from "@/lib/product-detail/conversation";
 import { requestImageQuestion } from "@/services/api/image";
+import { MAX_CONVERSATION_REFERENCE_IMAGES, prioritizeReferenceAssets } from "@/lib/product-detail/reference-selection";
 import { prepareReferenceImagesForRequest } from "@/services/image-storage";
 import type { AiConfig } from "@/stores/use-config-store";
 import type { ProductBrief, ProductDetailAsset, ProductDetailAssistantTurn, ProductDetailConversationMessage, Storyboard, UserDesignSkill } from "@/types/product-detail";
@@ -9,8 +10,9 @@ export async function requestProductDetailTurn(
     input: { brief: ProductBrief; messages: ProductDetailConversationMessage[]; skill?: UserDesignSkill; userMessage?: string; attachments?: ProductDetailAsset[]; storyboard?: Storyboard },
     signal?: AbortSignal,
 ): Promise<ProductDetailAssistantTurn> {
-    const references = input.attachments?.length
-        ? await prepareReferenceImagesForRequest(input.attachments.map((asset) => ({ id: asset.id, name: asset.name, type: asset.mimeType, dataUrl: asset.url || "", storageKey: asset.storageKey, width: asset.width, height: asset.height, bytes: asset.bytes }))).catch(() => [])
+    const selectedAttachments = prioritizeReferenceAssets(input.attachments || [], MAX_CONVERSATION_REFERENCE_IMAGES);
+    const references = selectedAttachments.length
+        ? await prepareReferenceImagesForRequest(selectedAttachments.map((asset) => ({ id: asset.id, name: asset.name, type: asset.mimeType, dataUrl: asset.url || "", storageKey: asset.storageKey, width: asset.width, height: asset.height, bytes: asset.bytes })))
         : [];
     const messages = buildProductDetailConversationMessages({ ...input, attachments: references });
     try {

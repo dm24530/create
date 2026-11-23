@@ -7,7 +7,6 @@ import { getCreateUsageStats, listCreateUsage, type CreateUsageLog, type CreateU
 import type { CreateSession } from "@/services/create-auth";
 import type { CreateManagedKey } from "@/services/create-managed-channel";
 import { resolveCreateServiceUrl } from "@/lib/create-product";
-import { formatPreciseDuration } from "@/lib/image-utils";
 import { cn } from "@/lib/utils";
 import { getClientRequestTiming } from "@/services/client-request-timing";
 
@@ -190,7 +189,6 @@ function LatencyCell({ row }: { row: CreateUsageLog }) {
     const seconds = Number(row.duration_ms || 0) / 1000;
     const tps = seconds > 0 && Number(row.output_tokens || 0) > 0 ? (Number(row.output_tokens) / seconds).toFixed(1) : "-";
     const clientTiming = getClientRequestTiming(row.request_id);
-    const hasClientTiming = Boolean(clientTiming);
     const sentMs = clientTiming?.generationMs ?? Number(row.duration_ms || 0);
     return (
         <div className="flex gap-2">
@@ -201,20 +199,16 @@ function LatencyCell({ row }: { row: CreateUsageLog }) {
                     <span>{formatDuration(row.first_token_ms)}</span>
                 </div>
                 <div className="flex gap-2">
-                    <span className="w-16 text-stone-500 dark:text-stone-400">{hasClientTiming ? "发送后" : "服务端"}</span>
-                    <span className="text-orange-600 dark:text-orange-400">{formatPreciseDuration(sentMs)}</span>
+                    <span className="w-16 text-stone-500 dark:text-stone-400">发送后</span>
+                    <span className="text-orange-600 dark:text-orange-400">{formatDuration(sentMs)}</span>
                 </div>
                 <div className="flex gap-2">
                     <span className="w-16 text-stone-500 dark:text-stone-400">从压缩开始</span>
-                    <span>{clientTiming ? formatPreciseDuration(clientTiming.totalMs) : "-"}</span>
+                    <span>{clientTiming ? formatDuration(clientTiming.totalMs) : "-"}</span>
                 </div>
                 <div className="flex gap-2">
                     <span className="w-16 text-stone-500 dark:text-stone-400">压缩耗时</span>
-                    <span>{clientTiming ? formatPreciseDuration(clientTiming.prepareMs) : "-"}</span>
-                </div>
-                <div className="flex gap-2">
-                    <span className="w-16 text-stone-500 dark:text-stone-400">下载耗时</span>
-                    <span>{clientTiming && clientTiming.downloadMs > 0 ? formatPreciseDuration(clientTiming.downloadMs) : "-"}</span>
+                    <span>{clientTiming ? formatDuration(clientTiming.prepareMs) : "-"}</span>
                 </div>
                 <div className="flex gap-2">
                     <span className="w-12 text-stone-500 dark:text-stone-400">输出 TPS</span>
@@ -265,7 +259,11 @@ function formatTime(value: string) {
 function formatDuration(value?: number | null) {
     const ms = Number(value || 0);
     if (!Number.isFinite(ms) || ms <= 0) return "-";
-    return formatPreciseDuration(ms);
+    if (ms < 1000) return `${ms}ms`;
+    const seconds = ms / 1000;
+    if (seconds < 60) return `${seconds.toFixed(2)}s`;
+    const minutes = Math.floor(seconds / 60);
+    return `${minutes}m ${(seconds % 60).toFixed(0)}s`;
 }
 
 function formatNumber(value: number) {

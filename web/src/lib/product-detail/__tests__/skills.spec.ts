@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { applyDesignSkill, buildSkillCandidate, mergeSkillCandidate } from "@/lib/product-detail/skills";
+import { BUILTIN_HOME_TEXTILE_SKILL_ID, ensureBuiltinSkills } from "@/lib/product-detail/builtin-skills";
+import { applyDesignSkill, buildSkillCandidate, findBestSkill, mergeLearnedSkill, mergeSkillCandidate } from "@/lib/product-detail/skills";
 import type { ProductDetailProject } from "@/types/product-detail";
 import { createEmptyBrief } from "@/lib/product-detail/brief";
 
@@ -61,6 +62,87 @@ describe("product detail user skill", () => {
         expect(next.brand.visualTone).toEqual(["高级", "极简"]);
         expect(next.copy.density).toBe("rich");
         expect(next.sourceProjectIds).toEqual(["project-1"]);
+    });
+
+    it("recommends a matching category skill and does not leak it to another category", () => {
+        const categorySkill = { ...buildSkillCandidate(project), id: "category-skill", scope: "category" as const, category: "厨房小家电", updatedAt: 10 };
+        const otherSkill = { ...buildSkillCandidate({ ...project, id: "project-2" }), id: "other-skill", scope: "category" as const, category: "服饰", updatedAt: 20 };
+
+        expect(findBestSkill([otherSkill, categorySkill], project)?.id).toBe("category-skill");
+        expect(findBestSkill([otherSkill], project)).toBeUndefined();
+    });
+
+    it("updates an existing learned skill instead of creating a duplicate", () => {
+        const existing = buildSkillCandidate(project);
+        const nextProject = {
+            ...project,
+            id: "project-2",
+            brief: {
+                ...project.brief,
+                productName: "便携咖啡杯",
+                colorPreference: ["#222222", "#FFFFFF"],
+                visualStyle: ["简洁", "年轻"],
+            },
+            storyboard: {
+                id: "storyboard-2",
+                revision: 1,
+                status: "confirmed" as const,
+                briefRevision: project.brief.revision,
+                pages: [{ ...({ id: "p2", order: 1, role: "hero", title: "主视觉", message: "展示杯身", copy: [], visualPrompt: "", negativePrompt: [], referenceAssetIds: [], factRefs: [], layoutTemplateId: "clean-commerce", status: "ready" } as const) }],
+            },
+        };
+        const learned = mergeLearnedSkill(existing, nextProject);
+
+        expect(learned.id).toBe(existing.id);
+        expect(learned.revision).toBe(existing.revision + 1);
+        expect(learned.sourceProjectIds).toEqual(["project-1", "project-2"]);
+        expect(learned.brand.colors).toEqual(expect.arrayContaining(["#111111", "#F5F0E8", "#222222", "#FFFFFF"]));
+        expect(learned.brand.visualTone).toEqual(expect.arrayContaining(["清爽", "年轻", "简洁"]));
+        expect(learned.pagePatterns.some((item) => item.guidance === "展示杯身")).toBe(true);
+    });
+
+    it("matches the built-in home textile Skill across common bed linen categories", () => {
+        const skills = ensureBuiltinSkills([], 1);
+        const skill = skills.find((item) => item.id === BUILTIN_HOME_TEXTILE_SKILL_ID);
+        const bedLinenProject = {
+            ...project,
+            brief: { ...project.brief, category: "床品四件套" },
+        };
+
+        expect(skills).toHaveLength(7);
+        for (const builtin of skills) {
+            expect(builtin.brand.colors).toEqual([]);
+            expect(builtin.brand.fonts).toEqual([]);
+            expect(builtin.brand.visualTone).toEqual([]);
+            expect(builtin.layout.preferredTemplates).toEqual([]);
+        }
+        expect(skill).toBeDefined();
+        if (!skill) throw new Error("home textile built-in skill missing");
+        expect(findBestSkill(skills, bedLinenProject)?.id).toBe(BUILTIN_HOME_TEXTILE_SKILL_ID);
+        expect(findBestSkill(skills, { ...project, brief: { ...project.brief, category: "护肤精华" } })?.id).toBe("builtin-beauty-care-v1");
+        expect(findBestSkill(skills, { ...project, brief: { ...project.brief, category: "蓝牙耳机" } })?.id).toBe("builtin-digital-3c-v1");
+        expect(skill.pagePatterns.find((pattern) => pattern.role === "feature-detail")?.guidance).toContain("织纹");
+        expect(skill.brand.colors).toEqual([]);
+        expect(skill.brand.visualTone).toEqual([]);
+        expect(skill.brand.fonts).toEqual([]);
+        expect(skill.layout.preferredTemplates).toEqual([]);
+        expect(skill.complianceRules).toContain("不得预设品牌色、字体、视觉调性或固定版式风格");
+    });
+
+    it("prefers a learned category Skill over the generic built-in Skill", () => {
+        const [builtIn] = ensureBuiltinSkills([], 1);
+        const bedLinenProject = { ...project, brief: { ...project.brief, category: "床品四件套" } };
+        const learned = {
+            ...buildSkillCandidate(bedLinenProject),
+            id: "learned-home-textile",
+            category: "家纺",
+            scope: "category" as const,
+            sourceProjectIds: ["project-1"],
+            pagePatterns: [{ role: "hero" as const, guidance: "用户项目已确认的卧室构图" }],
+            updatedAt: 10,
+        };
+
+        expect(findBestSkill([builtIn, learned], bedLinenProject)?.id).toBe("learned-home-textile");
     });
 });
 function mergeSkillBrief() {

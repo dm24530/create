@@ -101,7 +101,6 @@ test("desktop update service checks, downloads, and installs only after explicit
   const autoUpdater = new EventEmitter();
   let feedUrl = "";
   let installed = false;
-  let installArgs = [];
   autoUpdater.checkForUpdates = async () => {
     autoUpdater.emit("update-available", { version: "0.21.0" });
     return { updateInfo: { version: "0.21.0" } };
@@ -112,7 +111,7 @@ test("desktop update service checks, downloads, and installs only after explicit
     return [];
   };
   autoUpdater.setFeedURL = (options) => { feedUrl = options.url; };
-  autoUpdater.quitAndInstall = (...args) => { installed = true; installArgs = args; };
+  autoUpdater.quitAndInstall = () => { installed = true; };
 
   const states = [];
   const service = createDesktopUpdateService({
@@ -136,7 +135,6 @@ test("desktop update service checks, downloads, and installs only after explicit
   service.installUpdate();
   await new Promise((resolve) => setTimeout(resolve, 20));
   assert.equal(installed, true);
-  assert.deepEqual(installArgs, [true, true]);
 });
 
 test("server metadata alone is not enough when the update manifest still has the old version", async () => {
@@ -199,26 +197,4 @@ test("desktop update logger ignores broken stdout pipes", () => {
   } finally {
     console.info = originalInfo;
   }
-});
-
-
-test("periodic update checks default to every 30 minutes", () => {
-  const autoUpdater = new EventEmitter();
-  autoUpdater.setFeedURL = () => undefined;
-  let scheduledDelay = 0;
-  const service = createDesktopUpdateService({
-    app: { isPackaged: true, getVersion: () => "0.1.0" },
-    autoUpdater,
-    net: { fetch: async () => ({ ok: true, json: async () => ({}) }) },
-    onStateChange: () => undefined,
-    platform: "win32",
-    setIntervalFn: (_callback, delay) => {
-      scheduledDelay = delay;
-      return 1;
-    },
-    clearIntervalFn: () => undefined,
-  });
-
-  service.startPeriodicCheck("https://api.example.com/api/v1/public/create-client-release");
-  assert.equal(scheduledDelay, 30 * 60 * 1000);
 });

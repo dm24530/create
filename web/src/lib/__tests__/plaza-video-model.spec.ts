@@ -29,12 +29,20 @@ describe("model plaza video pricing metadata", () => {
     });
 
     it("shows a range for flexible durations and exact choices for fixed presets", () => {
-        expect(plazaVideoDurationLabel(model())).toBe("5–15s");
-        expect(plazaVideoDurationLabel(model({ name: "seedance 2.0 fast-GT" }))).toBe("10s / 15s");
+        expect(plazaVideoDurationLabel(model({
+            video_capabilities: { protocol: "seedance_video", min_duration: 5, max_duration: 15, default_duration: 5 },
+        }))).toBe("5–15s");
+        expect(plazaVideoDurationLabel(model({
+            name: "seedance 2.0 fast-GT",
+            video_capabilities: { protocol: "seedance_video", min_duration: 10, max_duration: 15, default_duration: 10, duration_options: [10, 15] },
+        }))).toBe("10s / 15s");
     });
 
     it("compresses consecutive presets into readable duration ranges", () => {
-        expect(plazaVideoDurationLabel(model({ name: "muse-cheap" }))).toBe("1–10s / 20s / 30s");
+        expect(plazaVideoDurationLabel(model({
+            name: "muse-cheap",
+            video_capabilities: { protocol: "muse_video", min_duration: 1, max_duration: 30, default_duration: 5, duration_options: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 30] },
+        }))).toBe("1–10s / 20s / 30s");
     });
     it("keeps each resolution on its own row with its own price", () => {
         expect(plazaVideoPricingRows(model())).toEqual([

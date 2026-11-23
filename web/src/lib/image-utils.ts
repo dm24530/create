@@ -22,28 +22,22 @@ export function formatDuration(ms: number) {
     return minutes ? i18n.t("common.durationMinutes", { minutes, seconds: String(seconds).padStart(2, "0") }) : i18n.t("common.durationSeconds", { seconds });
 }
 
+
 export function formatPreciseDuration(ms: number) {
-    const safeMs = Number.isFinite(ms) ? Math.max(0, ms) : 0;
-    const totalSeconds = safeMs / 1000;
-    const minutes = Math.floor(totalSeconds / 60);
-    const seconds = minutes > 0
-        ? (totalSeconds % 60).toFixed(1).padStart(4, "0")
-        : totalSeconds.toFixed(1);
-    return minutes
-        ? i18n.t("common.durationMinutes", { minutes, seconds })
-        : i18n.t("common.durationSeconds", { seconds });
+    const totalTenths = Math.max(0, Math.round((Number.isFinite(ms) ? ms : 0) / 100));
+    const minutes = Math.floor(totalTenths / 600);
+    const remainder = totalTenths % 600;
+    const seconds = (remainder / 10).toFixed(1);
+    if (!minutes) return `${seconds}秒`;
+    const padded = Number(seconds) < 10 ? `0${seconds}` : seconds;
+    return `${minutes}分${padded}秒`;
 }
 
 export function formatDownloadSpeed(bytesPerSecond: number) {
     if (!Number.isFinite(bytesPerSecond) || bytesPerSecond <= 0) return "-";
-    const units = ["B/s", "KB/s", "MB/s", "GB/s"];
-    let value = bytesPerSecond;
-    let unitIndex = 0;
-    while (value >= 1024 && unitIndex < units.length - 1) {
-        value /= 1024;
-        unitIndex += 1;
-    }
-    return `${value.toFixed(1)} ${units[unitIndex]}`;
+    if (bytesPerSecond >= 1024 * 1024) return `${(bytesPerSecond / (1024 * 1024)).toFixed(1)} MB/s`;
+    if (bytesPerSecond >= 1024) return `${(bytesPerSecond / 1024).toFixed(1)} KB/s`;
+    return `${Math.round(bytesPerSecond)} B/s`;
 }
 
 export function getDataUrlByteSize(dataUrl: string) {

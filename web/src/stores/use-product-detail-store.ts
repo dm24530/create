@@ -1,9 +1,12 @@
 import { create } from "zustand";
 import { nanoid } from "nanoid";
 
+import { ensureBuiltinSkills } from "@/lib/product-detail/builtin-skills";
 import { createEmptyBrief, createEmptySkill, createEmptyWorkspace } from "@/lib/product-detail/defaults";
 import { mergeProductBrief } from "@/lib/product-detail/brief";
 import { createProductDetailWelcomeMessage } from "@/lib/product-detail/conversation";
+import { applyDesignSkill, buildSkillCandidate, findBestSkill, mergeLearnedSkill, mergeSkillCandidate } from "@/lib/product-detail/skills";
+import { BRIEF_CHANGED_STORYBOARD_WARNING, ensureStoryboardVisualPrompts, isStoryboardStale } from "@/lib/product-detail/storyboard";
 import { removeProject, removeSkill, selectProject, upsertProject, upsertSkill } from "@/lib/product-detail/workspace";
 import { loadProductDetailWorkspace, saveProductDetailWorkspace } from "@/services/product-detail/storage";
 import { useUserStore } from "@/stores/use-user-store";
@@ -18,7 +21,14 @@ import type {
     ProductDetailWorkspace,
     Storyboard,
     UserDesignSkill,
+    UserDesignSkillPatch,
 } from "@/types/product-detail";
+
+type EditableSkillPatch = Partial<Omit<UserDesignSkill, "brand" | "copy" | "layout">> & {
+    brand?: Partial<UserDesignSkill["brand"]>;
+    copy?: Partial<UserDesignSkill["copy"]>;
+    layout?: Partial<UserDesignSkill["layout"]>;
+};
 
 type ProductDetailStore = {
     workspace: ProductDetailWorkspace;
@@ -38,10 +48,11 @@ type ProductDetailStore = {
     confirmStoryboard: (projectId: string) => void;
     addAsset: (projectId: string, asset: ProductDetailAsset) => void;
     removeAsset: (projectId: string, assetId: string) => void;
-    createSkill: (input?: Partial<UserDesignSkill>) => string;
-    updateSkill: (skillId: string, patch: Partial<UserDesignSkill>) => void;
+    createSkill: (input?: EditableSkillPatch) => string;
+    updateSkill: (skillId: string, patch: EditableSkillPatch) => void;
     deleteSkill: (skillId: string) => void;
     toggleSkill: (skillId: string, enabled: boolean) => void;
+    saveProjectSkill: (projectId: string, patch?: UserDesignSkillPatch) => { id: string; created: boolean } | undefined;
     attachSkill: (projectId: string, skillId: string) => void;
     setProjectModel: (projectId: string, capability: "text" | "image", model: string) => void;
 };
@@ -53,6 +64,10 @@ function currentUserId() {
     return Number.isFinite(id) && id > 0 ? id : 0;
 }
 
+function briefContentKey(brief: ProductDetailProject["brief"]) {
+    const { revision: _revision, ...content } = brief;
+    return JSON.stringify(content);
+}
 function queueSave(workspace: ProductDetailWorkspace, set: (patch: Partial<ProductDetailStore>) => void) {
     set({ saving: true });
     saveQueue = saveQueue
@@ -73,7 +88,23 @@ export const useProductDetailStore = create<ProductDetailStore>((set, get) => ({
         set({ loading: true, error: "" });
         try {
             const workspace = await loadProductDetailWorkspace();
-            set({ workspace, loading: false });
+            const userId = currentUserId();
+            const skills = ensureBuiltinSkills(workspace.skills, userId);
+            let autoAttached = false;
+            const enrichedWorkspace = {
+                ...workspace,
+                skills,
+                projects: workspace.projects.map((project) => {
+                    const skill = findBestSkill(skills, project);
+                    const skillIds = project.skillIds.length ? project.skillIds : skill ? [skill.id] : [];
+                    if (skillIds.length !== project.skillIds.length) autoAttached = true;
+                    const nextProject = { ...project, skillIds };
+                    if (!nextProject.storyboard) return nextProject;
+                    return { ...nextProject, storyboard: ensureStoryboardVisualPrompts(nextProject.storyboard, nextProject.brief, skill || createEmptySkill(project.userId || userId)) };
+                }),
+            };
+            set({ workspace: enrichedWorkspace, loading: false });
+            if (autoAttached || JSON.stringify(skills) !== JSON.stringify(workspace.skills)) void queueSave(enrichedWorkspace, set);
         } catch (error) {
             set({ loading: false, error: error instanceof Error ? error.message : String(error) });
         }
@@ -125,14 +156,34 @@ export const useProductDetailStore = create<ProductDetailStore>((set, get) => ({
     updateBrief: (projectId, patch) => {
         const project = get().workspace.projects.find((item) => item.id === projectId);
         if (!project) return;
-        const brief = mergeProductBrief(project.brief, patch);
+        const mergedBrief = mergeProductBrief(project.brief, patch);
+        const matchedSkill = project.skillIds.length ? undefined : findBestSkill(get().workspace.skills, { ...project, brief: mergedBrief, skillIds: [] });
+        const brief = matchedSkill ? applyDesignSkill(mergedBrief, matchedSkill) : mergedBrief;
+        const contentChanged = briefContentKey(project.brief) !== briefContentKey(brief);
+        const skillChanged = Boolean(matchedSkill && !project.skillIds.includes(matchedSkill.id));
+        if (!contentChanged && !skillChanged) return;
         const previousProductName = project.brief.productName.trim();
         const nextProductName = brief.productName.trim();
         const canAutoRename = project.name === "新商品详情页" || (previousProductName && project.name === previousProductName);
         const name = canAutoRename && nextProductName ? nextProductName : project.name;
-        get().updateProject(projectId, (current) => ({ ...current, name, platform: brief.platform, brief, status: "discovery" }));
-    },
-    setProjectStatus: (projectId, status) => {
+        get().updateProject(projectId, (current) => {
+            const storyboard = contentChanged && current.storyboard ? {
+                ...current.storyboard,
+                status: "draft" as const,
+                briefRevision: current.storyboard.briefRevision ?? current.brief.revision,
+                warning: BRIEF_CHANGED_STORYBOARD_WARNING,
+            } : current.storyboard;
+            return {
+                ...current,
+                name,
+                platform: brief.platform,
+                brief,
+                skillIds: matchedSkill ? Array.from(new Set([...current.skillIds, matchedSkill.id])) : current.skillIds,
+                status: storyboard && contentChanged ? "storyboard_draft" : current.status,
+                storyboard,
+            };
+        });
+    },    setProjectStatus: (projectId, status) => {
         get().updateProject(projectId, (project) => ({ ...project, status }));
     },
     appendMessage: (projectId, message) => {
@@ -152,28 +203,43 @@ export const useProductDetailStore = create<ProductDetailStore>((set, get) => ({
         }));
     },
     confirmStoryboard: (projectId) => {
-        get().updateProject(projectId, (project) => project.storyboard ? ({
-            ...project,
-            storyboard: { ...project.storyboard, status: "confirmed", revision: project.storyboard.revision + 1 },
-            status: "storyboard_confirmed",
-        }) : project);
+        get().updateProject(projectId, (project) => {
+            const storyboard = project.storyboard;
+            if (!storyboard || storyboard.warning || !storyboard.pages.length || isStoryboardStale(storyboard, project.brief)) return project;
+            return {
+                ...project,
+                storyboard: { ...storyboard, status: "confirmed", revision: storyboard.revision + 1 },
+                status: "storyboard_confirmed",
+            };
+        });
     },
     removeAsset: (projectId, assetId) => {
-        get().updateProject(projectId, (project) => ({
-            ...project,
-            assets: project.assets.filter((asset) => asset.id !== assetId),
-            brief: {
-                ...project.brief,
-                productAssetIds: project.brief.productAssetIds.filter((id) => id !== assetId),
-                referenceAssetIds: project.brief.referenceAssetIds.filter((id) => id !== assetId),
-            },
-        }));
+        const project = get().workspace.projects.find((item) => item.id === projectId);
+        if (!project) return;
+        const productAssetIds = project.brief.productAssetIds.filter((id) => id !== assetId);
+        const referenceAssetIds = project.brief.referenceAssetIds.filter((id) => id !== assetId);
+        const briefReferencesAsset = productAssetIds.length !== project.brief.productAssetIds.length || referenceAssetIds.length !== project.brief.referenceAssetIds.length;
+        get().updateProject(projectId, (current) => ({ ...current, assets: current.assets.filter((asset) => asset.id !== assetId) }));
+        if (briefReferencesAsset) get().updateBrief(projectId, { productAssetIds, referenceAssetIds });
     },
     addAsset: (projectId, asset) => {
         get().updateProject(projectId, (project) => ({ ...project, assets: [...project.assets, asset] }));
     },
     createSkill: (input = {}) => {
-        const skill = { ...createEmptySkill(currentUserId()), ...input, id: input.id || nanoid() };
+        const base = createEmptySkill(currentUserId());
+        const skill: UserDesignSkill = {
+            ...base,
+            ...input,
+            id: input.id || nanoid(),
+            brand: { ...base.brand, ...(input.brand || {}) },
+            copy: { ...base.copy, ...(input.copy || {}) },
+            layout: { ...base.layout, ...(input.layout || {}) },
+            pagePatterns: input.pagePatterns || base.pagePatterns,
+            categoryKnowledge: input.categoryKnowledge || base.categoryKnowledge,
+            complianceRules: input.complianceRules || base.complianceRules,
+            referenceAssetIds: input.referenceAssetIds || base.referenceAssetIds,
+            sourceProjectIds: input.sourceProjectIds || base.sourceProjectIds,
+        };
         const workspace = upsertSkill(get().workspace, skill);
         set({ workspace });
         void queueSave(workspace, set);
@@ -182,7 +248,20 @@ export const useProductDetailStore = create<ProductDetailStore>((set, get) => ({
     updateSkill: (skillId, patch) => {
         const skill = get().workspace.skills.find((item) => item.id === skillId);
         if (!skill) return;
-        const workspace = upsertSkill(get().workspace, { ...skill, ...patch, revision: skill.revision + 1, updatedAt: Date.now() });
+        const next: UserDesignSkill = {
+            ...skill,
+            ...patch,
+            brand: { ...skill.brand, ...(patch.brand || {}) },
+            copy: { ...skill.copy, ...(patch.copy || {}) },
+            layout: { ...skill.layout, ...(patch.layout || {}) },
+            pagePatterns: patch.pagePatterns || skill.pagePatterns,
+            categoryKnowledge: patch.categoryKnowledge || skill.categoryKnowledge,
+            complianceRules: patch.complianceRules || skill.complianceRules,
+            referenceAssetIds: patch.referenceAssetIds || skill.referenceAssetIds,
+            revision: skill.revision + 1,
+            updatedAt: Date.now(),
+        };
+        const workspace = upsertSkill(get().workspace, next);
         set({ workspace });
         void queueSave(workspace, set);
     },
@@ -191,14 +270,55 @@ export const useProductDetailStore = create<ProductDetailStore>((set, get) => ({
         set({ workspace });
         void queueSave(workspace, set);
     },
-    toggleSkill: (skillId, enabled) => get().updateSkill(skillId, { enabled }),
+    toggleSkill: (skillId, enabled) => {
+        const skill = get().workspace.skills.find((item) => item.id === skillId);
+        if (!skill || skill.enabled === enabled) return;
+        const next: UserDesignSkill = {
+            ...skill,
+            enabled,
+        };
+        const workspace = upsertSkill(get().workspace, next);
+        set({ workspace });
+        void queueSave(workspace, set);
+    },
+    saveProjectSkill: (projectId, patch) => {
+        const state = get();
+        const project = state.workspace.projects.find((item) => item.id === projectId);
+        if (!project) return undefined;
+        const existing = state.workspace.skills.find((item) => project.skillIds.includes(item.id))
+            || findBestSkill(state.workspace.skills, project);
+        const skill = existing
+            ? mergeLearnedSkill(existing, project, patch)
+            : mergeSkillCandidate(buildSkillCandidate(project), patch);
+        const nextProject = {
+            ...project,
+            skillIds: Array.from(new Set([...project.skillIds, skill.id])),
+            updatedAt: Date.now(),
+        };
+        const workspace = upsertProject(upsertSkill(state.workspace, skill), nextProject);
+        set({ workspace });
+        void queueSave(workspace, set);
+        return { id: skill.id, created: !existing };
+    },
     setProjectModel: (projectId, capability, model) => {
         get().updateProject(projectId, (project) => capability === "text" ? { ...project, textModel: model } : { ...project, imageModel: model });
     },
     attachSkill: (projectId, skillId) => {
-        get().updateProject(projectId, (project) => ({
-            ...project,
-            skillIds: project.skillIds.includes(skillId) ? project.skillIds : [...project.skillIds, skillId],
-        }));
+        const skill = get().workspace.skills.find((item) => item.id === skillId && item.enabled);
+        if (!skill) return;
+        get().updateProject(projectId, (project) => {
+            const brief = applyDesignSkill(project.brief, skill);
+            const briefChanged = briefContentKey(project.brief) !== briefContentKey(brief);
+            const storyboard = briefChanged && project.storyboard
+                ? { ...project.storyboard, status: "draft" as const, warning: "已应用新的设计 Skill，请重新生成分镜和页面图片。" }
+                : project.storyboard;
+            return {
+                ...project,
+                brief,
+                skillIds: project.skillIds.includes(skillId) ? project.skillIds : [...project.skillIds, skillId],
+                status: briefChanged && project.storyboard ? "storyboard_draft" : project.status,
+                storyboard,
+            };
+        });
     },
 }));

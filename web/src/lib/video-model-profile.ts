@@ -1,6 +1,33 @@
 import { videoRatioOptions } from "@/lib/media-size";
 
-export type VideoModelProvider = "muse_video" | "grok" | "seedance" | "seedance_video" | "video_tasks" | "openai_video";
+export type VideoModelProvider = "seedance" | "muse_video" | "grok" | "seedance_video" | "video_tasks" | "openai_video";
+
+export type VideoCapabilitySlots = {
+    first_frame: number;
+    last_frame: number;
+    reference_image: number;
+    reference_video: number;
+    reference_audio: number;
+};
+
+export type VideoCapabilityProfile = {
+    protocol: VideoModelProvider | string;
+    min_duration: number;
+    max_duration: number;
+    default_duration: number;
+    max_images?: number;
+    duration_options?: number[];
+    resolutions?: string[];
+    aspect_ratios?: string[];
+    slots?: Partial<VideoCapabilitySlots>;
+    supports_generate_audio?: boolean;
+    outputs_audio?: boolean;
+    modes?: string[];
+    frame_reference_exclusive?: boolean;
+    reference_image_free_count?: number;
+    reference_image_extra_price?: number;
+    reference_video_billing_mode?: "off" | "max_seconds" | "sum_seconds";
+};
 
 export type VideoModelProfile = {
     provider: VideoModelProvider;
@@ -14,374 +41,104 @@ export type VideoModelProfile = {
     defaultDuration: number;
     durationOptions?: readonly number[];
     supportsGenerateAudio: boolean;
+    outputsAudio: boolean;
+    slots: VideoCapabilitySlots;
+    modes: readonly string[];
 };
 
 const ALL_VIDEO_RATIOS = videoRatioOptions.filter((item) => item.value !== "auto").map((item) => item.value);
+const EMPTY_SLOTS: VideoCapabilitySlots = {
+    first_frame: 0,
+    last_frame: 0,
+    reference_image: 3,
+    reference_video: 0,
+    reference_audio: 0,
+};
 const DEFAULT_PROFILE: VideoModelProfile = {
     provider: "openai_video",
     resolutions: ["480", "720", "1080"],
     aspectRatios: ALL_VIDEO_RATIOS,
     maxImages: 3,
-    maxVideos: 1,
+    maxVideos: 0,
     maxAudios: 0,
     minDuration: 1,
     maxDuration: 15,
     defaultDuration: 5,
     supportsGenerateAudio: true,
+    outputsAudio: false,
+    slots: EMPTY_SLOTS,
+    modes: ["text-to-video", "image-to-video", "reference-images"],
 };
 
-const PROFILES: Record<string, VideoModelProfile> = {
-    "muse-video": {
-        provider: "muse_video",
-        resolutions: ["720"],
-        aspectRatios: ["16:9", "9:16"],
-        maxImages: 4,
-        maxVideos: 0,
-        maxAudios: 0,
-        // momo docs: muse-video supports any integer duration from 1 to 15 seconds.
-        minDuration: 1,
-        maxDuration: 15,
-        defaultDuration: 6,
-        supportsGenerateAudio: false,
-    },
-    "muse-cheap": {
-        provider: "muse_video",
-        resolutions: ["720"],
-        aspectRatios: ["16:9", "9:16"],
-        maxImages: 7,
-        maxVideos: 0,
-        maxAudios: 0,
-        minDuration: 1,
-        maxDuration: 30,
-        defaultDuration: 10,
-        durationOptions: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 30],
-        supportsGenerateAudio: false,
-    },
-    "grok-imagine-video": {
-        provider: "grok",
-        resolutions: ["480", "720"],
-        aspectRatios: ALL_VIDEO_RATIOS,
-        maxImages: 7,
-        maxVideos: 1,
-        maxAudios: 0,
-        minDuration: 1,
-        maxDuration: 10,
-        defaultDuration: 8,
-        supportsGenerateAudio: false,
-    },
-    "grok-imagine-video-onece": {
-        provider: "grok",
-        resolutions: ["480", "720"],
-        aspectRatios: ALL_VIDEO_RATIOS,
-        maxImages: 7,
-        maxVideos: 1,
-        maxAudios: 0,
-        minDuration: 1,
-        maxDuration: 10,
-        defaultDuration: 8,
-        supportsGenerateAudio: false,
-    },
-    "grok-imagine-video-1.5": {
-        provider: "grok",
-        resolutions: ["480", "720", "1080"],
-        aspectRatios: ALL_VIDEO_RATIOS,
-        maxImages: 7,
-        maxVideos: 1,
-        maxAudios: 0,
-        minDuration: 1,
-        maxDuration: 15,
-        defaultDuration: 5,
-        supportsGenerateAudio: true,
-    },
-    "seedance-2.0": {
-        provider: "seedance_video",
-        resolutions: ["480", "720"],
-        aspectRatios: ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"],
-        maxImages: 9,
-        maxVideos: 1,
-        maxAudios: 10,
-        minDuration: 5,
-        maxDuration: 15,
-        defaultDuration: 5,
-        supportsGenerateAudio: true,
-    },
-    "seedance-2.0-fast": {
-        provider: "seedance_video",
-        resolutions: ["480", "720"],
-        aspectRatios: ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"],
-        maxImages: 9,
-        maxVideos: 1,
-        maxAudios: 10,
-        minDuration: 5,
-        maxDuration: 15,
-        defaultDuration: 5,
-        supportsGenerateAudio: true,
-    },
-    "seedance-2.5": {
-        provider: "seedance_video",
-        resolutions: ["480", "720"],
-        aspectRatios: ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"],
-        maxImages: 30,
-        maxVideos: 10,
-        maxAudios: 10,
-        minDuration: 5,
-        maxDuration: 30,
-        defaultDuration: 5,
-        supportsGenerateAudio: true,
-    },
-    "wan3.0-video": {
-        provider: "seedance_video",
-        resolutions: ["720", "1080"],
-        aspectRatios: ["16:9", "9:16", "1:1"],
-        maxImages: 1,
-        maxVideos: 0,
-        maxAudios: 0,
-        minDuration: 2,
-        maxDuration: 30,
-        defaultDuration: 5,
-        supportsGenerateAudio: false,
-    },
-    "wan3.0-yuanlian": {
-        provider: "seedance_video",
-        resolutions: ["480", "720", "1080"],
-        aspectRatios: ["16:9", "9:16", "1:1"],
-        maxImages: 10,
-        maxVideos: 5,
-        maxAudios: 5,
-        minDuration: 2,
-        maxDuration: 30,
-        defaultDuration: 2,
-        supportsGenerateAudio: false,
-    },
-    "minimax h3": {
-        provider: "video_tasks",
-        resolutions: ["480"],
-        aspectRatios: ["9:16", "16:9", "1:1", "3:4", "4:3", "3:2", "2:3", "21:9"],
-        maxImages: 9,
-        maxVideos: 0,
-        maxAudios: 0,
-        minDuration: 4,
-        maxDuration: 15,
-        defaultDuration: 15,
-        supportsGenerateAudio: false,
-    },
-    "minimax h3-self": {
-        provider: "video_tasks",
-        resolutions: ["480", "768"],
-        aspectRatios: ["16:9", "9:16"],
-        maxImages: 9,
-        maxVideos: 0,
-        maxAudios: 3,
-        minDuration: 1,
-        maxDuration: 15,
-        defaultDuration: 5,
-        supportsGenerateAudio: false,
-    },
-    "seedance 2.0 fast-gt": {
-        provider: "seedance_video",
-        resolutions: ["480", "720"],
-        aspectRatios: ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"],
-        maxImages: 9,
-        maxVideos: 3,
-        maxAudios: 3,
-        minDuration: 10,
-        maxDuration: 15,
-        defaultDuration: 15,
-        durationOptions: [10, 15],
-        supportsGenerateAudio: true,
-    },
-    "seedance 2.0 mini-gt": {
-        provider: "seedance_video",
-        resolutions: ["480", "720"],
-        aspectRatios: ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"],
-        maxImages: 9,
-        maxVideos: 3,
-        maxAudios: 3,
-        minDuration: 10,
-        maxDuration: 15,
-        defaultDuration: 15,
-        durationOptions: [10, 15],
-        supportsGenerateAudio: true,
-    },
-    "seedance 2.5-gt": {
-        provider: "seedance_video",
-        resolutions: ["480", "720", "1080"],
-        aspectRatios: ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"],
-        maxImages: 30,
-        maxVideos: 10,
-        maxAudios: 10,
-        minDuration: 4,
-        maxDuration: 15,
-        defaultDuration: 5,
-        supportsGenerateAudio: true,
-    },
-    "seedance-2.0-mini": {
-        provider: "seedance_video",
-        resolutions: ["480", "720"],
-        aspectRatios: ["9:16", "16:9", "1:1", "3:4", "4:3"],
-        maxImages: 9,
-        maxVideos: 3,
-        maxAudios: 3,
-        minDuration: 5,
-        maxDuration: 15,
-        defaultDuration: 5,
-        supportsGenerateAudio: true,
-    },
-    "seedance-2.0-mini-chovy": {
-        provider: "seedance_video",
-        resolutions: ["720"],
-        aspectRatios: ["16:9", "9:16"],
-        maxImages: 9,
-        maxVideos: 0,
-        maxAudios: 0,
-        minDuration: 5,
-        maxDuration: 15,
-        defaultDuration: 15,
-        durationOptions: [5, 10, 15],
-        supportsGenerateAudio: false,
-    },
-    "seedance-2.5-alioth": {
-        provider: "seedance_video",
-        resolutions: ["720"],
-        aspectRatios: ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"],
-        maxImages: 30,
-        maxVideos: 0,
-        maxAudios: 10,
-        minDuration: 5,
-        maxDuration: 30,
-        defaultDuration: 30,
-        supportsGenerateAudio: false,
-    },
-    "seedance-2.5-draft-zq": {
-        provider: "seedance_video",
-        resolutions: ["480"],
-        aspectRatios: ["16:9", "9:16", "1:1", "4:3", "3:4"],
-        maxImages: 30,
-        maxVideos: 10,
-        maxAudios: 10,
-        minDuration: 5,
-        maxDuration: 30,
-        defaultDuration: 5,
-        supportsGenerateAudio: true,
-    },
-    "seedance-2.5-flash-zq": {
-        provider: "seedance_video",
-        resolutions: ["480", "720"],
-        aspectRatios: ["16:9", "9:16", "1:1", "4:3", "3:4"],
-        maxImages: 10,
-        maxVideos: 5,
-        maxAudios: 5,
-        minDuration: 5,
-        maxDuration: 30,
-        defaultDuration: 5,
-        supportsGenerateAudio: true,
-    },
-    "seedance-2.5-merak": {
-        provider: "seedance_video",
-        resolutions: ["480", "720"],
-        aspectRatios: ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"],
-        maxImages: 10,
-        maxVideos: 0,
-        maxAudios: 5,
-        minDuration: 5,
-        maxDuration: 30,
-        defaultDuration: 30,
-        supportsGenerateAudio: false,
-    },
-    "seedance2.0 fast deneb": {
-        provider: "seedance_video",
-        resolutions: ["720"],
-        aspectRatios: ["16:9", "9:16", "1:1", "4:3", "3:4"],
-        maxImages: 9,
-        maxVideos: 0,
-        maxAudios: 0,
-        minDuration: 5,
-        maxDuration: 15,
-        defaultDuration: 15,
-        durationOptions: [5, 10, 15],
-        supportsGenerateAudio: false,
-    },
-    "seedance2.0 mini love": {
-        provider: "seedance_video",
-        resolutions: ["480", "720"],
-        aspectRatios: ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"],
-        maxImages: 9,
-        maxVideos: 0,
-        maxAudios: 3,
-        minDuration: 5,
-        maxDuration: 15,
-        defaultDuration: 5,
-        supportsGenerateAudio: true,
-    },
-    "seedance2.5 coke": {
-        provider: "seedance_video",
-        resolutions: ["720"],
-        aspectRatios: ["16:9", "9:16", "4:3", "3:4", "1:1"],
-        maxImages: 30,
-        maxVideos: 10,
-        maxAudios: 10,
-        minDuration: 1,
-        maxDuration: 15,
-        defaultDuration: 5,
-        supportsGenerateAudio: false,
-    },
-};
-
-export function getVideoModelProfile(model: string, provider?: VideoModelProvider): VideoModelProfile {
-    const value = String(model || "").trim().toLowerCase();
-    const exact = PROFILES[value];
-    if (exact) return provider ? { ...exact, provider } : exact;
-    if (/^minimax[\s_-]*h3-self\b/.test(value)) return PROFILES["minimax h3-self"];
-    if (/^minimax[\s_-]*h3(?:$|[^0-9])/.test(value)) return PROFILES["minimax h3"];
-    if (value.includes("muse") && value.includes("cheap")) return PROFILES["muse-cheap"];
-    if (value.includes("muse")) return PROFILES["muse-video"];
-    if (value.includes("grok-imagine-video-1.5")) return PROFILES["grok-imagine-video-1.5"];
-    if (value.includes("grok-imagine-video")) return PROFILES["grok-imagine-video"];
-    if (value.includes("seedance-2.0-fast")) return PROFILES["seedance-2.0-fast"];
-    if (value.includes("seedance-2.0")) return PROFILES["seedance-2.0"];
-    if (value.includes("seedance-2.5")) return PROFILES["seedance-2.5"];
-    if (value.includes("wan3.0-yuanlian")) return PROFILES["wan3.0-yuanlian"];
-    if (value.includes("wan3.0-video")) return PROFILES["wan3.0-video"];
-    return provider ? { ...DEFAULT_PROFILE, provider } : DEFAULT_PROFILE;
+function normalizeProvider(value: unknown): VideoModelProvider {
+    const provider = String(value || "").trim().toLowerCase();
+    if (provider === "seedance" || provider === "muse_video" || provider === "grok" || provider === "seedance_video" || provider === "video_tasks" || provider === "openai_video") {
+        return provider;
+    }
+    return "openai_video";
 }
 
-export function resolveVideoModelProvider(
-    model: string,
-    config: { baseUrl?: string; apiFormat?: string; channelPlatform?: string },
-): VideoModelProvider {
-    const value = String(model || "").trim().toLowerCase();
-    const profile = getVideoModelProfile(value);
-    if (profile.provider === "muse_video" || profile.provider === "video_tasks") return profile.provider;
+function normalizeResolution(value: string) {
+    return String(value || "").trim().replace(/p$/i, "");
+}
 
-    let host = "";
-    try {
-        host = new URL(config.baseUrl || "").hostname.toLowerCase();
-    } catch {
-        host = "";
-    }
-    const platform = String(config.channelPlatform || "").trim().toLowerCase();
-    if (value.includes("grok")) {
-        return platform === "grok" || host.endsWith("x.ai") ? "grok" : "seedance_video";
-    }
-    if (host === "momoapi.xin" || host.endsWith(".momoapi.xin") || host === "openpix.cc" || host.endsWith(".openpix.cc")) {
-        return "seedance_video";
-    }
-    if (profile.provider === "seedance_video") {
-        if (platform === "composite") return "seedance_video";
-        if (host.includes("volces.com") || String(config.baseUrl || "").toLowerCase().includes("/api/v3")) {
-            return "seedance";
-        }
-        if (platform === "openai" && value.includes("seedance")) return "seedance";
-    }
-    return profile.provider;
+function totalImages(slots: VideoCapabilitySlots) {
+    return Math.max(0, slots.first_frame) + Math.max(0, slots.last_frame) + Math.max(0, slots.reference_image);
+}
+
+function deriveModes(slots: VideoCapabilitySlots, configured?: string[]) {
+    const modes = new Set((configured || []).map((mode) => String(mode || "").trim()).filter(Boolean));
+    modes.add("text-to-video");
+    if (slots.first_frame > 0) modes.add("image-to-video");
+    if (slots.first_frame > 0 && slots.last_frame > 0) modes.add("first-last-frame");
+    if (slots.reference_image > 0) modes.add("reference-images");
+    if (slots.reference_video > 0) modes.add("reference-video");
+    return Array.from(modes);
+}
+
+export function profileFromVideoCapability(capability?: VideoCapabilityProfile | null): VideoModelProfile | null {
+    if (!capability) return null;
+    const rawSlots = capability.slots || {};
+    const slots: VideoCapabilitySlots = {
+        first_frame: Math.max(0, Number(rawSlots.first_frame) || 0),
+        last_frame: Math.max(0, Number(rawSlots.last_frame) || 0),
+        reference_image: Math.max(0, Number(rawSlots.reference_image) || 0),
+        reference_video: Math.max(0, Number(rawSlots.reference_video) || 0),
+        reference_audio: Math.max(0, Number(rawSlots.reference_audio) || 0),
+    };
+    const minDuration = Math.max(1, Number(capability.min_duration) || 1);
+    const maxDuration = Math.max(minDuration, Number(capability.max_duration) || minDuration);
+    const defaultDuration = Math.min(maxDuration, Math.max(minDuration, Number(capability.default_duration) || minDuration));
+    const resolutions = (capability.resolutions || []).map(normalizeResolution).filter(Boolean);
+    const ratios = (capability.aspect_ratios || []).filter(Boolean);
+    return {
+        provider: normalizeProvider(capability.protocol),
+        resolutions: resolutions.length ? Array.from(new Set(resolutions)) : DEFAULT_PROFILE.resolutions,
+        aspectRatios: ratios.length ? Array.from(new Set(ratios)) : DEFAULT_PROFILE.aspectRatios,
+        maxImages: Math.max(0, Number(capability.max_images) || totalImages(slots)),
+        maxVideos: slots.reference_video,
+        maxAudios: slots.reference_audio,
+        minDuration,
+        maxDuration,
+        defaultDuration,
+        durationOptions: Array.isArray(capability.duration_options) ? capability.duration_options : undefined,
+        supportsGenerateAudio: capability.supports_generate_audio === true,
+        outputsAudio: capability.outputs_audio === true,
+        slots,
+        modes: deriveModes(slots, capability.modes),
+    };
+}
+
+export function getVideoModelProfile(_model: string, capability?: VideoCapabilityProfile | null): VideoModelProfile {
+    return profileFromVideoCapability(capability) || DEFAULT_PROFILE;
 }
 
 export function supportsVideoGenerateAudioToggle(profile: VideoModelProfile) {
-    return (profile.provider === "seedance" || profile.provider === "seedance_video") && profile.supportsGenerateAudio;
+    return profile.supportsGenerateAudio;
 }
 
 export function isVideoResolutionSupported(profile: VideoModelProfile, resolution: string) {
-    return profile.resolutions.includes(resolution);
+    return profile.resolutions.includes(normalizeResolution(resolution));
 }
 
 export function isVideoRatioSupported(profile: VideoModelProfile, ratio: string) {

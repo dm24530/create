@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { createEmptyBrief, isProductBriefReady, mergeProductBrief } from "@/lib/product-detail/brief";
+import { createEmptyBrief, isProductBriefReady, mergeProductBrief, missingProductBriefFields, sanitizeProductBriefPatch } from "@/lib/product-detail/brief";
 
 describe("product detail brief", () => {
     it("keeps confirmed facts and increments revision when a patch is merged", () => {
@@ -42,5 +42,15 @@ describe("product detail brief", () => {
         expect(next.productName).toBe("");
         expect(next.visualStyle).toEqual(["高端"]);
         expect(next.revision).toBe(2);
+    });
+
+    it("reports the actual missing brief fields", () => {
+        const brief = { ...createEmptyBrief("taobao"), productName: "便携水壶", category: "水具", targetAudience: ["上班族"] };
+        expect(missingProductBriefFields(brief)).toEqual(["核心卖点"]);
+    });
+
+    it("accepts string selling points returned by the model", () => {
+        const patch = sanitizeProductBriefPatch({ sellingPoints: ["便携外出"] });
+        expect(patch?.sellingPoints).toEqual([{ id: "fact-1", text: "便携外出", source: "user" }]);
     });
 });

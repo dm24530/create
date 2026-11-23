@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 vi.hoisted(() => {
@@ -12,7 +14,11 @@ vi.hoisted(() => {
     });
 });
 
-import { buildOpenAIVideoTaskPath, buildVideoProviderRequest, mapPendingVideoPhase, type VideoProviderRequestInput } from "../video";
+import { buildGenerationConfig } from "@/lib/canvas/canvas-generation-helpers";
+import { inferVideoRatio } from "@/lib/media-size";
+import { getVideoModelProfile, isVideoDurationOptionAllowed, isVideoRatioSupported, isVideoResolutionSupported, type VideoCapabilityProfile, type VideoModelProvider } from "@/lib/video-model-profile";
+import { createModelChannel, defaultConfig, encodeChannelModel, modelOptionName, videoCapabilityOf } from "@/stores/use-config-store";
+import { buildVideoProviderRequest, isRetryableVideoPollingError, VideoPollingError, videoContentPath, videoTaskPath, type VideoProviderRequestInput } from "../video";
 
 const base: VideoProviderRequestInput = {
     model: "model",
@@ -27,12 +33,87 @@ const base: VideoProviderRequestInput = {
     imageMode: "frames",
 };
 
+const MUSE_CAPABILITY: VideoCapabilityProfile = {
+    protocol: "muse_video",
+    min_duration: 1,
+    max_duration: 15,
+    default_duration: 10,
+    resolutions: ["720p"],
+    aspect_ratios: ["16:9", "9:16"],
+    slots: { first_frame: 0, last_frame: 0, reference_image: 4, reference_video: 0, reference_audio: 0 },
+    supports_generate_audio: false,
+    modes: ["text-to-video", "reference-images"],
+};
+
+const GROK_CAPABILITY: VideoCapabilityProfile = {
+    protocol: "grok",
+    min_duration: 1,
+    max_duration: 10,
+    default_duration: 8,
+    resolutions: ["480p", "720p"],
+    aspect_ratios: ["16:9", "9:16"],
+    slots: { first_frame: 1, last_frame: 1, reference_image: 7, reference_video: 1, reference_audio: 0 },
+    supports_generate_audio: false,
+    modes: ["text-to-video", "image-to-video", "reference-images"],
+};
+
+const SEEDANCE_VIDEO_CAPABILITY: VideoCapabilityProfile = {
+    protocol: "seedance_video",
+    min_duration: 4,
+    max_duration: 30,
+    default_duration: 5,
+    resolutions: ["480p", "720p", "1080p"],
+    aspect_ratios: ["16:9", "9:16", "1:1"],
+    slots: { first_frame: 1, last_frame: 1, reference_image: 9, reference_video: 3, reference_audio: 3 },
+    supports_generate_audio: true,
+    modes: ["text-to-video", "image-to-video", "first-last-frame", "reference-images", "reference-video"],
+};
+
+const MINIMAX_CAPABILITY: VideoCapabilityProfile = {
+    protocol: "video_tasks",
+    min_duration: 4,
+    max_duration: 15,
+    default_duration: 15,
+    resolutions: ["480p"],
+    aspect_ratios: ["16:9", "9:16", "1:1"],
+    slots: { first_frame: 0, last_frame: 0, reference_image: 9, reference_video: 0, reference_audio: 0 },
+    supports_generate_audio: false,
+    modes: ["text-to-video", "reference-images"],
+};
+
+function withProfile(provider: VideoModelProvider, capability: VideoCapabilityProfile, input: VideoProviderRequestInput) {
+    return buildVideoProviderRequest(provider, input, getVideoModelProfile(input.model, capability));
+}
+
+describe("video polling retry policy", () => {
+    it("retries transient network, timeout and server errors but not auth failures", () => {
+        expect(isRetryableVideoPollingError(new VideoPollingError("offline", 0))).toBe(true);
+        expect(isRetryableVideoPollingError(new VideoPollingError("timeout", 408))).toBe(true);
+        expect(isRetryableVideoPollingError(new VideoPollingError("busy", 503))).toBe(true);
+        expect(isRetryableVideoPollingError(new VideoPollingError("auth", 401))).toBe(false);
+        expect(isRetryableVideoPollingError(new VideoPollingError("forbidden", 403))).toBe(false);
+    });
+});
+describe("video task protocol paths", () => {
+    it("uses the Seedance native task and content endpoints", () => {
+        expect(videoTaskPath("seedance", "task id", "seedance-2.0")).toBe("/contents/generations/tasks/task%20id");
+        expect(videoContentPath("seedance", "task id", "seedance-2.0")).toBe("/contents/generations/tasks/task%20id/content");
+    });
+
+    it("uses model-aware paths for unified video protocols", () => {
+        expect(videoTaskPath("muse_video", "task-1", "muse-video")).toBe("/videos/task-1?model=muse-video");
+        expect(videoContentPath("video_tasks", "task-1", "minimax H3")).toBe("/videos/task-1/content?model=minimax%20H3");
+        expect(videoTaskPath("grok", "task-1", "grok-imagine-video")).toBe("/videos/task-1");
+        expect(videoContentPath("grok", "task-1", "grok-imagine-video")).toBe("/videos/task-1/content");
+    });
+});
 describe("vendor video request builders", () => {
-    it("uses Muse JSON fields", () => {
-        const request = buildVideoProviderRequest("muse_video", {
+    it("uses the capability-driven unified video protocol for Muse", () => {
+        const request = withProfile("muse_video", MUSE_CAPABILITY, {
             ...base,
             model: "muse-video",
             aspectRatio: "9:16",
+            imageMode: "reference",
         });
 
         expect(request.path).toBe("/video/generations");
@@ -40,21 +121,24 @@ describe("vendor video request builders", () => {
             model: "muse-video",
             prompt: "a cat running",
             duration: 8,
-            resolution: "720p",
             aspect_ratio: "9:16",
-            first_frame_image_url: "https://cdn.example.com/frame.png",
+            reference_image_urls: ["https://cdn.example.com/frame.png"],
         });
+        expect(request.body).not.toHaveProperty("seconds");
+        expect(request.body).not.toHaveProperty("generate_audio");
     });
 
-    it("uses Grok duration, resolution and aspect_ratio fields", () => {
-        const request = buildVideoProviderRequest("grok", {
+    it("uses capability-driven Grok fields without a model-name branch", () => {
+        const request = withProfile("grok", GROK_CAPABILITY, {
             ...base,
-            model: "grok-imagine-video",
+            model: "renamed-grok-model",
             resolution: "480p",
         });
 
         expect(request.path).toBe("/video/generations");
         expect(request.body).toMatchObject({
+            model: "renamed-grok-model",
+            mode: "image-to-video",
             duration: 8,
             resolution: "480p",
             aspect_ratio: "16:9",
@@ -63,27 +147,14 @@ describe("vendor video request builders", () => {
         expect(request.body).not.toHaveProperty("seconds");
     });
 
-    it("uses the documented Grok reference-video fields", () => {
-        const request = buildVideoProviderRequest("grok", {
-            ...base,
-            videoUrls: ["https://cdn.example.com/source.mp4"],
-        });
-
-        expect(request.path).toBe("/video/generations");
-        expect(request.body).toMatchObject({
-            mode: "reference-video",
-            reference_video_urls: ["https://cdn.example.com/source.mp4"],
-        });
-        expect(request.body).not.toHaveProperty("video");
-    });
-
-    it("uses Seedance reference-video mode without mixing reference audio", () => {
-        const request = buildVideoProviderRequest("seedance_video", {
+    it("sends Seedance Video references and audio only when capabilities allow them", () => {
+        const request = withProfile("seedance_video", SEEDANCE_VIDEO_CAPABILITY, {
             ...base,
             model: "seedance-2.5",
             resolution: "1080p",
             imageMode: "reference",
             videoUrls: ["https://cdn.example.com/ref.mp4"],
+            audioUrls: ["https://cdn.example.com/ref.mp3"],
         });
 
         expect(request.path).toBe("/video/generations");
@@ -93,115 +164,19 @@ describe("vendor video request builders", () => {
             aspect_ratio: "16:9",
             generate_audio: true,
             mode: "reference-video",
-            reference_video_urls: ["https://cdn.example.com/ref.mp4"],
-        });
-        expect(request.body).not.toHaveProperty("reference_audio_urls");
-    });
-
-    it("uses Seedance reference-images mode for reference audio", () => {
-        const request = buildVideoProviderRequest("seedance_video", {
-            ...base,
-            model: "seedance-2.5",
-            imageMode: "reference",
-            audioUrls: ["https://cdn.example.com/ref.mp3"],
-        });
-
-        expect(request.body).toMatchObject({
-            mode: "reference-images",
             reference_image_urls: ["https://cdn.example.com/frame.png"],
+            reference_video_urls: ["https://cdn.example.com/ref.mp4"],
             reference_audio_urls: ["https://cdn.example.com/ref.mp3"],
         });
     });
 
-    it("uses first and last frame URL fields for Seedance first-last-frame mode", () => {
-        const request = buildVideoProviderRequest("seedance_video", {
-            ...base,
-            model: "seedance-2.0",
-            imageMode: "frames",
-            imageUrls: [
-                "https://cdn.example.com/first.png",
-                "https://cdn.example.com/last.png",
-            ],
-        });
-
-        expect(request.body).toMatchObject({
-            mode: "first-last-frame",
-            first_frame_image_url: "https://cdn.example.com/first.png",
-            last_frame_image_url: "https://cdn.example.com/last.png",
-        });
-        expect(request.body).not.toHaveProperty("images");
-    });
-
-    it("rejects incompatible Seedance reference video and reference audio together", () => {
-        expect(() => buildVideoProviderRequest("seedance_video", {
-            ...base,
-            model: "seedance-2.5",
-            videoUrls: ["https://cdn.example.com/ref.mp4"],
-            audioUrls: ["https://cdn.example.com/ref.mp3"],
-        })).toThrow("参考视频和参考音频");
-    });
-
-    it("uses the Ark content task protocol for direct OpenAI Ark channels", () => {
-        const request = buildVideoProviderRequest("seedance", {
-            ...base,
-            model: "seedance 2.5-GT",
-            imageMode: "reference",
-            videoUrls: ["https://cdn.example.com/ref.mp4"],
-            audioUrls: ["https://cdn.example.com/ref.mp3"],
-        });
-
-        expect(request.path).toBe("/contents/generations/tasks");
-        expect(request.body).toMatchObject({
-            model: "seedance 2.5-GT",
-            duration: 8,
-            resolution: "720p",
-            ratio: "16:9",
-            generate_audio: true,
-            content: [
-                { type: "text", text: "a cat running" },
-                { type: "image_url", image_url: { url: "https://cdn.example.com/frame.png" }, role: "reference_image" },
-                { type: "video_url", video_url: { url: "https://cdn.example.com/ref.mp4" }, role: "reference_video" },
-                { type: "audio_url", audio_url: { url: "https://cdn.example.com/ref.mp3" }, role: "reference_audio" },
-            ],
-        });
-    });
-
-    it("marks extra Ark frame-mode images as reference images", () => {
-        const request = buildVideoProviderRequest("seedance", {
-            ...base,
-            model: "seedance 2.5-GT",
-            imageMode: "frames",
-            imageUrls: [
-                "https://cdn.example.com/first.png",
-                "https://cdn.example.com/last.png",
-                "https://cdn.example.com/style.png",
-            ],
-        });
-
-        expect(request.body.content).toContainEqual({
-            type: "image_url",
-            image_url: { url: "https://cdn.example.com/style.png" },
-            role: "reference_image",
-        });
-    });
-
-    it("forwards the supported four second Muse duration without replacing it with the default", () => {
-        const request = buildVideoProviderRequest("muse_video", {
-            ...base,
-            model: "muse-video",
-            durationSeconds: 4,
-        });
-
-        expect(request.body.duration).toBe(4);
-    });
-
-    it("omits vendor duration fields in automatic duration mode", () => {
-        const muse = buildVideoProviderRequest("muse_video", {
+    it("omits unsupported vendor duration fields in automatic duration mode", () => {
+        const muse = withProfile("muse_video", MUSE_CAPABILITY, {
             ...base,
             model: "muse-video",
             durationAuto: true,
         });
-        const grok = buildVideoProviderRequest("grok", {
+        const grok = withProfile("grok", GROK_CAPABILITY, {
             ...base,
             model: "grok-imagine-video",
             durationAuto: true,
@@ -211,87 +186,113 @@ describe("vendor video request builders", () => {
         expect(grok.body).not.toHaveProperty("duration");
     });
 
-    it("maps the workbench 1280x720 and 5 second selection to vendor-native fields", () => {
-        const input = { ...base, durationSeconds: 5, resolution: "720p", aspectRatio: "16:9" };
-
-        const muse = buildVideoProviderRequest("muse_video", input);
-        expect(muse.body).toMatchObject({ duration: 5, resolution: "720p", aspect_ratio: "16:9" });
-
-        const grok = buildVideoProviderRequest("grok", input);
-        expect(grok.body).toMatchObject({ duration: 5, resolution: "720p", aspect_ratio: "16:9" });
-
-        const seedance = buildVideoProviderRequest("seedance_video", input);
-        expect(seedance.body).toMatchObject({ duration: 5, resolution: "720p", aspect_ratio: "16:9" });
-    });
-
-    it("resolves server-relative reference assets to absolute URLs for video providers", () => {
-        vi.stubEnv("VITE_CREATE_API_BASE_URL", "https://create.example.com/api/v1");
-        const imageUrl = "/api/v1/public/video-reference-assets/reference-token";
-        const input = {
+    it("routes MiniMax through the same capability-driven protocol", () => {
+        const request = withProfile("video_tasks", MINIMAX_CAPABILITY, {
             ...base,
-            model: "muse-video",
-            imageUrls: [imageUrl],
-        };
-
-        const muse = buildVideoProviderRequest("muse_video", input);
-        expect(muse.body.first_frame_image_url).toBe("https://create.example.com/api/v1/public/video-reference-assets/reference-token");
-
-        const seedance = buildVideoProviderRequest("seedance_video", {
-            ...input,
-            model: "seedance-2.0",
+            model: "minimax-h3",
+            resolution: "480p",
             imageMode: "reference",
-        });
-        expect(seedance.body.reference_image_urls).toEqual([
-            "https://create.example.com/api/v1/public/video-reference-assets/reference-token",
-        ]);
-        vi.unstubAllEnvs();
-    });
-    it("uses the documented MiniMax video generation fields", () => {
-        const request = buildVideoProviderRequest("video_tasks", {
-            ...base,
-            model: "minimax H3-self",
-            resolution: "768p",
-            imageMode: "reference",
-            audioUrls: ["https://cdn.example.com/ref.mp3"],
+            imageUrls: ["https://cdn.example.com/ref.png"],
         });
 
         expect(request.path).toBe("/video/generations");
         expect(request.body).toMatchObject({
             duration: 8,
-            resolution: "768p",
+            resolution: "480p",
             aspect_ratio: "16:9",
-            reference_image_urls: ["https://cdn.example.com/frame.png"],
-            reference_audio_urls: ["https://cdn.example.com/ref.mp3"],
+            reference_image_urls: ["https://cdn.example.com/ref.png"],
         });
     });
+});
 
-    it("uses MiniMax reference-image fields when audio and frame images are present", () => {
-        const request = buildVideoProviderRequest("video_tasks", {
-            ...base,
-            model: "minimax H3-self",
-            imageMode: "frames",
-            audioUrls: ["https://cdn.example.com/ref.mp3"],
+function loadCatalog(): Array<{ model_name: string; capabilities: VideoCapabilityProfile }> {
+    const path = resolve(process.cwd(), "src/lib/__tests__/fixtures/video-capability-catalog.json");
+    return JSON.parse(readFileSync(path, "utf8")) as Array<{ model_name: string; capabilities: VideoCapabilityProfile }>;
+}
+
+describe("all app video models synthetic smoke", () => {
+    const catalog = loadCatalog();
+
+    it("contains the current 23 models", () => {
+        expect(catalog).toHaveLength(23);
+    });
+
+    describe.each(catalog.map((entry) => [entry.model_name, entry] as const))("%s", (_name, entry) => {
+        it("builds a valid request from server capabilities", () => {
+            const capability = entry.capabilities;
+            const profile = getVideoModelProfile(entry.model_name, capability);
+            const slots = profile.slots;
+            const useFrames = slots.first_frame > 0 || slots.last_frame > 0;
+            const imageUrls = useFrames
+                ? [
+                    ...(slots.first_frame > 0 ? ["https://cdn.example.com/first.png"] : []),
+                    ...(slots.last_frame > 0 ? ["https://cdn.example.com/last.png"] : []),
+                ]
+                : slots.reference_image > 0
+                    ? ["https://cdn.example.com/ref.png"]
+                    : [];
+            const input: VideoProviderRequestInput = {
+                model: entry.model_name,
+                prompt: "synthetic smoke prompt",
+                durationSeconds: profile.defaultDuration,
+                resolution: profile.resolutions[0],
+                aspectRatio: profile.aspectRatios[0],
+                generateAudio: profile.supportsGenerateAudio,
+                imageUrls,
+                videoUrls: slots.reference_video > 0 ? ["https://cdn.example.com/ref.mp4"] : [],
+                audioUrls: slots.reference_audio > 0 ? ["https://cdn.example.com/ref.mp3"] : [],
+                imageMode: useFrames ? "frames" : "reference",
+            };
+
+            const request = buildVideoProviderRequest(profile.provider, input, profile);
+            expect(request.body.model).toBe(entry.model_name);
+            if (profile.provider === "seedance") {
+                expect(request.path).toBe("/contents/generations/tasks");
+                expect(Array.isArray(request.body.content)).toBe(true);
+                expect(request.body.ratio).toBe(profile.aspectRatios[0]);
+            } else if (profile.provider === "openai_video") {
+                expect(request.path).toBe("/videos");
+                expect(request.body.seconds).toBe(profile.defaultDuration);
+            } else {
+                expect(request.path).toBe("/video/generations");
+                expect(request.body.prompt).toBe("synthetic smoke prompt");
+                expect(request.body.resolution).toBe(`${profile.resolutions[0]}p`);
+                expect(request.body.aspect_ratio).toBe(profile.aspectRatios[0]);
+                expect(request.body.duration).toBe(profile.defaultDuration);
+            }
         });
+    });
+});
+describe("all app video models canvas smoke", () => {
+    const catalog = loadCatalog();
 
-        expect(request.body).toMatchObject({
-            reference_image_urls: ["https://cdn.example.com/frame.png"],
-            reference_audio_urls: ["https://cdn.example.com/ref.mp3"],
+    describe.each(catalog.map((entry) => [entry.model_name, entry] as const))("%s", (_name, entry) => {
+        it("sanitizes canvas parameters and routes through the same video protocol", () => {
+            const channel = createModelChannel({
+                id: "managed-video",
+                name: "视频",
+                baseUrl: "https://example.com/v1",
+                apiKey: "sk-test",
+                apiFormat: "openai",
+                models: [{ name: entry.model_name, capability: "video", videoCapabilities: entry.capabilities }],
+            });
+            const encodedModel = encodeChannelModel(channel.id, entry.model_name);
+            const config = buildGenerationConfig({
+                ...defaultConfig,
+                channels: [channel],
+                model: encodedModel,
+                videoModel: encodedModel,
+                vquality: "1080",
+                size: "1920x1080",
+                videoSeconds: String(entry.capabilities.max_duration + 10),
+                videoMode: "frames",
+            }, undefined, "video");
+
+            const profile = getVideoModelProfile(modelOptionName(config.model), videoCapabilityOf(config, config.model));
+            expect(profile.provider).toBe(entry.capabilities.protocol);
+            expect(isVideoResolutionSupported(profile, config.vquality)).toBe(true);
+            expect(isVideoDurationOptionAllowed(profile, Number(config.videoSeconds))).toBe(true);
+            expect(isVideoRatioSupported(profile, inferVideoRatio(config.size))).toBe(true);
         });
-        expect(request.body).not.toHaveProperty("first_frame_image_url");
     });
-    it("maps upstream video statuses to queued and generating phases", () => {
-        expect(mapPendingVideoPhase("queued")).toBe("queued");
-        expect(mapPendingVideoPhase("submitted")).toBe("queued");
-        expect(mapPendingVideoPhase("processing")).toBe("generating");
-        expect(mapPendingVideoPhase("in_progress")).toBe("generating");
-        expect(mapPendingVideoPhase("unknown")).toBe("generating");
-    });
-
-    it("adds the model hint to unified video polling and download paths", () => {
-        expect(buildOpenAIVideoTaskPath("task/1", "seedance 2.5-GT", "status"))
-            .toBe("/videos/task%2F1?model=seedance%202.5-GT");
-        expect(buildOpenAIVideoTaskPath("task/1", "seedance 2.5-GT", "content"))
-            .toBe("/videos/task%2F1/content?model=seedance%202.5-GT");
-    });
-
 });

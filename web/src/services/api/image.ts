@@ -76,6 +76,15 @@ type ResponseApiPayload = {
     msg?: string;
 };
 type ResponseStreamState = { buffer: string; text: string; payload?: ResponseApiPayload; error?: string };
+type ChatCompletionPayload = {
+    choices?: Array<{
+        message?: { content?: string | Array<{ type?: string; text?: string }> };
+        delta?: { content?: string };
+        finish_reason?: string | null;
+    }>;
+    error?: { message?: string };
+};
+type ChatCompletionStreamState = { buffer: string; text: string; error?: string };
 
 type ImageApiResponse = {
     data?: Array<Record<string, unknown>>;
@@ -101,19 +110,12 @@ type GeminiPayload = {
     promptFeedback?: { blockReason?: string };
 };
 type GeminiStreamState = { buffer: string; text: string; toolCalls: ResponseToolCall[]; error?: string };
-export type GeneratedImageResult = { id: string; dataUrl: string; previewDataUrl?: string; previewOnly?: boolean; objectKey?: string; serverRequestId?: string };
-type DownloadProgress = {
-    loaded: number;
-    total: number;
-    bytesPerSecond: number;
-};
+export type GeneratedImageResult = { id: string; dataUrl: string; previewDataUrl?: string; objectKey?: string };
 type RequestOptions = {
     signal?: AbortSignal;
     onPreview?: (images: GeneratedImageResult[]) => void;
     startedAt?: number;
     clientRequestId?: string;
-    onDownloadStart?: () => void;
-    onDownloadProgress?: (progress: DownloadProgress) => void;
 };
 
 const IMAGE_QUALITY_VALUES = ["low", "medium", "high", "xhigh", "max"];
@@ -123,10 +125,8 @@ const IMAGE_MIN_PIXELS = 655360;
 const IMAGE_MAX_PIXELS = 8294400;
 const IMAGE_MAX_EDGE = 3840;
 const IMAGE_MAX_RATIO = 3;
-// A 4K Gemini response can include a large inline image. Keep the HTTP
-// request budget aligned with the local image download/decode budget so a
-// slow response body is not reported as an upstream generation failure.
-export const IMAGE_REQUEST_TIMEOUT_MS = 10 * 60_000;
+// 与 image-storage 的下载超时保持一致，避免接口挂起时节点一直停在生成中。
+const IMAGE_REQUEST_TIMEOUT_MS = 4 * 60_000;
 // Async submission must upload the full request body before the server can
 // return a task. Reference images may legitimately take longer than 30 seconds
 // on mobile or tunneled connections; timing out here looked like a server-side
@@ -134,51 +134,6 @@ export const IMAGE_REQUEST_TIMEOUT_MS = 10 * 60_000;
 const IMAGE_TASK_SUBMIT_TIMEOUT_MS = 3 * 60_000;
 const IMAGE_MODEL_READ_TIMEOUT_MS = 15_000;
 const GEMINI_IMAGE_REQUEST_CONCURRENCY = 12;
-const IMAGE_NETWORK_RETRY_ATTEMPTS = 5;
-const IMAGE_NETWORK_RETRY_BASE_DELAY_MS = 800;
-const RETRYABLE_IMAGE_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
-
-function isRetryableImageRequestError(error: unknown) {
-    const axiosLike = Boolean(error && typeof error === "object" && (error as { isAxiosError?: boolean }).isAxiosError === true) || axios.isAxiosError(error);
-    if (axios.isCancel(error) || !axiosLike) return false;
-    const axiosError = error as { response?: { status?: number }; code?: string };
-    const status = axiosError.response?.status;
-    if (status && !RETRYABLE_IMAGE_STATUSES.has(status)) return false;
-    if (!axiosError.response) {
-        return ["ERR_NETWORK", "ECONNABORTED", "ETIMEDOUT", "ECONNRESET", "ENOTFOUND", "EAI_AGAIN"].includes(String(axiosError.code || ""));
-    }
-    return RETRYABLE_IMAGE_STATUSES.has(status || 0);
-}
-
-async function waitForImageRetry(attempt: number, signal?: AbortSignal) {
-    const delay = IMAGE_NETWORK_RETRY_BASE_DELAY_MS * Math.min(8, 2 ** attempt);
-    await new Promise<void>((resolve, reject) => {
-        const timer = setTimeout(resolve, delay);
-        signal?.addEventListener("abort", () => {
-            clearTimeout(timer);
-            reject(new DOMException("The operation was aborted.", "AbortError"));
-        }, { once: true });
-    });
-}
-
-async function postImageWithNetworkRetry<T>(
-    url: string,
-    data: unknown,
-    config: Parameters<typeof axios.post<T>>[2],
-) {
-    let lastError: unknown;
-    for (let attempt = 0; attempt < IMAGE_NETWORK_RETRY_ATTEMPTS; attempt += 1) {
-        if (config?.signal?.aborted) throw new DOMException("The operation was aborted.", "AbortError");
-        try {
-            return await axios.post<T>(url, data, config);
-        } catch (error) {
-            lastError = error;
-            if (!isRetryableImageRequestError(error) || attempt === IMAGE_NETWORK_RETRY_ATTEMPTS - 1) throw error;
-            await waitForImageRetry(attempt, config?.signal as AbortSignal | undefined);
-        }
-    }
-    throw lastError;
-}
 
 const GEMINI_SUPPORTED_RATIOS = ["1:1", "1:4", "1:8", "2:3", "3:2", "3:4", "4:1", "4:3", "4:5", "5:4", "8:1", "9:16", "16:9", "21:9"];
 
@@ -277,7 +232,7 @@ function resolveGeminiImageSize(dimensions: { width: number; height: number } | 
     return "4K";
 }
 
-function resolveFullImageSource(item: Record<string, unknown>, fallbackOutputFormat: string | undefined) {
+function resolveImageSource(item: Record<string, unknown>, fallbackOutputFormat: string | undefined) {
     if (typeof item.b64_json === "string" && item.b64_json) {
         const declaredMime = [item.mime_type, item.mimeType]
             .find((value): value is string => typeof value === "string" && /^image\//i.test(value.trim()))
@@ -288,43 +243,22 @@ function resolveFullImageSource(item: Record<string, unknown>, fallbackOutputFor
         const mimeType = declaredMime || imageOutputMimeType(typeof itemFormat === "string" ? itemFormat : fallbackOutputFormat);
         return `data:${mimeType};base64,${item.b64_json}`;
     }
-    for (const key of ["url", "image_url", "download_url", "source_url"]) {
+    for (const key of ["url", "display_url", "image_url"]) {
         if (typeof item[key] === "string" && item[key]) {
             return item[key] as string;
         }
     }
-    // `display_url` is used by the gateway as a render-optimized URL and can
-    // point at a preview. Only use it as an original fallback when no preview
-    // field is present.
-    if (!resolveImagePreviewSource(item) && typeof item.display_url === "string" && item.display_url) {
-        return item.display_url;
-    }
+    const preview = resolveImagePreviewSource(item);
+    if (preview) return preview;
     return null;
 }
 
 function resolveImagePreviewSource(item: Record<string, unknown>) {
-    for (const key of ["preview_data_url", "preview_url", "previewDataUrl", "display_url", "thumb_url", "thumbnail_url"]) {
+    for (const key of ["preview_data_url", "preview_url", "previewDataUrl"]) {
         const value = item[key];
         if (typeof value === "string" && value) return value;
     }
     return undefined;
-}
-
-function responseRequestId(headers: unknown) {
-    if (!headers) return "";
-    const getter = (headers as { get?: (name: string) => unknown }).get;
-    if (typeof getter === "function") {
-        const value = getter.call(headers, "x-client-request-id");
-        if (typeof value === "string" && value.trim()) return value.trim();
-    }
-    const record = headers as Record<string, unknown>;
-    const value = record["x-client-request-id"] ?? record["X-Client-Request-ID"];
-    return typeof value === "string" ? value.trim() : "";
-}
-
-function attachServerRequestId(images: GeneratedImageResult[], headers: unknown) {
-    const requestId = responseRequestId(headers);
-    return requestId ? images.map((image) => ({ ...image, serverRequestId: requestId })) : images;
 }
 
 function parseImagePayload(payload: ImageApiResponse, fallbackOutputFormat?: string) {
@@ -338,14 +272,11 @@ function parseImagePayload(payload: ImageApiResponse, fallbackOutputFormat?: str
         || [];
     const images: GeneratedImageResult[] = [];
     for (const item of imageList) {
-        const previewDataUrl = resolveImagePreviewSource(item);
-        const fullDataUrl = resolveFullImageSource(item, fallbackOutputFormat);
-        const dataUrl = fullDataUrl || previewDataUrl;
+        const dataUrl = resolveImageSource(item, fallbackOutputFormat);
         if (dataUrl) images.push({
             id: nanoid(),
             dataUrl,
-            previewDataUrl,
-            previewOnly: !fullDataUrl && Boolean(previewDataUrl),
+            previewDataUrl: resolveImagePreviewSource(item),
             objectKey: typeof item.object_key === "string" && item.object_key.trim() ? item.object_key.trim() : undefined,
         });
     }
@@ -484,7 +415,7 @@ function readAxiosError(error: unknown, fallback: string) {
     if (axios.isCancel(error)) return apiText("requestCanceled");
     if (axios.isAxiosError(error)) {
         if (error.code === "ECONNABORTED" || error.code === "ETIMEDOUT") return apiText("imageTimeout");
-        if (!error.response && ["ERR_NETWORK", "ECONNRESET", "ETIMEDOUT", "ECONNABORTED", "ENOTFOUND", "EAI_AGAIN"].includes(String(error.code || ""))) return apiText("networkError");
+        if (!error.response && error.code === "ERR_NETWORK") return apiText("requestFailed");
         const responseData = error.response?.data;
         // Prefer the API error from the response body.
         const apiMsg = readApiErrorMessage(responseData);
@@ -499,6 +430,24 @@ function readAxiosError(error: unknown, fallback: string) {
     return error instanceof Error ? readApiErrorMessage(error.message) || error.message : fallback;
 }
 
+function isRetryableTransportError(error: unknown) {
+    if (axios.isCancel(error)) return false;
+    if (!axios.isAxiosError(error)) return false;
+    if (error.response) return false;
+    return error.code === "ERR_NETWORK" || error.code === "ECONNRESET" || error.code === "ECONNABORTED" || error.code === "ETIMEDOUT";
+}
+
+async function postWithTransportRetry<T>(request: () => Promise<T>, enabled: boolean): Promise<T> {
+    if (!enabled) return request();
+    try {
+        return await request();
+    } catch (error) {
+        if (!isRetryableTransportError(error)) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        return request();
+    }
+}
+
 function readStatusError(status: number | undefined, fallback: string) {
     if (status === 401 || status === 403) return apiText("authenticationFailed");
     if (status === 429) return apiText("rateLimited");
@@ -511,22 +460,6 @@ function readStatusError(status: number | undefined, fallback: string) {
 function withSystemPrompt(config: AiConfig, prompt: string) {
     const systemPrompt = config.systemPrompt.trim();
     return systemPrompt ? `${systemPrompt}\n\n${prompt}` : prompt;
-}
-
-
-function createDownloadProgressHandler(options?: RequestOptions) {
-    let notified = false;
-    return (event?: { loaded?: number; total?: number; rate?: number }) => {
-        if (!notified) {
-            notified = true;
-            options?.onDownloadStart?.();
-        }
-        options?.onDownloadProgress?.({
-            loaded: Math.max(0, Number(event?.loaded) || 0),
-            total: Math.max(0, Number(event?.total) || 0),
-            bytesPerSecond: Math.max(0, Number(event?.rate) || 0),
-        });
-    };
 }
 
 function aiApiUrl(config: AiConfig, path: string) {
@@ -727,6 +660,95 @@ async function requestStreamingResponse(config: AiConfig, body: Record<string, u
     return { ...result, content: state.text || result.content };
 }
 
+function toChatCompletionMessages(messages: ResponseInputMessage[]) {
+    return messages.flatMap((message) => {
+        if ("type" in message) return [];
+        if (message.role === "tool") return [{ role: "user" as const, content: message.content }];
+        return [{ role: message.role, content: message.content || "" }];
+    });
+}
+
+function chatCompletionText(payload: ChatCompletionPayload) {
+    const content = payload.choices?.[0]?.message?.content;
+    if (typeof content === "string") return content;
+    if (Array.isArray(content)) return content.map((item) => item.text || "").join("");
+    return "";
+}
+
+function consumeChatCompletionStreamBlock(block: string, state: ChatCompletionStreamState, onDelta?: (text: string) => void) {
+    const data = block
+        .split(/\r?\n/)
+        .filter((line) => line.startsWith("data:"))
+        .map((line) => line.slice(5).replace(/^ /, ""))
+        .join("\n")
+        .trim();
+    if (!data || data === "[DONE]") return;
+    try {
+        const event = JSON.parse(data) as ChatCompletionPayload & Record<string, unknown>;
+        const errorMessage = responseErrorMessage(event);
+        if (errorMessage) state.error = errorMessage;
+        const delta = event.choices?.[0]?.delta?.content;
+        if (typeof delta === "string" && delta) {
+            state.text += delta;
+            onDelta?.(state.text);
+        }
+    } catch {
+        state.error = apiText("requestFailed");
+    }
+}
+
+function consumeChatCompletionStreamText(state: ChatCompletionStreamState, text: string, onDelta?: (text: string) => void, flush = false) {
+    state.buffer += text;
+    for (;;) {
+        const match = state.buffer.match(/\r?\n\r?\n/);
+        if (!match) break;
+        const index = match.index ?? 0;
+        consumeChatCompletionStreamBlock(state.buffer.slice(0, index), state, onDelta);
+        state.buffer = state.buffer.slice(index + match[0].length);
+    }
+    if (flush && state.buffer.trim()) {
+        consumeChatCompletionStreamBlock(state.buffer, state, onDelta);
+        state.buffer = "";
+    }
+}
+
+async function requestChatCompletionResponse(
+    config: AiConfig,
+    messages: ResponseInputMessage[],
+    onDelta?: (text: string) => void,
+    options?: RequestOptions,
+): Promise<string> {
+    const response = await fetch(aiApiUrl(config, "/chat/completions"), {
+        method: "POST",
+        headers: { ...aiHeaders(config, "application/json"), Accept: "text/event-stream" },
+        body: JSON.stringify({
+            model: config.model,
+            messages: toChatCompletionMessages(messages),
+            stream: true,
+        }),
+        signal: options?.signal,
+    });
+    if (!response.ok) throw new Error(await readFetchError(response, apiText("requestFailed")));
+    if (!response.body) {
+        const payload = (await response.json()) as ChatCompletionPayload;
+        const errorMessage = responseErrorMessage(payload);
+        if (errorMessage) throw new Error(errorMessage);
+        return chatCompletionText(payload);
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    const state: ChatCompletionStreamState = { buffer: "", text: "" };
+    for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        consumeChatCompletionStreamText(state, decoder.decode(value, { stream: true }), onDelta);
+        if (state.error) throw new Error(state.error);
+    }
+    consumeChatCompletionStreamText(state, decoder.decode(), onDelta, true);
+    if (state.error) throw new Error(state.error);
+    return state.text;
+}
 function toGeminiBody(config: AiConfig, messages: ResponseInputMessage[], extra?: Record<string, unknown>) {
     const systemText = [
         config.systemPrompt.trim(),
@@ -895,14 +917,13 @@ async function requestGeminiImagesOnce(config: AiConfig, prompt: string, referen
     };
     const asyncResult = isLocalImagePassthrough() ? null : await requestGeminiImagesAsync(config, request, options);
     if (asyncResult) return asyncResult;
-    const clientRequestId = options?.clientRequestId || nanoid();
     try {
-        const response = await postImageWithNetworkRetry<GeminiPayload>(
+        const response = await axios.post<GeminiPayload>(
             geminiApiUrl(config, "generateContent"),
             request,
-            { headers: geminiHeaders(config, clientRequestId), signal: options?.signal, timeout: IMAGE_REQUEST_TIMEOUT_MS, onDownloadProgress: createDownloadProgressHandler(options) },
+            { headers: geminiHeaders(config, options?.clientRequestId), signal: options?.signal, timeout: IMAGE_REQUEST_TIMEOUT_MS },
         );
-        return attachServerRequestId(parseGeminiImagePayload(response.data), response.headers);
+        return parseGeminiImagePayload(response.data);
     } catch (error) {
         throw new Error(readAxiosError(error, apiText("requestFailed")));
     }
@@ -1031,7 +1052,7 @@ async function submitAsyncImageTask(
             {
                 headers: {
                     ...aiHeaders(config, contentType || undefined, options?.clientRequestId),
-                    "Idempotency-Key": options?.clientRequestId || nanoid(),
+                    "Idempotency-Key": nanoid(),
                 },
                 signal: options?.signal,
                 timeout: IMAGE_TASK_SUBMIT_TIMEOUT_MS,
@@ -1074,7 +1095,7 @@ async function requestGeminiImagesAsync(
             {
                 headers: {
                     ...aiHeaders(config, "application/json", options?.clientRequestId),
-                    "Idempotency-Key": options?.clientRequestId || nanoid(),
+                    "Idempotency-Key": nanoid(),
                 },
                 signal: options?.signal,
                 timeout: IMAGE_TASK_SUBMIT_TIMEOUT_MS,
@@ -1124,10 +1145,6 @@ async function pollImageTask(
                 timeout: Math.min(30_000, Math.max(1, deadline - Date.now())),
             })
         } catch (error) {
-            if (isRetryableImageRequestError(error) && Date.now() < deadline) {
-                await waitForAsyncImagePoll(1000, options?.signal)
-                continue
-            }
             throw new Error(readAxiosError(error, apiText("requestFailed")))
         }
         const task = response.data
@@ -1149,7 +1166,7 @@ async function pollImageTask(
                 await waitForAsyncImagePoll(500, options?.signal)
                 continue
             }
-            const images = attachServerRequestId(parseImagePayload(result as ImageApiResponse, config.outputFormat), response.headers)
+            const images = parseImagePayload(result as ImageApiResponse, config.outputFormat)
             reportCanvasImageDisplay(taskId, options?.startedAt)
             return images
         }
@@ -1159,7 +1176,7 @@ async function pollImageTask(
                 if (images.length) {
                     previewDelivered = true
                     reportCanvasImageDisplay(taskId, options?.startedAt)
-                    options?.onPreview?.(attachServerRequestId(images, response.headers))
+                    options?.onPreview?.(images)
                 }
             } catch {
                 // Keep polling for the final persisted image.
@@ -1260,29 +1277,30 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
     }
     const quality = normalizeQuality(config.quality);
     const requestSize = resolveRequestSize(config.size);
-    const clientRequestId = options?.clientRequestId || nanoid();
     try {
-        const response = await postImageWithNetworkRetry<ImageApiResponse>(
-            aiApiUrl(requestConfig, "/images/generations"),
-            {
-                model: requestConfig.model,
-                prompt: withSystemPrompt(requestConfig, prompt),
-                n,
-                ...(quality ? { quality } : {}),
-                ...(requestSize ? { size: requestSize } : {}),
-                ...(background ? { background } : {}),
-                // gpt-image models reject response_format; they always return b64.
-                ...(/gpt-image/.test(requestConfig.model) ? {} : { response_format: "b64_json" }),
-                output_format: outputFormat,
-            },
-            {
-                headers: aiHeaders(requestConfig, "application/json", clientRequestId),
-                signal: options?.signal,
-                timeout: IMAGE_REQUEST_TIMEOUT_MS,
-                onDownloadProgress: createDownloadProgressHandler(options),
-            },
+        const response = await postWithTransportRetry(
+            () => axios.post<ImageApiResponse>(
+                aiApiUrl(requestConfig, "/images/generations"),
+                {
+                    model: requestConfig.model,
+                    prompt: withSystemPrompt(requestConfig, prompt),
+                    n,
+                    ...(quality ? { quality } : {}),
+                    ...(requestSize ? { size: requestSize } : {}),
+                    ...(background ? { background } : {}),
+                    // gpt-image models reject response_format; they always return b64.
+                    ...(/gpt-image/.test(requestConfig.model) ? {} : { response_format: "b64_json" }),
+                    output_format: outputFormat,
+                },
+                {
+                    headers: aiHeaders(requestConfig, "application/json", options?.clientRequestId),
+                    signal: options?.signal,
+                    timeout: IMAGE_REQUEST_TIMEOUT_MS,
+                },
+            ),
+            Boolean(options?.clientRequestId),
         );
-        const images = attachServerRequestId(await parseImagePayload(response.data, outputFormat), response.headers);
+        const images = await parseImagePayload(response.data, outputFormat);
         return normalizeGeneratedImages(images, outputFormat);
     } catch (error) {
         throw new Error(readAxiosError(error, apiText("requestFailed")));
@@ -1332,7 +1350,6 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
 
     const quality = normalizeQuality(config.quality);
     const requestSize = resolveRequestSize(config.size);
-    const clientRequestId = options?.clientRequestId || nanoid();
     const formData = new FormData();
     formData.set("model", requestConfig.model);
     formData.set("prompt", withSystemPrompt(requestConfig, requestPrompt));
@@ -1361,8 +1378,11 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     files.forEach((file) => formData.append(imageField, file));
 
     try {
-        const response = await postImageWithNetworkRetry<ImageApiResponse>(aiApiUrl(requestConfig, "/images/edits"), formData, { headers: aiHeaders(requestConfig, undefined, clientRequestId), signal: options?.signal, timeout: IMAGE_REQUEST_TIMEOUT_MS, onDownloadProgress: createDownloadProgressHandler(options) });
-        const images = attachServerRequestId(await parseImagePayload(response.data, outputFormat), response.headers);
+        const response = await postWithTransportRetry(
+            () => axios.post<ImageApiResponse>(aiApiUrl(requestConfig, "/images/edits"), formData, { headers: aiHeaders(requestConfig, undefined, options?.clientRequestId), signal: options?.signal, timeout: IMAGE_REQUEST_TIMEOUT_MS }),
+            Boolean(options?.clientRequestId),
+        );
+        const images = await parseImagePayload(response.data, outputFormat);
         return normalizeGeneratedImages(images, outputFormat);
     } catch (error) {
         throw new Error(readAxiosError(error, apiText("requestFailed")));
@@ -1395,13 +1415,27 @@ export async function requestImageQuestion(config: AiConfig, messages: AiTextMes
             if (answer === apiText("noContent")) onDelta(answer);
             return answer;
         }
-        const answer = (await requestStreamingResponse(requestConfig, {
-            model: requestConfig.model,
-            input: toResponseInput(withSystemMessage(requestConfig, messages)),
-            ...(requestConfig.reasoningEffort === "auto" ? {} : { reasoning: { effort: requestConfig.reasoningEffort } }),
-        }, onDelta, options)).content || apiText("noContent");
-        if (answer === apiText("noContent")) onDelta(answer);
-        return answer;
+        const responseMessages = withSystemMessage(requestConfig, messages);
+        try {
+            const answer = (await requestStreamingResponse(requestConfig, {
+                model: requestConfig.model,
+                input: toResponseInput(responseMessages),
+                ...(requestConfig.reasoningEffort === "auto" ? {} : { reasoning: { effort: requestConfig.reasoningEffort } }),
+            }, onDelta, options)).content || apiText("noContent");
+            if (answer === apiText("noContent")) onDelta(answer);
+            return answer;
+        } catch (responsesError) {
+            if (options?.signal?.aborted) throw responsesError;
+            try {
+                const answer = (await requestChatCompletionResponse(requestConfig, responseMessages, onDelta, options)).trim() || apiText("noContent");
+                if (answer === apiText("noContent")) onDelta(answer);
+                return answer;
+            } catch (chatError) {
+                const primary = readAxiosError(responsesError, apiText("requestFailed"));
+                const fallback = readAxiosError(chatError, apiText("requestFailed"));
+                throw new Error(`${primary}; Chat Completions fallback failed: ${fallback}`);
+            }
+        }
     } catch (error) {
         throw new Error(readAxiosError(error, apiText("requestFailed")));
     }

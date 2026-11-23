@@ -44,10 +44,21 @@ const secondKey = {
   quota_used: 0.5,
   group,
 };
+const videoCapabilities = {
+  protocol: "seedance_video",
+  min_duration: 4,
+  max_duration: 12,
+  default_duration: 8,
+  duration_options: [4, 8, 12],
+  resolutions: ["720p"],
+  aspect_ratios: ["16:9", "9:16"],
+  slots: { first_frame: 1, last_frame: 0, reference_image: 2, reference_video: 1, reference_audio: 0 },
+  supports_generate_audio: true,
+  outputs_audio: true,
+  modes: ["text-to-video", "image-to-video", "reference-images", "reference-video"],
+};
 const projects = new Map();
 const assets = new Map();
-const videoTasks = new Map();
-let mockVideoSequence = 0;
 const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nX0AAAAASUVORK5CYII=";
 const mockStartedAt = Date.now();
 const mockUsageLogs = [
@@ -57,15 +68,6 @@ const mockUsageLogs = [
 
 function envelope(data, status = 200, message = "ok") {
   return { status, body: { code: 0, message, data } };
-}
-
-function lastUserText(payload) {
-  const input = Array.isArray(payload?.input) ? payload.input : [];
-  const message = [...input].reverse().find((item) => item?.role === "user");
-  if (!message) return "";
-  if (typeof message.content === "string") return message.content;
-  if (!Array.isArray(message.content)) return "";
-  return message.content.map((part) => typeof part?.text === "string" ? part.text : "").join("\n");
 }
 
 async function body(request) {
@@ -136,6 +138,40 @@ const server = http.createServer(async (request, response) => {
     return send(response, 200, { code: 0, data: { items: [apiKey, secondKey], total: 2, page: 1, page_size: 100, pages: 1 } });
   }
   if (path === "/api/v1/groups/available") return send(response, 200, { code: 0, data: [group] });
+  if (path === "/api/v1/models/available") {
+    return send(response, 200, { code: 0, data: [{
+      name: "Mock Composite Channel",
+      description: "Mock capability source",
+      platforms: [{
+        platform: "composite",
+        groups: [group],
+        supported_models: [
+          { name: "gpt-image-2", platform: "composite", pricing: null },
+          { name: "brand-new-video", platform: "composite", pricing: { billing_mode: "video", per_request_price: 0.32, intervals: [] }, video_capabilities: videoCapabilities },
+        ],
+      }],
+    }]});
+  }
+  if (path === "/api/v1/model-plaza") {
+    return send(response, 200, { code: 0, data: {
+      description: "Mock model plaza",
+      groups: [{
+        id: group.id,
+        name: group.name,
+        description: group.description,
+        platform: group.platform,
+        rate_multiplier: 1,
+        models: [
+          { name: "gpt-image-2", platform: "composite", description: "Mock image model", pricing: { billing_mode: "image", per_request_price: 0.02, intervals: [] } },
+          { name: "brand-new-video", platform: "composite", description: "Mock video model", video_capabilities: videoCapabilities, pricing: { billing_mode: "video", per_request_price: 0.32, intervals: [
+            { tier_label: "720p / 4s", min_tokens: 4, max_tokens: 4, per_request_price: 0.2 },
+            { tier_label: "720p / 8s", min_tokens: 8, max_tokens: 8, per_request_price: 0.32 },
+            { tier_label: "720p / 12s", min_tokens: 12, max_tokens: 12, per_request_price: 0.44 },
+          ] } },
+        ],
+      }],
+    }});
+  }
   if (path === "/api/v1/prompts") {
     return send(response, 200, { code: 0, data: { items: [], total: 0, page: 1, page_size: 12, pages: 0 } });
   }
@@ -154,83 +190,11 @@ const server = http.createServer(async (request, response) => {
   if (path === "/v1/models") {
     return send(response, 200, { object: "list", data: [
       { id: "gpt-image-2", object: "model" },
-      { id: "grok-imagine-video", object: "model" },
-      { id: "gpt-5.5", object: "model" },
+      { id: "brand-new-video", object: "model" },
     ]});
-  }
-  if (path === "/v1/responses" && method === "POST") {
-    const payload = await body(request);
-    const current = lastUserText(payload);
-    const detailed = current.includes("便携榨汁杯");
-    const briefPatch = detailed
-      ? {
-          productName: "便携榨汁杯",
-          category: "厨房小家电",
-          targetAudience: ["通勤上班族", "健身人群"],
-          sellingPoints: [{ id: "fact-1", text: "一键榨汁，杯身便携", source: "user" }],
-          scenarios: ["办公室", "健身后"],
-          visualStyle: ["清爽", "高级"],
-          colorPreference: ["#111111", "#F5F0E8"],
-          copyTone: ["直接", "可信"],
-          forbiddenContent: ["绝对化承诺"],
-        }
-      : current.includes("京东")
-        ? { platform: "jd" }
-        : current.includes("拼多多")
-          ? { platform: "pdd" }
-          : current.includes("淘宝") || current.includes("天猫")
-            ? { platform: "taobao" }
-            : {};
-    const answer = {
-      message: detailed ? "商品信息已经足够，可以生成 6 页页面分镜了。" : Object.keys(briefPatch).length ? "平台已记录。继续告诉我商品名称和类目，也可以直接上传商品图。" : "我听到了。继续补充商品名称、类目、目标人群和已确认卖点。",
-      briefPatch,
-      ...(detailed ? {} : { question: { field: "productName", prompt: "商品名称是什么？", options: ["我上传商品图", "我直接描述商品"] } }),
-      readyToPlan: detailed,
-      assumptions: detailed ? ["商品图尚未上传，底图会仅按文字 Brief 策划"] : [],
-      risks: [],
-      actions: detailed ? [{ type: "plan_storyboard", label: "生成页面分镜" }] : [],
-    };
-    const text = JSON.stringify(answer);
-    response.writeHead(200, {
-      "Content-Type": "text/event-stream; charset=utf-8",
-      "Cache-Control": "no-cache",
-      "Access-Control-Allow-Origin": "*",
-    });
-    response.write(`data: ${JSON.stringify({ type: "response.output_text.delta", delta: text })}\n\n`);
-    response.write(`data: ${JSON.stringify({ type: "response.completed", response: { output_text: text } })}\n\n`);
-    response.end();
-    return;
   }
   if (path === "/v1/images/generations" && method === "POST") {
     return send(response, 200, { created: Math.floor(Date.now() / 1000), data: [{ url: `data:image/png;base64,${png}` }] });
-  }
-  if ((path === "/v1/videos/generations" || path === "/v1/videos" || path === "/v1/video/generations") && method === "POST") {
-    const id = `mock-video-${++mockVideoSequence}`;
-    videoTasks.set(id, { createdAt: Date.now(), contentAttempts: 0 });
-    return send(response, 200, { id, object: "video", status: "pending" });
-  }
-  const videoStatusMatch = path.match(/^\/v1\/videos\/([^/]+)$/);
-  if (videoStatusMatch && method === "GET") {
-    const id = videoStatusMatch[1];
-    const task = videoTasks.get(id);
-    if (!task) return send(response, 404, { error: { message: "Video request not found" } });
-    const status = Date.now() - task.createdAt >= 3000 ? "completed" : "pending";
-    return send(response, 200, { id, object: "video", status });
-  }
-  const videoContentMatch = path.match(/^\/v1\/videos\/([^/]+)\/content$/);
-  if (videoContentMatch && method === "GET") {
-    const contentTask = videoTasks.get(videoContentMatch[1]);
-    if (contentTask) {
-      contentTask.contentAttempts += 1;
-      if (contentTask.contentAttempts === 1) return send(response, 502, { error: { message: "temporary mock content failure" } });
-    }
-    response.writeHead(200, {
-      "Content-Type": "video/mp4",
-      "Content-Length": "18",
-      "Access-Control-Allow-Origin": "*",
-    });
-    response.end(Buffer.from("mock-video-content"));
-    return;
   }
 
   if (path === "/api/v1/canvas/projects" && method === "GET") {

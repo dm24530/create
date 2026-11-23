@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildProductDetailConversationMessages, createProductDetailWelcomeMessage, fallbackProductDetailTurn, parseProductDetailAssistantTurn } from "@/lib/product-detail/conversation";
+import { buildProductDetailConversationMessages, createProductDetailWelcomeMessage, fallbackProductDetailTurn, formatDetailText, parseProductDetailAssistantTurn } from "@/lib/product-detail/conversation";
 import { createEmptyBrief } from "@/lib/product-detail/brief";
 
 describe("product detail conversation", () => {
@@ -62,6 +62,8 @@ describe("product detail conversation", () => {
             attachments: [{ id: "a1", name: "product.png", type: "image/png", dataUrl: "data:image/png;base64,AAAA", width: 100, height: 100, bytes: 3 }],
         });
         const current = result[result.length - 1];
+        expect(String(result[0].content)).toContain("先完成视觉分析");
+        expect(String(result[0].content)).toContain("不要先问颜色、风格或模板");
         expect(Array.isArray(current.content)).toBe(true);
         expect(current.content).toEqual(expect.arrayContaining([
             { type: "text", text: "请分析这张商品图" },
@@ -71,6 +73,7 @@ describe("product detail conversation", () => {
     it("asks for the product name first when the brief is empty", () => {
         const turn = fallbackProductDetailTurn(createEmptyBrief("jd"));
         expect(turn.message).toContain("商品名称");
+        expect(turn.question?.options).toBeUndefined();
         expect(turn.readyToPlan).toBe(false);
     });
     it("creates an assistant welcome turn that starts discovery in chat", () => {
@@ -104,6 +107,27 @@ describe("product detail conversation", () => {
             targetAudience: ["通勤人群"],
             pricePosition: "premium",
         });
+    });
+
+    it("turns object-shaped assumptions, risks, and options into readable text", () => {
+        const turn = parseProductDetailAssistantTurn(JSON.stringify({
+            message: "请确认理解",
+            question: {
+                field: "visualStyle",
+                prompt: "选择风格",
+                options: [{ label: "高级极简", description: "留白更多" }, { text: "轻快明亮" }],
+            },
+            readyToPlan: false,
+            assumptions: [{ text: "主色使用黑白灰", confidence: 0.9 }],
+            risks: [{ message: "参考图不能当作正式规格", severity: "high" }],
+        }));
+
+        expect(formatDetailText({ label: "高级极简", description: "留白更多" })).toBe("高级极简");
+        expect(formatDetailText("user: 目标人群为通勤上班族。")).toBe("目标人群为通勤上班族。");
+        expect(formatDetailText({ unconfirmed: "早晚通勤是拟采用的画面场景。" })).toBe("早晚通勤是拟采用的画面场景。");
+        expect(turn.question?.options).toBeUndefined();
+        expect(turn.assumptions).toEqual(["主色使用黑白灰"]);
+        expect(turn.risks).toEqual(["参考图不能当作正式规格"]);
     });
 
     it("drops duplicate and unknown agent actions", () => {

@@ -7,6 +7,7 @@ import i18n from "@/i18n";
 import { normalizeImageOutputFormat } from "@/lib/image-output-format";
 import { isCreateProductMode } from "@/lib/create-product";
 import { guessModelCapability, type ModelCapability } from "@/lib/model-capability";
+import type { VideoCapabilityProfile } from "@/lib/video-model-profile";
 
 export type ApiCallFormat = "openai" | "gemini";
 export type { ModelCapability } from "@/lib/model-capability";
@@ -16,6 +17,7 @@ export type ChannelModel = {
     name: string;
     capability: ModelCapability;
     script?: string;
+    videoCapabilities?: VideoCapabilityProfile;
 };
 
 export type ModelChannel = {
@@ -24,7 +26,6 @@ export type ModelChannel = {
     baseUrl: string;
     apiKey: string;
     apiFormat: ApiCallFormat;
-    platform?: string;
     models: ChannelModel[];
 };
 
@@ -33,7 +34,6 @@ export type AiConfig = {
     baseUrl: string;
     apiKey: string;
     apiFormat: ApiCallFormat;
-    channelPlatform?: string;
     channels: ModelChannel[];
     model: string;
     imageModel: string;
@@ -176,6 +176,10 @@ function findChannelModel(config: AiConfig, value: string): { channel: ModelChan
 
 export function modelCapabilityOf(config: AiConfig, value: string): ModelCapability | undefined {
     return findChannelModel(config, value)?.model.capability;
+}
+
+export function videoCapabilityOf(config: AiConfig, value: string): VideoCapabilityProfile | undefined {
+    return findChannelModel(config, value)?.model.videoCapabilities;
 }
 
 export function modelMatchesCapability(config: AiConfig, value: string, capability?: ModelCapability) {
@@ -334,7 +338,8 @@ export function normalizeChannelModels(models: Array<string | ChannelModel> | un
         seen.add(name);
         const capability = typeof item === "string" ? guessCapability(name) : item.capability || guessCapability(name);
         const script = typeof item === "string" ? undefined : item.script?.trim() || undefined;
-        result.push({ name, capability, script });
+        const videoCapabilities = typeof item === "string" ? undefined : item.videoCapabilities;
+        result.push({ name, capability, script, videoCapabilities });
     }
     return result;
 }
@@ -347,7 +352,6 @@ export function createModelChannel(channel?: Partial<ModelChannel>): ModelChanne
         baseUrl: channel?.baseUrl?.trim() || defaultBaseUrlForApiFormat(apiFormat),
         apiKey: channel?.apiKey || "",
         apiFormat,
-        platform: channel?.platform?.trim() || undefined,
         models: normalizeChannelModels(channel?.models),
     };
 }
@@ -482,7 +486,6 @@ export function resolveModelRequestConfig(config: AiConfig, value: string) {
         baseUrl: channel.baseUrl,
         apiKey: channel.apiKey,
         apiFormat: channel.apiFormat,
-        channelPlatform: channel.platform,
     };
 }
 

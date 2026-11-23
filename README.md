@@ -3,17 +3,9 @@
 Independent Create application built from the pinned
 [`basketikun/infinite-canvas`](https://github.com/basketikun/infinite-canvas) UI.
 
-This source tree is intentionally separate from the cloud Web
-application. The upstream MIT license is retained at
-`LICENSE.infinite-canvas`.
-
-## Repository Layout
-
-- `desktop/`: active Electron shell and updater.
-- `web/`: active standalone app UI.
-- `scripts/`: shared build/version scripts.
-- `mock-server/`: local development API.
-- `legacy/`: archived pre-standalone desktop clients.
+This source tree is intentionally separate from the existing Vue Web and
+`canvas-app/`. The upstream MIT license is retained at
+`../LICENSE.infinite-canvas`.
 
 ## Current Implementation
 
@@ -21,24 +13,15 @@ application. The upstream MIT license is retained at
 - Login uses the existing Create `/api/v1/auth/login` and refresh flow.
 - A managed Create API key is reused or created automatically.
 - Image and video models are loaded from the Create `/v1/models` gateway.
-- Canvas projects and generated assets remain local; the desktop runtime disables cloud canvas sync.
+- Canvas projects and assets use the existing `/api/v1/canvas` API.
 - Browser storage remains IndexedDB/localForage for this milestone.
 - Electron loads bundled local assets from `app://create/`.
-- The cloud Web application is maintained in a separate repository.
+- The existing Vue Web remains unchanged.
 
 ## One-Click Local Test
 
-From the repository root:
-
 ```powershell
-cd C:\项目\code\create-app-split
-npm start
-```
-
-`npm start` delegates to the active Electron shell in `desktop/`. For the
-mock API + Vite development environment, use:
-
-```powershell
+cd C:\项目\code\create\create-canvas-app
 .\start-local.ps1
 ```
 
@@ -56,7 +39,7 @@ stops both background servers. Mock login accepts any email/password.
 ## Web Development
 
 ```powershell
-cd web
+cd create-canvas-app/web
 npm install --legacy-peer-deps
 npm run dev
 ```
@@ -70,12 +53,12 @@ The Vite development server proxies `/api` and `/v1` to
 npm run build
 ```
 
-Output: `web/dist`.
+Output: `create-canvas-app/web/dist`.
 
 ## Desktop Build
 
 ```powershell
-cd web
+cd create-canvas-app/web
 npm run build:desktop
 
 cd ../desktop
@@ -83,16 +66,7 @@ npm install --legacy-peer-deps
 npm start
 ```
 
-For a network-independent local unpacked package, run from the repository root:
-
-```powershell
-npm run pack:local
-```
-
-This uses the Electron binary already installed in `desktop/node_modules` and
-writes the unpacked Windows/macOS app to `desktop/release/`.
-
-`build:desktop` reads `web/.env.desktop` and points API traffic to
+`build:desktop` reads `.env.desktop` and points API traffic to
 `https://create.superai.sbs`. The desktop app uses a separate `app://create`
 origin.
 
@@ -106,34 +80,13 @@ cors:
   allow_credentials: true
 ```
 
-## GitHub Release and Signing
-
-User-facing installers are produced by `.github/workflows/create-canvas-app.yml`.
-Pushing a `create-canvas-v*` tag creates Windows and macOS installers and a
-GitHub Release. Normal users download the `.exe` or `.dmg` directly.
-
-Tagged macOS releases require Developer ID signing and notarization credentials.
-See [`docs/APP_RELEASING.md`](docs/APP_RELEASING.md) for the certificate,
-App Store Connect API key, GitHub Secrets, and release procedure.
-
 ## Desktop Tests
 
 ```powershell
-cd desktop
+cd create-canvas-app/desktop
 npm run check
 npm run test:smoke
 ```
-
-For the complete local mock suite (login, API key switching, image generation,
-video task polling/download, canvas generation, auto-save, and restart
-persistence), run from the repository root:
-
-```powershell
-.\scripts\test-local-mock.ps1
-```
-
-The suite uses the local mock upstream only and does not call paid image/video
-providers.
 
 `test:smoke` launches Electron against `web/dist-desktop` and verifies that the
 Create login screen renders through the `app://create` protocol.

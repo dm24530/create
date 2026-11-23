@@ -42,7 +42,7 @@ function formatDurationOptions(options: readonly number[]) {
 }
 
 export function plazaVideoDurationLabel(model: CreateModelPlazaModel) {
-    const profile = getVideoModelProfile(model.name);
+    const profile = getVideoModelProfile(model.name, model.video_capabilities);
     if (profile.durationOptions?.length) return formatDurationOptions(profile.durationOptions);
     return profile.minDuration === profile.maxDuration
         ? `${profile.maxDuration}s`
@@ -50,7 +50,7 @@ export function plazaVideoDurationLabel(model: CreateModelPlazaModel) {
 }
 
 export function plazaVideoPreviewDurations(model: CreateModelPlazaModel) {
-    const profile = getVideoModelProfile(model.name);
+    const profile = getVideoModelProfile(model.name, model.video_capabilities);
     if (profile.durationOptions?.length) {
         const values = Array.from(new Set(profile.durationOptions)).sort((a, b) => a - b);
         return values.length > 1 ? [values[0], values[values.length - 1]] : values;
@@ -74,7 +74,7 @@ export function plazaVideoPricingRows(model: CreateModelPlazaModel): PlazaVideoP
 }
 
 export function plazaVideoReferenceSummary(model: CreateModelPlazaModel): PlazaVideoReferenceSummary {
-    const profile = getVideoModelProfile(model.name);
+    const profile = getVideoModelProfile(model.name, model.video_capabilities);
     return {
         images: profile.maxImages,
         videos: profile.maxVideos,
@@ -83,7 +83,7 @@ export function plazaVideoReferenceSummary(model: CreateModelPlazaModel): PlazaV
 }
 
 export function plazaVideoCapabilityLabels(model: CreateModelPlazaModel) {
-    const profile = getVideoModelProfile(model.name);
+    const profile = getVideoModelProfile(model.name, model.video_capabilities);
     const labels = ["文生视频", "图生视频"];
     if (profile.maxImages > 0) labels.push("参考图");
     if (profile.maxVideos > 0) labels.push("参考视频");

@@ -9,7 +9,6 @@ import { FailedTaskDetailModal, type FailedTaskDetail } from "@/components/workb
 import { GeneratedMediaDetailModal, type GeneratedMediaDetailData } from "@/components/workbench/generated-media-detail-modal";
 import { resolveGeneratedImageBlob } from "@/lib/generated-image-download";
 import { generationFailureReason } from "@/lib/generation-error";
-import { matchingFailedTaskLogIds } from "@/lib/workbench-failed-task-deletion";
 import { isCreateProductMode } from "@/lib/create-product";
 import { imageReferenceLabel } from "@/lib/image-reference-prompt";
 import { normalizeImageBackground, normalizeImageOutputFormat, supportsTransparentImageBackground } from "@/lib/image-output-format";
@@ -17,10 +16,10 @@ import { computeMediaSize, inferMediaRatio, inferMediaScale, mediaRatioOptions, 
 import { encodeChannelModel, modelOptionName, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { nanoid } from "nanoid";
 import { autoSaveGeneratedFile, deleteGeneratedFile, generatedFileExtension, readGeneratedFileAsset, saveGeneratedFile } from "@/lib/desktop-save";
-import { formatBytes, formatDownloadSpeed, formatDuration, formatPreciseDuration } from "@/lib/image-utils";
+import { formatBytes, formatDuration } from "@/lib/image-utils";
 import { requestEdit, requestGeneration, submitPersistentImageTask, waitForPersistentImageTask } from "@/services/api/image";
 import { deleteStoredImages, ensureImagePreview, getImageBlob, getImagePreviewRevision, prepareReferenceImagesForRequest, previewUrlFor, resolveImageUrl, setImageBlob, subscribeImagePreviews, uploadImage } from "@/services/image-storage";
-import { buildClientRequestTiming, saveClientRequestTiming } from "@/services/client-request-timing";
+import { saveClientRequestTiming } from "@/services/client-request-timing";
 import { createUserWorkbenchLogStore } from "@/services/workbench-log-storage";
 import { configureCreateWorkspace, getManagedKeySelection, listCreateManagedKeys, managedKeySupportsImage, switchManagedKey, type CreateManagedKey } from "@/services/create-managed-channel";
 import { WorkbenchModelSelect } from "@/components/workbench/model-select";
@@ -45,8 +44,6 @@ type GeneratedImage = {
     model?: string;
     prepareDurationMs?: number;
     generationDurationMs?: number;
-    downloadDurationMs?: number;
-    previewOnly?: boolean;
 };
 
 type GenerationResult = {
@@ -59,16 +56,10 @@ type GenerationResult = {
     model?: string;
     config?: AiConfig;
     references?: ReferenceImage[];
-    phase?: "compressing" | "generating" | "downloading";
+    phase?: "compressing" | "generating";
     phaseStartedAt?: number;
     prepareDurationMs?: number;
     clientRequestId?: string;
-    downloadProgress?: {
-        percent: number;
-        loaded: number;
-        total: number;
-        bytesPerSecond: number;
-    };
 };
 
 type GenerationLog = {
@@ -462,10 +453,6 @@ export default function ImagePage() {
     }, [autoRunToken]);
 
     const downloadImage = async (image: GeneratedImage, index: number) => {
-        if (image.previewOnly) {
-            message.warning(t("canvas.node.originalProcessing"));
-            return;
-        }
         try {
             const blob = await resolveGeneratedImageBlob(image);
             const mimeType = blob.type || image.mimeType || "image/png";
@@ -478,14 +465,12 @@ export default function ImagePage() {
     };
 
     const addResultToReferences = async (image: GeneratedImage, index: number) => {
-        if (image.previewOnly) { message.warning(t("canvas.node.originalProcessing")); return; }
         const stored = await uploadImage(image.dataUrl);
         setReferences((value) => [...value, { id: nanoid(), name: `result-${index + 1}.png`, type: stored.mimeType, dataUrl: stored.url, storageKey: stored.storageKey }]);
         message.success(t("imageWorkbench.addedReference"));
     };
 
     const saveResultToAssets = async (image: GeneratedImage, index: number) => {
-        if (image.previewOnly) { message.warning(t("canvas.node.originalProcessing")); return; }
         const stored = await uploadImage(image.dataUrl);
         addAsset({
             kind: "image",
@@ -572,8 +557,13 @@ export default function ImagePage() {
             okButtonProps: { danger: true },
             cancelText: t("common.cancel"),
             onOk: async () => {
-                const matchingLogIds = matchingFailedTaskLogIds(logs, result);
-                await Promise.all(matchingLogIds.map((id) => logStore.removeItem(id)));
+                const logIds = new Set([result.id, result.logId].filter((id): id is string => Boolean(id)));
+                const matchingLogs = logs.filter((log) => logIds.has(log.id) || (
+                    log.status === "failed" &&
+                    log.prompt === result.prompt &&
+                    (log.error || "") === (result.error || "")
+                ));
+                await Promise.all(matchingLogs.map((log) => logStore.removeItem(log.id)));
                 setResults((value) => value.filter((item) => item.id !== result.id));
                 setFailedDetail((current) => current?.id === result.id ? null : current);
                 await refreshLogs();
@@ -639,51 +629,8 @@ export default function ImagePage() {
             const requestStartedAt = performance.now();
             const prepareDurationMs = requestStartedAt - prepareStartedAt;
             setResults((value) => updateResultById(value, resultId, { phase: "generating", phaseStartedAt: requestStartedAt, prepareDurationMs }));
-            let downloadStartedAt: number | null = null;
-            let lastProgressLoaded = 0;
-            let lastProgressAt = 0;
-            let lastProgressRate = 0;
             const requestOptions = {
                 clientRequestId,
-                onDownloadStart: () => {
-                    if (downloadStartedAt) return;
-                    downloadStartedAt = performance.now();
-                    setResults((value) => updateResultById(value, resultId, {
-                        phase: "downloading",
-                        phaseStartedAt: downloadStartedAt || performance.now(),
-                        downloadProgress: { percent: 0, loaded: 0, total: 0, bytesPerSecond: 0 },
-                    }));
-                },
-                onDownloadProgress: (progress: { loaded: number; total: number; bytesPerSecond: number }) => {
-                    if (!downloadStartedAt) {
-                        downloadStartedAt = performance.now();
-                    }
-                    const now = performance.now();
-                    if (!lastProgressAt) lastProgressAt = now;
-                    const elapsedSeconds = Math.max(0.001, (now - lastProgressAt) / 1000);
-                    const instantRate = Math.max(0, progress.loaded - lastProgressLoaded) / elapsedSeconds;
-                    const bytesPerSecond = progress.bytesPerSecond > 0
-                        ? progress.bytesPerSecond
-                        : instantRate > 0
-                          ? instantRate
-                          : lastProgressRate;
-                    lastProgressLoaded = Math.max(lastProgressLoaded, progress.loaded);
-                    lastProgressAt = now;
-                    lastProgressRate = bytesPerSecond;
-                    const percent = progress.total > 0
-                        ? Math.min(100, Math.max(0, (progress.loaded / progress.total) * 100))
-                        : 0;
-                    setResults((value) => updateResultById(value, resultId, {
-                        phase: "downloading",
-                        phaseStartedAt: downloadStartedAt || now,
-                        downloadProgress: {
-                            percent,
-                            loaded: progress.loaded,
-                            total: progress.total,
-                            bytesPerSecond,
-                        },
-                    }));
-                },
                 onPreview: (previewImages: Array<{ id: string; dataUrl: string }>) => {
                     const preview = previewImages[0];
                     if (!preview) return;
@@ -697,7 +644,6 @@ export default function ImagePage() {
                                 durationMs: previewAt - prepareStartedAt,
                                 prepareDurationMs,
                                 generationDurationMs: previewAt - requestStartedAt,
-                                downloadDurationMs: 0,
                                 width: 0,
                                 height: 0,
                                 bytes: 0,
@@ -716,40 +662,27 @@ export default function ImagePage() {
                   ? await requestEdit(snapshot.config, snapshot.text, requestReferences, requestOptions)
                   : await requestGeneration(snapshot.config, snapshot.text, requestOptions);
             const requestCompletedAt = performance.now();
-            const phaseTiming = buildClientRequestTiming({
-                prepareStartedAt,
-                requestStartedAt,
-                downloadStartedAt,
-                completedAt: requestCompletedAt,
-            });
-            const { generationMs: generationDurationMs, downloadMs: downloadDurationMs, totalMs: totalDurationMs } = phaseTiming;
+            const generationDurationMs = requestCompletedAt - requestStartedAt;
+            const totalDurationMs = requestCompletedAt - prepareStartedAt;
             const image = result[0];
             if (!image) throw new Error(t("imageWorkbench.missingResult"));
-            saveClientRequestTiming(clientRequestId, phaseTiming);
-            const serverRequestId = result[0]?.serverRequestId;
-            if (serverRequestId && serverRequestId !== clientRequestId) {
-                saveClientRequestTiming(serverRequestId, phaseTiming);
-            }
+            saveClientRequestTiming(clientRequestId, { prepareMs: prepareDurationMs, generationMs: generationDurationMs, totalMs: totalDurationMs });
             const immediateImage: GeneratedImage = {
                 id: image.id,
                 dataUrl: image.previewDataUrl || image.dataUrl,
                 durationMs: totalDurationMs,
                 prepareDurationMs,
                 generationDurationMs,
-                downloadDurationMs,
                 width: 0,
                 height: 0,
                 bytes: 0,
                 mimeType: "",
-                previewOnly: Boolean(image.previewOnly || image.previewDataUrl),
                 prompt: snapshot.text,
                 model: modelOptionName(snapshot.config.model),
             };
             // Match the canvas behavior: paint the returned image first, then
-            // persist it to local storage in the background. A preview-only
-            // response must never be persisted as the original artifact.
+            // persist it to local storage in the background.
             setResults((value) => updateResultById(value, resultId, { status: "success", image: immediateImage }));
-            if (image.previewOnly) return immediateImage;
             let stored: Awaited<ReturnType<typeof uploadImage>> | null = null;
             let durableBlob: Blob | null = null;
             try {
@@ -780,12 +713,10 @@ export default function ImagePage() {
                     durationMs: totalDurationMs,
                     prepareDurationMs,
                     generationDurationMs,
-                    downloadDurationMs,
                     width: stored.width,
                     height: stored.height,
                     bytes: stored.bytes,
                     mimeType: stored.mimeType,
-                    previewOnly: false,
                     prompt: snapshot.text,
                     model: modelOptionName(snapshot.config.model),
                 };
@@ -800,7 +731,6 @@ export default function ImagePage() {
                     ...(localPath ? { localPath } : {}),
                     bytes: durableBlob.size,
                     mimeType: durableBlob.type || "image/png",
-                    previewOnly: false,
                 };
                 setResults((value) => updateResultById(value, resultId, { status: "success", image: nextImage }));
                 return nextImage;
@@ -1410,7 +1340,6 @@ function ResultImageCard({
     useEffect(() => setRecoveredImage(null), [image.id, image.storageKey, image.dataUrl]);
     const currentImage = recoveredImage || image;
     const imageSource = previewUrlFor(currentImage.storageKey) || currentImage.dataUrl;
-    const previewOnly = Boolean(currentImage.previewOnly);
     const recoverImage = async () => {
         const recovered = await resolveStoredLogImage(currentImage).catch(() => currentImage);
         if (recovered.dataUrl || recovered.storageKey) setRecoveredImage(recovered);
@@ -1422,15 +1351,9 @@ function ResultImageCard({
                 className="group relative block w-full cursor-zoom-in overflow-hidden"
                 title={t("common.details")}
                 aria-label={t("common.details")}
-                onClick={() => onPreview({ kind: "image", src: currentImage.dataUrl, prompt: currentImage.prompt, model: currentImage.model, width: currentImage.width, height: currentImage.height, durationMs: currentImage.durationMs, prepareDurationMs: currentImage.prepareDurationMs, generationDurationMs: currentImage.generationDurationMs, downloadDurationMs: currentImage.downloadDurationMs, bytes: currentImage.bytes })}
-                onContextMenu={(event) => event.preventDefault()}
+                onClick={() => onPreview({ kind: "image", src: currentImage.dataUrl, prompt: currentImage.prompt, model: currentImage.model, width: currentImage.width, height: currentImage.height, durationMs: currentImage.durationMs, bytes: currentImage.bytes })}
             >
                 <Image src={imageSource} preview={false} alt={t("imageWorkbench.resultAlt", { count: index + 1 })} className="aspect-square w-full object-cover" onError={() => void recoverImage()} />
-                {previewOnly ? (
-                    <span className="pointer-events-none absolute left-2 top-2 rounded-md bg-black/65 px-2 py-1 text-[10px] font-medium text-white">
-                        {t("canvas.node.thumbnailPreview")}
-                    </span>
-                ) : null}
                 <span className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/0 text-xs font-medium text-white opacity-0 transition group-hover:bg-black/20 group-hover:opacity-100">{t("common.details")}</span>
             </button>
             <div className="space-y-2 border-t border-stone-200 px-3 py-2.5 dark:border-stone-800">
@@ -1439,10 +1362,9 @@ function ResultImageCard({
                         {image.width}x{image.height}
                     </span>
                     <span>{formatBytes(image.bytes)}</span>
-                    {image.prepareDurationMs ? <span title={t("workbench.prepareDuration")}>{t("workbench.prepareDuration")} {formatPreciseDuration(image.prepareDurationMs)}</span> : null}
-                    <span title={t("workbench.generationDuration")}>{t("workbench.generationDuration")} {formatPreciseDuration(image.generationDurationMs || image.durationMs)}</span>
-                    {image.downloadDurationMs && image.downloadDurationMs > 0 ? <span title={t("workbench.downloadDuration")}>{t("workbench.downloadDuration")} {formatPreciseDuration(image.downloadDurationMs)}</span> : null}
-                    <span title={t("workbench.totalDuration")}>{t("workbench.totalDuration")} {formatPreciseDuration(image.durationMs)}</span>
+                    {image.prepareDurationMs ? <span title="本地压缩耗时">压缩 {formatDuration(image.prepareDurationMs)}</span> : null}
+                    <span title="发送到上游后的生成耗时">生成 {formatDuration(image.generationDurationMs || image.durationMs)}</span>
+                    <span title="从开始压缩到生成完成">总计 {formatDuration(image.durationMs)}</span>
                 </div>
                 <div className="grid min-w-0 grid-cols-4 gap-2">
                     <Tooltip title={t("common.addToAssets")}>
@@ -1455,8 +1377,8 @@ function ResultImageCard({
                             {t("imageWorkbench.referenceShort")}
                         </Button>
                     </Tooltip>
-                    <Tooltip title={previewOnly ? t("canvas.node.originalProcessing") : t("common.download")}>
-                        <Button className={RESULT_ACTION_BUTTON_CLASS} size="small" disabled={previewOnly} icon={<Download className="size-3.5" />} onClick={() => void onDownload(currentImage, index)}>
+                    <Tooltip title={t("common.download")}>
+                        <Button className={RESULT_ACTION_BUTTON_CLASS} size="small" icon={<Download className="size-3.5" />} onClick={() => void onDownload(currentImage, index)}>
                             {t("common.download")}
                         </Button>
                     </Tooltip>
@@ -1476,11 +1398,6 @@ function PendingImageCard({ result, clockNow }: { result: GenerationResult; cloc
     const phase = result.phase || "generating";
     const phaseStartedAt = result.phaseStartedAt || clockNow;
     const phaseElapsedMs = Math.max(0, clockNow - phaseStartedAt);
-    const phaseLabel = phase === "compressing"
-        ? t("workbench.compressing")
-        : phase === "downloading"
-          ? t("workbench.downloading")
-          : t("workbench.generating");
     return (
         <div className="relative aspect-square overflow-hidden rounded-lg border border-dashed border-stone-300 bg-stone-50 dark:border-stone-700 dark:bg-stone-900">
             <div
@@ -1490,24 +1407,10 @@ function PendingImageCard({ result, clockNow }: { result: GenerationResult; cloc
                     backgroundSize: "16px 16px",
                 }}
             />
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-6 text-sm text-stone-500 dark:text-stone-400">
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-sm text-stone-500 dark:text-stone-400">
                 <LoaderCircle className="size-6 animate-spin" />
-                <span>{phaseLabel}</span>
-                <span className="text-xs tabular-nums">{t("workbench.elapsed", { time: formatPreciseDuration(phaseElapsedMs) })}</span>
-                {phase === "downloading" ? (
-                    <div className="mt-1 flex w-full max-w-48 flex-col gap-1.5">
-                        <div className="h-1.5 w-full overflow-hidden rounded-full bg-stone-200 dark:bg-stone-800">
-                            <div
-                                className="h-full rounded-full bg-emerald-500 transition-[width] duration-200"
-                                style={{ width: `${result.downloadProgress?.percent ?? 0}%` }}
-                            />
-                        </div>
-                        <div className="flex justify-between text-[11px] tabular-nums">
-                            <span>{result.downloadProgress?.total ? `${result.downloadProgress.percent.toFixed(1)}%` : "--%"}</span>
-                            <span>{formatDownloadSpeed(result.downloadProgress?.bytesPerSecond ?? 0)}</span>
-                        </div>
-                    </div>
-                ) : null}
+                <span>{phase === "compressing" ? t("workbench.compressing") : t("workbench.generating")}</span>
+                <span className="text-xs tabular-nums">{t("workbench.elapsed", { time: formatDuration(phaseElapsedMs) })}</span>
             </div>
         </div>
     );
@@ -1712,7 +1615,6 @@ async function pruneStoredLogs() {
 }
 
 async function resolveStoredLogImage(image: GeneratedImage): Promise<GeneratedImage> {
-    if (image.previewOnly) return image;
     let storageKey = image.storageKey?.trim() || "";
     let localPath = image.localPath?.trim() || "";
     let blob = storageKey ? await getImageBlob(storageKey).catch(() => null) : null;

@@ -7,8 +7,6 @@ vi.mock("axios", () => ({
     default: {
         get: vi.fn(),
         post: vi.fn(),
-        isCancel: vi.fn(() => false),
-        isAxiosError: vi.fn(() => false),
     },
     isCancel: vi.fn(() => false),
     isAxiosError: vi.fn(() => false),
@@ -35,7 +33,6 @@ function config(overrides: Partial<AiConfig>): AiConfig {
 
 describe("image request parameter forwarding", () => {
     let requestGeneration: typeof import("../image").requestGeneration;
-    let IMAGE_REQUEST_TIMEOUT_MS: typeof import("../image").IMAGE_REQUEST_TIMEOUT_MS;
 
     beforeEach(async () => {
         const values = new Map<string, string>();
@@ -49,16 +46,12 @@ describe("image request parameter forwarding", () => {
             createDesktop: { isDesktop: true },
             location: { origin: "http://localhost:3001" },
         });
-        ({ requestGeneration, IMAGE_REQUEST_TIMEOUT_MS } = await import("../image"));
+        ({ requestGeneration } = await import("../image"));
     });
 
     afterEach(() => {
         vi.clearAllMocks();
         vi.unstubAllGlobals();
-    });
-
-    it("allows slow 4K image responses and downloads for ten minutes", () => {
-        expect(IMAGE_REQUEST_TIMEOUT_MS).toBe(10 * 60_000);
     });
 
     it("forwards exact image size and format through the OpenAI-compatible image endpoint", async () => {
@@ -93,96 +86,6 @@ describe("image request parameter forwarding", () => {
             "X-Client-Request-ID": "client-image-test",
             "X-Create-Image-Passthrough": "local",
         });
-    });
-
-    it("notifies when the image response download starts", async () => {
-        const onDownloadStart = vi.fn();
-        vi.mocked(axios.post).mockImplementationOnce(async (_url, _body, options) => {
-            options?.onDownloadProgress?.({ loaded: 1, total: 10 });
-            return { data: { data: [{ b64_json: "aW1hZ2U=", mime_type: "image/png" }] } };
-        });
-
-        await requestGeneration(config({}), "draw a cat", { onDownloadStart });
-
-        expect(onDownloadStart).toHaveBeenCalledTimes(1);
-    });
-
-    it("keeps the server request id for usage timing correlation", async () => {
-        vi.mocked(axios.post).mockResolvedValueOnce({
-            data: { data: [{ b64_json: "aW1hZ2U=", mime_type: "image/png" }] },
-            headers: { "x-client-request-id": "server-request-1" },
-        });
-
-        const [image] = await requestGeneration(config({}), "draw a cat");
-
-        expect(image?.serverRequestId).toBe("server-request-1");
-    });
-
-    it("forwards download bytes, total, and rate", async () => {
-        const onDownloadProgress = vi.fn();
-        vi.mocked(axios.post).mockImplementationOnce(async (_url, _body, options) => {
-            options?.onDownloadProgress?.({ loaded: 5_000_000, total: 10_000_000, rate: 2_000_000 });
-            return { data: { data: [{ b64_json: "aW1hZ2U=", mime_type: "image/png" }] } };
-        });
-
-        await requestGeneration(config({}), "draw a cat", { onDownloadProgress });
-
-        expect(onDownloadProgress).toHaveBeenCalledWith({
-            loaded: 5_000_000,
-            total: 10_000_000,
-            bytesPerSecond: 2_000_000,
-        });
-    });
-
-
-    it("prefers a full url over a render preview and marks preview-only responses", async () => {
-        vi.mocked(axios.post)
-            .mockResolvedValueOnce({
-                data: {
-                    data: [{
-                        url: "https://cdn.example.com/full.png",
-                        display_url: "data:image/jpeg;base64,cHJldmlldw==",
-                        preview_data_url: "data:image/jpeg;base64,cHJldmlldw==",
-                        mime_type: "image/png",
-                    }],
-                },
-            })
-            .mockResolvedValueOnce({
-                data: {
-                    data: [{
-                        display_url: "data:image/jpeg;base64,cHJldmlldw==",
-                        preview_data_url: "data:image/jpeg;base64,cHJldmlldw==",
-                        mime_type: "image/jpeg",
-                    }],
-                },
-            });
-
-        const [preferred] = await requestGeneration(config({ outputFormat: "png" }), "draw a cat");
-        if (!preferred) throw new Error("expected preferred image");
-        expect(preferred.dataUrl).toBe("https://cdn.example.com/full.png");
-        expect(preferred.previewOnly).toBe(false);
-
-        const [preview] = await requestGeneration(config({ outputFormat: "jpeg" }), "draw a cat");
-        if (!preview) throw new Error("expected preview image");
-        expect(preview.dataUrl).toBe("data:image/jpeg;base64,cHJldmlldw==");
-        expect(preview.previewOnly).toBe(true);
-    });
-
-
-    it("retries a transient network failure without changing the request id", async () => {
-        const networkError = Object.assign(new Error("network unavailable"), { code: "ERR_NETWORK", isAxiosError: true });
-        vi.mocked(axios.post)
-            .mockRejectedValueOnce(networkError)
-            .mockResolvedValueOnce({
-                data: { data: [{ b64_json: "aW1hZ2U=", mime_type: "image/png" }] },
-            });
-
-        await requestGeneration(config({}), "draw a cat", { clientRequestId: "stable-network-request" });
-
-        expect(axios.post).toHaveBeenCalledTimes(2);
-        for (const call of vi.mocked(axios.post).mock.calls) {
-            expect(call[2]?.headers).toMatchObject({ "X-Client-Request-ID": "stable-network-request" });
-        }
     });
 
     it("maps a 4K Gemini selection to aspectRatio and imageSize", async () => {

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { beforeEach } from "vitest";
-import { configureCreateWorkspace, getManagedKeySelection, resolveManagedCredentials, switchManagedKey, type CreateManagedGroup, type CreateManagedKey } from "../create-managed-channel";
+import { afterEach, beforeEach } from "vitest";
+import { configureCreateWorkspace, getManagedKeySelection, loadCreateVideoCapabilities, resolveManagedCredentials, switchManagedKey, type CreateManagedGroup, type CreateManagedKey } from "../create-managed-channel";
 import type { CreateSession } from "../create-auth";
 import { useConfigStore } from "@/stores/use-config-store";
 
@@ -14,6 +14,7 @@ const session: CreateSession = {
 
 const imageGroup: CreateManagedGroup = { id: 10, name: "image", platform: "openai", allow_image_generation: true };
 const videoGroup: CreateManagedGroup = { id: 11, name: "video", platform: "grok", video_capable: true };
+const textGroup: CreateManagedGroup = { id: 13, name: "deepseek text", platform: "deepseek" };
 const compositeGroup: CreateManagedGroup = { id: 12, name: "composite", platform: "composite", allow_image_generation: true, video_capable: true };
 
 function key(id: number, group: CreateManagedGroup): CreateManagedKey {
@@ -22,6 +23,44 @@ function key(id: number, group: CreateManagedGroup): CreateManagedKey {
 
 describe("managed Create credentials", () => {
     beforeEach(() => localStorage.clear());
+    afterEach(() => vi.unstubAllGlobals());
+    it("loads per-model video capabilities for the selected group from the server", async () => {
+        vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+            ok: true,
+            status: 200,
+            text: async () => JSON.stringify({
+                code: 0,
+                data: [{
+                    platforms: [{
+                        groups: [{ id: videoGroup.id }],
+                        supported_models: [{
+                            name: "brand-new-video",
+                            video_capabilities: {
+                                protocol: "seedance_video",
+                                min_duration: 4,
+                                max_duration: 12,
+                                default_duration: 8,
+                                resolutions: ["720p"],
+                                aspect_ratios: ["16:9"],
+                                slots: { first_frame: 1, last_frame: 0, reference_image: 2, reference_video: 1, reference_audio: 0 },
+                            },
+                        }],
+                    }],
+                }],
+            }),
+        }));
+
+        const capabilities = await loadCreateVideoCapabilities(session, videoGroup.id);
+
+        expect(capabilities["brand-new-video"]).toMatchObject({
+            protocol: "seedance_video",
+            default_duration: 8,
+            resolutions: ["720p"],
+        });
+        expect(vi.mocked(fetch)).toHaveBeenCalledWith("/api/v1/models/available", expect.objectContaining({
+            credentials: "include",
+        }));
+    });
     it("reuses a composite key for image and video", async () => {
         const composite = key(1, compositeGroup);
         const result = await resolveManagedCredentials(session, {
@@ -73,51 +112,90 @@ describe("managed Create credentials", () => {
             listKeys: vi.fn().mockResolvedValue([key(1, compositeGroup)]),
             listGroups: vi.fn().mockResolvedValue([compositeGroup]),
             createKey: vi.fn(),
-            loadModels: vi.fn().mockResolvedValue(["gpt-image-2", "grok-imagine-video"]),
+            loadModels: vi.fn().mockResolvedValue(["gpt-image-2", "grok-imagine-video", "gpt-5.5"]),
         });
         const config = useConfigStore.getState().config;
         expect(config.channels[0]?.id).toBe("create-managed");
         expect(config.imageModel).toContain("gpt-image-2");
         expect(config.videoModel).toContain("grok-imagine-video");
+        expect(config.textModel).toContain("gpt-5.5");
     });
 
-    it("configures text models from the composite managed group", async () => {
-        await configureCreateWorkspace(session, {
-            listKeys: vi.fn().mockResolvedValue([key(1, compositeGroup)]),
-            listGroups: vi.fn().mockResolvedValue([compositeGroup]),
-            createKey: vi.fn(),
-            loadModels: vi.fn().mockResolvedValue(["gpt-image-2", "gpt-5.5", "grok-imagine-video"]),
-        });
-        const config = useConfigStore.getState().config;
-        expect(config.textModel).toContain("gpt-5.5");
-        expect(config.channels[0]?.models.some((model) => model.name === "gpt-5.5" && model.capability === "text")).toBe(true);
-    });
     it("keeps image and video channels scoped to their own capabilities", async () => {
         const deps = {
             listKeys: vi.fn().mockResolvedValue([key(1, imageGroup), key(2, videoGroup)]),
             listGroups: vi.fn().mockResolvedValue([imageGroup, videoGroup]),
             createKey: vi.fn(),
-            loadModels: vi.fn().mockResolvedValue(["gpt-image-2", "muse-video", "seedance-2.0"]),
+            loadModels: vi.fn().mockResolvedValue(["gpt-image-2", "gpt-5.5", "muse-video", "seedance-2.0"]),
         }
         await configureCreateWorkspace(session, deps)
         const config = useConfigStore.getState().config
         const imageChannel = config.channels.find((channel) => channel.id === "create-managed-image")
         const videoChannel = config.channels.find((channel) => channel.id === "create-managed-video")
 
-        expect(imageChannel?.models.map((model) => `${model.name}:${model.capability}`)).toEqual(["gpt-image-2:image"])
+        expect(imageChannel?.models.map((model) => `${model.name}:${model.capability}`)).toEqual(["gpt-image-2:image", "gpt-5.5:text"])
         expect(videoChannel?.models.map((model) => `${model.name}:${model.capability}`)).toEqual([
             "muse-video:video",
             "seedance-2.0:video",
         ])
     })
 
+    it("loads text models from a separate active text key", async () => {
+        const deps = {
+            listKeys: vi.fn().mockResolvedValue([key(1, imageGroup), key(2, videoGroup), key(3, textGroup)]),
+            listGroups: vi.fn().mockResolvedValue([imageGroup, videoGroup, textGroup]),
+            createKey: vi.fn(),
+            loadModels: vi.fn().mockImplementation(async (apiKey: string) => {
+                if (apiKey === "sk-1") return ["gpt-image-2"];
+                if (apiKey === "sk-2") return ["grok-imagine-video"];
+                if (apiKey === "sk-3") return ["deepseek-v4.1-flash-1017"];
+                return [];
+            }),
+        };
+        await configureCreateWorkspace(session, deps, { force: true });
+        const config = useConfigStore.getState().config;
+        const textChannel = config.channels.find((channel) => channel.id === "create-managed-text");
+
+        expect(textChannel?.apiKey).toBe("sk-3");
+        expect(textChannel?.models.map((model) => `${model.name}:${model.capability}`)).toEqual([
+            "deepseek-v4.1-flash-1017:text",
+        ]);
+        expect(config.textModel).toBe("create-managed-text::deepseek-v4.1-flash-1017");
+    });
+
+    it("classifies new video models from server capability metadata instead of their names", async () => {
+        const deps = {
+            listKeys: vi.fn().mockResolvedValue([key(1, imageGroup), key(2, videoGroup)]),
+            listGroups: vi.fn().mockResolvedValue([imageGroup, videoGroup]),
+            createKey: vi.fn(),
+            loadModels: vi.fn().mockImplementation(async (apiKey: string) => apiKey === "sk-2" ? ["brand-new-video"] : ["gpt-image-2"]),
+            loadVideoCapabilities: vi.fn().mockResolvedValue({
+                "brand-new-video": {
+                    protocol: "seedance_video",
+                    min_duration: 4,
+                    max_duration: 12,
+                    default_duration: 8,
+                    resolutions: ["720p"],
+                    aspect_ratios: ["16:9"],
+                    slots: { first_frame: 1, last_frame: 0, reference_image: 2, reference_video: 1, reference_audio: 0 },
+                },
+            }),
+        };
+        await configureCreateWorkspace(session, deps, { force: true });
+        const config = useConfigStore.getState().config;
+        const videoChannel = config.channels.find((channel) => channel.id === "create-managed-video");
+        const model = videoChannel?.models.find((item) => item.name === "brand-new-video");
+        expect(model?.capability).toBe("video");
+        expect(model?.videoCapabilities?.protocol).toBe("seedance_video");
+        expect(config.videoModel).toContain("brand-new-video");
+    });
     it("selects image and video keys independently", async () => {
         const keys = [key(1, imageGroup), key(2, imageGroup), key(3, videoGroup)];
         const deps = {
             listKeys: vi.fn().mockResolvedValue(keys),
             listGroups: vi.fn().mockResolvedValue([imageGroup, videoGroup]),
             createKey: vi.fn(),
-            loadModels: vi.fn().mockResolvedValue(["gpt-image-2", "grok-imagine-video"]),
+            loadModels: vi.fn().mockResolvedValue(["gpt-image-2", "grok-imagine-video", "gpt-5.5"]),
         };
         await configureCreateWorkspace(session, deps);
         expect(getManagedKeySelection()).toEqual({ imageKeyId: 1, videoKeyId: 3 });

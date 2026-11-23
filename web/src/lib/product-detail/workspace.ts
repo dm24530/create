@@ -50,6 +50,14 @@ export function removeSkill(workspace: ProductDetailWorkspace, skillId: string):
     };
 }
 
+export function assetStorageKeysForProjectDeletion(workspace: ProductDetailWorkspace, projectId: string): string[] {
+    const project = workspace.projects.find((item) => item.id === projectId);
+    if (!project) return [];
+    const retainedBySkill = new Set(workspace.skills.flatMap((skill) => skill.referenceAssetIds));
+    return project.assets
+        .filter((asset) => Boolean(asset.storageKey) && (asset.kind === "generated" || !retainedBySkill.has(asset.id)))
+        .map((asset) => asset.storageKey as string);
+}
 export function normalizeWorkspace(value: unknown): ProductDetailWorkspace {
     if (!value || typeof value !== "object") return createWorkspace();
     const raw = value as Partial<ProductDetailWorkspace>;

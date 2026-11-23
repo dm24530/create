@@ -33,7 +33,6 @@ describe("waitForPersistentImageTask", () => {
 
     afterEach(() => {
         vi.clearAllMocks();
-        vi.mocked(axios.isAxiosError).mockReturnValue(false);
         vi.useRealTimers();
         vi.unstubAllGlobals();
         configureCanvasAuth("");
@@ -184,7 +183,7 @@ describe("waitForPersistentImageTask", () => {
                 },
             },
         });
-        vi.mocked(axios.isAxiosError).mockReturnValue(true);
+        vi.mocked(axios.isAxiosError).mockReturnValueOnce(true);
 
         await expect(waitForPersistentImageTask(config, {
             taskId: "imgtask_http_error",

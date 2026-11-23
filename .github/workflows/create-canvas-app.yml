@@ -367,6 +367,23 @@ jobs:
           xcrun stapler validate "$app_path"
           spctl --assess --type execute --verbose=4 "$app_path"
 
+      - name: Verify unsigned macOS ad-hoc signature
+        if: env.HAS_MAC_CERT != 'true'
+        working-directory: desktop
+        shell: bash
+        env:
+          HAS_MAC_CERT: ${{ secrets.CSC_LINK != '' }}
+        run: |
+          app_path=$(find "release/mac-${{ matrix.arch }}" -type d -name "*.app" | head -n 1)
+          if [ -z "$app_path" ]; then
+            echo "::error title=macOS app missing::No .app bundle was produced"
+            exit 1
+          fi
+          test -f "$app_path/Contents/_CodeSignature/CodeResources"
+          codesign --verify --deep --strict "$app_path"
+          codesign -dv --verbose=4 "$app_path" 2>&1 | tee mac-signature.log
+          grep -q "Signature=adhoc" mac-signature.log
+
       - name: Report unsigned macOS build
         if: env.HAS_MAC_CERT != 'true'
         shell: bash
