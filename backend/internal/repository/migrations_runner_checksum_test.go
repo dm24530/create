@@ -179,4 +179,22 @@ func TestIsMigrationChecksumCompatible(t *testing.T) {
 		require.False(t, ok)
 	})
 
+	t.Run("272生产变体checksum可兼容", func(t *testing.T) {
+		ok := isMigrationChecksumCompatible(
+			"272_sync_video_catalog_and_merge_groups.sql",
+			"98a82fd11005a4a16ae47c848a3f76e8ed665e91561ae4fa4af639caacd0e9b1",
+			"d9781e2cd93bcd374ec1d01ebc99e2aa3e22dd5903e4def644fd0918e505b0ec",
+		)
+		require.True(t, ok)
+	})
+
+	t.Run("272未知checksum仍不兼容", func(t *testing.T) {
+		ok := isMigrationChecksumCompatible(
+			"272_sync_video_catalog_and_merge_groups.sql",
+			"98a82fd11005a4a16ae47c848a3f76e8ed665e91561ae4fa4af639caacd0e9b1",
+			"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+		)
+		require.False(t, ok)
+	})
+
 }
