@@ -135,7 +135,7 @@ function modelsFor(channel: ModelChannel, capability: ModelCapability) {
     return channel.models.filter((model) => model.capability === capability);
 }
 
-function channelFromModels(id: string, name: string, apiKey: string, models: string[], capabilities?: ModelCapability[]) {
+function channelFromModels(id: string, name: string, platform: string | undefined, apiKey: string, models: string[], capabilities?: ModelCapability[]) {
     const allowed = capabilities ? new Set(capabilities) : null;
     return createModelChannel({
         id,
@@ -143,6 +143,7 @@ function channelFromModels(id: string, name: string, apiKey: string, models: str
         baseUrl: createGatewayBaseUrl(),
         apiKey,
         apiFormat: "openai",
+        platform,
         models: models.map((model) => ({ name: model, capability: guessCapability(model) })).filter((model) => !allowed || allowed.has(model.capability)),
     });
 }
@@ -314,16 +315,17 @@ async function configureCreateWorkspaceInternal(session: CreateSession, override
         channels.push(channelFromModels(
             "create-managed",
             imageGroupName,
+            imageKey.group?.platform,
             imageKey.key,
             Array.from(new Set([...imageModels, ...videoModels])),
             ["image", "video", "text"],
         ));
     } else {
         if (imageModels.length) {
-            channels.push(channelFromModels("create-managed-image", imageGroupName, imageKey.key, imageModels, ["image"]));
+            channels.push(channelFromModels("create-managed-image", imageGroupName, imageKey.group?.platform, imageKey.key, imageModels, ["image"]));
         }
         if (videoKey && videoModels.length) {
-            channels.push(channelFromModels("create-managed-video", videoGroupName, videoKey.key, videoModels, ["video"]));
+            channels.push(channelFromModels("create-managed-video", videoGroupName, videoKey.group?.platform, videoKey.key, videoModels, ["video"]));
         }
     }
 

@@ -2,9 +2,10 @@ import { App, Input, Modal, Spin, Tag } from "antd";
 import { Copy, RefreshCw, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
-import { getCreateModelPlaza, type CreateModelPlaza, type CreateModelPlazaGroup, type CreateModelPlazaModel, type CreateModelPricing, type CreateModelPricingInterval } from "@/services/create-account";
+import { getCreateModelPlaza, type CreateModelPlaza, type CreateModelPlazaGroup, type CreateModelPlazaModel, type CreateModelPricingInterval } from "@/services/create-account";
 import type { CreateSession } from "@/services/create-auth";
 import { cn } from "@/lib/utils";
+import { isPlazaVideoModel, plazaVideoBillingUnit, plazaVideoDurationLabel, plazaVideoPreviewDurations, plazaVideoPricingRows } from "@/lib/plaza-video-model";
 
 type PriceColumn = { key: string; label: string };
 
@@ -138,13 +139,24 @@ function FilterChip({ active, label, count, onClick }: { active: boolean; label:
 }
 
 function ModelPlazaGroupCard({ group, models, onCopy }: { group: CreateModelPlazaGroup; models: CreateModelPlazaModel[]; onCopy: (name: string) => void }) {
-    const columns = priceColumns(models);
+    const videoModels = models.filter(isPlazaVideoModel);
+    const nonVideoModels = models.filter((model) => !isPlazaVideoModel(model));
     return (
         <section className="overflow-hidden rounded-xl border border-teal-500/25 bg-white shadow-sm dark:border-teal-700/45 dark:bg-[#252525]">
             <div className="border-b border-stone-200 bg-stone-50/80 px-4 py-4 dark:border-stone-700 dark:bg-[#292929]">
                 <div className="inline-flex items-center rounded-md bg-cyan-50 px-2 py-1 text-sm font-medium text-cyan-700 dark:bg-cyan-950/50 dark:text-cyan-300">{group.name}</div>
                 {group.description ? <p className="mt-3 text-sm text-stone-500 dark:text-stone-300">{group.description}</p> : null}
             </div>
+            {nonVideoModels.length ? <TokenModelPricingTable models={nonVideoModels} onCopy={onCopy} /> : null}
+            {videoModels.length ? <VideoModelPricingCards models={videoModels} onCopy={onCopy} /> : null}
+        </section>
+    );
+}
+
+function TokenModelPricingTable({ models, onCopy }: { models: CreateModelPlazaModel[]; onCopy: (name: string) => void }) {
+    const columns = priceColumns(models);
+    return (
+        <>
             <div className="grid border-b border-stone-200 bg-stone-100/80 text-sm text-stone-500 dark:border-stone-700 dark:bg-[#303030] dark:text-stone-300 md:grid-cols-[minmax(300px,1.15fr)_minmax(440px,1fr)]">
                 <div className="flex items-center px-4 py-3 font-medium">模型</div>
                 <div className="px-4 py-3">
@@ -165,17 +177,10 @@ function ModelPlazaGroupCard({ group, models, onCopy }: { group: CreateModelPlaz
                     <div key={`${model.platform}:${model.name}`} className={cn("grid md:grid-cols-[minmax(300px,1.15fr)_minmax(440px,1fr)]", index > 0 && "border-t border-stone-200 dark:border-stone-700/80")}>
                         <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-2 px-4 py-4">
                             <span className="break-all text-[15px] font-medium text-stone-900 dark:text-stone-100">{model.name}</span>
-                            <button
-                                type="button"
-                                className="inline-flex size-6 shrink-0 items-center justify-center rounded text-stone-400 transition hover:bg-stone-100 hover:text-stone-700 dark:hover:bg-stone-700 dark:hover:text-stone-100"
-                                title="复制模型名称"
-                                aria-label={`复制模型名称 ${model.name}`}
-                                onClick={() => onCopy(model.name)}
-                            >
-                                <Copy className="size-3.5" />
-                            </button>
+                            <CopyModelButton model={model} onCopy={onCopy} />
                             <PlatformBadge platform={model.platform} />
                             <BillingBadge model={model} />
+                            {model.description ? <p className="basis-full max-h-16 overflow-y-auto overscroll-contain whitespace-pre-line break-words pr-1 text-xs leading-5 text-stone-500 dark:text-stone-400">{model.description}</p> : null}
                         </div>
                         <div className="grid grid-cols-3 items-center gap-3 px-4 py-4">
                             {columns.map((column) => (
@@ -185,10 +190,104 @@ function ModelPlazaGroupCard({ group, models, onCopy }: { group: CreateModelPlaz
                     </div>
                 ))}
             </div>
-        </section>
+        </>
     );
 }
 
+function VideoModelPricingCards({ models, onCopy }: { models: CreateModelPlazaModel[]; onCopy: (name: string) => void }) {
+    return (
+        <div className="grid gap-3 p-4 xl:grid-cols-2">
+            {models.map((model) => (
+                <VideoModelPricingCard key={`${model.platform}:${model.name}`} model={model} onCopy={onCopy} />
+            ))}
+        </div>
+    );
+}
+
+function VideoModelPricingCard({ model, onCopy }: { model: CreateModelPlazaModel; onCopy: (name: string) => void }) {
+    const rows = plazaVideoPricingRows(model);
+    const duration = plazaVideoDurationLabel(model);
+    return (
+        <article className="rounded-xl border border-stone-200 p-4 dark:border-stone-700/80" data-video-pricing-model>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                    <span className="min-w-0 text-[15px] font-medium text-stone-900 dark:text-stone-100">
+                        <span className="break-all">{model.name}</span>
+                    </span>
+                    <CopyModelButton model={model} onCopy={onCopy} />
+                    <PlatformBadge platform={model.platform} />
+                    <BillingBadge model={model} />
+                </div>
+                <span className="rounded-full border border-orange-200 bg-orange-50 px-2.5 py-1 text-xs font-medium text-orange-700 dark:border-orange-900/60 dark:bg-orange-950/35 dark:text-orange-300">
+                    可选时长 {duration}
+                </span>
+            </div>
+            {model.description ? <p className="mt-2 max-h-16 overflow-y-auto overscroll-contain whitespace-pre-line break-words pr-1 text-xs leading-5 text-stone-500 dark:text-stone-400">{model.description}</p> : null}
+            {rows.length ? (
+                <div className="mt-2 rounded-lg border border-stone-200 dark:border-stone-700">
+                    <table className="w-full table-fixed text-left text-xs">
+                        <thead className="bg-stone-50 text-stone-500 dark:bg-stone-900/60 dark:text-stone-400">
+                            <tr>
+                                <th className="w-[20%] px-2.5 py-1.5 font-medium">分辨率</th>
+                                <th className="w-[17%] px-2.5 py-1.5 font-medium">计费方式</th>
+                                <th className="w-[20%] px-2.5 py-1.5 font-medium">支持时长</th>
+                                <th className="px-2.5 py-1.5 text-right font-medium">实付价格</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-stone-200 dark:divide-stone-700/80">
+                            {rows.map((row) => (
+                                <tr key={row.key}>
+                                    <td className="px-2.5 py-2 font-medium text-stone-700 dark:text-stone-200">{row.resolution}</td>
+                                    <td className="px-2.5 py-2 text-stone-500 dark:text-stone-400">{videoBillingLabel(model)}</td>
+                                    <td className="break-words px-2.5 py-2 text-stone-500 dark:text-stone-400">{duration}</td>
+                                    <td className="px-2.5 py-2 text-right">
+                                        <div className="font-mono text-sm font-semibold text-stone-900 dark:text-stone-100">
+                                            ${formatPrice(row.price)}
+                                            <span className="ml-1 font-sans text-[11px] font-normal text-stone-400">/ {videoPriceUnit(model)}</span>
+                                        </div>
+                                        {plazaVideoBillingUnit(model) === "second" ? (
+                                            <div className="mt-1 whitespace-normal break-words text-[10px] leading-4 text-stone-400">{videoDurationEstimates(model, row.price)}</div>
+                                        ) : null}
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            ) : (
+                <p className="mt-3 rounded-lg border border-dashed border-stone-300 px-3 py-2 text-xs text-stone-500 dark:border-stone-700 dark:text-stone-400">未配置定价</p>
+            )}
+        </article>
+    );
+}
+function CopyModelButton({ model, onCopy }: { model: CreateModelPlazaModel; onCopy: (name: string) => void }) {
+    return (
+        <button
+            type="button"
+            className="inline-flex size-6 shrink-0 items-center justify-center rounded text-stone-400 transition hover:bg-stone-100 hover:text-stone-700 dark:hover:bg-stone-700 dark:hover:text-stone-100"
+            title="复制模型名称"
+            aria-label={`复制模型名称 ${model.name}`}
+            onClick={() => onCopy(model.name)}
+        >
+            <Copy className="size-3.5" />
+        </button>
+    );
+}
+
+function videoBillingLabel(model: CreateModelPlazaModel) {
+    return plazaVideoBillingUnit(model) === "second" ? "按秒计费" : "按次计费";
+}
+
+function videoPriceUnit(model: CreateModelPlazaModel) {
+    return plazaVideoBillingUnit(model) === "second" ? "秒" : "次";
+}
+
+function videoDurationEstimates(model: CreateModelPlazaModel, secondPrice: number) {
+    return plazaVideoPreviewDurations(model)
+        .filter((seconds) => Number.isFinite(seconds) && seconds > 0)
+        .map((seconds) => `${seconds}s ≈ ${formatPrice(secondPrice * seconds)}`)
+        .join(" · ");
+}
 function PlatformBadge({ platform }: { platform: string }) {
     const normalized = platform.toLowerCase();
     const color = normalized.includes("gemini")
@@ -205,7 +304,7 @@ function BillingBadge({ model }: { model: CreateModelPlazaModel }) {
     const billingMode = model.pricing?.billing_mode || "";
     return (
         <span className="rounded border border-stone-200 bg-stone-50 px-1.5 py-0.5 text-xs text-stone-600 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-300">
-            {billingMode === "image" ? "按图片计费" : billingMode === "video" ? "按视频计费" : "按 Token 计费"}
+            {isPlazaVideoModel(model) ? videoBillingLabel(model) : billingMode === "image" ? "按图片计费" : "按 Token 计费"}
         </span>
     );
 }
@@ -264,6 +363,7 @@ function formatPrice(value: number) {
     return value.toFixed(4).replace(/0+$/, "").replace(/\.$/, "");
 }
 function requestUnit(model: CreateModelPlazaModel) {
+    if (isPlazaVideoModel(model)) return videoPriceUnit(model);
     return model.pricing?.billing_mode === "image" ? "张" : "次";
 }
 function platformLabel(platform: string) {
@@ -273,3 +373,4 @@ function platformLabel(platform: string) {
     if (normalized.includes("grok")) return "Grok";
     return platform;
 }
+

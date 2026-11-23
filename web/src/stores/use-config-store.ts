@@ -24,6 +24,7 @@ export type ModelChannel = {
     baseUrl: string;
     apiKey: string;
     apiFormat: ApiCallFormat;
+    platform?: string;
     models: ChannelModel[];
 };
 
@@ -32,6 +33,7 @@ export type AiConfig = {
     baseUrl: string;
     apiKey: string;
     apiFormat: ApiCallFormat;
+    channelPlatform?: string;
     channels: ModelChannel[];
     model: string;
     imageModel: string;
@@ -345,6 +347,7 @@ export function createModelChannel(channel?: Partial<ModelChannel>): ModelChanne
         baseUrl: channel?.baseUrl?.trim() || defaultBaseUrlForApiFormat(apiFormat),
         apiKey: channel?.apiKey || "",
         apiFormat,
+        platform: channel?.platform?.trim() || undefined,
         models: normalizeChannelModels(channel?.models),
     };
 }
@@ -479,6 +482,7 @@ export function resolveModelRequestConfig(config: AiConfig, value: string) {
         baseUrl: channel.baseUrl,
         apiKey: channel.apiKey,
         apiFormat: channel.apiFormat,
+        channelPlatform: channel.platform,
     };
 }
 

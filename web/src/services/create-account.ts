@@ -114,6 +114,7 @@ export type CreateModelPricing = {
 export type CreateModelPlazaModel = {
     name: string;
     platform: string;
+    description?: string;
     pricing?: CreateModelPricing | null;
     official_pricing?: Record<string, unknown> | null;
 };

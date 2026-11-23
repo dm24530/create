@@ -15,7 +15,7 @@ import { isCreateProductMode } from "@/lib/create-product";
 import { appendVideoBatch, canResumeVideoTask, mergeVideoBatch, videoTaskElapsedMs, VIDEO_TASK_POLL_INTERVAL_MS, VIDEO_TASK_POLL_TIMEOUT_MS } from "@/lib/video-task-recovery";
 import { normalizeVideoResolutionValue } from "@/components/video-settings-panel";
 import { computeVideoSize, inferVideoRatio, parsePixelSize, parseVideoResolution, readVideoDimensions, videoRatioOptions } from "@/lib/media-size";
-import { clampVideoSecondsForProfile, getVideoModelProfile, isVideoDurationOptionAllowed, isVideoRatioSupported, isVideoResolutionSupported, supportsVideoGenerateAudioToggle } from "@/lib/video-model-profile";
+import { clampVideoSecondsForProfile, getVideoModelProfile, isVideoDurationOptionAllowed, isVideoRatioSupported, isVideoResolutionSupported, resolveVideoModelProvider, supportsVideoGenerateAudioToggle } from "@/lib/video-model-profile";
 import { autoSaveGeneratedFile, deleteGeneratedFile, readGeneratedFileAsset } from "@/lib/desktop-save";
 import { captureVideoAssetCover } from "@/lib/video-asset-cover";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
@@ -29,7 +29,7 @@ import { PanelResizeHandle, useStoredPanelWidth } from "@/components/workbench/p
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useUserStore } from "@/stores/use-user-store";
 import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
-import { boolConfig, encodeChannelModel, modelOptionName, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+import { boolConfig, encodeChannelModel, modelOptionName, resolveModelRequestConfig, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 import i18n from "@/i18n";
@@ -100,9 +100,9 @@ type GenerationLog = {
 type GenerationLogConfig = Pick<AiConfig, "model" | "videoModel" | "size" | "vquality" | "videoSeconds" | "videoDurationAuto" | "videoGenerateAudio" | "videoWatermark" | "videoMode">;
 
 const LOG_STORE_KEY = "infinite-canvas:video_generation_logs";
-const MAX_REFERENCE_IMAGES = 9;
-const MAX_REFERENCE_VIDEOS = 3;
-const MAX_REFERENCE_AUDIOS = 3;
+const MAX_REFERENCE_IMAGES = 30;
+const MAX_REFERENCE_VIDEOS = 10;
+const MAX_REFERENCE_AUDIOS = 10;
 const MAX_VIDEO_TASKS = 4;
 const MAX_PROMPT_LENGTH = 5000;
 const VIDEO_SECONDS_PRESETS = [5, 8, 10, 15] as const;
@@ -164,7 +164,8 @@ export default function VideoPage() {
 
     const model = effectiveConfig.videoModel || effectiveConfig.model;
     const videoModelName = modelOptionName(model);
-    const videoProfile = getVideoModelProfile(videoModelName);
+    const videoProvider = resolveVideoModelProvider(videoModelName, effectiveConfig);
+    const videoProfile = getVideoModelProfile(videoModelName, videoProvider);
     const audioToggleDisabled = !supportsVideoGenerateAudioToggle(videoProfile);
     const maxReferenceImages = Math.min(MAX_REFERENCE_IMAGES, videoProfile.maxImages);
     const maxReferenceVideos = Math.min(MAX_REFERENCE_VIDEOS, videoProfile.maxVideos);
@@ -1826,7 +1827,11 @@ function buildLog({
 }
 
 function buildVideoConfig(config: AiConfig, model: string): AiConfig {
-    const profile = getVideoModelProfile(modelOptionName(model));
+    const requestConfig = resolveModelRequestConfig(config, model);
+    const profile = getVideoModelProfile(
+        modelOptionName(model),
+        resolveVideoModelProvider(modelOptionName(model), requestConfig),
+    );
     const requestedResolution = normalizeResolution(config.vquality);
     const resolution = isVideoResolutionSupported(profile, requestedResolution) ? requestedResolution : profile.resolutions[0] || "720";
     const requestedRatio = inferVideoRatio(config.size);
