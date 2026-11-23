@@ -32,7 +32,7 @@ export function ProjectRail({ projects, skills, activeProjectId, onSelect, onCre
                     block
                     icon={<Plus className="size-4" />}
                     onClick={onCreate}
-                    className="mt-5 h-10 rounded-[14px] border-0 bg-[#22211f] text-xs font-semibold text-white shadow-[0_8px_22px_rgba(34,33,31,0.14)] hover:!bg-black dark:bg-stone-100 dark:text-stone-950 dark:hover:!bg-white"
+                    className="mt-5 h-10 rounded-[14px] border-0 bg-[#22211f] text-xs font-semibold text-white shadow-[0_8px_22px_rgba(34,33,31,0.14)] hover:!bg-black dark:!bg-stone-100 dark:!text-stone-950 dark:hover:!bg-white dark:hover:!text-stone-950"
                 >
                     {t("productDetail.newProject")}
                 </Button>

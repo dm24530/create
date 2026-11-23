@@ -13,7 +13,7 @@ import { RenderPreview } from "@/components/product-detail/render-preview";
 import { isProductBriefReady, mergeProductBrief, missingProductBriefFields } from "@/lib/product-detail/brief";
 import { PRODUCT_DETAIL_PLATFORM_PROFILES } from "@/lib/product-detail/defaults";
 import { classifyProductDetailGenerationIntent } from "@/lib/product-detail/intent";
-import { isStoryboardStale, normalizeStoryboard, reorderStoryboard, updateStoryboardPage } from "@/lib/product-detail/storyboard";
+import { isStoryboardStale, keepStoryboardForEditing, normalizeStoryboard, reorderStoryboard, updateStoryboardPage } from "@/lib/product-detail/storyboard";
 import { buildSkillCandidate, findBestSkill } from "@/lib/product-detail/skills";
 import { resolveProductDetailImageModel, resolveProductDetailTextModel } from "@/lib/product-detail/models";
 import { hasProductImageReference } from "@/lib/product-detail/reference-selection";
@@ -440,19 +440,28 @@ export default function ProductDetailPage() {
         if (action.type === "save_skill") { persistSkill(agentMessage.turn?.skillCandidate); }
     };
 
+    const keepCurrentStoryboard = () => {
+        if (!activeProject?.storyboard) return;
+        setStoryboard(activeProject.id, keepStoryboardForEditing(activeProject.storyboard, activeProject.brief));
+        openWorkspace("storyboard");
+        message.success("已保留当前分镜。请按最新商品信息调整页面，确认后再生成图片。");
+    };
     const movePage = (pageId: string, offset: number) => {
-        if (activeProject?.storyboard) setStoryboard(activeProject.id, reorderStoryboard(activeProject.storyboard, pageId, offset));
+        if (!activeProject?.storyboard) return;
+        const synced = keepStoryboardForEditing(activeProject.storyboard, activeProject.brief);
+        setStoryboard(activeProject.id, reorderStoryboard(synced, pageId, offset));
     };
     const deletePage = (pageId: string) => {
         if (!activeProject?.storyboard) return;
-        const pages = activeProject.storyboard.pages.filter((page) => page.id !== pageId).map((page, index) => ({ ...page, order: index + 1 }));
-        setStoryboard(activeProject.id, { ...activeProject.storyboard, status: "draft", revision: activeProject.storyboard.revision + 1, pages });
+        const synced = keepStoryboardForEditing(activeProject.storyboard, activeProject.brief);
+        const pages = synced.pages.filter((page) => page.id !== pageId).map((page, index) => ({ ...page, order: index + 1 }));
+        setStoryboard(activeProject.id, { ...synced, revision: synced.revision + 1, pages });
     };
     const updatePageContent = (pageId: string, patch: Pick<StoryboardPage, "title" | "message" | "copy">) => {
         const project = useProductDetailStore.getState().workspace.projects.find((item) => item.id === activeProject?.id);
         if (!project?.storyboard) return;
-        const updated = updateStoryboardPage(project.storyboard, pageId, patch);
-        setStoryboard(project.id, { ...updated, status: "draft" });
+        const synced = keepStoryboardForEditing(project.storyboard, project.brief);
+        setStoryboard(project.id, updateStoryboardPage(synced, pageId, patch));
     };
 
     const rightTabs = [
@@ -522,7 +531,7 @@ export default function ProductDetailPage() {
                             </div>
                             <Tabs activeKey={rightTab} onChange={setRightTab} items={rightTabs} className="px-3 pt-1 [&_.ant-tabs-nav]:mb-0" />
                             {rightTab === "brief" ? <BriefSummaryPanel brief={activeProject.brief} assets={attachments} onUpdate={(patch) => updateBrief(activeProject.id, patch)} onRequestChange={continueEditing} /> : null}
-                            {rightTab === "storyboard" ? <StoryboardPanel storyboard={activeProject.storyboard} assets={activeProject.assets} stale={storyboardStale} imageModelAvailable={Boolean(imageModelValue)} generatingPageIds={generatingPageIds} onMove={movePage} onDelete={deletePage} onConfirm={() => confirmStoryboard(activeProject.id)} onGenerate={async (page) => { await generatePage(page); }} onGenerateAll={async () => { await generateAll(); }} onRegenerate={() => void generateStoryboard()} generatingAll={generatingAll} onRequestChange={requestStoryboardChange} onUpdatePage={updatePageContent} /> : null}
+                            {rightTab === "storyboard" ? <StoryboardPanel storyboard={activeProject.storyboard} assets={activeProject.assets} stale={storyboardStale} imageModelAvailable={Boolean(imageModelValue)} generatingPageIds={generatingPageIds} onMove={movePage} onDelete={deletePage} onConfirm={() => confirmStoryboard(activeProject.id)} onGenerate={async (page) => { await generatePage(page); }} onGenerateAll={async () => { await generateAll(); }} onRegenerate={() => void generateStoryboard()} onKeepEditing={keepCurrentStoryboard} generatingAll={generatingAll} onRequestChange={requestStoryboardChange} onUpdatePage={updatePageContent} /> : null}
                             {rightTab === "results" ? <RenderPreview project={activeProject} platform={activeProject.brief.platform} skill={activeSkill || buildSkillCandidate(activeProject)} onGenerateImage={async (page) => { await generatePage(page); }} /> : null}
                             {rightTab === "export" ? <RenderPreview project={activeProject} platform={activeProject.brief.platform} skill={activeSkill || buildSkillCandidate(activeProject)} onGenerateImage={async (page) => { await generatePage(page); }} /> : null}
                         </aside>
@@ -533,7 +542,7 @@ export default function ProductDetailPage() {
                     <div className="flex size-16 items-center justify-center rounded-[20px] bg-[#22211f] text-white shadow-[0_16px_40px_rgba(34,33,31,0.16)] dark:bg-stone-100 dark:text-stone-950"><PackageSearch className="size-7" /></div>
                     <h1 className="mt-5 text-xl font-semibold tracking-[-0.03em]">{t("productDetail.title")}</h1>
                     <p className="mt-2 max-w-md text-sm leading-6 text-stone-500">{t("productDetail.emptyProjectsHint")}</p>
-                    <Button icon={<Plus className="size-4" />} className="mt-5 h-10 rounded-full border-0 bg-[#22211f] px-5 text-xs font-semibold text-white shadow-none hover:!bg-black dark:bg-stone-100 dark:text-stone-950 dark:hover:!bg-white" onClick={createProjectNow}>{t("productDetail.newProject")}</Button>
+                    <Button icon={<Plus className="size-4" />} className="mt-5 h-10 rounded-full border-0 bg-[#22211f] px-5 text-xs font-semibold text-white shadow-none hover:!bg-black dark:!bg-stone-100 dark:!text-stone-950 dark:hover:!bg-white dark:hover:!text-stone-950" onClick={createProjectNow}>{t("productDetail.newProject")}</Button>
                 </main>
             )}
             <SkillManagerModal open={skillOpen} skills={workspace.skills} projectSkillIds={activeProject?.skillIds || []} recommendedSkillId={activeSkill?.id} canCreateProjectSkill={canCreateSkill} onClose={() => setSkillOpen(false)} onToggle={toggleSkill} onDelete={(id) => deleteSkill(id)} onCreateFromProject={() => persistSkill()} onCreateCustom={createCustomSkill} onUpdateSkill={updateCustomSkill} onAttach={(skillId) => { if (activeProject) attachSkill(activeProject.id, skillId); }} />

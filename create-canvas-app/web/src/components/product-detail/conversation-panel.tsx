@@ -182,7 +182,7 @@ export function ConversationPanel({
                         loading={!hasCurrentStoryboard && storyboardBusy}
                         disabled={storyboardButtonDisabled}
                         onClick={handleStoryboardButton}
-                        className="h-9 rounded-full border-0 bg-[#22211f] px-4 text-xs font-semibold text-white shadow-[0_6px_20px_rgba(34,33,31,0.16)] hover:bg-black dark:bg-stone-100 dark:text-stone-950 dark:hover:bg-white"
+                        className="h-9 rounded-full border-0 bg-[#22211f] px-4 text-xs font-semibold text-white shadow-[0_6px_20px_rgba(34,33,31,0.16)] hover:bg-black dark:!bg-stone-100 dark:!text-stone-950 dark:hover:bg-white dark:hover:!text-stone-950"
                     >
                         {storyboardButtonLabel}
                     </Button>
@@ -259,7 +259,7 @@ export function ConversationPanel({
                         </div>
                     ) : null}
 
-                    <div className="overflow-hidden rounded-[26px] border border-black/[0.09] bg-white shadow-[0_18px_50px_rgba(38,32,25,0.08)] transition focus-within:border-black/20 focus-within:shadow-[0_20px_60px_rgba(38,32,25,0.11)] dark:border-white/10 dark:bg-[#211f1c] dark:focus-within:border-white/20">
+                    <div data-product-detail-composer="" className="product-detail-composer overflow-hidden rounded-[26px] border border-black/[0.09] bg-white shadow-[0_18px_50px_rgba(38,32,25,0.08)] transition focus-within:border-black/20 focus-within:shadow-[0_20px_60px_rgba(38,32,25,0.11)] dark:border-white/10 dark:bg-[#211f1c] dark:focus-within:border-white/20">
                         <Input.TextArea
                             ref={textareaRef}
                             value={value}
@@ -428,7 +428,7 @@ function MessageRow({ message, isLatestAssistant, showGenerationConfirmation, bu
         return (
             <div className="flex justify-end">
                 <div className="max-w-[82%] sm:max-w-[72%]">
-                    <div className="rounded-[24px] rounded-br-[8px] bg-[#22211f] px-5 py-3.5 text-[14px] leading-7 text-white shadow-[0_8px_24px_rgba(34,33,31,0.12)] dark:bg-stone-100 dark:text-stone-950">
+                    <div data-user-message-bubble="" className="rounded-[24px] rounded-br-[8px] bg-[#22211f] px-5 py-3.5 text-[14px] leading-7 text-white shadow-[0_8px_24px_rgba(34,33,31,0.12)] dark:border dark:border-white/[0.09] dark:bg-[#2b2926] dark:text-stone-100 dark:shadow-[0_14px_34px_rgba(0,0,0,0.28)]">
                         <div className="whitespace-pre-wrap break-words">{message.content}</div>
                         {message.assetIds?.length ? <MessageAttachments assetIds={message.assetIds} allAssets={allAssets} light /> : null}
                     </div>
@@ -684,7 +684,7 @@ function BriefGenerationConfirmation({ open, brief, onConfirm, onContinue, onSup
 
                 <div className="flex flex-wrap items-center justify-between gap-2 border-t border-black/[0.06] pt-3 dark:border-white/[0.07]">
                     <Button type="text" onClick={onContinue} className="rounded-full text-xs text-stone-500 hover:!text-stone-900 dark:text-stone-400 dark:hover:!text-white">暂不生成</Button>
-                    <Button type="primary" disabled={!ready} onClick={onConfirm} className="h-10 rounded-full border-0 bg-[#22211f] px-5 text-xs font-semibold shadow-none hover:!bg-black disabled:opacity-40 dark:bg-stone-100 dark:text-stone-950 dark:hover:!bg-white">{ready ? "确认并生成分镜" : `还需补充 ${missing.length} 项`}</Button>
+                    <Button type="primary" disabled={!ready} onClick={onConfirm} className="h-10 rounded-full border-0 bg-[#22211f] px-5 text-xs font-semibold shadow-none hover:!bg-black disabled:opacity-40 dark:!bg-stone-100 dark:!text-stone-950 dark:hover:!bg-white dark:hover:!text-stone-950">{ready ? "确认并生成分镜" : `还需补充 ${missing.length} 项`}</Button>
                 </div>
             </div>
         </Modal>
@@ -711,7 +711,7 @@ function ModalSummaryField({ label, value }: { label: string; value: string }) {
 
 function ModalAction({ icon, title, description, primary = false, onClick }: { icon: React.ReactNode; title: string; description: string; primary?: boolean; onClick: () => void }) {
     return (
-        <button type="button" onClick={onClick} className={`flex min-h-[82px] items-start gap-2.5 rounded-2xl border p-3 text-left transition ${primary ? "border-stone-900 bg-stone-900 text-white hover:bg-black dark:border-stone-100 dark:bg-stone-100 dark:text-stone-950 dark:hover:bg-white" : "border-black/[0.09] bg-white/70 text-stone-800 hover:border-black/20 hover:bg-white dark:border-white/[0.12] dark:bg-white/[0.06] dark:text-stone-100 dark:hover:border-white/25 dark:hover:bg-white/[0.1]"}`}>
+        <button type="button" onClick={onClick} className={`flex min-h-[82px] items-start gap-2.5 rounded-2xl border p-3 text-left transition ${primary ? "border-stone-900 bg-stone-900 text-white hover:bg-black dark:border-stone-100 dark:!bg-stone-100 dark:!text-stone-950 dark:hover:bg-white dark:hover:!text-stone-950" : "border-black/[0.09] bg-white/70 text-stone-800 hover:border-black/20 hover:bg-white dark:border-white/[0.12] dark:bg-white/[0.06] dark:text-stone-100 dark:hover:border-white/25 dark:hover:bg-white/[0.1]"}`}>
             <span className={`mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-xl ${primary ? "bg-black/10 text-white dark:bg-stone-950/10 dark:text-stone-950" : "bg-stone-100 text-stone-700 dark:bg-white/[0.09] dark:text-stone-100"}`}>{icon}</span>
             <span className="min-w-0">
                 <span className={`block text-xs font-semibold ${primary ? "text-white dark:text-stone-950" : "text-stone-800 dark:text-stone-100"}`}>{title}</span>

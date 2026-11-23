@@ -6,7 +6,7 @@ import { createEmptyBrief, createEmptySkill, createEmptyWorkspace } from "@/lib/
 import { mergeProductBrief } from "@/lib/product-detail/brief";
 import { createProductDetailWelcomeMessage } from "@/lib/product-detail/conversation";
 import { applyDesignSkill, buildSkillCandidate, findBestSkill, mergeLearnedSkill, mergeSkillCandidate } from "@/lib/product-detail/skills";
-import { ensureStoryboardVisualPrompts, isStoryboardStale } from "@/lib/product-detail/storyboard";
+import { BRIEF_CHANGED_STORYBOARD_WARNING, ensureStoryboardVisualPrompts, isStoryboardStale } from "@/lib/product-detail/storyboard";
 import { removeProject, removeSkill, selectProject, upsertProject, upsertSkill } from "@/lib/product-detail/workspace";
 import { loadProductDetailWorkspace, saveProductDetailWorkspace } from "@/services/product-detail/storage";
 import { useUserStore } from "@/stores/use-user-store";
@@ -171,7 +171,7 @@ export const useProductDetailStore = create<ProductDetailStore>((set, get) => ({
                 ...current.storyboard,
                 status: "draft" as const,
                 briefRevision: current.storyboard.briefRevision ?? current.brief.revision,
-                warning: "关键信息已修改，需要重新生成分镜和页面图片。",
+                warning: BRIEF_CHANGED_STORYBOARD_WARNING,
             } : current.storyboard;
             return {
                 ...current,
@@ -270,7 +270,17 @@ export const useProductDetailStore = create<ProductDetailStore>((set, get) => ({
         set({ workspace });
         void queueSave(workspace, set);
     },
-    toggleSkill: (skillId, enabled) => get().updateSkill(skillId, { enabled }),
+    toggleSkill: (skillId, enabled) => {
+        const skill = get().workspace.skills.find((item) => item.id === skillId);
+        if (!skill || skill.enabled === enabled) return;
+        const next: UserDesignSkill = {
+            ...skill,
+            enabled,
+        };
+        const workspace = upsertSkill(get().workspace, next);
+        set({ workspace });
+        void queueSave(workspace, set);
+    },
     saveProjectSkill: (projectId, patch) => {
         const state = get();
         const project = state.workspace.projects.find((item) => item.id === projectId);

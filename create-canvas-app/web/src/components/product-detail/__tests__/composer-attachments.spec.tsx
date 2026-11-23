@@ -39,7 +39,7 @@ afterEach(() => {
     window.matchMedia = originalMatchMedia;
     window.getComputedStyle = originalGetComputedStyle;
     globalThis.ResizeObserver = originalResizeObserver;
-    HTMLElement.prototype.scrollTo = originalScrollTo;
+    HTMLElement.prototype.scrollTo = originalScrollTo || (() => {});
 });
 
 describe("详情页输入框附件", () => {
@@ -116,6 +116,13 @@ describe("详情页输入框附件", () => {
             );
         });
 
+        const composer = document.querySelector("[data-product-detail-composer]") as HTMLElement | null;
+        expect(composer).not.toBeNull();
+        expect(composer?.classList.contains("product-detail-composer")).toBe(true);
+        const userBubble = document.querySelector("[data-user-message-bubble]") as HTMLElement | null;
+        expect(userBubble).not.toBeNull();
+        expect(userBubble?.className).toContain("dark:bg-[#2b2926]");
+        expect(userBubble?.className).not.toContain("dark:bg-stone-100");
         const overlay = document.querySelector("[data-composer-attachments]") as HTMLElement | null;
         expect(overlay).not.toBeNull();
         expect(overlay?.classList.contains("absolute")).toBe(true);

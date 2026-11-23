@@ -11,7 +11,7 @@ const ROLE_LABELS: Record<ProductPageRole, string> = {
     hero: "首屏", "pain-point": "痛点", "core-benefit": "利益", "feature-detail": "细节", scenario: "场景", "how-to-use": "步骤", specification: "规格", trust: "信任", closing: "收尾",
 };
 
-export function StoryboardPanel({ storyboard, assets, stale, imageModelAvailable, generatingPageIds, onMove, onDelete, onConfirm, onGenerate, onGenerateAll, onRegenerate, generatingAll, onRequestChange, onUpdatePage }: {
+export function StoryboardPanel({ storyboard, assets, stale, imageModelAvailable, generatingPageIds, onMove, onDelete, onConfirm, onGenerate, onGenerateAll, onRegenerate, onKeepEditing, generatingAll, onRequestChange, onUpdatePage }: {
     storyboard?: Storyboard;
     assets: ProductDetailAsset[];
     stale: boolean;
@@ -23,6 +23,7 @@ export function StoryboardPanel({ storyboard, assets, stale, imageModelAvailable
     onGenerate: (page: StoryboardPage) => Promise<void>;
     onGenerateAll: () => Promise<void>;
     onRegenerate: () => void;
+    onKeepEditing: () => void;
     generatingAll: boolean;
     onRequestChange: (request: string) => void;
     onUpdatePage: (pageId: string, patch: Pick<StoryboardPage, "title" | "message" | "copy">) => void;
@@ -67,24 +68,25 @@ export function StoryboardPanel({ storyboard, assets, stale, imageModelAvailable
             <div className="rounded-[18px] border border-black/[0.07] bg-white/70 p-4 shadow-[0_4px_16px_rgba(38,32,25,0.025)] dark:border-white/[0.08] dark:bg-white/[0.035]">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                     <div className="flex items-center gap-2">
-                        <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-medium ${stale ? "bg-red-50 text-red-600 dark:bg-red-950/20 dark:text-red-300" : confirmed ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/25 dark:text-emerald-300" : "bg-amber-50 text-amber-700 dark:bg-amber-950/20 dark:text-amber-300"}`}>
-                            <span className={`size-1.5 rounded-full ${stale ? "bg-red-500" : confirmed ? "bg-emerald-500" : "bg-amber-500"}`} />
-                            {stale ? "已过期" : confirmed ? "已确认" : "待确认"}
+                        <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-medium ${stale ? "bg-amber-50 text-amber-700 dark:bg-amber-950/20 dark:text-amber-300" : confirmed ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/25 dark:text-emerald-300" : "bg-amber-50 text-amber-700 dark:bg-amber-950/20 dark:text-amber-300"}`}>
+                            <span className={`size-1.5 rounded-full ${stale ? "bg-amber-500" : confirmed ? "bg-emerald-500" : "bg-amber-500"}`} />
+                            {stale ? "待更新" : confirmed ? "已确认" : "待确认"}
                         </span>
                         <span className="text-[10px] text-stone-400">Rev {storyboard.revision} · {storyboard.pages.length} 页</span>
                     </div>
                     <div className="flex flex-wrap gap-2">
                         <Button size="small" icon={<MessageSquareText className="size-3.5" />} onClick={() => onRequestChange("请调整当前分镜结构：新增一页，并说明放在哪个位置，页面文案和视觉方向是什么。")} className="h-8 rounded-full border-black/[0.08] bg-white px-3 text-[10px] shadow-none dark:border-white/10 dark:bg-transparent">对话新增</Button>
-                        {stale || storyboard.warning ? <Button size="small" icon={<RefreshCw className="size-3.5" />} onClick={onRegenerate} className="h-8 rounded-full border-black/[0.08] bg-white px-3 text-[10px] shadow-none dark:border-white/10 dark:bg-transparent">重新生成</Button> : null}
+                        {stale || storyboard.warning ? <Button size="small" icon={<RefreshCw className="size-3.5" />} onClick={onRegenerate} className="h-8 rounded-full border-black/[0.08] bg-white px-3 text-[10px] shadow-none dark:border-white/10 dark:bg-transparent">{stale ? "AI 更新分镜" : "重新生成"}</Button> : null}
+                        {stale ? <Button size="small" icon={<Pencil className="size-3.5" />} onClick={onKeepEditing} className="h-8 rounded-full border-black/[0.08] bg-white px-3 text-[10px] shadow-none dark:border-white/10 dark:bg-transparent">保留并继续编辑</Button> : null}
                         {confirmed ? (
-                            <Button size="small" icon={<ImagePlus className="size-3.5" />} loading={generatingAll} disabled={!canGenerate} onClick={() => void onGenerateAll()} className="h-8 rounded-full border-0 bg-[#22211f] px-3 text-[10px] font-semibold text-white shadow-none hover:!bg-black dark:bg-stone-100 dark:text-stone-950 dark:hover:!bg-white">生成全部底图</Button>
+                            <Button size="small" icon={<ImagePlus className="size-3.5" />} loading={generatingAll} disabled={!canGenerate} onClick={() => void onGenerateAll()} className="h-8 rounded-full border-0 bg-[#22211f] px-3 text-[10px] font-semibold text-white shadow-none hover:!bg-black dark:!bg-stone-100 dark:!text-stone-950 dark:hover:!bg-white dark:hover:!text-stone-950">生成全部底图</Button>
                         ) : (
-                            <Button size="small" type="primary" icon={<CheckCircle2 className="size-3.5" />} disabled={!canConfirm} onClick={onConfirm} className="h-8 rounded-full border-0 bg-[#22211f] px-3 text-[10px] font-semibold text-white shadow-none hover:!bg-black dark:bg-stone-100 dark:text-stone-950 dark:hover:!bg-white">确认分镜</Button>
+                            <Button size="small" type="primary" icon={<CheckCircle2 className="size-3.5" />} disabled={!canConfirm} onClick={onConfirm} className="h-8 rounded-full border-0 bg-[#22211f] px-3 text-[10px] font-semibold text-white shadow-none hover:!bg-black dark:!bg-stone-100 dark:!text-stone-950 dark:hover:!bg-white dark:hover:!text-stone-950">确认分镜</Button>
                         )}
                     </div>
                 </div>
                 <div className="mt-3 text-[10px] leading-5 text-stone-400 dark:text-stone-500">确认分镜本身不扣生图费用；确认后再点击“生成全部底图”才会开始计费。</div>
-                {stale ? <div className="mt-3 flex items-start gap-2 rounded-xl border border-amber-200/70 bg-amber-50/70 px-3 py-2.5 text-[10px] leading-5 text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/20 dark:text-amber-200"><AlertTriangle className="mt-0.5 size-3.5 shrink-0" />Brief 已修改，旧分镜和旧图片不能继续生成或导出。请重新生成分镜并确认。</div> : null}
+                {stale ? <div className="mt-3 flex items-start gap-2 rounded-xl border border-amber-200/70 bg-amber-50/70 px-3 py-2.5 text-[10px] leading-5 text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/20 dark:text-amber-200"><AlertTriangle className="mt-0.5 size-3.5 shrink-0" />商品信息已更新。你可以保留当前分镜继续编辑，或让 AI 基于现有内容更新分镜；确认前不会生成新图片。</div> : null}
                 {storyboard.warning && !stale ? <div className="mt-3 flex items-start gap-2 rounded-xl border border-red-200/70 bg-red-50/70 px-3 py-2.5 text-[10px] leading-5 text-red-700 dark:border-red-900/40 dark:bg-red-950/20 dark:text-red-300"><AlertTriangle className="mt-0.5 size-3.5 shrink-0" />{storyboard.warning}。为避免错误费用，当前分镜不能确认或生图。</div> : null}
                 {!imageModelAvailable ? <div className="mt-3 flex items-start gap-2 rounded-xl border border-amber-200/70 bg-amber-50/70 px-3 py-2.5 text-[10px] leading-5 text-amber-700 dark:border-amber-900/40 dark:bg-amber-950/20 dark:text-amber-300"><AlertTriangle className="mt-0.5 size-3.5 shrink-0" />后台创作分组没有配置生图模型，暂时不能生成底图。</div> : null}
             </div>
@@ -114,7 +116,7 @@ export function StoryboardPanel({ storyboard, assets, stale, imageModelAvailable
                                 <Button size="small" icon={<Pencil className="size-3.5" />} onClick={() => openEditor(page)} className="h-7 rounded-full border-black/[0.08] px-2.5 text-[9px] dark:border-white/10">编辑文案</Button>
                                 <Button size="small" type="dashed" icon={<MessageSquareText className="size-3.5" />} onClick={() => onRequestChange(`请修改分镜“${page.title}”：`)} className="h-7 rounded-full border-black/[0.08] px-2.5 text-[9px] dark:border-white/10">让 AI 修改</Button>
                                 <span className={`rounded-full px-2 py-1 text-[9px] ${stale && page.generatedAssetId ? "bg-red-50 text-red-600 dark:bg-red-950/20 dark:text-red-300" : page.status === "ready" ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/20 dark:text-emerald-300" : page.status === "failed" ? "bg-red-50 text-red-600 dark:bg-red-950/20 dark:text-red-300" : "bg-stone-100 text-stone-500 dark:bg-white/[0.06] dark:text-stone-400"}`}>
-                                    {stale && page.generatedAssetId ? "旧结果已失效" : page.status === "ready" ? "底图已生成" : page.status === "failed" ? "生成失败" : generating ? "生成中" : "待生成"}
+                                    {stale && page.generatedAssetId ? "底图需重新生成" : page.status === "ready" ? "底图已生成" : page.status === "failed" ? "生成失败" : generating ? "生成中" : "待生成"}
                                 </span>
                                 {page.factRefs.length ? <span className="rounded-full bg-emerald-50 px-2 py-1 text-[9px] text-emerald-700 dark:bg-emerald-950/20 dark:text-emerald-300">事实引用 {page.factRefs.length}</span> : null}
                             </div>

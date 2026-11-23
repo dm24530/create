@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { createEmptyBrief } from "@/lib/product-detail/brief";
 import { createEmptySkill } from "@/lib/product-detail/defaults";
-import { createFallbackStoryboard, ensureStoryboardVisualPrompts, isStoryboardStale, isStoryboardUsable, normalizeStoryboard, reorderStoryboard, updateStoryboardPage } from "@/lib/product-detail/storyboard";
+import { BRIEF_CHANGED_STORYBOARD_WARNING, createFallbackStoryboard, ensureStoryboardVisualPrompts, isStoryboardStale, isStoryboardUsable, keepStoryboardForEditing, normalizeStoryboard, reorderStoryboard, updateStoryboardPage } from "@/lib/product-detail/storyboard";
 
 const brief = {
     ...createEmptyBrief("taobao"),
@@ -64,6 +64,30 @@ describe("product detail storyboard", () => {
         expect(isStoryboardUsable(storyboard, changedBrief)).toBe(false);
     });
 
+    it("keeps the existing storyboard pages when the user chooses to edit after a brief change", () => {
+        const source = createFallbackStoryboard(brief, createEmptySkill(1));
+        const stale = { ...source, status: "confirmed" as const, briefRevision: brief.revision - 1 };
+        const next = keepStoryboardForEditing(stale, brief);
+
+        expect(next.pages).toBe(stale.pages);
+        expect(next.status).toBe("draft");
+        expect(next.briefRevision).toBe(brief.revision);
+        expect(isStoryboardStale(next, brief)).toBe(false);
+    });
+    it("does not treat legacy projects with a missing brief revision as stale", () => {
+        const storyboard = { ...createFallbackStoryboard(brief, createEmptySkill(1)), status: "confirmed" as const, briefRevision: 4 };
+        const legacyBrief = { ...brief } as Record<string, unknown>;
+        delete legacyBrief.revision;
+
+        expect(isStoryboardStale(storyboard, legacyBrief as unknown as typeof brief)).toBe(false);
+    });
+    it("preserves a real AI generation warning when keeping a storyboard for editing", () => {
+        const source = createFallbackStoryboard(brief, createEmptySkill(1));
+        const warning = "文本模型调用失败，已使用基础分镜模板";
+        const next = keepStoryboardForEditing({ ...source, status: "confirmed", briefRevision: brief.revision - 1, warning }, brief);
+
+        expect(next.warning).toBe(warning);
+    });
     it("accepts a confirmed storyboard only when it matches the brief revision", () => {
         const storyboard = { ...createFallbackStoryboard(brief, createEmptySkill(1)), status: "confirmed" as const };
 

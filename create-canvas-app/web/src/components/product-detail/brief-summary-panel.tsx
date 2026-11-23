@@ -32,7 +32,7 @@ export function BriefSummaryPanel({ brief, assets, onUpdate, onRequestChange }: 
                     </span>
                     <div className="min-w-0 flex-1">
                         <div className="text-sm font-semibold tracking-[-0.02em]">{ready ? "关键信息已整理" : "正在整理关键信息"}</div>
-                        <div className="mt-1 text-[11px] leading-5 text-stone-500 dark:text-stone-400">由 AI 根据对话自动更新。删除条目后会同步使旧分镜失效，修改需求请继续对话。</div>
+                        <div className="mt-1 text-[11px] leading-5 text-stone-500 dark:text-stone-400">由 AI 根据对话自动更新。修改后会提示同步当前分镜，你可以保留现有内容继续编辑。</div>
                     </div>
                     <Button size="small" type="text" icon={<MessageSquareText className="size-3.5" />} onClick={onRequestChange} className="shrink-0 rounded-full text-stone-500 hover:!text-stone-900 dark:text-stone-400 dark:hover:!text-white">对话</Button>
                 </div>

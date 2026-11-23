@@ -43,13 +43,26 @@ const DEFAULT_ROLES: ProductPageRole[] = [
     "closing",
 ];
 
+export const BRIEF_CHANGED_STORYBOARD_WARNING = "关键信息已修改，需要重新生成分镜和页面图片。";
+
 const EXTRA_ROLES: ProductPageRole[] = ["how-to-use", "trust"];
 
 export function isStoryboardStale(storyboard?: Storyboard, brief?: ProductBrief): boolean {
-    if (!storyboard || !brief || storyboard.briefRevision == null) return false;
-    return storyboard.briefRevision !== brief.revision;
+    if (!storyboard || !brief) return false;
+    const storyboardRevision = Number(storyboard.briefRevision);
+    const briefRevision = Number(brief.revision);
+    if (!Number.isFinite(storyboardRevision) || !Number.isFinite(briefRevision)) return false;
+    return storyboardRevision !== briefRevision;
 }
 
+export function keepStoryboardForEditing(storyboard: Storyboard, brief: ProductBrief): Storyboard {
+    return {
+        ...storyboard,
+        status: "draft",
+        briefRevision: brief.revision,
+        warning: storyboard.warning === BRIEF_CHANGED_STORYBOARD_WARNING ? undefined : storyboard.warning,
+    };
+}
 export function isStoryboardUsable(storyboard?: Storyboard, brief?: ProductBrief): boolean {
     return Boolean(storyboard && storyboard.status === "confirmed" && !storyboard.warning && !isStoryboardStale(storyboard, brief));
 }

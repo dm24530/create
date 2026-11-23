@@ -159,6 +159,31 @@ describe("product detail store invalidation", () => {
         expect(skills[0].revision).toBe(2);
     });
 
+    it("does not bump Skill revision when it is enabled or disabled", () => {
+        const project = createProject();
+        const skill = {
+            ...createEmptySkill(1),
+            id: "skill-toggle",
+            name: "可启停 Skill",
+            enabled: true,
+            revision: 7,
+            updatedAt: 123,
+        };
+        setWorkspace(project);
+        useProductDetailStore.setState((state) => ({ workspace: { ...state.workspace, skills: [skill] } }));
+
+        useProductDetailStore.getState().toggleSkill(skill.id, false);
+        let current = useProductDetailStore.getState().workspace.skills.find((item) => item.id === skill.id);
+        expect(current?.enabled).toBe(false);
+        expect(current?.revision).toBe(7);
+        expect(current?.updatedAt).toBe(123);
+
+        useProductDetailStore.getState().toggleSkill(skill.id, true);
+        current = useProductDetailStore.getState().workspace.skills.find((item) => item.id === skill.id);
+        expect(current?.enabled).toBe(true);
+        expect(current?.revision).toBe(7);
+        expect(current?.updatedAt).toBe(123);
+    });
     it("seeds the built-in home textile Skill when the workspace loads", async () => {
         await useProductDetailStore.getState().load();
         const skills = useProductDetailStore.getState().workspace.skills;

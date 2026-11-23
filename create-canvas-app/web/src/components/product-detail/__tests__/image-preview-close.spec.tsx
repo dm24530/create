@@ -87,6 +87,7 @@ describe("商品详情图片预览", () => {
                     onGenerate={async () => {}}
                     onGenerateAll={async () => {}}
                     onRegenerate={() => {}}
+                    onKeepEditing={() => {}}
                     generatingAll={false}
                     onRequestChange={() => {}}
                     onUpdatePage={() => {}}

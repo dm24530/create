@@ -252,8 +252,14 @@ jobs:
           [ -n "${APPLE_ID:-}" ] || unset APPLE_ID
           [ -n "${APPLE_APP_SPECIFIC_PASSWORD:-}" ] || unset APPLE_APP_SPECIFIC_PASSWORD
           [ -n "${APPLE_TEAM_ID:-}" ] || unset APPLE_TEAM_ID
+          if [ -n "${CSC_LINK:-}" ]; then
+            build_script="dist:mac:${{ matrix.arch }}"
+          else
+            build_script="dist:mac:${{ matrix.arch }}:unsigned"
+            export CSC_IDENTITY_AUTO_DISCOVERY=false
+          fi
           set +e
-          npm run dist:mac:${{ matrix.arch }} 2>&1 | tee desktop-package.log
+          npm run "$build_script" 2>&1 | tee desktop-package.log
           status=${PIPESTATUS[0]}
           set -e
           if [ "$status" -ne 0 ]; then
@@ -268,6 +274,23 @@ jobs:
             exit "$status"
           fi
 
+      - name: Verify macOS ${{ matrix.arch }} signature
+        working-directory: create-canvas-app/desktop
+        shell: bash
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+        run: |
+          app_path=$(find "release/mac-${{ matrix.arch }}" -type d -name "Create.app" | head -n 1)
+          if [ -z "$app_path" ]; then
+            echo "::error title=Create.app missing::No packaged app found for ${{ matrix.arch }}"
+            exit 1
+          fi
+          test -f "$app_path/Contents/_CodeSignature/CodeResources"
+          codesign --verify --deep --strict "$app_path"
+          codesign -dv --verbose=4 "$app_path" 2>&1 | tee mac-signature.log
+          if [ -z "${CSC_LINK:-}" ]; then
+            grep -q "Signature=adhoc" mac-signature.log
+          fi
       - name: Upload macOS ${{ matrix.arch }} package
         uses: actions/upload-artifact@v4
         with:

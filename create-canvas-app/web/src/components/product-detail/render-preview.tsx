@@ -47,7 +47,7 @@ export function RenderPreview({ project, platform, skill, onGenerateImage }: { p
     };
 
     const render = async () => {
-        if (!usable) { message.warning(storyboardStale ? "Brief 已修改，旧分镜和旧图片不能继续预览。" : "请先确认当前分镜，再渲染预览。"); return; }
+        if (!usable) { message.warning(storyboardStale ? "商品信息已更新，请先同步并确认当前分镜再预览。" : "请先确认当前分镜，再渲染预览。"); return; }
         if (!generatedPages.length) { message.warning("请先生成至少一页无字底图。"); return; }
         setRendering(true);
         setProgress(0);
@@ -102,7 +102,7 @@ export function RenderPreview({ project, platform, skill, onGenerateImage }: { p
     };
 
     const exportAll = async () => {
-        if (!usable) { message.warning(storyboardStale ? "Brief 已修改，旧分镜和旧图片不能导出。" : "请先确认当前分镜，再导出页面。"); return; }
+        if (!usable) { message.warning(storyboardStale ? "商品信息已更新，请先同步并确认当前分镜再导出。" : "请先确认当前分镜，再导出页面。"); return; }
         if (!allPagesGenerated) { message.warning(`还有 ${pages.length - generatedPages.length} 页未生成底图，不能导出完整详情页。`); return; }
         setExporting(true); setProgress(0);
         try {
@@ -155,14 +155,14 @@ export function RenderPreview({ project, platform, skill, onGenerateImage }: { p
                     <div className="flex flex-wrap justify-end gap-2">
                         <Button icon={<RefreshCw className="size-3.5" />} loading={rendering} disabled={!usable} onClick={() => void render()} className="h-8 rounded-full border-black/[0.08] bg-white px-3 text-[10px] shadow-none dark:border-white/10 dark:bg-transparent">生成预览</Button>
                         <Button icon={<Download className="size-3.5" />} loading={rendering} disabled={!allPagesGenerated || !usable} onClick={() => void downloadLongImage()} className="h-8 rounded-full border-black/[0.08] bg-white px-3 text-[10px] shadow-none dark:border-white/10 dark:bg-transparent">下载长图</Button>
-                        <Button type="primary" icon={<Download className="size-3.5" />} loading={exporting} disabled={!allPagesGenerated || !usable} onClick={() => void exportAll()} className="h-8 rounded-full border-0 bg-[#22211f] px-3 text-[10px] font-semibold shadow-none hover:!bg-black dark:bg-stone-100 dark:text-stone-950 dark:hover:!bg-white">导出 ZIP</Button>
+                        <Button type="primary" icon={<Download className="size-3.5" />} loading={exporting} disabled={!allPagesGenerated || !usable} onClick={() => void exportAll()} className="h-8 rounded-full border-0 bg-[#22211f] px-3 text-[10px] font-semibold shadow-none hover:!bg-black dark:!bg-stone-100 dark:!text-stone-950 dark:hover:!bg-white dark:hover:!text-stone-950">导出 ZIP</Button>
                     </div>
                 </div>
-                {!usable ? <div className="mt-3 rounded-xl border border-amber-200/70 bg-amber-50/70 px-3 py-2.5 text-[10px] leading-5 text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/20 dark:text-amber-200">{storyboardStale ? "Brief 已修改，当前分镜和图片已过期，不能继续渲染或导出。请重新生成分镜并确认。" : "当前分镜尚未确认或不是由 AI 正确生成，生成结果已锁定，不能继续渲染或导出。"}</div> : null}
+                {!usable ? <div className="mt-3 rounded-xl border border-amber-200/70 bg-amber-50/70 px-3 py-2.5 text-[10px] leading-5 text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/20 dark:text-amber-200">{storyboardStale ? "商品信息已更新。请先同步并确认当前分镜，再渲染或导出。" : "当前分镜尚未确认或不是由 AI 正确生成，生成结果已锁定，不能继续渲染或导出。"}</div> : null}
                 {usable && !allPagesGenerated ? <div className="mt-3 rounded-xl border border-sky-200/70 bg-sky-50/70 px-3 py-2.5 text-[10px] leading-5 text-sky-800 dark:border-sky-900/40 dark:bg-sky-950/20 dark:text-sky-200">完整详情页必须等 {pages.length} 页底图全部生成后才能合成和导出。</div> : null}
             </div>
             {rendering || exporting ? <Progress className="mb-3" percent={progress} size="small" /> : null}
-            {longPreview ? <div className="mb-3 flex justify-center"><div className="inline-flex rounded-full border border-black/[0.08] bg-white/70 p-1 dark:border-white/10 dark:bg-white/[0.04]"><button type="button" onClick={() => setViewMode("pages")} className={`rounded-full px-3 py-1 text-[10px] transition ${viewMode === "pages" ? "bg-stone-900 text-white dark:bg-stone-100 dark:text-stone-950" : "text-stone-500 dark:text-stone-400"}`}>单页</button><button type="button" onClick={() => setViewMode("long")} className={`rounded-full px-3 py-1 text-[10px] transition ${viewMode === "long" ? "bg-stone-900 text-white dark:bg-stone-100 dark:text-stone-950" : "text-stone-500 dark:text-stone-400"}`}>长图预览</button></div></div> : null}
+            {longPreview ? <div className="mb-3 flex justify-center"><div className="inline-flex rounded-full border border-black/[0.08] bg-white/70 p-1 dark:border-white/10 dark:bg-white/[0.04]"><button type="button" onClick={() => setViewMode("pages")} className={`rounded-full px-3 py-1 text-[10px] transition ${viewMode === "pages" ? "bg-stone-900 !text-white dark:!bg-stone-100 dark:!text-stone-950" : "text-stone-500 hover:bg-white/70 hover:text-stone-900 dark:text-stone-400 dark:hover:bg-white/[0.08] dark:hover:text-white"}`}>单页</button><button type="button" onClick={() => setViewMode("long")} className={`rounded-full px-3 py-1 text-[10px] transition ${viewMode === "long" ? "bg-stone-900 !text-white dark:!bg-stone-100 dark:!text-stone-950" : "text-stone-500 hover:bg-white/70 hover:text-stone-900 dark:text-stone-400 dark:hover:bg-white/[0.08] dark:hover:text-white"}`}>长图预览</button></div></div> : null}
             {viewMode === "long" && longPreview ? (
                 <div className="rounded-[16px] border border-black/[0.06] bg-stone-100 p-2 dark:border-white/[0.08] dark:bg-stone-900"><div className="thin-scrollbar max-h-[68vh] overflow-y-auto rounded-xl bg-stone-200 dark:bg-stone-950"><img src={longPreview.url} alt="商品详情页长图" className="block h-auto w-full" /></div><div className="mt-2 text-center text-[10px] text-stone-500 dark:text-stone-400">完整长图 · {longPreview.width}×{longPreview.height}</div></div>
             ) : (
