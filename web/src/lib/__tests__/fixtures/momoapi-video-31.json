@@ -1,0 +1,1567 @@
+{
+  "source": "https://momoapi.xin/docs",
+  "captured_at": "2026-11-24",
+  "model_count": 31,
+  "models": [
+    {
+      "model_name": "grok-imagine-video",
+      "docs_provider": "xAI",
+      "capabilities": {
+        "protocol": "momo_video",
+        "min_duration": 1,
+        "max_duration": 10,
+        "default_duration": 1,
+        "duration_options": null,
+        "resolutions": [
+          "480p",
+          "720p"
+        ],
+        "aspect_ratios": [
+          "1:1",
+          "16:9",
+          "9:16",
+          "4:3",
+          "3:4",
+          "3:2",
+          "2:3",
+          "21:9",
+          "5:2"
+        ],
+        "slots": {
+          "first_frame": 1,
+          "last_frame": 0,
+          "reference_image": 7,
+          "reference_video": 1,
+          "reference_audio": 0,
+          "keyframes": 0
+        },
+        "max_images": 7,
+        "supports_generate_audio": false,
+        "modes": [
+          "text-to-video",
+          "image-to-video",
+          "reference-images",
+          "reference-video",
+          "video-edit",
+          "video-extension"
+        ],
+        "parameters": [],
+        "request_schema": {
+          "create_path": "/video/generations",
+          "task_path": "/videos/{id}",
+          "content_path": "/videos/{id}/content"
+        },
+        "mode_capabilities": {
+          "image-to-video": {
+            "duration_options": null,
+            "duration_min_seconds": 1,
+            "duration_max_seconds": 10,
+            "duration_step_seconds": 1,
+            "resolution_options": [
+              "480p",
+              "720p"
+            ]
+          },
+          "reference-images": {
+            "duration_options": null,
+            "duration_min_seconds": 1,
+            "duration_max_seconds": 10,
+            "duration_step_seconds": 1,
+            "resolution_options": [
+              "480p",
+              "720p"
+            ]
+          },
+          "text-to-video": {
+            "duration_options": null,
+            "duration_min_seconds": 1,
+            "duration_max_seconds": 10,
+            "duration_step_seconds": 1,
+            "resolution_options": [
+              "480p",
+              "720p"
+            ]
+          },
+          "video-edit": {
+            "duration_options": null,
+            "duration_min_seconds": 1,
+            "duration_step_seconds": 1,
+            "resolution_options": null
+          },
+          "video-extension": {
+            "duration_options": null,
+            "duration_default_seconds": 6,
+            "duration_min_seconds": 2,
+            "duration_max_seconds": 10,
+            "duration_step_seconds": 1,
+            "resolution_options": null
+          }
+        }
+      }
+    },
+    {
+      "model_name": "grok-imagine-video-1.5",
+      "docs_provider": "xAI",
+      "capabilities": {
+        "protocol": "momo_video",
+        "min_duration": 1,
+        "max_duration": 15,
+        "default_duration": 1,
+        "duration_options": null,
+        "resolutions": [
+          "480p",
+          "720p",
+          "1080p"
+        ],
+        "aspect_ratios": [
+          "1:1",
+          "16:9",
+          "9:16",
+          "4:3",
+          "3:4",
+          "3:2",
+          "2:3",
+          "21:9",
+          "5:2"
+        ],
+        "slots": {
+          "first_frame": 1,
+          "last_frame": 1,
+          "reference_image": 7,
+          "reference_video": 1,
+          "reference_audio": 0,
+          "keyframes": 4
+        },
+        "max_images": 7,
+        "supports_generate_audio": true,
+        "modes": [
+          "text-to-video",
+          "image-to-video",
+          "first-last-frame",
+          "reference-images",
+          "reference-video",
+          "keyframes"
+        ],
+        "parameters": [],
+        "request_schema": {
+          "create_path": "/video/generations",
+          "task_path": "/videos/{id}",
+          "content_path": "/videos/{id}/content",
+          "mode_media": {
+            "keyframes": {
+              "image_role": "keyframes",
+              "max_images": 4,
+              "max_videos": 0,
+              "max_audios": 0
+            }
+          },
+          "media_fields": {
+            "keyframes": {
+              "field": "keyframe_image_urls",
+              "multiple": true
+            }
+          }
+        },
+        "mode_capabilities": {
+          "first-last-frame": {
+            "duration_options": null,
+            "duration_min_seconds": 1,
+            "duration_max_seconds": 15,
+            "duration_step_seconds": 1,
+            "resolution_options": [
+              "480p",
+              "720p"
+            ],
+            "supports_first_frame_image": true,
+            "supports_last_frame_image": true
+          },
+          "image-to-video": {
+            "duration_options": null,
+            "duration_min_seconds": 1,
+            "duration_max_seconds": 15,
+            "duration_step_seconds": 1,
+            "resolution_options": [
+              "480p",
+              "720p",
+              "1080p"
+            ]
+          },
+          "reference-images": {
+            "duration_options": null,
+            "duration_min_seconds": 1,
+            "duration_max_seconds": 15,
+            "duration_step_seconds": 1,
+            "resolution_options": [
+              "480p",
+              "720p"
+            ],
+            "supports_first_frame_image": true,
+            "supports_last_frame_image": true,
+            "supports_keyframes": true
+          },
+          "text-to-video": {
+            "duration_options": null,
+            "duration_min_seconds": 1,
+            "duration_max_seconds": 15,
+            "duration_step_seconds": 1,
+            "resolution_options": [
+              "480p",
+              "720p",
+              "1080p"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "model_name": "minimax H3",
+      "docs_provider": "Sora",
+      "capabilities": {
+        "protocol": "momo_video",
+        "min_duration": 4,
+        "max_duration": 15,
+        "default_duration": 4,
+        "duration_options": null,
+        "resolutions": [
+          "480p"
+        ],
+        "aspect_ratios": [
+          "9:16",
+          "16:9",
+          "1:1",
+          "3:4",
+          "4:3",
+          "2:3",
+          "3:2",
+          "21:9"
+        ],
+        "slots": {
+          "first_frame": 0,
+          "last_frame": 0,
+          "reference_image": 9,
+          "reference_video": 0,
+          "reference_audio": 0,
+          "keyframes": 0
+        },
+        "max_images": 9,
+        "supports_generate_audio": false,
+        "modes": [
+          "text-to-video",
+          "reference-images"
+        ],
+        "parameters": [],
+        "request_schema": {
+          "create_path": "/video/generations",
+          "task_path": "/videos/{id}",
+          "content_path": "/videos/{id}/content"
+        }
+      }
+    },
+    {
+      "model_name": "minimax H3-self",
+      "docs_provider": "Sora",
+      "capabilities": {
+        "protocol": "momo_video",
+        "min_duration": 1,
+        "max_duration": 15,
+        "default_duration": 1,
+        "duration_options": null,
+        "resolutions": [
+          "480p",
+          "768p"
+        ],
+        "aspect_ratios": [
+          "16:9",
+          "9:16"
+        ],
+        "slots": {
+          "first_frame": 0,
+          "last_frame": 0,
+          "reference_image": 9,
+          "reference_video": 0,
+          "reference_audio": 3,
+          "keyframes": 0
+        },
+        "max_images": 9,
+        "supports_generate_audio": false,
+        "modes": [
+          "text-to-video",
+          "reference-images"
+        ],
+        "parameters": [],
+        "request_schema": {
+          "create_path": "/video/generations",
+          "task_path": "/videos/{id}",
+          "content_path": "/videos/{id}/content"
+        }
+      }
+    },
+    {
+      "model_name": "muse-cheap",
+      "docs_provider": "Sora",
+      "capabilities": {
+        "protocol": "momo_video",
+        "min_duration": 1,
+        "max_duration": 30,
+        "default_duration": 1,
+        "duration_options": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          20,
+          30
+        ],
+        "resolutions": [
+          "720p"
+        ],
+        "aspect_ratios": [
+          "16:9",
+          "9:16"
+        ],
+        "slots": {
+          "first_frame": 0,
+          "last_frame": 0,
+          "reference_image": 7,
+          "reference_video": 0,
+          "reference_audio": 0,
+          "keyframes": 0
+        },
+        "max_images": 7,
+        "supports_generate_audio": false,
+        "modes": [
+          "text-to-video",
+          "reference-images"
+        ],
+        "parameters": [],
+        "request_schema": {
+          "create_path": "/video/generations",
+          "task_path": "/videos/{id}",
+          "content_path": "/videos/{id}/content"
+        }
+      }
+    },
+    {
+      "model_name": "muse-video",
+      "docs_provider": "Sora",
+      "capabilities": {
+        "protocol": "momo_video",
+        "min_duration": 1,
+        "max_duration": 15,
+        "default_duration": 1,
+        "duration_options": null,
+        "resolutions": [
+          "720p"
+        ],
+        "aspect_ratios": [
+          "16:9",
+          "9:16"
+        ],
+        "slots": {
+          "first_frame": 1,
+          "last_frame": 0,
+          "reference_image": 4,
+          "reference_video": 0,
+          "reference_audio": 0,
+          "keyframes": 0
+        },
+        "max_images": 4,
+        "supports_generate_audio": false,
+        "modes": [
+          "text-to-video",
+          "image-to-video",
+          "reference-images"
+        ],
+        "parameters": [],
+        "request_schema": {
+          "create_path": "/video/generations",
+          "task_path": "/videos/{id}",
+          "content_path": "/videos/{id}/content"
+        }
+      }
+    },
+    {
+      "model_name": "seedance 2.0 fast-GT",
+      "docs_provider": "Sora",
+      "capabilities": {
+        "protocol": "momo_video",
+        "min_duration": 10,
+        "max_duration": 15,
+        "default_duration": 10,
+        "duration_options": [
+          10,
+          15
+        ],
+        "resolutions": [
+          "480p",
+          "720p"
+        ],
+        "aspect_ratios": [
+          "16:9",
+          "9:16",
+          "1:1",
+          "4:3",
+          "3:4",
+          "21:9"
+        ],
+        "slots": {
+          "first_frame": 0,
+          "last_frame": 0,
+          "reference_image": 9,
+          "reference_video": 1,
+          "reference_audio": 3,
+          "keyframes": 0
+        },
+        "max_images": 9,
+        "supports_generate_audio": true,
+        "modes": [
+          "text-to-video",
+          "reference-images",
+          "reference-video"
+        ],
+        "parameters": [],
+        "request_schema": {
+          "create_path": "/video/generations",
+          "task_path": "/videos/{id}",
+          "content_path": "/videos/{id}/content"
+        }
+      }
+    },
+    {
+      "model_name": "seedance 2.0 fast-OvO",
+      "docs_provider": "Sora",
+      "capabilities": {
+        "protocol": "momo_video",
+        "min_duration": 4,
+        "max_duration": 15,
+        "default_duration": 4,
+        "duration_options": null,
+        "resolutions": [
+          "480p",
+          "720p"
+        ],
+        "aspect_ratios": [
+          "16:9",
+          "9:16",
+          "1:1",
+          "4:3",
+          "3:4",
+          "21:9"
+        ],
+        "slots": {
+          "first_frame": 0,
+          "last_frame": 0,
+          "reference_image": 9,
+          "reference_video": 1,
+          "reference_audio": 3,
+          "keyframes": 0
+        },
+        "max_images": 9,
+        "supports_generate_audio": true,
+        "modes": [
+          "text-to-video",
+          "reference-images",
+          "reference-video"
+        ],
+        "parameters": [],
+        "request_schema": {
+          "create_path": "/video/generations",
+          "task_path": "/videos/{id}",
+          "content_path": "/videos/{id}/content"
+        }
+      }
+    },
+    {
+      "model_name": "seedance 2.0 mini-GT",
+      "docs_provider": "Sora",
+      "capabilities": {
+        "protocol": "momo_video",
+        "min_duration": 10,
+        "max_duration": 15,
+        "default_duration": 10,
+        "duration_options": [
+          10,
+          15
+        ],
+        "resolutions": [
+          "480p",
+          "720p"
+        ],
+        "aspect_ratios": [
+          "16:9",
+          "9:16",
+          "1:1",
+          "4:3",
+          "3:4",
+          "21:9"
+        ],
+        "slots": {
+          "first_frame": 0,
+          "last_frame": 0,
+          "reference_image": 9,
+          "reference_video": 1,
+          "reference_audio": 3,
+          "keyframes": 0
+        },
+        "max_images": 9,
+        "supports_generate_audio": true,
+        "modes": [
+          "text-to-video",
+          "reference-images",
+          "reference-video"
+        ],
+        "parameters": [],
+        "request_schema": {
+          "create_path": "/video/generations",
+          "task_path": "/videos/{id}",
+          "content_path": "/videos/{id}/content"
+        }
+      }
+    },
+    {
+      "model_name": "seedance 2.0 mini-OvO",
+      "docs_provider": "Sora",
+      "capabilities": {
+        "protocol": "momo_video",
+        "min_duration": 4,
+        "max_duration": 15,
+        "default_duration": 4,
+        "duration_options": null,
+        "resolutions": [
+          "480p",
+          "720p"
+        ],
+        "aspect_ratios": [
+          "16:9",
+          "9:16",
+          "1:1",
+          "4:3",
+          "3:4",
+          "21:9"
+        ],
+        "slots": {
+          "first_frame": 0,
+          "last_frame": 0,
+          "reference_image": 9,
+          "reference_video": 1,
+          "reference_audio": 3,
+          "keyframes": 0
+        },
+        "max_images": 9,
+        "supports_generate_audio": true,
+        "modes": [
+          "text-to-video",
+          "reference-images",
+          "reference-video"
+        ],
+        "parameters": [],
+        "request_schema": {
+          "create_path": "/video/generations",
+          "task_path": "/videos/{id}",
+          "content_path": "/videos/{id}/content"
+        }
+      }
+    },
+    {
+      "model_name": "seedance 2.0 mini-OvO-Pack",
+      "docs_provider": "Sora",
+      "capabilities": {
+        "protocol": "momo_video",
+        "min_duration": 10,
+        "max_duration": 15,
+        "default_duration": 10,
+        "duration_options": [
+          10,
+          15
+        ],
+        "resolutions": [
+          "480p",
+          "720p"
+        ],
+        "aspect_ratios": [
+          "16:9",
+          "9:16",
+          "1:1",
+          "4:3",
+          "3:4",
+          "21:9"
+        ],
+        "slots": {
+          "first_frame": 0,
+          "last_frame": 0,
+          "reference_image": 9,
+          "reference_video": 1,
+          "reference_audio": 3,
+          "keyframes": 0
+        },
+        "max_images": 9,
+        "supports_generate_audio": true,
+        "modes": [
+          "text-to-video",
+          "reference-images",
+          "reference-video"
+        ],
+        "parameters": [],
+        "request_schema": {
+          "create_path": "/video/generations",
+          "task_path": "/videos/{id}",
+          "content_path": "/videos/{id}/content"
+        }
+      }
+    },
+    {
+      "model_name": "seedance 2.5-GT",
+      "docs_provider": "Sora",
+      "capabilities": {
+        "protocol": "momo_video",
+        "min_duration": 4,
+        "max_duration": 15,
+        "default_duration": 4,
+        "duration_options": null,
+        "resolutions": [
+          "480p",
+          "720p",
+          "1080p"
+        ],
+        "aspect_ratios": [
+          "16:9",
+          "9:16",
+          "1:1",
+          "4:3",
+          "3:4",
+          "21:9"
+        ],
+        "slots": {
+          "first_frame": 0,
+          "last_frame": 0,
+          "reference_image": 30,
+          "reference_video": 1,
+          "reference_audio": 10,
+          "keyframes": 0
+        },
+        "max_images": 30,
+        "supports_generate_audio": true,
+        "modes": [
+          "text-to-video",
+          "reference-images",
+          "reference-video"
+        ],
+        "parameters": [],
+        "request_schema": {
+          "create_path": "/video/generations",
+          "task_path": "/videos/{id}",
+          "content_path": "/videos/{id}/content"
+        }
+      }
+    },
+    {
+      "model_name": "seedance-2.0",
+      "docs_provider": "DoubaoVideo",
+      "capabilities": {
+        "protocol": "momo_video",
+        "min_duration": 5,
+        "max_duration": 15,
+        "default_duration": 5,
+        "duration_options": null,
+        "resolutions": [
+          "480p",
+          "720p"
+        ],
+        "aspect_ratios": [
+          "16:9",
+          "9:16",
+          "1:1",
+          "4:3",
+          "3:4",
+          "21:9"
+        ],
+        "slots": {
+          "first_frame": 1,
+          "last_frame": 1,
+          "reference_image": 9,
+          "reference_video": 1,
+          "reference_audio": 10,
+          "keyframes": 0
+        },
+        "max_images": 9,
+        "supports_generate_audio": true,
+        "modes": [
+          "text-to-video",
+          "image-to-video",
+          "first-last-frame",
+          "reference-images",
+          "reference-video"
+        ],
+        "parameters": [
+          {
+            "key": "seed",
+            "label": "随机种子",
+            "type": "integer",
+            "min": 0
+          }
+        ],
+        "request_schema": {
+          "create_path": "/video/generations",
+          "task_path": "/videos/{id}",
+          "content_path": "/videos/{id}/content"
+        }
+      }
+    },
+    {
+      "model_name": "seedance-2.0-fast",
+      "docs_provider": "DoubaoVideo",
+      "capabilities": {
+        "protocol": "momo_video",
+        "min_duration": 5,
+        "max_duration": 15,
+        "default_duration": 5,
+        "duration_options": null,
+        "resolutions": [
+          "480p",
+          "720p"
+        ],
+        "aspect_ratios": [
+          "16:9",
+          "9:16",
+          "1:1",
+          "4:3",
+          "3:4",
+          "21:9"
+        ],
+        "slots": {
+          "first_frame": 1,
+          "last_frame": 1,
+          "reference_image": 9,
+          "reference_video": 1,
+          "reference_audio": 10,
+          "keyframes": 0
+        },
+        "max_images": 9,
+        "supports_generate_audio": true,
+        "modes": [
+          "text-to-video",
+          "image-to-video",
+          "first-last-frame",
+          "reference-images",
+          "reference-video"
+        ],
+        "parameters": [
+          {
+            "key": "seed",
+            "label": "随机种子",
+            "type": "integer",
+            "min": 0
+          }
+        ],
+        "request_schema": {
+          "create_path": "/video/generations",
+          "task_path": "/videos/{id}",
+          "content_path": "/videos/{id}/content"
+        }
+      }
+    },
+    {
+      "model_name": "seedance-2.0-fast-zq",
+      "docs_provider": "DoubaoVideo",
+      "capabilities": {
+        "protocol": "momo_video",
+        "min_duration": 5,
+        "max_duration": 15,
+        "default_duration": 5,
+        "duration_options": null,
+        "resolutions": [
+          "720p"
+        ],
+        "aspect_ratios": [
+          "16:9",
+          "9:16",
+          "1:1",
+          "4:3",
+          "3:4"
+        ],
+        "slots": {
+          "first_frame": 0,
+          "last_frame": 0,
+          "reference_image": 9,
+          "reference_video": 1,
+          "reference_audio": 3,
+          "keyframes": 0
+        },
+        "max_images": 9,
+        "supports_generate_audio": true,
+        "modes": [
+          "text-to-video",
+          "reference-images",
+          "reference-video"
+        ],
+        "parameters": [
+          {
+            "key": "seed",
+            "label": "随机种子",
+            "type": "integer",
+            "min": 0
+          }
+        ],
+        "request_schema": {
+          "create_path": "/video/generations",
+          "task_path": "/videos/{id}",
+          "content_path": "/videos/{id}/content"
+        }
+      }
+    },
+    {
+      "model_name": "seedance-2.0-mini",
+      "docs_provider": "DoubaoVideo",
+      "capabilities": {
+        "protocol": "momo_video",
+        "min_duration": 5,
+        "max_duration": 15,
+        "default_duration": 5,
+        "duration_options": null,
+        "resolutions": [
+          "480p",
+          "720p"
+        ],
+        "aspect_ratios": [
+          "9:16",
+          "16:9",
+          "1:1",
+          "3:4",
+          "4:3"
+        ],
+        "slots": {
+          "first_frame": 0,
+          "last_frame": 0,
+          "reference_image": 9,
+          "reference_video": 1,
+          "reference_audio": 3,
+          "keyframes": 0
+        },
+        "max_images": 9,
+        "supports_generate_audio": true,
+        "modes": [
+          "text-to-video",
+          "reference-video",
+          "reference-images"
+        ],
+        "parameters": [
+          {
+            "key": "seed",
+            "label": "随机种子",
+            "type": "integer",
+            "min": 0
+          }
+        ],
+        "request_schema": {
+          "create_path": "/video/generations",
+          "task_path": "/videos/{id}",
+          "content_path": "/videos/{id}/content"
+        }
+      }
+    },
+    {
+      "model_name": "seedance-2.0-mini-Chovy",
+      "docs_provider": "Sora",
+      "capabilities": {
+        "protocol": "momo_video",
+        "min_duration": 5,
+        "max_duration": 15,
+        "default_duration": 5,
+        "duration_options": [
+          5,
+          10,
+          15
+        ],
+        "resolutions": [
+          "720p"
+        ],
+        "aspect_ratios": [
+          "16:9",
+          "9:16"
+        ],
+        "slots": {
+          "first_frame": 0,
+          "last_frame": 0,
+          "reference_image": 9,
+          "reference_video": 0,
+          "reference_audio": 0,
+          "keyframes": 0
+        },
+        "max_images": 9,
+        "supports_generate_audio": false,
+        "modes": [
+          "text-to-video",
+          "reference-images"
+        ],
+        "parameters": [],
+        "request_schema": {
+          "create_path": "/video/generations",
+          "task_path": "/videos/{id}",
+          "content_path": "/videos/{id}/content"
+        }
+      }
+    },
+    {
+      "model_name": "seedance-2.0-zq",
+      "docs_provider": "DoubaoVideo",
+      "capabilities": {
+        "protocol": "momo_video",
+        "min_duration": 5,
+        "max_duration": 15,
+        "default_duration": 5,
+        "duration_options": null,
+        "resolutions": [
+          "4k",
+          "480p",
+          "720p",
+          "1080p"
+        ],
+        "aspect_ratios": [
+          "16:9",
+          "9:16",
+          "1:1",
+          "4:3",
+          "3:4"
+        ],
+        "slots": {
+          "first_frame": 0,
+          "last_frame": 0,
+          "reference_image": 9,
+          "reference_video": 1,
+          "reference_audio": 3,
+          "keyframes": 0
+        },
+        "max_images": 9,
+        "supports_generate_audio": true,
+        "modes": [
+          "text-to-video",
+          "reference-images",
+          "reference-video"
+        ],
+        "parameters": [
+          {
+            "key": "seed",
+            "label": "随机种子",
+            "type": "integer",
+            "min": 0
+          }
+        ],
+        "request_schema": {
+          "create_path": "/video/generations",
+          "task_path": "/videos/{id}",
+          "content_path": "/videos/{id}/content"
+        }
+      }
+    },
+    {
+      "model_name": "seedance-2.5",
+      "docs_provider": "DoubaoVideo",
+      "capabilities": {
+        "protocol": "momo_video",
+        "min_duration": 5,
+        "max_duration": 30,
+        "default_duration": 5,
+        "duration_options": null,
+        "resolutions": [
+          "480p",
+          "720p"
+        ],
+        "aspect_ratios": [
+          "16:9",
+          "9:16",
+          "1:1",
+          "4:3",
+          "3:4",
+          "21:9"
+        ],
+        "slots": {
+          "first_frame": 0,
+          "last_frame": 0,
+          "reference_image": 30,
+          "reference_video": 1,
+          "reference_audio": 10,
+          "keyframes": 0
+        },
+        "max_images": 30,
+        "supports_generate_audio": true,
+        "modes": [
+          "text-to-video",
+          "reference-images",
+          "reference-video"
+        ],
+        "parameters": [
+          {
+            "key": "seed",
+            "label": "随机种子",
+            "type": "integer",
+            "min": 0
+          }
+        ],
+        "request_schema": {
+          "create_path": "/video/generations",
+          "task_path": "/videos/{id}",
+          "content_path": "/videos/{id}/content"
+        }
+      }
+    },
+    {
+      "model_name": "seedance-2.5-acrux",
+      "docs_provider": "Sora",
+      "capabilities": {
+        "protocol": "momo_video",
+        "min_duration": 5,
+        "max_duration": 30,
+        "default_duration": 5,
+        "duration_options": null,
+        "resolutions": [
+          "480p",
+          "720p"
+        ],
+        "aspect_ratios": [
+          "16:9",
+          "9:16",
+          "1:1",
+          "4:3",
+          "3:4",
+          "21:9"
+        ],
+        "slots": {
+          "first_frame": 0,
+          "last_frame": 0,
+          "reference_image": 30,
+          "reference_video": 0,
+          "reference_audio": 0,
+          "keyframes": 0
+        },
+        "max_images": 30,
+        "supports_generate_audio": false,
+        "modes": [
+          "text-to-video",
+          "reference-images"
+        ],
+        "parameters": [],
+        "request_schema": {
+          "create_path": "/video/generations",
+          "task_path": "/videos/{id}",
+          "content_path": "/videos/{id}/content"
+        }
+      }
+    },
+    {
+      "model_name": "seedance-2.5-alioth",
+      "docs_provider": "Sora",
+      "capabilities": {
+        "protocol": "momo_video",
+        "min_duration": 5,
+        "max_duration": 30,
+        "default_duration": 5,
+        "duration_options": null,
+        "resolutions": [
+          "720p"
+        ],
+        "aspect_ratios": [
+          "16:9",
+          "9:16",
+          "1:1",
+          "4:3",
+          "3:4",
+          "21:9"
+        ],
+        "slots": {
+          "first_frame": 0,
+          "last_frame": 0,
+          "reference_image": 30,
+          "reference_video": 0,
+          "reference_audio": 10,
+          "keyframes": 0
+        },
+        "max_images": 30,
+        "supports_generate_audio": false,
+        "modes": [
+          "text-to-video",
+          "reference-images"
+        ],
+        "parameters": [],
+        "request_schema": {
+          "create_path": "/video/generations",
+          "task_path": "/videos/{id}",
+          "content_path": "/videos/{id}/content"
+        }
+      }
+    },
+    {
+      "model_name": "seedance-2.5-alphard",
+      "docs_provider": "Sora",
+      "capabilities": {
+        "protocol": "momo_video",
+        "min_duration": 30,
+        "max_duration": 30,
+        "default_duration": 30,
+        "duration_options": [
+          30
+        ],
+        "resolutions": [
+          "720p"
+        ],
+        "aspect_ratios": [
+          "16:9",
+          "9:16",
+          "1:1",
+          "4:3",
+          "3:4"
+        ],
+        "slots": {
+          "first_frame": 0,
+          "last_frame": 0,
+          "reference_image": 30,
+          "reference_video": 1,
+          "reference_audio": 10,
+          "keyframes": 0
+        },
+        "max_images": 30,
+        "supports_generate_audio": false,
+        "modes": [
+          "text-to-video",
+          "reference-images",
+          "reference-video"
+        ],
+        "parameters": [],
+        "request_schema": {
+          "create_path": "/video/generations",
+          "task_path": "/videos/{id}",
+          "content_path": "/videos/{id}/content"
+        }
+      }
+    },
+    {
+      "model_name": "seedance-2.5-draft-zq",
+      "docs_provider": "DoubaoVideo",
+      "capabilities": {
+        "protocol": "momo_video",
+        "min_duration": 5,
+        "max_duration": 30,
+        "default_duration": 5,
+        "duration_options": null,
+        "resolutions": [
+          "480p"
+        ],
+        "aspect_ratios": [
+          "16:9",
+          "9:16",
+          "1:1",
+          "4:3",
+          "3:4"
+        ],
+        "slots": {
+          "first_frame": 0,
+          "last_frame": 0,
+          "reference_image": 30,
+          "reference_video": 1,
+          "reference_audio": 10,
+          "keyframes": 0
+        },
+        "max_images": 30,
+        "supports_generate_audio": true,
+        "modes": [
+          "text-to-video",
+          "reference-images",
+          "reference-video"
+        ],
+        "parameters": [
+          {
+            "key": "seed",
+            "label": "随机种子",
+            "type": "integer",
+            "min": 0
+          }
+        ],
+        "request_schema": {
+          "create_path": "/video/generations",
+          "task_path": "/videos/{id}",
+          "content_path": "/videos/{id}/content"
+        }
+      }
+    },
+    {
+      "model_name": "seedance-2.5-flash-zq",
+      "docs_provider": "DoubaoVideo",
+      "capabilities": {
+        "protocol": "momo_video",
+        "min_duration": 5,
+        "max_duration": 30,
+        "default_duration": 5,
+        "duration_options": null,
+        "resolutions": [
+          "480p",
+          "720p"
+        ],
+        "aspect_ratios": [
+          "16:9",
+          "9:16",
+          "1:1",
+          "4:3",
+          "3:4"
+        ],
+        "slots": {
+          "first_frame": 0,
+          "last_frame": 0,
+          "reference_image": 10,
+          "reference_video": 1,
+          "reference_audio": 5,
+          "keyframes": 0
+        },
+        "max_images": 10,
+        "supports_generate_audio": true,
+        "modes": [
+          "text-to-video",
+          "reference-images",
+          "reference-video"
+        ],
+        "parameters": [
+          {
+            "key": "seed",
+            "label": "随机种子",
+            "type": "integer",
+            "min": 0
+          }
+        ],
+        "request_schema": {
+          "create_path": "/video/generations",
+          "task_path": "/videos/{id}",
+          "content_path": "/videos/{id}/content"
+        }
+      }
+    },
+    {
+      "model_name": "seedance-2.5-merak",
+      "docs_provider": "Sora",
+      "capabilities": {
+        "protocol": "momo_video",
+        "min_duration": 5,
+        "max_duration": 30,
+        "default_duration": 5,
+        "duration_options": null,
+        "resolutions": [
+          "480p",
+          "720p"
+        ],
+        "aspect_ratios": [
+          "16:9",
+          "9:16",
+          "1:1",
+          "4:3",
+          "3:4",
+          "21:9"
+        ],
+        "slots": {
+          "first_frame": 0,
+          "last_frame": 0,
+          "reference_image": 10,
+          "reference_video": 0,
+          "reference_audio": 5,
+          "keyframes": 0
+        },
+        "max_images": 10,
+        "supports_generate_audio": false,
+        "modes": [
+          "text-to-video",
+          "reference-images"
+        ],
+        "parameters": [],
+        "request_schema": {
+          "create_path": "/video/generations",
+          "task_path": "/videos/{id}",
+          "content_path": "/videos/{id}/content"
+        }
+      }
+    },
+    {
+      "model_name": "seedance2.0 fast Deneb",
+      "docs_provider": "Sora",
+      "capabilities": {
+        "protocol": "momo_video",
+        "min_duration": 5,
+        "max_duration": 15,
+        "default_duration": 5,
+        "duration_options": [
+          5,
+          10,
+          15
+        ],
+        "resolutions": [
+          "720p"
+        ],
+        "aspect_ratios": [
+          "16:9",
+          "9:16",
+          "1:1",
+          "4:3",
+          "3:4"
+        ],
+        "slots": {
+          "first_frame": 0,
+          "last_frame": 0,
+          "reference_image": 9,
+          "reference_video": 0,
+          "reference_audio": 0,
+          "keyframes": 0
+        },
+        "max_images": 9,
+        "supports_generate_audio": false,
+        "modes": [
+          "text-to-video",
+          "reference-images"
+        ],
+        "parameters": [],
+        "request_schema": {
+          "create_path": "/video/generations",
+          "task_path": "/videos/{id}",
+          "content_path": "/videos/{id}/content"
+        }
+      }
+    },
+    {
+      "model_name": "seedance2.0 mini Love",
+      "docs_provider": "Sora",
+      "capabilities": {
+        "protocol": "momo_video",
+        "min_duration": 5,
+        "max_duration": 15,
+        "default_duration": 5,
+        "duration_options": null,
+        "resolutions": [
+          "480p",
+          "720p"
+        ],
+        "aspect_ratios": [
+          "16:9",
+          "9:16",
+          "1:1",
+          "4:3",
+          "3:4",
+          "21:9"
+        ],
+        "slots": {
+          "first_frame": 1,
+          "last_frame": 1,
+          "reference_image": 9,
+          "reference_video": 0,
+          "reference_audio": 3,
+          "keyframes": 0
+        },
+        "max_images": 9,
+        "supports_generate_audio": true,
+        "modes": [
+          "text-to-video",
+          "first-last-frame",
+          "reference-images"
+        ],
+        "parameters": [],
+        "request_schema": {
+          "create_path": "/video/generations",
+          "task_path": "/videos/{id}",
+          "content_path": "/videos/{id}/content"
+        }
+      }
+    },
+    {
+      "model_name": "seedance2.5 GouGou",
+      "docs_provider": "Sora",
+      "capabilities": {
+        "protocol": "momo_video",
+        "min_duration": 4,
+        "max_duration": 30,
+        "default_duration": 4,
+        "duration_options": [
+          4,
+          5,
+          6,
+          8,
+          10,
+          12,
+          15,
+          20,
+          25,
+          30
+        ],
+        "resolutions": [
+          "720p"
+        ],
+        "aspect_ratios": [
+          "16:9",
+          "9:16",
+          "1:1",
+          "4:3",
+          "3:4",
+          "21:9"
+        ],
+        "slots": {
+          "first_frame": 0,
+          "last_frame": 0,
+          "reference_image": 30,
+          "reference_video": 1,
+          "reference_audio": 10,
+          "keyframes": 0
+        },
+        "max_images": 30,
+        "supports_generate_audio": false,
+        "modes": [
+          "text-to-video",
+          "reference-images",
+          "reference-video"
+        ],
+        "parameters": [],
+        "request_schema": {
+          "create_path": "/video/generations",
+          "task_path": "/videos/{id}",
+          "content_path": "/videos/{id}/content"
+        }
+      }
+    },
+    {
+      "model_name": "seedance2.5 coke",
+      "docs_provider": "Sora",
+      "capabilities": {
+        "protocol": "momo_video",
+        "min_duration": 1,
+        "max_duration": 15,
+        "default_duration": 1,
+        "duration_options": null,
+        "resolutions": [
+          "720p"
+        ],
+        "aspect_ratios": [
+          "16:9",
+          "9:16",
+          "4:3",
+          "3:4",
+          "1:1"
+        ],
+        "slots": {
+          "first_frame": 0,
+          "last_frame": 0,
+          "reference_image": 30,
+          "reference_video": 1,
+          "reference_audio": 10,
+          "keyframes": 0
+        },
+        "max_images": 30,
+        "supports_generate_audio": false,
+        "modes": [
+          "text-to-video",
+          "reference-images",
+          "reference-video"
+        ],
+        "parameters": [],
+        "request_schema": {
+          "create_path": "/video/generations",
+          "task_path": "/videos/{id}",
+          "content_path": "/videos/{id}/content"
+        }
+      }
+    },
+    {
+      "model_name": "wan3.0-video",
+      "docs_provider": "Sora",
+      "capabilities": {
+        "protocol": "momo_video",
+        "min_duration": 2,
+        "max_duration": 30,
+        "default_duration": 2,
+        "duration_options": null,
+        "resolutions": [
+          "480p",
+          "720p",
+          "1080p"
+        ],
+        "aspect_ratios": [
+          "16:9",
+          "9:16",
+          "1:1"
+        ],
+        "slots": {
+          "first_frame": 1,
+          "last_frame": 0,
+          "reference_image": 0,
+          "reference_video": 0,
+          "reference_audio": 0,
+          "keyframes": 0
+        },
+        "max_images": 1,
+        "supports_generate_audio": false,
+        "modes": [
+          "text-to-video",
+          "image-to-video"
+        ],
+        "parameters": [],
+        "request_schema": {
+          "create_path": "/video/generations",
+          "task_path": "/videos/{id}",
+          "content_path": "/videos/{id}/content"
+        }
+      }
+    },
+    {
+      "model_name": "wan3.0-yuanlian",
+      "docs_provider": "Sora",
+      "capabilities": {
+        "protocol": "momo_video",
+        "min_duration": 2,
+        "max_duration": 30,
+        "default_duration": 2,
+        "duration_options": null,
+        "resolutions": [
+          "480p",
+          "720p",
+          "1080p"
+        ],
+        "aspect_ratios": [
+          "16:9",
+          "9:16",
+          "1:1"
+        ],
+        "slots": {
+          "first_frame": 0,
+          "last_frame": 0,
+          "reference_image": 10,
+          "reference_video": 1,
+          "reference_audio": 5,
+          "keyframes": 0
+        },
+        "max_images": 10,
+        "supports_generate_audio": false,
+        "modes": [
+          "text-to-video",
+          "reference-images",
+          "reference-video"
+        ],
+        "parameters": [],
+        "request_schema": {
+          "create_path": "/video/generations",
+          "task_path": "/videos/{id}",
+          "content_path": "/videos/{id}/content"
+        },
+        "mode_capabilities": {
+          "text-to-video": {
+            "duration_options": null,
+            "duration_min_seconds": 2,
+            "duration_max_seconds": 30,
+            "duration_step_seconds": 1,
+            "resolution_options": [
+              "480p",
+              "720p",
+              "1080p"
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "mode_capability_source": "https://momoapi.xin/api/video-models"
+}

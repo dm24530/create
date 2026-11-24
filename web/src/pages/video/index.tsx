@@ -11,9 +11,9 @@ import { FailedTaskDetailModal, type FailedTaskDetail } from "@/components/workb
 import { GeneratedMediaDetailModal, type GeneratedMediaDetailData } from "@/components/workbench/generated-media-detail-modal";
 import { generationFailureReason } from "@/lib/generation-error";
 import { isCreateProductMode } from "@/lib/create-product";
-import { normalizeVideoResolutionValue } from "@/components/video-settings-panel";
-import { computeVideoSize, inferVideoRatio, parsePixelSize, parseVideoResolution, readVideoDimensions, videoRatioOptions } from "@/lib/media-size";
-import { clampVideoSecondsForProfile, getVideoModelProfile, isVideoDurationOptionAllowed, isVideoRatioSupported, isVideoResolutionSupported, supportsVideoGenerateAudioToggle } from "@/lib/video-model-profile";
+import { normalizeVideoResolutionValue, VideoParameterFields } from "@/components/video-settings-panel";
+import { computeVideoSize, inferVideoRatio, normalizeVideoResolutionToken, parsePixelSize, parseVideoResolution, readVideoDimensions, videoRatioOptions, videoResolutionDisplayLabel } from "@/lib/media-size";
+import { clampVideoSecondsForProfile, getVideoModelProfile, isVideoDurationOptionAllowed, isVideoRatioSupported, isVideoResolutionSupported, resolveVideoModeForReferencePlan, resolveVideoModeMediaPolicy, resolveVideoModeProfile, resolveVideoResolutionForProfile, supportsVideoGenerateAudioToggle, videoResolutionChoices } from "@/lib/video-model-profile";
 import { autoSaveGeneratedFile, deleteGeneratedFile, readGeneratedFileAsset } from "@/lib/desktop-save";
 import { captureVideoAssetCover } from "@/lib/video-asset-cover";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
@@ -24,6 +24,7 @@ import { createUserWorkbenchLogStore } from "@/services/workbench-log-storage";
 import { buildVideoConfig, buildVideoLog as buildLog, normalizeVideoResolution as normalizeResolution, readVideoLogs, recoverVideoFromLocalFile, serializeVideoLog as serializeLog } from "@/lib/workbench/video-log";
 import { configureCreateWorkspace, getManagedKeySelection, listCreateManagedKeys, managedKeySupportsVideo, switchManagedKey, type CreateManagedKey } from "@/services/create-managed-channel";
 import { WorkbenchModelSelect } from "@/components/workbench/model-select";
+import { useModelPlazaDetails } from "@/hooks/use-model-plaza-details";
 import { PanelResizeHandle, useStoredPanelWidth } from "@/components/workbench/panel-resize-handle";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useUserStore } from "@/stores/use-user-store";
@@ -35,11 +36,19 @@ import type { GeneratedVideo, VideoGenerationLog as GenerationLog, VideoGenerati
 import i18n from "@/i18n";
 
 const LOG_STORE_KEY = "infinite-canvas:video_generation_logs";
-const MAX_REFERENCE_IMAGES = 9;
-const MAX_REFERENCE_VIDEOS = 3;
-const MAX_REFERENCE_AUDIOS = 3;
 const MAX_VIDEO_TASKS = 4;
 const MAX_PROMPT_LENGTH = 5000;
+type ReferenceRole = "reference_images" | "first_frame" | "last_frame" | "keyframes" | "reference_videos" | "video-edit" | "video-extension" | "reference_audio";
+const REFERENCE_ROLE_META: Record<ReferenceRole, { label: string; description: string; accept: string }> = {
+    reference_images: { label: "参考图", description: "默认用途。作为主体、场景或风格参考。", accept: "image/*" },
+    first_frame: { label: "首帧", description: "画面从这张图开始运动。", accept: "image/*" },
+    last_frame: { label: "尾帧", description: "画面运动到这张图结束。", accept: "image/*" },
+    keyframes: { label: "关键帧", description: "按顺序控制画面变化。", accept: "image/*" },
+    reference_videos: { label: "参考视频", description: "参考动作、镜头或节奏。", accept: "video/*" },
+    "video-edit": { label: "视频编辑", description: "上传一个源视频进行编辑。", accept: "video/*" },
+    "video-extension": { label: "视频续写", description: "上传一个源视频继续往后生成。", accept: "video/*" },
+    reference_audio: { label: "参考音频", description: "参考声音、音乐或节奏。", accept: "audio/*" },
+};
 const { store: logStore, ensureMigrated: ensureLogStoreMigrated } = createUserWorkbenchLogStore("video_generation_logs");
 
 export default function VideoPage() {
@@ -59,6 +68,7 @@ export default function VideoPage() {
     const addAsset = useAssetStore((state) => state.addAsset);
     const cleanupAssets = useAssetStore((state) => state.cleanupImages);
     const session = useUserStore((state) => state.session);
+    const modelPlazaDetails = useModelPlazaDetails(session);
     const [videoKeys, setVideoKeys] = useState<CreateManagedKey[]>([]);
     const [videoKeysLoading, setVideoKeysLoading] = useState(false);
     const [selectedVideoKeyId, setSelectedVideoKeyId] = useState(() => getManagedKeySelection().videoKeyId);
@@ -67,6 +77,8 @@ export default function VideoPage() {
     const [references, setReferences] = useState<ReferenceImage[]>([]);
     const [referenceVideos, setReferenceVideos] = useState<ReferenceVideo[]>([]);
     const [referenceAudios, setReferenceAudios] = useState<ReferenceAudio[]>([]);
+    const [referenceRoleOpen, setReferenceRoleOpen] = useState(false);
+    const [pendingReferenceRole, setPendingReferenceRole] = useState<ReferenceRole>("reference_images");
     const [taskCount, setTaskCount] = useState(1);
     const [results, setResults] = useState<GenerationResult[]>([]);
     const [logs, setLogs] = useState<GenerationLog[]>([]);
@@ -101,16 +113,74 @@ export default function VideoPage() {
     const videoModelName = modelOptionName(model);
     const videoCapability = videoCapabilityOf(effectiveConfig, model);
     const videoProfile = useMemo(() => getVideoModelProfile(videoModelName, videoCapability), [videoCapability, videoModelName]);
-    const audioToggleDisabled = !supportsVideoGenerateAudioToggle(videoProfile);
-    const maxReferenceImages = Math.min(MAX_REFERENCE_IMAGES, videoProfile.maxImages);
-    const maxReferenceVideos = Math.min(MAX_REFERENCE_VIDEOS, videoProfile.maxVideos);
-    const maxReferenceAudios = Math.min(MAX_REFERENCE_AUDIOS, videoProfile.maxAudios);
-    const resolutionOptions = Array.from(new Set(videoProfile.resolutions)).sort((a, b) => Number(a) - Number(b));
-    const referenceUploadDisabled = maxReferenceImages + maxReferenceVideos + maxReferenceAudios === 0 || (references.length >= maxReferenceImages && referenceVideos.length >= maxReferenceVideos && referenceAudios.length >= maxReferenceAudios);
-    const durationPresetOptions = useMemo(() => {
-        if (videoProfile.durationOptions?.length) return Array.from(new Set(videoProfile.durationOptions)).sort((left, right) => left - right);
-        return [1, 2, 3, 4, 5, 6, 8, 10, 12, 15, 20, 30].filter((value) => isVideoDurationOptionAllowed(videoProfile, value));
-    }, [videoProfile]);
+    const referenceImageRoles = useMemo(() => references.map((item) => item.videoRole || "reference"), [references]);
+    const selectedVideoMode = useMemo(() => resolveVideoModeForReferencePlan(videoProfile, effectiveConfig.videoMode, {
+        imageRoles: referenceImageRoles,
+        imageCount: references.length,
+        videoCount: referenceVideos.length,
+        audioCount: referenceAudios.length,
+    }), [effectiveConfig.videoMode, referenceAudios.length, referenceImageRoles, referenceVideos.length, references.length, videoProfile]);
+    const orderedReferences = useMemo(() => {
+        const first = references.find((item) => item.videoRole === "first_frame");
+        const last = references.find((item) => item.videoRole === "last_frame");
+        if (selectedVideoMode === "first-last-frame") return [first, last].filter((item): item is ReferenceImage => Boolean(item));
+        if (selectedVideoMode === "image-to-video") return first ? [first] : [];
+        if (selectedVideoMode === "keyframes") return references.filter((item) => item.videoRole === "keyframe");
+        if (selectedVideoMode === "reference-images") return references.filter((item) => item.videoRole === "reference" || !item.videoRole);
+        return references;
+    }, [references, selectedVideoMode]);
+    const modeProfile = useMemo(() => resolveVideoModeProfile(videoProfile, selectedVideoMode), [selectedVideoMode, videoProfile]);
+    const audioToggleDisabled = !supportsVideoGenerateAudioToggle(modeProfile);
+    const modeMediaPolicy = resolveVideoModeMediaPolicy(videoProfile, selectedVideoMode);
+    const maxReferenceImages = modeMediaPolicy.max_images;
+    const maxReferenceVideos = modeMediaPolicy.max_videos;
+    const maxReferenceAudios = modeMediaPolicy.max_audios;
+    const resolutionOptions = useMemo(() => videoResolutionChoices(videoProfile, selectedVideoMode), [selectedVideoMode, videoProfile]);
+    const hasFirstFrame = references.some((item) => item.videoRole === "first_frame");
+    const availableReferenceRoles = useMemo(() => {
+        const modes = videoProfile.modes;
+        const slots = videoProfile.slots;
+        const roles: ReferenceRole[] = [];
+        if (slots.reference_image > 0 && modes.includes("reference-images")) roles.push("reference_images");
+        if (slots.first_frame > 0 && (modes.includes("image-to-video") || modes.includes("first-last-frame"))) roles.push("first_frame");
+        if (hasFirstFrame && slots.last_frame > 0 && modes.includes("first-last-frame")) roles.push("last_frame");
+        if (slots.keyframes > 0 && modes.includes("keyframes")) roles.push("keyframes");
+        if (slots.reference_video > 0 && modes.includes("reference-video")) roles.push("reference_videos");
+        if (slots.reference_video > 0 && modes.includes("video-edit")) roles.push("video-edit");
+        if (slots.reference_video > 0 && modes.includes("video-extension")) roles.push("video-extension");
+        if (slots.reference_audio > 0 && (modes.includes("reference-images") || modes.includes("reference-video"))) roles.push("reference_audio");
+        return roles;
+    }, [hasFirstFrame, videoProfile]);
+    const referenceRoleOptions = useMemo(() => {
+        const visibleRoles = (Object.keys(REFERENCE_ROLE_META) as ReferenceRole[]).filter((role) => role === "first_frame" || role === "last_frame" || availableReferenceRoles.includes(role));
+        return visibleRoles.map((role) => {
+            const supported = availableReferenceRoles.includes(role);
+            const needsFirstFrame = role === "last_frame" && !hasFirstFrame;
+            return {
+                role,
+                ...REFERENCE_ROLE_META[role],
+                enabled: supported,
+                reason: needsFirstFrame ? "请先添加首帧" : supported ? "" : "当前模型不支持此用途",
+            };
+        });
+    }, [availableReferenceRoles, hasFirstFrame]);
+    const referenceUploadDisabled = availableReferenceRoles.length === 0;
+    const durationPresetOptions = useMemo(() => [5, 10, 15], []);
+    const referenceModeHint = selectedVideoMode === "reference-images"
+        ? `参考图模式 · 最多 ${videoProfile.slots.reference_image} 张图${videoProfile.slots.reference_audio ? ` / ${videoProfile.slots.reference_audio} 段音频` : ""}`
+        : selectedVideoMode === "image-to-video"
+            ? "首帧模式 · 上传 1 张首帧图"
+            : selectedVideoMode === "first-last-frame"
+                ? "首尾帧模式 · 上传首帧和尾帧"
+                : selectedVideoMode === "keyframes"
+                    ? `关键帧模式 · 最多 ${videoProfile.slots.keyframes} 张`
+                    : selectedVideoMode === "reference-video"
+                        ? "参考视频模式 · 可同时使用参考图、视频和音频"
+                        : selectedVideoMode === "video-edit"
+                            ? "视频编辑 · 上传一个源视频"
+                            : selectedVideoMode === "video-extension"
+                                ? "视频续写 · 上传一个源视频"
+                                : "文生视频 · 直接输入提示词";
     const selectedVideoKey = videoKeys.find((item) => item.id === selectedVideoKeyId) || null;
     const selectedVideoChannel = selectedVideoKey
         ? effectiveConfig.channels.find((channel) => channel.apiKey === selectedVideoKey.key) || null
@@ -133,11 +203,17 @@ export default function VideoPage() {
     }, [model, selectedVideoChannel?.id, updateConfig, videoModelOptions.join("|")]);
 
     const canGenerate = Boolean(prompt.trim());
-    const resolution = parseVideoResolution(effectiveConfig.vquality);
-    const selectedRatio = inferVideoRatio(effectiveConfig.size);
+    const requestedResolution = normalizeVideoResolutionToken(effectiveConfig.vquality || modeProfile.resolutions[0] || "720");
+    const selectedResolution = requestedResolution === "768" ? "720" : requestedResolution;
+    const effectiveResolution = isVideoResolutionSupported(modeProfile, requestedResolution) ? resolveVideoResolutionForProfile(modeProfile, requestedResolution) : modeProfile.resolutions[0] || "720";
+    const resolution = parseVideoResolution(effectiveResolution);
+    const requestedRatio = inferVideoRatio(effectiveConfig.size);
+    const ratioOptions = useMemo(() => videoRatioOptions.filter((item) => isVideoRatioSupported(modeProfile, item.value)), [modeProfile]);
+    const selectedRatio = isVideoRatioSupported(modeProfile, requestedRatio) ? requestedRatio : modeProfile.aspectRatios[0] || "16:9";
     const dimensions = readVideoDimensions(effectiveConfig.size, resolution, selectedRatio);
-    const seconds = Number(clampVideoSecondsForProfile(effectiveConfig.videoSeconds || String(videoProfile.defaultDuration || "5"), videoProfile));
+    const seconds = Number(clampVideoSecondsForProfile(effectiveConfig.videoSeconds || String(modeProfile.defaultDuration || "5"), modeProfile));
     const durationAuto = effectiveConfig.videoDurationAuto === true;
+    const displayedSeconds = durationAuto ? modeProfile.defaultDuration : seconds;
     const generateAudio = boolConfig(effectiveConfig.videoGenerateAudio, true);
     const selectedSizeLabel = selectedRatio === "auto" ? "自适应" : `${videoOrientationLabel(selectedRatio)} ${dimensions.width}×${dimensions.height}`;
 
@@ -203,70 +279,128 @@ export default function VideoPage() {
     }, [running, startedAt]);
 
     useEffect(() => {
-        const nextResolution = isVideoResolutionSupported(videoProfile, resolution) ? resolution : videoProfile.resolutions[0] || "720";
-        const nextRatio = isVideoRatioSupported(videoProfile, selectedRatio) ? selectedRatio : videoProfile.aspectRatios[0] || "16:9";
-        if (nextResolution !== resolution) updateConfig("vquality", nextResolution);
+        const nextResolution = isVideoResolutionSupported(modeProfile, requestedResolution) ? requestedResolution : modeProfile.resolutions[0] || "720";
+        const nextRatio = isVideoRatioSupported(modeProfile, selectedRatio) ? selectedRatio : modeProfile.aspectRatios[0] || "16:9";
+        if (nextResolution !== requestedResolution) updateConfig("vquality", nextResolution);
         if (nextRatio !== selectedRatio) {
             updateConfig("size", computeVideoSize(nextResolution, nextRatio));
-        } else if (nextResolution !== resolution && selectedRatio !== "auto") {
+        } else if (nextResolution !== requestedResolution && selectedRatio !== "auto") {
             updateConfig("size", computeVideoSize(nextResolution, selectedRatio));
         }
-        const nextSeconds = clampVideoSecondsForProfile(effectiveConfig.videoSeconds || String(videoProfile.defaultDuration || "5"), videoProfile);
+        const nextSeconds = clampVideoSecondsForProfile(effectiveConfig.videoSeconds || String(modeProfile.defaultDuration || "5"), modeProfile);
         if (String(effectiveConfig.videoSeconds || "").trim() !== nextSeconds) updateConfig("videoSeconds", nextSeconds);
+        if (selectedVideoMode !== effectiveConfig.videoMode) updateConfig("videoMode", selectedVideoMode);
         if (audioToggleDisabled && generateAudio) updateConfig("videoGenerateAudio", "false");
-        const exceedsLimit = references.length > maxReferenceImages || referenceVideos.length > maxReferenceVideos || referenceAudios.length > maxReferenceAudios;
-        if (exceedsLimit) {
-            message.warning(`当前模型最多支持 ${maxReferenceImages} 张参考图、${maxReferenceVideos} 个参考视频、${maxReferenceAudios} 个参考音频，超出部分已移除`);
-        }
-        setReferences((value) => value.length > maxReferenceImages ? value.slice(0, maxReferenceImages) : value);
-        setReferenceVideos((value) => value.length > maxReferenceVideos ? value.slice(0, maxReferenceVideos) : value);
-        setReferenceAudios((value) => value.length > maxReferenceAudios ? value.slice(0, maxReferenceAudios) : value);
-    }, [audioToggleDisabled, effectiveConfig.videoSeconds, generateAudio, maxReferenceAudios, maxReferenceImages, maxReferenceVideos, message, references, referenceAudios, referenceVideos, resolution, selectedRatio, updateConfig, videoProfile]);
+    }, [audioToggleDisabled, effectiveConfig.videoMode, effectiveConfig.videoSeconds, generateAudio, maxReferenceAudios, maxReferenceImages, maxReferenceVideos, message, modeProfile, references, referenceAudios, referenceVideos, requestedResolution, selectedRatio, selectedVideoMode, updateConfig, videoProfile]);
 
     useEffect(() => {
         void refreshLogs();
     }, []);
 
-    const addReferences = async (files?: FileList | File[] | null) => {
+    const addReferences = async (files?: FileList | File[] | null, role: ReferenceRole = pendingReferenceRole) => {
         const selectedFiles = Array.from(files || []);
-        const unsupported = selectedFiles.filter((file) => !file.type.startsWith("image/") && !file.type.startsWith("video/") && !file.type.startsWith("audio/"));
-        if (unsupported.length) message.warning(t("videoWorkbench.unsupportedFiles"));
+        if (!selectedFiles.length) return;
+        if (role === "last_frame" && !references.some((item) => item.videoRole === "first_frame")) {
+            message.warning("请先添加首帧，再添加尾帧");
+            return;
+        }
+        const acceptedMime = REFERENCE_ROLE_META[role].accept.slice(0, -1);
+        const matchingFiles = selectedFiles.filter((file) => file.type.startsWith(acceptedMime));
+        if (matchingFiles.length !== selectedFiles.length) message.warning("已忽略与所选用途不匹配的文件");
+        if (!matchingFiles.length) return;
 
-        const imageFiles = selectedFiles.filter((file) => file.type.startsWith("image/"));
-        const videoFiles = selectedFiles.filter((file) => file.type.startsWith("video/"));
-        const audioFiles = selectedFiles.filter((file) => file.type.startsWith("audio/"));
+        const { imageBytes, videoBytes, audioBytes } = videoProfile.fileLimits;
+        const tooLarge = (kind: "image" | "video" | "audio", bytes: number) => {
+            if (kind === "image") return bytes > imageBytes ? "videoWorkbench.imageTooLarge" : "";
+            if (kind === "video") return bytes > videoBytes ? "videoWorkbench.videoTooLarge" : "";
+            return bytes > audioBytes ? "videoWorkbench.audioTooLarge" : "";
+        };
 
-        const acceptedImages = imageFiles.filter((file) => file.size <= 30 * 1024 * 1024).slice(0, Math.max(0, maxReferenceImages - references.length));
-        const acceptedVideos = videoFiles.filter((file) => file.size <= 200 * 1024 * 1024).slice(0, Math.max(0, maxReferenceVideos - referenceVideos.length));
-        const acceptedAudios = audioFiles.filter((file) => file.size <= 15 * 1024 * 1024).slice(0, Math.max(0, maxReferenceAudios - referenceAudios.length));
-        if (imageFiles.some((file) => file.size > 30 * 1024 * 1024)) message.warning(t("videoWorkbench.imageTooLarge"));
-        if (videoFiles.some((file) => file.size > 200 * 1024 * 1024)) message.warning(t("videoWorkbench.videoTooLarge"));
-        if (audioFiles.some((file) => file.size > 15 * 1024 * 1024)) message.warning(t("videoWorkbench.audioTooLarge"));
-        if (videoFiles.length && !maxReferenceVideos) message.warning("当前模型不支持参考视频");
-        if (audioFiles.length && !maxReferenceAudios) message.warning("当前模型不支持参考音频");
-        if (imageFiles.length && !maxReferenceImages) message.warning("当前模型不支持参考图");
-
-        const [nextImages, nextVideos, nextAudios] = await Promise.all([
-            Promise.all(
-                acceptedImages.map(async (file) => {
+        if (role === "reference_images" || role === "first_frame" || role === "last_frame" || role === "keyframes") {
+            const imageLimit = role === "reference_images" ? videoProfile.slots.reference_image : role === "keyframes" ? videoProfile.slots.keyframes : 1;
+            const imageFiles = matchingFiles.filter((file) => file.type.startsWith("image/")).slice(0, Math.max(1, imageLimit));
+            if (imageFiles.some((file) => tooLarge("image", file.size))) message.warning(t("videoWorkbench.imageTooLarge"));
+            const nextImages = await Promise.all(
+                imageFiles.filter((file) => !tooLarge("image", file.size)).map(async (file) => {
                     const image = await uploadImage(file);
-                    return { id: nanoid(), name: file.name, type: image.mimeType, dataUrl: image.url, storageKey: image.storageKey };
+                    return { id: nanoid(), name: file.name, type: image.mimeType, dataUrl: image.url, storageKey: image.storageKey } as ReferenceImage;
                 }),
-            ),
-            Promise.all(
-                acceptedVideos.map(async (file) => {
-                    const video = await uploadMediaFile(file, "video");
-                    return { id: nanoid(), name: file.name, type: video.mimeType, url: video.url, storageKey: video.storageKey, bytes: video.bytes, width: video.width, height: video.height, durationMs: video.durationMs };
-                }),
-            ),
-            Promise.all(
-                acceptedAudios.map(async (file) => {
-                    const audio = await uploadMediaFile(file, "audio");
-                    return { id: nanoid(), name: file.name, type: audio.mimeType, url: audio.url, storageKey: audio.storageKey, durationMs: audio.durationMs };
-                }),
-            ),
-        ]);
+            );
+            if (!nextImages.length) return;
 
+            if (role === "first_frame") {
+                const first = { ...nextImages[0], videoRole: "first_frame" as const };
+                const last = references.find((item) => item.videoRole === "last_frame");
+                setReferences((value) => [...value.filter((item) => item.videoRole !== "first_frame"), first]);
+                const nextMode = last && videoProfile.modes.includes("first-last-frame")
+                    ? "first-last-frame"
+                    : videoProfile.modes.includes("image-to-video") ? "image-to-video" : "first-last-frame";
+                updateConfig("videoMode", nextMode);
+                return;
+            }
+            if (role === "last_frame") {
+                const first = references.find((item) => item.videoRole === "first_frame");
+                if (!first) {
+                    message.warning("请先添加首帧，再添加尾帧");
+                    return;
+                }
+                const last = { ...nextImages[0], videoRole: "last_frame" as const };
+                setReferences((value) => [...value.filter((item) => item.videoRole !== "last_frame"), last]);
+                updateConfig("videoMode", "first-last-frame");
+                return;
+            }
+            if (role === "keyframes") {
+                const keyframes = nextImages.map((item) => ({ ...item, videoRole: "keyframe" as const }));
+                setReferences((value) => {
+                    const others = value.filter((item) => item.videoRole !== "keyframe");
+                    const existing = value.filter((item) => item.videoRole === "keyframe");
+                    const added = keyframes.slice(0, Math.max(0, videoProfile.slots.keyframes - existing.length));
+                    return [...others, ...existing, ...added];
+                });
+                updateConfig("videoMode", "keyframes");
+                return;
+            }
+
+            const referenceImages = nextImages.map((item) => ({ ...item, videoRole: "reference" as const }));
+            setReferences((value) => {
+                const others = value.filter((item) => item.videoRole !== "reference" && item.videoRole);
+                const existingReferences = value.filter((item) => item.videoRole === "reference" || !item.videoRole);
+                const added = referenceImages.slice(0, Math.max(0, videoProfile.slots.reference_image - existingReferences.length));
+                return [...others, ...existingReferences, ...added];
+            });
+            updateConfig("videoMode", "reference-images");
+            return;
+        }
+
+        if (role === "reference_videos" || role === "video-edit" || role === "video-extension") {
+            const videoLimit = role === "reference_videos" ? videoProfile.slots.reference_video : 1;
+            const videoFiles = matchingFiles.filter((file) => file.type.startsWith("video/")).slice(0, Math.max(1, videoLimit));
+            if (videoFiles.some((file) => tooLarge("video", file.size))) message.warning(t("videoWorkbench.videoTooLarge"));
+            const nextVideos = await Promise.all(
+                videoFiles.filter((file) => !tooLarge("video", file.size)).map(async (file) => {
+                    const video = await uploadMediaFile(file, "video");
+                    return { id: nanoid(), name: file.name, type: video.mimeType, url: video.url, storageKey: video.storageKey, bytes: video.bytes, width: video.width, height: video.height, durationMs: video.durationMs } as ReferenceVideo;
+                }),
+            );
+            if (!nextVideos.length) return;
+            if (role === "reference_videos") {
+                setReferenceVideos((value) => [...value, ...nextVideos].slice(0, videoProfile.slots.reference_video));
+                updateConfig("videoMode", "reference-video");
+            } else {
+                setReferenceVideos([nextVideos[0]]);
+                updateConfig("videoMode", role);
+            }
+            return;
+        }
+
+        const audioFiles = matchingFiles.filter((file) => file.type.startsWith("audio/"));
+        if (audioFiles.some((file) => tooLarge("audio", file.size))) message.warning(t("videoWorkbench.audioTooLarge"));
+        const nextAudios = await Promise.all(
+            audioFiles.filter((file) => !tooLarge("audio", file.size)).map(async (file) => {
+                const audio = await uploadMediaFile(file, "audio");
+                return { id: nanoid(), name: file.name, type: audio.mimeType, url: audio.url, storageKey: audio.storageKey, durationMs: audio.durationMs } as ReferenceAudio;
+            }),
+        );
         const totalAudioMs = referenceAudios.reduce((total, item) => total + (item.durationMs || 0), 0);
         let runningAudioMs = totalAudioMs;
         const validAudios = nextAudios.filter((audio) => {
@@ -276,10 +410,22 @@ export default function VideoPage() {
             return true;
         });
         if (validAudios.length !== nextAudios.length) message.warning(t("videoWorkbench.audioDurationInvalid"));
+        setReferenceAudios((value) => [...value, ...validAudios].slice(0, videoProfile.slots.reference_audio));
+        if (!references.length && !referenceVideos.length) updateConfig("videoMode", "reference-images");
+    };
 
-        setReferences((value) => [...value, ...nextImages].slice(0, maxReferenceImages));
-        setReferenceVideos((value) => [...value, ...nextVideos].slice(0, maxReferenceVideos));
-        setReferenceAudios((value) => [...value, ...validAudios].slice(0, maxReferenceAudios));
+    const openReferenceRolePicker = () => {
+        if (!availableReferenceRoles.length) {
+            message.warning("当前模型不支持添加参考素材");
+            return;
+        }
+        setReferenceRoleOpen(true);
+    };
+
+    const chooseReferenceRole = (role: ReferenceRole) => {
+        setPendingReferenceRole(role);
+        setReferenceRoleOpen(false);
+        window.setTimeout(() => fileInputRef.current?.click(), 0);
     };
 
     const handleReferenceDragEnter = (event: DragEvent<HTMLDivElement>) => {
@@ -298,7 +444,7 @@ export default function VideoPage() {
         event.preventDefault();
         dragDepthRef.current = 0;
         setReferenceDragTarget(false);
-        void addReferences(event.dataTransfer.files);
+        void addReferences(event.dataTransfer.files, "reference_images");
     };
 
     const addReferencesFromClipboard = async () => {
@@ -312,10 +458,11 @@ export default function VideoPage() {
             const nextReferences = await Promise.all(
                 blobs.slice(0, Math.max(0, maxReferenceImages - references.length)).map(async (blob, index) => {
                     const image = await uploadImage(blob);
-                    return { id: nanoid(), name: `clipboard-${index + 1}.png`, type: image.mimeType, dataUrl: image.url, storageKey: image.storageKey };
+                    return { id: nanoid(), name: `clipboard-${index + 1}.png`, type: image.mimeType, dataUrl: image.url, storageKey: image.storageKey, videoRole: "reference" as const };
                 }),
             );
-            setReferences((value) => [...value, ...nextReferences].slice(0, maxReferenceImages));
+            setReferences((value) => [...value.filter((item) => item.videoRole === "reference" || !item.videoRole), ...nextReferences].slice(0, videoProfile.slots.reference_image));
+            updateConfig("videoMode", "reference-images");
             message.success(t("videoWorkbench.clipboardAdded", { count: nextReferences.length }));
         } catch {
             message.error(t("videoWorkbench.clipboardEmpty"));
@@ -335,23 +482,23 @@ export default function VideoPage() {
         const files = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith("image/"));
         if (!files.length) return;
         event.preventDefault();
-        void addReferences(files);
+        void addReferences(files, "reference_images");
     };
 
     const selectResolution = (nextResolution: string) => {
-        if (!isVideoResolutionSupported(videoProfile, nextResolution)) return;
+        if (!isVideoResolutionSupported(modeProfile, nextResolution)) return;
         updateConfig("vquality", nextResolution);
         if (selectedRatio !== "auto") updateConfig("size", computeVideoSize(nextResolution, selectedRatio));
     };
 
     const selectVideoRatio = (ratio: string) => {
-        if (!isVideoRatioSupported(videoProfile, ratio)) return;
+        if (!isVideoRatioSupported(modeProfile, ratio)) return;
         updateConfig("size", computeVideoSize(resolution, ratio));
     };
 
     const commitSeconds = (raw: string) => {
         updateConfig("videoDurationAuto", false);
-        updateConfig("videoSeconds", clampVideoSecondsForProfile(raw, videoProfile));
+        updateConfig("videoSeconds", clampVideoSecondsForProfile(raw, modeProfile));
     };
 
     const commitTaskCount = (raw: string) => {
@@ -479,12 +626,12 @@ export default function VideoPage() {
         }
         const requestConfig = buildVideoConfig(effectiveConfig, model);
         const typedSeconds = secondsInputRef.current?.value;
-        if (typedSeconds) requestConfig.videoSeconds = clampVideoSecondsForProfile(typedSeconds, videoProfile);
+        if (typedSeconds) requestConfig.videoSeconds = clampVideoSecondsForProfile(typedSeconds, modeProfile);
         return {
             text,
             model,
             config: requestConfig,
-            references: [...references],
+            references: [...orderedReferences],
             referenceVideos: [...referenceVideos],
             referenceAudios: [...referenceAudios],
         };
@@ -534,16 +681,18 @@ export default function VideoPage() {
             setPrompt(payload.content);
         } else if (payload.kind === "image") {
             const stored = await uploadImage(payload.dataUrl);
-            setReferences((value) => [...value, { id: nanoid(), name: payload.title, type: stored.mimeType, dataUrl: stored.url, storageKey: stored.storageKey }].slice(0, maxReferenceImages));
+            setReferences((value) => [...value.filter((item) => item.videoRole === "reference" || !item.videoRole), { id: nanoid(), name: payload.title, type: stored.mimeType, dataUrl: stored.url, storageKey: stored.storageKey, videoRole: "reference" as const }].slice(0, videoProfile.slots.reference_image));
+            updateConfig("videoMode", "reference-images");
         } else if (payload.kind === "video") {
             const source = payload.storageKey ? await resolveMediaUrl(payload.storageKey, payload.url) : payload.url;
             const stored = await uploadMediaFile(source, "video");
             setReferenceVideos((value) =>
                 [...value, { id: nanoid(), name: payload.title, type: stored.mimeType, url: stored.url, storageKey: stored.storageKey, bytes: stored.bytes, width: stored.width, height: stored.height, durationMs: stored.durationMs }].slice(
                     0,
-                    maxReferenceVideos,
+                    videoProfile.slots.reference_video,
                 ),
             );
+            updateConfig("videoMode", "reference-video");
         }
         setAssetPickerOpen(false);
     };
@@ -749,6 +898,7 @@ export default function VideoPage() {
         if (log.config.videoGenerateAudio) updateConfig("videoGenerateAudio", log.config.videoGenerateAudio);
         if (log.config.videoWatermark) updateConfig("videoWatermark", log.config.videoWatermark);
         if (log.config.videoMode) updateConfig("videoMode", log.config.videoMode);
+        if (log.config.videoParameters) updateConfig("videoParameters", log.config.videoParameters);
         setResults(log.status === "pending" ? [{ id: log.id, status: "pending" }] : log.video ? [{ id: log.video.id, status: "success", video: { ...log.video, prompt: log.video.prompt || log.prompt, model: log.video.model || modelOptionName(log.model) } }] : [{ id: log.id, status: "failed", error: generationFailureReason(log.error, t("workbench.failureReasonUnavailable")) }]);
     };
 
@@ -837,6 +987,7 @@ export default function VideoPage() {
                             <div className="flex items-center justify-between gap-2 px-2.5 pb-1">
                                 <div className="min-w-0 max-w-[300px] flex-1">
                                     <WorkbenchModelSelect
+                                        details={modelPlazaDetails}
                                         label="视频模型"
                                         value={videoModelGroups.some((group) => group.models.some((item) => item.value === model)) ? model : ""}
                                         groups={videoModelGroups}
@@ -898,9 +1049,9 @@ export default function VideoPage() {
                                     type="button"
                                     className="grid size-7 place-items-center rounded-lg text-stone-500 transition hover:bg-stone-100 hover:text-stone-900 disabled:cursor-not-allowed disabled:opacity-35 dark:hover:bg-stone-800 dark:hover:text-stone-100"
                                     disabled={referenceUploadDisabled}
-                                    title={referenceUploadDisabled ? "当前模型不支持或已用满参考素材" : "上传参考素材"}
-                                    aria-label="上传参考素材"
-                                    onClick={() => fileInputRef.current?.click()}
+                                    title={referenceUploadDisabled ? "当前模型不支持参考素材" : "添加参考素材"}
+                                    aria-label="添加参考素材"
+                                    onClick={openReferenceRolePicker}
                                 >
                                     <Upload className="size-4" />
                                 </button>
@@ -920,21 +1071,27 @@ export default function VideoPage() {
                                     event.currentTarget.scrollLeft += event.deltaY;
                                 }}
                             >
-                                {references.map((item, index) => (
-                                    <div key={item.id} className="group relative size-24 shrink-0 overflow-hidden rounded-xl border border-stone-200 dark:border-stone-700">
-                                        <img src={previewUrlFor(item.storageKey) || item.dataUrl} alt={item.name} className="size-full object-cover" />
-                                        <span className="absolute left-1.5 top-1.5 rounded-md bg-black/65 px-1.5 py-0.5 text-[10px] font-medium text-white backdrop-blur">图片{index + 1}</span>
-                                        <ReferenceOrderButtons index={index} total={references.length} onMove={(offset) => setReferences((value) => moveListItem(value, index, offset))} />
-                                        <button
-                                            type="button"
-                                            className="absolute right-1.5 top-1.5 hidden size-6 items-center justify-center rounded-md bg-black/65 text-white backdrop-blur group-hover:flex"
-                                            onClick={() => setReferences((value) => value.filter((ref) => ref.id !== item.id))}
-                                            aria-label={t("videoWorkbench.removeImage")}
-                                        >
-                                            <Trash2 className="size-3.5" />
-                                        </button>
-                                    </div>
-                                ))}
+                                {references.map((item, index) => {
+                                    const roleLabel = item.videoRole === "first_frame" ? "首帧" : item.videoRole === "last_frame" ? "尾帧" : item.videoRole === "keyframe" ? `关键帧${index + 1}` : `参考图${index + 1}`;
+                                    return (
+                                        <div key={item.id} className={`group relative size-24 shrink-0 overflow-hidden rounded-xl border dark:border-stone-700 ${item.videoRole === "first_frame" ? "border-sky-500 ring-2 ring-sky-500/45" : item.videoRole === "last_frame" ? "border-amber-500 ring-2 ring-amber-500/45" : item.videoRole === "keyframe" ? "border-violet-500 ring-2 ring-violet-500/40" : "border-stone-200"}`}>
+                                            <img src={previewUrlFor(item.storageKey) || item.dataUrl} alt={item.name} className="size-full object-cover" />
+                                            <span className={`absolute left-1.5 top-1.5 rounded-md px-1.5 py-0.5 text-[10px] font-semibold text-white shadow-sm backdrop-blur ${item.videoRole === "first_frame" ? "bg-sky-600/90" : item.videoRole === "last_frame" ? "bg-amber-600/90" : item.videoRole === "keyframe" ? "bg-violet-600/90" : "bg-black/65"}`}>{roleLabel}</span>
+                                            <ReferenceOrderButtons index={index} total={references.length} onMove={(offset) => setReferences((value) => moveListItem(value, index, offset))} />
+                                            <button
+                                                type="button"
+                                                className="absolute right-1.5 top-1.5 hidden size-6 items-center justify-center rounded-md bg-black/65 text-white backdrop-blur group-hover:flex"
+                                                onClick={() => setReferences((value) => {
+                                                    const next = value.filter((ref) => ref.id !== item.id);
+                                                    return item.videoRole === "first_frame" ? next.filter((ref) => ref.videoRole !== "last_frame") : next;
+                                                })}
+                                                aria-label={t("videoWorkbench.removeImage")}
+                                            >
+                                                <Trash2 className="size-3.5" />
+                                            </button>
+                                        </div>
+                                    );
+                                })}
                                 {referenceVideos.map((item, index) => (
                                     <div key={item.id} className="group relative size-24 shrink-0 overflow-hidden rounded-xl border border-stone-200 bg-stone-900 dark:border-stone-700">
                                         <video src={item.url} muted preload="metadata" className="size-full object-cover opacity-80" />
@@ -973,29 +1130,30 @@ export default function VideoPage() {
                                     type="button"
                                     className="grid size-24 shrink-0 place-items-center rounded-xl border border-dashed border-stone-500 text-stone-500 transition hover:border-stone-700 hover:bg-stone-100 hover:text-stone-900 disabled:cursor-not-allowed disabled:opacity-35 dark:hover:border-stone-400 dark:hover:bg-stone-900 dark:hover:text-stone-100"
                                     disabled={referenceUploadDisabled}
-                                    title={referenceUploadDisabled ? "当前模型不支持或已用满参考素材" : referenceDragTarget ? t("videoWorkbench.dropReferences") : t("videoWorkbench.noImages")}
-                                    onClick={() => fileInputRef.current?.click()}
+                                    title={referenceUploadDisabled ? "当前模型不支持参考素材" : referenceDragTarget ? t("videoWorkbench.dropReferences") : "添加参考素材"}
+                                    onClick={openReferenceRolePicker}
                                 >
                                     <Plus className="size-7 stroke-[1.4]" />
                                 </button>
                             </div>
-                            <p className="mt-1 text-[11px] leading-4 text-stone-500">当前模型最多支持 {maxReferenceImages} 张参考图、{maxReferenceVideos} 个参考视频、{maxReferenceAudios} 个参考音频。</p>
+                            <p className="mt-1 text-[11px] leading-4 text-stone-500">{referenceModeHint}</p>
                         </div>
 
                         <div className="mt-3">
                             <div className="mb-2 text-sm font-semibold text-stone-900 dark:text-stone-100">清晰度</div>
                             <div className="grid overflow-hidden rounded-xl border border-stone-200 bg-stone-100/60 p-1 dark:border-stone-700 dark:bg-stone-900/60" style={{ gridTemplateColumns: `repeat(${resolutionOptions.length}, minmax(0, 1fr))` }}>
                                 {resolutionOptions.map((value) => {
-                                    const supported = isVideoResolutionSupported(videoProfile, value);
+                                    const supported = isVideoResolutionSupported(modeProfile, value);
                                     return (
                                         <button
                                             key={value}
                                             type="button"
                                             disabled={!supported}
-                                            className={`h-9 rounded-lg text-sm transition ${resolution === value && supported ? "bg-stone-200 font-semibold !text-stone-950 shadow-sm dark:bg-stone-700 dark:!text-stone-100" : supported ? "text-stone-500 hover:text-stone-900 dark:hover:text-stone-100" : "cursor-not-allowed text-stone-600 opacity-35 dark:text-stone-500"}`}
+                                            aria-pressed={selectedResolution === normalizeVideoResolutionToken(value) && supported}
+                                            className={`h-9 rounded-lg text-sm transition ${selectedResolution === normalizeVideoResolutionToken(value) && supported ? "bg-stone-200 font-semibold !text-stone-950 shadow-sm dark:bg-stone-700 dark:!text-stone-100" : supported ? "text-stone-500 hover:text-stone-900 dark:hover:text-stone-100" : "cursor-not-allowed text-stone-600 opacity-35 dark:text-stone-500"}`}
                                             onClick={() => selectResolution(value)}
                                         >
-                                            {value}P
+                                            {videoResolutionDisplayLabel(value)}
                                         </button>
                                     );
                                 })}
@@ -1012,14 +1170,14 @@ export default function VideoPage() {
                                     value={selectedRatio}
                                     onChange={(event) => selectVideoRatio(event.target.value)}
                                 >
-                                    {videoRatioOptions
+                                    {ratioOptions
                                         .filter((item) => item.value !== "auto")
                                         .map((item) => (
-                                            <option key={item.value} value={item.value} disabled={!isVideoRatioSupported(videoProfile, item.value)}>
+                                            <option key={item.value} value={item.value}>
                                                 {videoRatioSizeLabel(item.value, resolution)}
                                             </option>
                                         ))}
-                                    <option value="auto" disabled={!isVideoRatioSupported(videoProfile, "auto")}>自适应</option>
+                                    {ratioOptions.some((item) => item.value === "auto") ? <option value="auto">自适应</option> : null}
                                 </select>
                                 <ChevronDown className="pointer-events-none absolute right-3 top-3 size-4 text-stone-500" />
                             </div>
@@ -1027,23 +1185,23 @@ export default function VideoPage() {
 
                         <div className="mt-3">
                             <div className="mb-2 text-sm font-semibold text-stone-900 dark:text-stone-100">秒数</div>
-                            <div className="grid grid-cols-[minmax(0,1fr)_96px] items-center gap-2">
-                                <div className="grid grid-flow-col auto-cols-[minmax(56px,1fr)] overflow-x-auto rounded-xl border border-stone-200 p-1 dark:border-stone-700">
+                            <div className="grid grid-cols-[minmax(0,1fr)_84px] items-center gap-2">
+                                <div className="grid grid-cols-4 gap-1 rounded-xl border border-stone-200 p-1 dark:border-stone-700">
                                     <button
                                         type="button"
-                                        className={`h-9 rounded-lg text-sm transition ${durationAuto ? "bg-stone-200 font-semibold !text-stone-950 shadow-sm dark:bg-stone-700 dark:!text-stone-100" : "text-stone-500 hover:bg-stone-100 dark:hover:bg-stone-800"}`}
+                                        className={`h-9 whitespace-nowrap rounded-lg px-1 text-sm transition ${durationAuto ? "bg-stone-200 font-semibold !text-stone-950 shadow-sm dark:bg-stone-700 dark:!text-stone-100" : "text-stone-500 hover:bg-stone-100 dark:hover:bg-stone-800"}`}
                                         onClick={() => updateConfig("videoDurationAuto", true)}
                                     >
                                         自动
                                     </button>
                                     {durationPresetOptions.map((value) => {
-                                        const supported = isVideoDurationOptionAllowed(videoProfile, value);
+                                        const supported = isVideoDurationOptionAllowed(modeProfile, value);
                                         return (
                                             <button
                                                 key={value}
                                                 type="button"
                                                 disabled={!supported}
-                                                className={`h-9 rounded-lg text-sm transition ${!durationAuto && seconds === value && supported ? "bg-stone-200 font-semibold !text-stone-950 shadow-sm dark:bg-stone-700 dark:!text-stone-100" : supported ? "text-stone-500 hover:bg-stone-100 dark:hover:bg-stone-800" : "cursor-not-allowed text-stone-600 opacity-35 dark:text-stone-500"}`}
+                                                className={`h-9 whitespace-nowrap rounded-lg px-1 text-sm transition ${!durationAuto && seconds === value && supported ? "bg-stone-200 font-semibold !text-stone-950 shadow-sm dark:bg-stone-700 dark:!text-stone-100" : supported ? "text-stone-500 hover:bg-stone-100 dark:hover:bg-stone-800" : "cursor-not-allowed text-stone-600 opacity-35 dark:text-stone-500"}`}
                                                 onClick={() => {
                                                     updateConfig("videoDurationAuto", false);
                                                     updateConfig("videoSeconds", String(value));
@@ -1059,9 +1217,9 @@ export default function VideoPage() {
                                         aria-label="自定义秒数"
                                         type="number"
                                         ref={secondsInputRef}
-                                        min={videoProfile.minDuration}
-                                        max={videoProfile.maxDuration}
-                                        value={effectiveConfig.videoSeconds}
+                                        min={modeProfile.minDuration}
+                                        max={modeProfile.maxDuration}
+                                        value={displayedSeconds}
                                         disabled={durationAuto}
                                         className="min-w-0 flex-1 bg-transparent px-2 text-center text-sm outline-none disabled:cursor-not-allowed disabled:opacity-45 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                                         onChange={(event) => {
@@ -1119,6 +1277,17 @@ export default function VideoPage() {
                                 </button>
                             </div>
                         </div>
+
+                        {videoProfile.parameters.length ? (
+                            <div className="mt-3">
+                                <div className="mb-2 text-sm font-semibold text-stone-900 dark:text-stone-100">模型参数</div>
+                                <VideoParameterFields
+                                    profile={videoProfile}
+                                    values={effectiveConfig.videoParameters}
+                                    onChange={(key, value) => updateConfig("videoParameters", { ...effectiveConfig.videoParameters, [key]: value })}
+                                />
+                            </div>
+                        ) : null}
 
                         <div className="mt-3">
                             <Button
@@ -1186,11 +1355,11 @@ export default function VideoPage() {
             <input
                 ref={fileInputRef}
                 type="file"
-                accept="image/*,video/*,audio/*"
+                accept={REFERENCE_ROLE_META[pendingReferenceRole].accept}
                 multiple
                 className="hidden"
                 onChange={(event) => {
-                    void addReferences(event.target.files);
+                    void addReferences(event.target.files, pendingReferenceRole);
                     event.target.value = "";
                 }}
             />
@@ -1206,6 +1375,25 @@ export default function VideoPage() {
                 />
             </Drawer>
             <AssetPickerModal open={assetPickerOpen} defaultTab="my-assets" onInsert={(payload) => void insertPickedAsset(payload)} onClose={() => setAssetPickerOpen(false)} />
+            <Modal centered title="添加参考素材" open={referenceRoleOpen} onCancel={() => setReferenceRoleOpen(false)} footer={null} width={560} destroyOnHidden>
+                <p className="mb-4 text-sm text-stone-500 dark:text-stone-400">选择素材用途。默认按参考图处理，生成模式会自动切换。</p>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    {referenceRoleOptions.map((option) => (
+                        <button
+                            key={option.role}
+                            type="button"
+                            aria-label={option.label}
+                            disabled={!option.enabled}
+                            className="rounded-xl border border-stone-200 bg-stone-50 px-3 py-3 text-left transition hover:border-stone-400 hover:bg-stone-100 disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:border-stone-200 disabled:hover:bg-stone-50 dark:border-stone-700 dark:bg-stone-900 dark:hover:border-stone-500 dark:hover:bg-stone-800 dark:disabled:hover:border-stone-700 dark:disabled:hover:bg-stone-900"
+                            onClick={() => chooseReferenceRole(option.role)}
+                        >
+                            <span className="block text-sm font-semibold text-stone-900 dark:text-stone-100">{option.label}</span>
+                            <span className="mt-1 block text-xs leading-5 text-stone-500 dark:text-stone-400">{option.description}</span>
+                            {option.reason ? <span className="mt-1 block text-[11px] font-medium text-amber-600 dark:text-amber-400">{option.reason}</span> : null}
+                        </button>
+                    ))}
+                </div>
+            </Modal>
             <GeneratedMediaDetailModal data={previewMedia} onClose={() => setPreviewMedia(null)} />
             <Modal centered title={t("workbench.deleteLogs")} open={deleteConfirmOpen} onCancel={() => setDeleteConfirmOpen(false)} onOk={deleteSelectedLogs} okText={t("common.delete")} okButtonProps={{ danger: true }} cancelText={t("common.cancel")}>
                 {t("workbench.deleteLogsConfirm", { count: selectedLogIds.length })}

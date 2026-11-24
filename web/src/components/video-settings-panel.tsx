@@ -5,27 +5,22 @@ import { useTranslation } from "react-i18next";
 import i18n from "@/i18n";
 import { ImageSettingsTheme } from "@/components/image-settings-panel";
 import { type CanvasTheme } from "@/lib/canvas-theme";
-import { computeVideoSize, inferVideoRatio, parseVideoResolution, readVideoDimensions, VIDEO_SECONDS_MAX, VIDEO_SECONDS_MIN, videoRatioOptions } from "@/lib/media-size";
-import { clampVideoSecondsForProfile, getVideoModelProfile, isVideoDurationOptionAllowed, isVideoRatioSupported, isVideoResolutionSupported, type VideoModelProfile } from "@/lib/video-model-profile";
+import { computeVideoSize, inferVideoRatio, normalizeVideoResolutionToken, parseVideoResolution, readVideoDimensions, VIDEO_SECONDS_MAX, VIDEO_SECONDS_MIN, videoRatioOptions, videoResolutionDisplayLabel } from "@/lib/media-size";
+import { clampVideoSecondsForProfile, getVideoModelProfile, isVideoDurationOptionAllowed, isVideoModeSupported, isVideoRatioSupported, isVideoResolutionSupported, normalizeVideoModeValue, resolveVideoModeProfile, resolveVideoParameterValues, videoDurationChoices, videoModeChoices, videoResolutionChoices, type VideoModelProfile, type VideoParameterSpec } from "@/lib/video-model-profile";
 import { modelOptionName, videoCapabilityOf, type AiConfig } from "@/stores/use-config-store";
 
-const resolutionOptions = [
-    { value: "480", label: "480p" },
-    { value: "720", label: "720p" },
-    { value: "1080", label: "1080p" },
-];
-const videoModeOptions = [
-    { value: "frames", labelKey: "frames" },
-    { value: "reference", labelKey: "reference" },
-];
+const resolutionOptions = ["480", "720", "768", "1080", "4k"].map((value) => ({ value, label: videoResolutionDisplayLabel(value) }));
 
 export const videoResolutionOptions = resolutionOptions.map((item) => ({ value: item.value, label: item.label }));
 export const videoSizeOptions = videoRatioOptions.map((item) => ({ value: item.value, get label() { return item.value === "auto" ? i18n.t("settingsPanels.common.auto") : item.value; } }));
 export const videoSecondsRange = { min: VIDEO_SECONDS_MIN, max: VIDEO_SECONDS_MAX };
 
+export type VideoSettingKey = "vquality" | "size" | "videoSeconds" | "videoGenerateAudio" | "videoWatermark" | "videoMode" | "videoParameters";
+type VideoSettingValue = string | Record<string, unknown>;
+
 type VideoSettingsPanelProps = {
     config: AiConfig;
-    onConfigChange: (key: "vquality" | "size" | "videoSeconds" | "videoGenerateAudio" | "videoWatermark" | "videoMode", value: string) => void;
+    onConfigChange: (key: VideoSettingKey, value: VideoSettingValue) => void;
     theme: CanvasTheme;
     showTitle?: boolean;
     className?: string;
@@ -35,24 +30,25 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
     const { t } = useTranslation();
     const videoModel = config.videoModel || config.model;
     const profile = getVideoModelProfile(modelOptionName(videoModel), videoCapabilityOf(config, videoModel));
-    const requestedResolution = parseVideoResolution(config.vquality);
-    const resolution = isVideoResolutionSupported(profile, requestedResolution) ? requestedResolution : profile.resolutions[0] || "720";
+    const normalizedMode = normalizeVideoModeValue(config.videoMode, profile);
+    const videoMode = normalizedMode === "auto" ? profile.modes[0] || "text-to-video" : normalizedMode;
+    const modeProfile = resolveVideoModeProfile(profile, videoMode);
+    const resolutionChoices = videoResolutionChoices(profile, videoMode);
+    const requestedResolution = normalizeVideoResolutionToken(config.vquality || modeProfile.resolutions[0] || "720");
+    const resolution = isVideoResolutionSupported(modeProfile, requestedResolution) ? requestedResolution : modeProfile.resolutions[0] || "720";
     const requestedRatio = inferVideoRatio(config.size || "auto");
     const selectedRatio = isVideoRatioSupported(profile, requestedRatio) ? requestedRatio : profile.aspectRatios[0] || "16:9";
     const dimensions = readVideoDimensions(config.size || "auto", resolution, selectedRatio);
-    const seconds = Number(clampVideoSecondsForProfile(config.videoSeconds || String(profile.defaultDuration || 6), profile));
-    const durationPresetOptions = profile.durationOptions?.length
-        ? Array.from(new Set(profile.durationOptions)).sort((left, right) => left - right)
-        : [];
-    const videoMode = normalizeVideoModeValue(config.videoMode);
-    const framesAvailable = profile.slots.first_frame > 0 || profile.slots.last_frame > 0 || profile.modes.includes("image-to-video") || profile.modes.includes("first-last-frame");
-    const referenceAvailable = profile.slots.reference_image > 0 || profile.slots.reference_video > 0 || profile.slots.reference_audio > 0 || profile.modes.includes("reference-images") || profile.modes.includes("reference-video");
-    const availableModes = videoModeOptions.filter((item) => item.value === "frames" ? framesAvailable : referenceAvailable);
+    const seconds = Number(clampVideoSecondsForProfile(config.videoSeconds || String(modeProfile.defaultDuration || 6), modeProfile));
+    const durationPresetOptions = videoDurationChoices(modeProfile);
+    const availableModes = videoModeChoices(profile);
+    const parameterValues = resolveVideoParameterValues(profile, config.videoParameters);
     const applySize = (nextResolution: string, ratio: string) => {
         onConfigChange("vquality", nextResolution);
         onConfigChange("size", computeVideoSize(nextResolution, ratio));
     };
     const selectResolution = (nextResolution: string) => {
+        if (!isVideoResolutionSupported(modeProfile, nextResolution)) return;
         if (selectedRatio === "auto") onConfigChange("vquality", nextResolution);
         else applySize(nextResolution, selectedRatio);
     };
@@ -63,11 +59,14 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
                 {showTitle ? <div className="text-lg font-semibold">{t("settingsPanels.video.title")}</div> : null}
                 <SettingGroup title={t("settingsPanels.video.quality")} color={theme.node.muted}>
                     <div className="flex flex-wrap gap-2.5">
-                        {profile.resolutions.map((item) => (
-                            <OptionPill key={item} selected={resolution === item} theme={theme} onClick={() => selectResolution(item)}>
-                                {item}p
-                            </OptionPill>
-                        ))}
+                        {resolutionChoices.map((item) => {
+                            const supported = isVideoResolutionSupported(modeProfile, item);
+                            return (
+                                <OptionPill key={item} selected={resolution === normalizeVideoResolutionToken(item)} disabled={!supported} theme={theme} onClick={() => selectResolution(item)}>
+                                    {videoResolutionDisplayLabel(item)}
+                                </OptionPill>
+                            );
+                        })}
                     </div>
                 </SettingGroup>
                 <SettingGroup title={t("settingsPanels.video.size")} color={theme.node.muted}>
@@ -102,17 +101,20 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
                     <div className="space-y-2.5" onMouseDown={(event) => event.stopPropagation()}>
                         {durationPresetOptions.length ? (
                             <div className="grid grid-flow-col auto-cols-[minmax(54px,1fr)] gap-2 overflow-x-auto pb-1">
-                                {durationPresetOptions.map((value) => (
-                                    <OptionPill key={value} selected={seconds === value} theme={theme} onClick={() => onConfigChange("videoSeconds", String(value))}>
-                                        {value}s
-                                    </OptionPill>
-                                ))}
+                                {durationPresetOptions.map((value) => {
+                                    const supported = isVideoDurationOptionAllowed(modeProfile, value);
+                                    return (
+                                        <OptionPill key={value} selected={seconds === value} disabled={!supported} theme={theme} onClick={() => onConfigChange("videoSeconds", String(value))}>
+                                            {value}s
+                                        </OptionPill>
+                                    );
+                                })}
                             </div>
                         ) : (
                             <Slider className="min-w-0" min={profile.minDuration} max={profile.maxDuration} step={1} value={seconds} onChange={(value) => onConfigChange("videoSeconds", String(Array.isArray(value) ? value[0] : value))} />
                         )}
                         <div className="flex items-center justify-end gap-2">
-                            <SecondsInput value={seconds} profile={profile} theme={theme} onCommit={(value) => onConfigChange("videoSeconds", String(value))} />
+                            <SecondsInput value={seconds} profile={modeProfile} theme={theme} onCommit={(value) => onConfigChange("videoSeconds", String(value))} />
                             <span className="shrink-0 text-sm" style={{ color: theme.node.muted }}>s</span>
                         </div>
                     </div>
@@ -120,12 +122,25 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
                 {availableModes.length > 1 ? (
                     <SettingGroup title={t("settingsPanels.video.mode")} color={theme.node.muted}>
                         <div className="grid grid-cols-2 gap-2.5">
-                            {availableModes.map((item) => (
-                                <OptionPill key={item.value} selected={videoMode === item.value} theme={theme} onClick={() => onConfigChange("videoMode", item.value)}>
-                                    {t(`settingsPanels.video.modes.${item.labelKey}`)}
-                                </OptionPill>
-                            ))}
+                            {availableModes.map((item) => {
+                                const supported = isVideoModeSupported(profile, item);
+                                return (
+                                    <OptionPill key={item} selected={videoMode === item} disabled={!supported} theme={theme} onClick={() => onConfigChange("videoMode", item)}>
+                                        {videoModeLabel(item)}
+                                    </OptionPill>
+                                );
+                            })}
                         </div>
+                    </SettingGroup>
+                ) : null}
+                {profile.parameters.length ? (
+                    <SettingGroup title={t("settingsPanels.video.parameters")} color={theme.node.muted}>
+                        <VideoParameterFields
+                            profile={profile}
+                            values={parameterValues}
+                            theme={theme}
+                            onChange={(key, value) => onConfigChange("videoParameters", { ...config.videoParameters, [key]: value })}
+                        />
                     </SettingGroup>
                 ) : null}
             </div>
@@ -134,7 +149,7 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
 }
 
 export function videoResolutionLabel(value: string) {
-    return `${parseVideoResolution(value)}p`;
+    return videoResolutionDisplayLabel(value);
 }
 
 export function videoSizeLabel(value: string) {
@@ -148,11 +163,12 @@ export function videoSecondsLabel(value: string) {
 }
 
 export function videoModeLabel(value: string) {
-    return i18n.t(`settingsPanels.video.modes.${normalizeVideoModeValue(value)}`);
+    const key = value === "frames" ? "image-to-video" : value === "reference" ? "reference-images" : value;
+    return i18n.t(`settingsPanels.video.modes.${key}`, { defaultValue: key || "auto" });
 }
 
-export function normalizeVideoModeValue(value: string | undefined) {
-    return value === "reference" ? "reference" : "frames";
+export function normalizeVideoSelectionMode(value: string | undefined) {
+    return normalizeVideoModeValue(value);
 }
 
 export function normalizeVideoSizeValue(value: string, resolution = "720") {
@@ -178,7 +194,7 @@ function updateDimension(key: "width" | "height", value: number | null, dimensio
 
 function OptionPill({ selected, disabled = false, theme, onClick, children }: { selected: boolean; disabled?: boolean; theme: CanvasTheme; onClick: () => void; children: ReactNode }) {
     return (
-        <button type="button" disabled={disabled} className="h-9 cursor-pointer rounded-full border px-2 text-sm transition hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-35" style={{ background: "transparent", borderColor: selected ? theme.node.text : theme.node.stroke, color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()} onClick={onClick}>
+        <button type="button" disabled={disabled} aria-pressed={selected} className="h-9 cursor-pointer rounded-full border px-2 text-sm transition hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-35" style={{ background: "transparent", borderColor: selected ? theme.node.text : theme.node.stroke, color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()} onClick={onClick}>
             {children}
         </button>
     );
@@ -238,4 +254,75 @@ function SizePreview({ width, height, color }: { width: number; height: number; 
     const previewWidth = Math.max(10, Math.round((width / longSide) * 26));
     const previewHeight = Math.max(10, Math.round((height / longSide) * 26));
     return <span className="rounded-[3px] border-2" style={{ width: previewWidth, height: previewHeight, borderColor: color }} />;
+}
+
+export function VideoParameterFields({ profile, values, onChange, theme, className = "space-y-2.5" }: { profile: VideoModelProfile; values?: Record<string, unknown>; onChange: (key: string, value: string | number | boolean) => void; theme?: CanvasTheme; className?: string }) {
+    const parameterValues = resolveVideoParameterValues(profile, values);
+    return (
+        <div className={className}>
+            {profile.parameters.map((parameter) => (
+                <VideoParameterControl
+                    key={parameter.key}
+                    parameter={parameter}
+                    value={parameterValues[parameter.key]}
+                    theme={theme}
+                    onChange={(value) => onChange(parameter.key, value)}
+                />
+            ))}
+        </div>
+    );
+}
+
+function VideoParameterControl({ parameter, value, theme, onChange }: { parameter: VideoParameterSpec; value: unknown; theme?: CanvasTheme; onChange: (value: string | number | boolean) => void }) {
+    const current = value ?? parameter.default;
+    const label = parameter.label || parameter.key;
+    const inputStyle = theme ? { background: theme.node.fill, color: theme.node.text, borderColor: theme.node.stroke } : undefined;
+    if (parameter.type === "boolean") {
+        const checked = current === true;
+        return (
+            <div className="flex items-center justify-between gap-3" title={parameter.description}>
+                <span className="min-w-0 truncate text-sm">{label}</span>
+                <button type="button" role="switch" aria-checked={checked} aria-label={label} className={`relative h-6 w-10 shrink-0 rounded-full transition ${theme ? "" : checked ? "bg-stone-700 dark:bg-stone-200" : "bg-stone-300 dark:bg-stone-700"}`} style={theme ? { background: checked ? theme.node.text : theme.node.stroke } : undefined} onClick={() => onChange(!checked)}>
+                    <span className="absolute top-0.5 size-5 rounded-full bg-white shadow-sm transition-[left]" style={{ left: checked ? 18 : 2 }} />
+                </button>
+            </div>
+        );
+    }
+    if (parameter.type === "enum") {
+        return (
+            <label className="flex items-center justify-between gap-3" title={parameter.description}>
+                <span className="min-w-0 truncate text-sm">{label}</span>
+                <select className="h-9 max-w-[170px] rounded-xl border border-stone-200 bg-stone-50 px-2 text-sm outline-none dark:border-stone-700 dark:bg-stone-900/60" style={inputStyle} value={String(current ?? "")} onChange={(event) => onChange(coerceParameterValue(parameter, event.target.value))}>
+                    {parameter.options?.map((option) => {
+                        const optionValue = typeof option === "object" ? option.value : option;
+                        const optionLabel = typeof option === "object" && option.label ? option.label : String(optionValue);
+                        return <option key={String(optionValue)} value={String(optionValue)}>{optionLabel}</option>;
+                    })}
+                </select>
+            </label>
+        );
+    }
+    return (
+        <label className="flex items-center justify-between gap-3" title={parameter.description}>
+            <span className="min-w-0 truncate text-sm">{label}</span>
+            <input
+                className="h-9 w-[170px] rounded-xl border border-stone-200 bg-stone-50 px-2 text-sm outline-none dark:border-stone-700 dark:bg-stone-900/60"
+                style={inputStyle}
+                type={parameter.type === "string" ? "text" : "number"}
+                value={current === undefined ? "" : String(current)}
+                min={parameter.min}
+                max={parameter.max}
+                step={parameter.step}
+                required={parameter.required}
+                onChange={(event) => onChange(coerceParameterValue(parameter, event.target.value))}
+            />
+        </label>
+    );
+}
+
+function coerceParameterValue(parameter: VideoParameterSpec, raw: string): string | number | boolean {
+    if (parameter.type === "integer") return Math.trunc(Number(raw) || 0);
+    if (parameter.type === "number") return Number(raw) || 0;
+    if (parameter.type === "boolean") return raw === "true";
+    return raw;
 }

@@ -81,7 +81,7 @@ export function CreateUsageModal({ open, onClose, session, keys }: { open: boole
             title: "价格",
             dataIndex: "actual_cost",
             width: 110,
-            render: (value: number) => <span className="font-mono text-sm font-medium text-emerald-600 dark:text-emerald-400">${Number(value || 0).toFixed(6)}</span>,
+            render: (value: number) => <span className="font-mono text-sm font-medium text-emerald-600 dark:text-emerald-400">￥{Number(value || 0).toFixed(6)}</span>,
         },
         {
             title: "图片",
@@ -126,7 +126,7 @@ export function CreateUsageModal({ open, onClose, session, keys }: { open: boole
                         icon={<CircleDollarSign className="size-5" />}
                         iconClass="bg-emerald-500/10 text-emerald-600 dark:text-emerald-300"
                         label="总消费"
-                        value={`¥${Number(stats?.total_actual_cost || 0).toFixed(4)}`}
+                        value={`￥${Number(stats?.total_actual_cost || 0).toFixed(4)}`}
                         valueClass="text-emerald-600 dark:text-emerald-400"
                     />
                     <MetricCard icon={<Timer className="size-5" />} iconClass="bg-violet-500/10 text-violet-600 dark:text-violet-300" label="平均耗时" value={`${(Number(stats?.average_duration_ms || 0) / 1000).toFixed(2)}s`} />

@@ -50,6 +50,7 @@ export type AiConfig = {
     videoGenerateAudio: string;
     videoWatermark: string;
     videoMode: string;
+    videoParameters: Record<string, unknown>;
     systemPrompt: string;
     reasoningEffort: ReasoningEffort;
     models: string[];
@@ -116,11 +117,12 @@ export const defaultConfig: AiConfig = {
     audioSpeed: "1",
     audioInstructions: "",
     videoSeconds: "6",
-    videoDurationAuto: false,
+    videoDurationAuto: true,
     vquality: "720",
     videoGenerateAudio: "true",
     videoWatermark: "false",
-    videoMode: "frames",
+    videoMode: "auto",
+    videoParameters: {},
     systemPrompt: "",
     reasoningEffort: "auto",
     models: ["default::gpt-image-2", "default::grok-imagine-video", "default::gpt-5.5", "default::gpt-4o-mini-tts"],
@@ -272,6 +274,16 @@ export const useConfigStore = create<ConfigStore>()(
                 const persistedConfig = (persistedState.config || {}) as Partial<AiConfig>;
                 const persistedWebdav = (persistedState.webdav || {}) as Partial<WebdavSyncConfig>;
                 const config = { ...defaultConfig, ...persistedConfig };
+                const durationAutoMigrationKey = `${CONFIG_STORE_KEY}:video-duration-auto-default-v2`;
+                let videoDurationAuto = config.videoDurationAuto ?? defaultConfig.videoDurationAuto;
+                try {
+                    if (localStorage.getItem(durationAutoMigrationKey) !== "1") {
+                        videoDurationAuto = true;
+                        localStorage.setItem(durationAutoMigrationKey, "1");
+                    }
+                } catch {
+                    // Storage can be unavailable in restricted browser contexts.
+                }
                 const countMigrationKey = `${CONFIG_STORE_KEY}:canvas-image-count-default-v1`;
                 let canvasImageCount = config.canvasImageCount || defaultConfig.canvasImageCount;
                 try {
@@ -307,10 +319,12 @@ export const useConfigStore = create<ConfigStore>()(
                         audioInstructions: config.audioInstructions || "",
                         reasoningEffort: config.reasoningEffort || "auto",
                         videoSeconds: config.videoSeconds || "6",
+                        videoDurationAuto,
                         vquality: config.vquality || "720",
                         videoGenerateAudio: config.videoGenerateAudio || "true",
                         videoWatermark: config.videoWatermark || "false",
-                        videoMode: config.videoMode === "reference" ? "reference" : "frames",
+                        videoMode: typeof config.videoMode === "string" && config.videoMode.trim() ? config.videoMode : defaultConfig.videoMode,
+                        videoParameters: config.videoParameters && typeof config.videoParameters === "object" && !Array.isArray(config.videoParameters) ? config.videoParameters : {},
                         canvasImageCount,
                         proxyEnabled: Boolean(config.proxyEnabled),
                         proxyUrl: config.proxyUrl || DEFAULT_LOCAL_PROXY_URL,

@@ -98,6 +98,7 @@ describe("workbench log helpers", () => {
             videoGenerateAudio: "true",
             videoWatermark: "false",
             videoMode: "frames",
+            videoParameters: {},
         });
     });
 });

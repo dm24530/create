@@ -4,12 +4,13 @@ import i18n from "@/i18n";
 import { fetchPrompts } from "@/services/api/prompts";
 import { uploadImage } from "@/services/image-storage";
 import { imageAspectOptions, imageQualityOptions, imageScaleOptions } from "@/components/image-settings-panel";
-import { videoResolutionOptions, videoSecondsRange, videoSizeOptions } from "@/components/video-settings-panel";
+import { videoModeLabel, videoResolutionOptions, videoSizeOptions } from "@/components/video-settings-panel";
 import type { CanvasAgentSnapshot } from "@/lib/canvas/canvas-agent-ops";
-import { clampVideoSeconds } from "@/lib/media-size";
+import { normalizeVideoResolutionToken } from "@/lib/media-size";
+import { clampVideoSecondsForProfile, getVideoModelProfile, isVideoRatioSupported, isVideoResolutionSupported, normalizeVideoModeValue, resolveVideoModeProfile } from "@/lib/video-model-profile";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { useAssetStore } from "@/stores/use-asset-store";
-import { modelOptionLabel, modelOptionName, normalizeModelOptionValue, selectableModelsByCapability, useConfigStore } from "@/stores/use-config-store";
+import { modelOptionLabel, modelOptionName, normalizeModelOptionValue, selectableModelsByCapability, useConfigStore, videoCapabilityOf } from "@/stores/use-config-store";
 import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
 
 // Execute site-level Agent tools in the browser, including canvas lists, workbench generation, prompt search, and asset operations.
@@ -190,48 +191,60 @@ function runImageWorkbench(input: SiteToolInput, navigate: NavigateFunction) {
 function getVideoConfig() {
     const { config } = useConfigStore.getState();
     const model = config.videoModel || config.model;
+    const profile = getVideoModelProfile(modelOptionName(model), videoCapabilityOf(config, model));
+    const normalizedMode = normalizeVideoModeValue(config.videoMode, profile);
+    const mode = normalizedMode === "auto" ? profile.modes[0] || "text-to-video" : normalizedMode;
+    const modeProfile = resolveVideoModeProfile(profile, mode);
+    const requestedResolution = normalizeVideoResolutionToken(config.vquality || modeProfile.resolutions[0] || "720");
     return {
         current: {
             model,
             modelName: modelOptionName(model),
             size: config.size || "1280x720",
-            seconds: config.videoSeconds || "6",
-            resolution: config.vquality || "720",
+            seconds: clampVideoSecondsForProfile(config.videoSeconds || String(modeProfile.defaultDuration), modeProfile),
+            resolution: isVideoResolutionSupported(modeProfile, requestedResolution) ? requestedResolution : modeProfile.resolutions[0] || "720",
             generateAudio: config.videoGenerateAudio !== "false",
             watermark: config.videoWatermark === "true",
-            mode: config.videoMode === "reference" ? "reference" : "frames",
+            mode,
+            parameters: config.videoParameters || {},
         },
         models: selectableModelsByCapability(config, "video").map((value) => ({ value, label: modelOptionLabel(config, value) })),
-        sizeOptions: videoSizeOptions,
-        secondsRange: videoSecondsRange,
-        resolutionOptions: videoResolutionOptions,
-        modeOptions: [
-            { value: "frames", label: i18n.t("settingsPanels.video.modes.frames") },
-            { value: "reference", label: i18n.t("settingsPanels.video.modes.reference") },
-        ],
+        sizeOptions: videoSizeOptions.filter((option) => option.value === "auto" || isVideoRatioSupported(profile, option.value)),
+        secondsRange: { min: profile.minDuration, max: profile.maxDuration },
+        resolutionOptions: videoResolutionOptions.filter((option) => isVideoResolutionSupported(modeProfile, option.value)),
+        modeOptions: profile.modes.map((mode) => ({ value: mode, label: videoModeLabel(mode) })),
     };
 }
 
 function runVideoWorkbench(input: SiteToolInput, navigate: NavigateFunction) {
     const configStore = useConfigStore.getState();
     const applied: Record<string, unknown> = {};
+    let selectedModel = configStore.config.videoModel || configStore.config.model;
     if (typeof input.model === "string" && input.model.trim()) {
         const value = normalizeModelOptionValue(input.model, configStore.config.channels) || input.model;
         configStore.updateConfig("videoModel", value);
+        selectedModel = value;
         applied.model = value;
     }
+    const profile = getVideoModelProfile(modelOptionName(selectedModel), videoCapabilityOf(configStore.config, selectedModel));
+    const requestedMode = typeof input.mode === "string" && input.mode.trim() ? normalizeVideoModeValue(input.mode, profile) : normalizeVideoModeValue(configStore.config.videoMode, profile);
+    const mode = requestedMode === "auto" ? profile.modes[0] || "text-to-video" : requestedMode;
+    const modeProfile = resolveVideoModeProfile(profile, mode);
     if (typeof input.size === "string" && input.size.trim()) {
         configStore.updateConfig("size", input.size);
         applied.size = input.size;
     }
     if (input.seconds != null && String(input.seconds).trim()) {
-        const seconds = clampVideoSeconds(String(input.seconds));
+        const seconds = clampVideoSecondsForProfile(String(input.seconds), modeProfile);
         configStore.updateConfig("videoSeconds", seconds);
         applied.seconds = seconds;
     }
     if (typeof input.resolution === "string" && input.resolution.trim()) {
-        configStore.updateConfig("vquality", input.resolution);
-        applied.resolution = input.resolution;
+        const resolution = normalizeVideoResolutionToken(input.resolution);
+        if (isVideoResolutionSupported(modeProfile, resolution)) {
+            configStore.updateConfig("vquality", resolution);
+            applied.resolution = resolution;
+        }
     }
     if (typeof input.generateAudio === "boolean") {
         configStore.updateConfig("videoGenerateAudio", String(input.generateAudio));
@@ -241,9 +254,9 @@ function runVideoWorkbench(input: SiteToolInput, navigate: NavigateFunction) {
         configStore.updateConfig("videoWatermark", String(input.watermark));
         applied.watermark = input.watermark;
     }
-    if (input.mode === "frames" || input.mode === "reference") {
-        configStore.updateConfig("videoMode", input.mode);
-        applied.mode = input.mode;
+    if (typeof input.mode === "string" && input.mode.trim() && normalizeVideoModeValue(input.mode, profile) !== "auto") {
+        configStore.updateConfig("videoMode", mode);
+        applied.mode = mode;
     }
     const prompt = typeof input.prompt === "string" ? input.prompt : undefined;
     const run = input.run !== false;

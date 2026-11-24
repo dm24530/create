@@ -68,7 +68,7 @@ export function CreateAccountActions() {
     return (
         <>
             <div className="inline-flex shrink-0 items-center gap-1">
-                {user ? <button type="button" className="rounded-md px-2 py-1 text-sm font-medium tabular-nums text-emerald-600 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-950/30" title="充值" onClick={() => setRechargeOpen(true)}>${Number(user.balance || 0).toFixed(2)}</button> : null}
+                {user ? <button type="button" className="rounded-md px-2 py-1 text-sm font-medium tabular-nums text-emerald-600 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-950/30" title="充值" onClick={() => setRechargeOpen(true)}>￥{Number(user.balance || 0).toFixed(2)}</button> : null}
                 <Tooltip title="API 密钥">
                     <button type="button" className={iconClass} aria-label="API 密钥" onClick={() => { setKeysOpen(true); void refreshKeys(); }}>
                         <KeyRound className="size-4" />

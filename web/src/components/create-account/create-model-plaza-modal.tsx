@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { getCreateModelPlaza, type CreateModelPlaza, type CreateModelPlazaGroup, type CreateModelPlazaModel, type CreateModelPricingInterval } from "@/services/create-account";
 import type { CreateSession } from "@/services/create-auth";
+import { plazaVideoCapabilityLabels, plazaVideoReferenceSummary } from "@/lib/plaza-video-model";
 import { cn } from "@/lib/utils";
 
 type PriceColumn = { key: string; label: string };
@@ -199,6 +200,19 @@ function VideoPricingCards({ group, models, onCopy }: { group: CreateModelPlazaG
                             </span>
                         </div>
                         {cleanDescription(model.description) ? <p className="mt-2 whitespace-pre-line break-words text-xs leading-5 text-stone-500 dark:text-stone-300">{cleanDescription(model.description)}</p> : null}
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                            {plazaVideoCapabilityLabels(model).map((label) => (
+                                <Tag key={label} className="m-0 rounded px-1.5 py-0.5 text-[11px]">{label}</Tag>
+                            ))}
+                        </div>
+                        {(() => {
+                            const refs = plazaVideoReferenceSummary(model);
+                            return refs.images || refs.videos || refs.audios ? (
+                                <p className="mt-2 text-[11px] text-stone-400">
+                                    参考素材上限：{refs.images} 图 / {refs.videos} 视频 / {refs.audios} 音频
+                                </p>
+                            ) : null;
+                        })()}
                         {rows.length ? (
                             <div className="mt-2 overflow-x-auto rounded-lg border border-stone-100 dark:border-stone-700/60">
                                 <table className="w-full min-w-[420px] table-fixed text-left text-xs">
@@ -218,7 +232,7 @@ function VideoPricingCards({ group, models, onCopy }: { group: CreateModelPlazaG
                                                 <td className="break-words px-2.5 py-2 text-stone-500 dark:text-stone-400">{row.duration}</td>
                                                 <td className="px-2.5 py-2 text-right">
                                                     <div className="font-mono text-sm font-semibold text-stone-900 dark:text-white">
-                                                        ${formatPrice(row.price * rate)}
+                                                        ￥{formatPrice(row.price * rate)}
                                                         <span className="ml-1 font-sans text-[11px] font-normal text-stone-400">{videoUnitLabel(model)}</span>
                                                     </div>
                                                     {videoBillingUnit(model) === "second" ? <div className="mt-1 break-words text-[10px] leading-4 text-stone-400">{durationEstimates(model, row.price * rate)}</div> : null}
@@ -244,7 +258,7 @@ function StandardPricingTable({ models, mode, onCopy }: { models: CreateModelPla
                 <div className="flex items-center px-4 py-3 font-medium">模型</div>
                 <div className="px-4 py-3">
                     <div className="text-center text-sm font-semibold text-cyan-600 dark:text-cyan-300">
-                        实付价格(折后) <span className="font-normal text-stone-500 dark:text-stone-400">{mode === "request" ? "$ / 次" : "$ / 1M token"}</span>
+                        实付价格(折后) <span className="font-normal text-stone-500 dark:text-stone-400">{mode === "request" ? "￥ / 次" : "￥ / 1M token"}</span>
                     </div>
                     <div className="mt-2 grid gap-3 overflow-x-auto" style={{ gridTemplateColumns: `repeat(${columns.length}, minmax(110px, 1fr))` }}>
                         {columns.map((column) => <span key={column.key} className="text-sm text-stone-500 dark:text-stone-400">{column.label}</span>)}
@@ -347,12 +361,12 @@ function priceForModel(model: CreateModelPlazaModel, column: PriceColumn) {
     if (!pricing) return "-";
     if (column.key === "standard") {
         const price = pricedValue(pricing.per_request_price);
-        return price == null ? "-" : `$${formatPrice(price)} / ${requestUnit(model)}`;
+        return price == null ? "-" : `￥${formatPrice(price)} / ${requestUnit(model)}`;
     }
     const interval = findInterval(pricing.intervals || [], column.label);
     if (interval) {
         const tierPrice = pricedValue(interval.per_request_price);
-        if (tierPrice != null) return `$${formatPrice(tierPrice)} / ${requestUnit(model)}`;
+        if (tierPrice != null) return `￥${formatPrice(tierPrice)} / ${requestUnit(model)}`;
         return formatIntervalTokenPrice(interval);
     }
     if (column.key === "input") return formatTokenPrice(pricing.input_price);
@@ -473,7 +487,7 @@ function durationEstimates(model: CreateModelPlazaModel, secondPrice: number) {
         ? Array.from(new Set(capability.duration_options)).sort((left, right) => left - right)
         : Array.from(new Set([Number(capability?.min_duration || 0), Number(capability?.max_duration || 0)])).filter((value) => value > 0);
     const preview = values.length > 1 ? [values[0], values[values.length - 1]] : values;
-    return preview.map((seconds) => `${seconds}s ≈ $${formatPrice(secondPrice * seconds)}`).join(" · ");
+    return preview.map((seconds) => `${seconds}s ≈ ￥${formatPrice(secondPrice * seconds)}`).join(" · ");
 }
 
 function cleanDescription(description?: string) {
@@ -494,7 +508,7 @@ function formatIntervalTokenPrice(interval: CreateModelPricingInterval) {
 function formatTokenPrice(value: number | null | undefined) {
     const numeric = pricedValue(value);
     if (numeric == null) return "-";
-    return `$${formatPrice(numeric * 1_000_000)} / 1M`;
+    return `￥${formatPrice(numeric * 1_000_000)} / 1M`;
 }
 function pricedValue(value: number | null | undefined) {
     const numeric = Number(value);

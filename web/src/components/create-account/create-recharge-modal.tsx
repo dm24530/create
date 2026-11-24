@@ -27,9 +27,7 @@ export function CreateRechargeModal({ open, onClose, session }: { open: boolean;
     const user = useUserStore((state) => state.user);
     const setUser = useUserStore((state) => state.setUser);
     const methods = useMemo(() => Object.values(info?.methods || {}), [info]);
-    const selectedMethod = methods.find((method) => method.payment_type === paymentType) || methods[0];
-    const currency = selectedMethod?.currency || "CNY";
-    const currencySymbol = currency === "USD" ? "$" : currency === "EUR" ? "€" : "¥";
+    const currencySymbol = "￥";
     const quickAmounts = useMemo(() => {
         const configured = (info?.recharge_card_products || []).map((product) => Number(product.amount)).filter((value) => Number.isFinite(value) && value > 0);
         return configured.length ? Array.from(new Set(configured)).sort((left, right) => left - right) : DEFAULT_QUICK_AMOUNTS;
@@ -160,7 +158,7 @@ export function CreateRechargeModal({ open, onClose, session }: { open: boolean;
                         </div>
                         <div className="flex shrink-0 items-center gap-2 text-emerald-500">
                             <span className="text-sm">当前余额：</span>
-                            <span className="text-base font-medium">{Number(user?.balance || 0).toFixed(2)}</span>
+                            <span className="text-base font-medium">￥{Number(user?.balance || 0).toFixed(2)}</span>
                             <Button type="text" size="small" icon={<RefreshCw className="size-4" />} aria-label="刷新余额" title="刷新余额" onClick={() => void refreshBalance()} />
                         </div>
                     </div>
@@ -182,7 +180,7 @@ export function CreateRechargeModal({ open, onClose, session }: { open: boolean;
                                             className={`h-14 rounded-lg border text-base transition ${amount === value ? "border-stone-950 bg-stone-100 font-semibold text-stone-950 dark:border-stone-200 dark:bg-stone-800 dark:text-stone-50" : "border-stone-300 text-stone-700 hover:border-stone-500 dark:border-stone-700 dark:text-stone-300 dark:hover:border-stone-500"}`}
                                             onClick={() => setAmount(value)}
                                         >
-                                            {value}
+                                            ￥{value}
                                         </button>
                                     ))}
                                 </div>

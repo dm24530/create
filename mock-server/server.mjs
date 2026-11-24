@@ -1,5 +1,8 @@
 import http from "node:http";
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const port = Number(process.env.CREATE_MOCK_PORT || 9890);
 const user = {
@@ -44,19 +47,103 @@ const secondKey = {
   quota_used: 0.5,
   group,
 };
-const videoCapabilities = {
-  protocol: "seedance_video",
-  min_duration: 4,
-  max_duration: 12,
-  default_duration: 8,
-  duration_options: [4, 8, 12],
-  resolutions: ["720p"],
-  aspect_ratios: ["16:9", "9:16"],
-  slots: { first_frame: 1, last_frame: 0, reference_image: 2, reference_video: 1, reference_audio: 0 },
-  supports_generate_audio: true,
-  outputs_audio: true,
-  modes: ["text-to-video", "image-to-video", "reference-images", "reference-video"],
+const mockRoot = path.dirname(fileURLToPath(import.meta.url));
+const videoCatalog = JSON.parse(readFileSync(path.resolve(mockRoot, "../web/src/lib/__tests__/fixtures/momoapi-video-31.json"), "utf8")).models;
+const mockResolutionPrices = {
+  "480p": 0.32,
+  "720p": 0.52,
+  "768p": 0.6,
+  "1080p": 0.9,
+  "2k": 1.4,
+  "4k": 2.2,
+  "8k": 4.4,
 };
+const videoModelEntries = videoCatalog.map((entry) => {
+  const resolutions = Array.isArray(entry.capabilities?.resolutions) ? entry.capabilities.resolutions : [];
+  const tiers = resolutions.length ? resolutions : ["标准"];
+  const intervals = tiers.map((resolution, index) => ({
+    tier_label: resolution,
+    per_request_price: mockResolutionPrices[String(resolution).toLowerCase()] ?? Number((0.32 + index * 0.2).toFixed(2)),
+  }));
+  return {
+    name: entry.model_name,
+    platform: "composite",
+    description: "视频能力模拟数据",
+    video_capabilities: entry.capabilities,
+    pricing: {
+      billing_mode: "video",
+      per_request_price: intervals[0].per_request_price,
+      intervals,
+    },
+  };
+});
+function inferMockVideoMode(body) {
+  if (body?.mode === "video-edit" || body?.mode === "video-extension") return body.mode;
+  if (Array.isArray(body?.keyframes) && body.keyframes.length) return "keyframes";
+  if (body?.first_frame_image_url && body?.last_frame_image_url) return "first-last-frame";
+  if (Array.isArray(body?.images) && body.images.length) return "image-to-video";
+  if (Array.isArray(body?.reference_video_urls) && body.reference_video_urls.length) return "reference-video";
+  if (Array.isArray(body?.reference_image_urls) && body.reference_image_urls.length) return "reference-images";
+  return "text-to-video";
+}
+
+function validateMockVideoRequest(body) {
+  const model = videoModelEntries.find((entry) => entry.name === body?.model);
+  if (!model) return { error: `unknown video model: ${body?.model || ""}` };
+  if (typeof body.prompt !== "string" || !body.prompt.trim()) return { error: "prompt is required" };
+  const capability = model.video_capabilities || {};
+  const mode = inferMockVideoMode(body);
+  if (!(capability.modes || []).includes(mode)) return { error: `unsupported mode ${mode} for ${body.model}` };
+  if (mode !== "video-edit" && mode !== "video-extension" && body.mode != null) {
+    return { error: `mode must be omitted for ${mode}` };
+  }
+  if (body.images != null && !(Array.isArray(body.images) && body.images.length === 1 && body.images.every((url) => typeof url === "string"))) {
+    return { error: "images must contain exactly one URL" };
+  }
+  if (mode === "image-to-video" && (!Array.isArray(body.images) || body.images.length !== 1)) {
+    return { error: "image-to-video requires images[1]" };
+  }
+  if (mode === "image-to-video" && body.first_frame_image_url != null) {
+    return { error: "image-to-video must use images, not first_frame_image_url" };
+  }
+  if (mode === "first-last-frame" && (typeof body.first_frame_image_url !== "string" || typeof body.last_frame_image_url !== "string")) {
+    return { error: "first-last-frame requires first_frame_image_url and last_frame_image_url" };
+  }
+  if (mode === "keyframes") {
+    if (!Array.isArray(body.keyframes) || !body.keyframes.length) return { error: "keyframes must not be empty" };
+    let previous = 0;
+    for (const keyframe of body.keyframes) {
+      if (!keyframe || !Number.isInteger(keyframe.timestamp_s) || keyframe.timestamp_s <= previous || typeof keyframe.image_url !== "string" || !keyframe.image_url) {
+        return { error: "keyframes require increasing integer timestamp_s and image_url" };
+      }
+      previous = keyframe.timestamp_s;
+    }
+    if (body.keyframe_image_urls != null) return { error: "use keyframes objects, not keyframe_image_urls" };
+  }
+  if (mode === "reference-images" && (!Array.isArray(body.reference_image_urls) || !body.reference_image_urls.length)) {
+    return { error: "reference-images requires reference_image_urls" };
+  }
+  if (mode === "reference-video" && (!Array.isArray(body.reference_video_urls) || !body.reference_video_urls.length)) {
+    return { error: "reference-video requires reference_video_urls" };
+  }
+  if (mode === "video-edit" || mode === "video-extension") {
+    if (typeof body.reference_video_url !== "string" || !body.reference_video_url) return { error: `${mode} requires reference_video_url` };
+    if (body.reference_video_urls != null) return { error: `${mode} must not use reference_video_urls` };
+    if (body.reference_image_urls != null || body.reference_audio_urls != null) return { error: `${mode} only accepts the source video` };
+  }
+  const modeResolutions = capability.mode_capabilities?.[mode]?.resolution_options;
+  const resolutions = Array.isArray(modeResolutions) && modeResolutions.length ? modeResolutions : capability.resolutions || [];
+  if (body.resolution != null && resolutions.length && !resolutions.includes(String(body.resolution).toLowerCase())) {
+    return { error: `unsupported resolution ${body.resolution} for ${mode}` };
+  }
+  if (body.aspect_ratio != null && Array.isArray(capability.aspect_ratios) && capability.aspect_ratios.length && !capability.aspect_ratios.includes(body.aspect_ratio)) {
+    return { error: `unsupported aspect_ratio ${body.aspect_ratio}` };
+  }
+  return { mode };
+}
+
+let lastVideoGenerationRequest = null;
+const referenceAssetRequests = [];
 const projects = new Map();
 const assets = new Map();
 const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nX0AAAAASUVORK5CYII=";
@@ -86,6 +173,18 @@ function send(response, status, payload) {
     "Access-Control-Max-Age": "86400",
   });
   response.end(JSON.stringify(payload));
+}
+
+function sendSse(response, content) {
+  const event = JSON.stringify({ choices: [{ delta: { content } }] });
+  response.writeHead(200, {
+    "Content-Type": "text/event-stream; charset=utf-8",
+    "Cache-Control": "no-cache",
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Headers": "Authorization, Content-Type, Accept, Accept-Language",
+    "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+  });
+  response.end(`data: ${event}\n\ndata: [DONE]\n\n`);
 }
 
 function sendVideo(response) {
@@ -159,7 +258,8 @@ const server = http.createServer(async (request, response) => {
         groups: [group],
         supported_models: [
           { name: "gpt-image-2", platform: "composite", pricing: null },
-          { name: "brand-new-video", platform: "composite", pricing: { billing_mode: "video", per_request_price: 0.32, intervals: [] }, video_capabilities: videoCapabilities },
+          { name: "gpt-5.5", platform: "composite", pricing: null },
+          ...videoModelEntries,
         ],
       }],
     }]});
@@ -174,12 +274,9 @@ const server = http.createServer(async (request, response) => {
         platform: group.platform,
         rate_multiplier: 1,
         models: [
-          { name: "gpt-image-2", platform: "composite", description: "Mock image model", pricing: { billing_mode: "image", per_request_price: 0.02, intervals: [] } },
-          { name: "brand-new-video", platform: "composite", description: "Mock video model", video_capabilities: videoCapabilities, pricing: { billing_mode: "video", per_request_price: 0.32, intervals: [
-            { tier_label: "720p / 4s", min_tokens: 4, max_tokens: 4, per_request_price: 0.2 },
-            { tier_label: "720p / 8s", min_tokens: 8, max_tokens: 8, per_request_price: 0.32 },
-            { tier_label: "720p / 12s", min_tokens: 12, max_tokens: 12, per_request_price: 0.44 },
-          ] } },
+          { name: "gpt-image-2", platform: "composite", description: "图像模型模拟数据", pricing: { billing_mode: "image", per_request_price: 0.02, intervals: [{ tier_label: "1K", per_request_price: 0.02 }, { tier_label: "2K", per_request_price: 0.04 }, { tier_label: "4K", per_request_price: 0.08 }] } },
+          { name: "gpt-5.5", platform: "composite", description: "文本模型模拟数据", pricing: { billing_mode: "text", input_price: 0.5, output_price: 1.5, intervals: [] } },
+          ...videoModelEntries,
         ],
       }],
     }});
@@ -202,17 +299,104 @@ const server = http.createServer(async (request, response) => {
   if (path === "/v1/models") {
     return send(response, 200, { object: "list", data: [
       { id: "gpt-image-2", object: "model" },
-      { id: "brand-new-video", object: "model" },
+      { id: "gpt-5.5", object: "model" },
+      ...videoModelEntries.map((model) => ({ id: model.name, object: "model" })),
     ]});
   }
   if (path === "/v1/images/generations" && method === "POST") {
     return send(response, 200, { created: Math.floor(Date.now() / 1000), data: [{ url: `data:image/png;base64,${png}` }] });
   }
+  if (path === "/v1/images/edits" && method === "POST") {
+    await body(request);
+    return send(response, 200, { created: Math.floor(Date.now() / 1000), data: [{ url: `data:image/png;base64,${png}` }] });
+  }
+  if (path === "/v1/responses" && method === "POST") {
+    await body(request);
+    return send(response, 501, { error: { message: "responses endpoint is not implemented in mock" } });
+  }
+  if (path === "/v1/chat/completions" && method === "POST") {
+    const payload = await body(request);
+    const raw = JSON.stringify(payload);
+    const storyboardRoles = ["hero", "pain-point", "core-benefit", "feature-detail", "scenario", "closing"];
+    const storyboard = {
+      id: "mock-product-storyboard",
+      revision: 1,
+      status: "draft",
+      pages: storyboardRoles.map((role, index) => ({
+        id: `mock-page-${index + 1}`,
+        order: index + 1,
+        role,
+        title: `Mock 页面 ${index + 1}`,
+        message: index === 0 ? "便携榨汁杯的核心卖点" : "清晰展示商品价值",
+        copy: [
+          { id: `copy-title-${index + 1}`, kind: "title", text: `Mock 页面 ${index + 1}` },
+          { id: `copy-body-${index + 1}`, kind: "body", text: "适合办公室和健身场景。" },
+          ...(role === "closing" ? [{ id: `copy-cta-${index + 1}`, kind: "cta", text: "立即了解" }] : []),
+        ],
+        visualPrompt: `第 ${index + 1} 页商品摄影底图，场景和构图独立`,
+        negativePrompt: ["不得生成文字", "不得改变商品外观"],
+        referenceAssetIds: [],
+        factRefs: ["fact-1"],
+        layoutTemplateId: "clean-commerce",
+        status: "draft",
+      })),
+    };
+    const content = raw.includes("商品详情页生成结构化分镜")
+      ? JSON.stringify(storyboard)
+      : JSON.stringify({
+          message: "已整理商品信息，可以生成分镜。",
+          briefPatch: {
+            productName: "Mock 便携榨汁杯",
+            category: "厨房小家电",
+            description: "适合办公室和健身场景的便携榨汁杯",
+            sellingPoints: [{ id: "fact-1", text: "一键榨汁", source: "user" }],
+            targetAudience: ["上班族"],
+            scenarios: ["办公室", "健身房"],
+            platform: "taobao",
+            pricePosition: "mid",
+            visualStyle: ["清爽"],
+            colorPreference: ["#111111"],
+            copyTone: ["直接"],
+            forbiddenContent: [],
+            requiredModules: ["hero", "pain-point", "core-benefit", "feature-detail", "scenario", "closing"],
+            assumptions: [],
+          },
+          question: null,
+          readyToPlan: true,
+          assumptions: [],
+          risks: [],
+          actions: [{ type: "plan_storyboard", label: "生成分镜" }],
+        });
+    return sendSse(response, content);
+  }
   if (path === "/v1/video/generations" && method === "POST") {
+    const payload = await body(request);
+    const validation = validateMockVideoRequest(payload);
+    if (validation.error) return send(response, 400, { code: 400, message: validation.error });
+    lastVideoGenerationRequest = { ...payload, __mode: validation.mode };
     return send(response, 200, { code: 0, data: { id: "mock-video-task", status: "queued" } });
   }
+  if (path === "/__mock/last-video-request" && method === "GET") {
+    return send(response, 200, { code: 0, data: lastVideoGenerationRequest });
+  }
+  if (path === "/__mock/reference-assets" && method === "GET") {
+    return send(response, 200, { code: 0, data: referenceAssetRequests });
+  }
+  if (path === "/api/v1/video-studio/reference-assets" && method === "POST") {
+    const payload = await body(request);
+    const kind = ["image", "video", "audio"].includes(payload.kind) ? payload.kind : "image";
+    const id = randomUUID();
+    referenceAssetRequests.push({ kind, dataPrefix: String(payload.data_url || "").slice(0, 32) });
+    return send(response, 200, { code: 0, data: { url: `https://mock.local/reference/${kind}/${id}` } });
+  }
   if (path === "/v1/videos/mock-video-task" && method === "GET") {
-    return send(response, 200, { code: 0, data: { id: "mock-video-task", status: "completed" } });
+    const capabilityProbe = String(lastVideoGenerationRequest?.prompt || "").startsWith("mock capability ");
+    return send(response, 200, {
+      code: 0,
+      data: capabilityProbe
+        ? { id: "mock-video-task", status: "failed", error: { message: "mock capability probe complete" } }
+        : { id: "mock-video-task", status: "completed" },
+    });
   }
   if (path === "/v1/videos/mock-video-task/content" && method === "GET") {
     return sendVideo(response);

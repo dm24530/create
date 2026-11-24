@@ -265,7 +265,7 @@ export function CreateApiKeysModal({ open, onClose, session, keys, loading, onRe
                         ) : null}
                     </div>
                     <div>
-                        <p className="text-base font-medium text-stone-700 dark:text-stone-300">调用限额（USD）</p>
+                        <p className="text-base font-medium text-stone-700 dark:text-stone-300">调用限额（人民币）</p>
                         <div className="mt-3 grid gap-4 sm:grid-cols-3">
                             <label className="block">
                                 <span className="mb-2 block text-base text-stone-700 dark:text-stone-300">每 5 小时</span>
@@ -312,11 +312,11 @@ function maskKey(value: string) {
 function quotaSummary(item: CreateManagedKey) {
     const quota = Number(item.quota || 0);
     const used = Number(item.quota_used || 0);
-    const total = quota > 0 ? `额度限制 $${quota.toFixed(2)}，已用 $${used.toFixed(2)}` : "额度限制不限";
+    const total = quota > 0 ? `额度限制 ￥${quota.toFixed(2)}，已用 ￥${used.toFixed(2)}` : "额度限制不限";
     const limits = [
-        Number(item.rate_limit_5h || 0) > 0 ? `5h $${Number(item.rate_limit_5h).toFixed(2)}` : "",
-        Number(item.rate_limit_1d || 0) > 0 ? `1d $${Number(item.rate_limit_1d).toFixed(2)}` : "",
-        Number(item.rate_limit_7d || 0) > 0 ? `7d $${Number(item.rate_limit_7d).toFixed(2)}` : "",
+        Number(item.rate_limit_5h || 0) > 0 ? `5h ￥${Number(item.rate_limit_5h).toFixed(2)}` : "",
+        Number(item.rate_limit_1d || 0) > 0 ? `1d ￥${Number(item.rate_limit_1d).toFixed(2)}` : "",
+        Number(item.rate_limit_7d || 0) > 0 ? `7d ￥${Number(item.rate_limit_7d).toFixed(2)}` : "",
     ].filter(Boolean);
     return limits.length ? `${total} · ${limits.join(" / ")}` : total;
 }

@@ -95,7 +95,7 @@ export type VideoGenerationResult = {
     referenceAudios?: ReferenceAudio[];
 };
 
-export type VideoGenerationLogConfig = Pick<AiConfig, "model" | "videoModel" | "size" | "vquality" | "videoSeconds" | "videoDurationAuto" | "videoGenerateAudio" | "videoWatermark" | "videoMode">;
+export type VideoGenerationLogConfig = Pick<AiConfig, "model" | "videoModel" | "size" | "vquality" | "videoSeconds" | "videoDurationAuto" | "videoGenerateAudio" | "videoWatermark" | "videoMode" | "videoParameters">;
 
 export type VideoGenerationLog = {
     id: string;

@@ -13,6 +13,7 @@ import { CanvasPromptLibrary } from "./canvas-prompt-library";
 import { CanvasAudioSettingsPopover, type CanvasAudioSettingKey } from "./canvas-audio-settings-popover";
 import { CanvasPromptChipInput } from "./canvas-prompt-chip-input";
 import { CanvasVideoSettingsPopover } from "./canvas-video-settings-popover";
+import type { VideoSettingKey } from "@/components/video-settings-panel";
 import { CanvasTextSettingsPopover } from "./canvas-text-settings-popover";
 import { CanvasNodeType, type CanvasGenerationMode, type CanvasNodeData } from "@/types/canvas";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
@@ -185,6 +186,7 @@ function buildNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mode: Can
         videoGenerateAudio: node.metadata?.generateAudio || globalConfig.videoGenerateAudio || defaultConfig.videoGenerateAudio,
         videoWatermark: node.metadata?.watermark || globalConfig.videoWatermark || defaultConfig.videoWatermark,
         videoMode: node.metadata?.videoMode || globalConfig.videoMode || defaultConfig.videoMode,
+        videoParameters: node.metadata?.videoParameters || globalConfig.videoParameters || defaultConfig.videoParameters,
         audioVoice: node.metadata?.audioVoice || globalConfig.audioVoice || defaultConfig.audioVoice,
         audioFormat: node.metadata?.audioFormat || globalConfig.audioFormat || defaultConfig.audioFormat,
         audioSpeed: node.metadata?.audioSpeed || globalConfig.audioSpeed || defaultConfig.audioSpeed,
@@ -193,12 +195,13 @@ function buildNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mode: Can
     };
 }
 
-function videoConfigPatch(key: keyof AiConfig, value: string) {
-    if (key === "videoSeconds") return { seconds: value };
-    if (key === "videoGenerateAudio") return { generateAudio: value };
-    if (key === "videoWatermark") return { watermark: value };
-    if (key === "videoMode") return { videoMode: value };
-    return { [key]: value };
+function videoConfigPatch(key: VideoSettingKey, value: string | Record<string, unknown>) {
+    if (key === "videoSeconds") return { seconds: String(value) };
+    if (key === "videoGenerateAudio") return { generateAudio: String(value) };
+    if (key === "videoWatermark") return { watermark: String(value) };
+    if (key === "videoMode") return { videoMode: String(value) };
+    if (key === "videoParameters") return { videoParameters: value as Record<string, unknown> };
+    return { [key]: String(value) };
 }
 
 function audioConfigPatch(key: CanvasAudioSettingKey, value: string) {

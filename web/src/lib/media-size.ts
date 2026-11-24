@@ -109,12 +109,34 @@ export function clampVideoSeconds(value: string) {
     return String(Math.max(VIDEO_SECONDS_MIN, Math.min(VIDEO_SECONDS_MAX, seconds)));
 }
 
+export function normalizeVideoResolutionToken(value: string | undefined) {
+    const raw = String(value || "").trim().toLowerCase().replace(/p$/, "");
+    if (!raw) return "";
+    if (raw === "4320" || raw === "8k") return "8k";
+    if (raw === "2160" || raw === "4k") return "4k";
+    if (raw === "1440" || raw === "2k") return "2k";
+    return raw;
+}
+
 export function parseVideoResolution(value: string | undefined) {
     const raw = String(value || "").trim().toLowerCase();
     if (raw === "low") return "480";
     if (raw === "auto" || raw === "high" || raw === "medium") return "720";
-    const number = raw.replace(/p$/i, "");
-    return /^\d+$/.test(number) && Number(number) > 0 ? number : "720";
+    const token = normalizeVideoResolutionToken(raw);
+    if (token === "8k") return "4320";
+    if (token === "4k") return "2160";
+    if (token === "2k") return "1440";
+    return /^\d+$/.test(token) && Number(token) > 0 ? token : "720";
+}
+
+export function videoResolutionDisplayLabel(value: string) {
+    const token = normalizeVideoResolutionToken(value) || "720";
+    return /^[248]k$/i.test(token) ? token.toUpperCase() : `${token}P`;
+}
+
+export function normalizeVideoRatioValue(value: unknown) {
+    const raw = String(value || "").trim();
+    return raw.toLowerCase() === "adaptive" ? "auto" : raw;
 }
 
 export function inferVideoRatio(size: string) {

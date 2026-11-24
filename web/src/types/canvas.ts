@@ -83,6 +83,7 @@ export type CanvasNodeMetadata = {
     generateAudio?: string;
     watermark?: string;
     videoMode?: string;
+    videoParameters?: Record<string, unknown>;
     audioVoice?: string;
     audioFormat?: string;
     audioSpeed?: string;

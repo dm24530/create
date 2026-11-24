@@ -17,7 +17,7 @@ const VIDEO_MODEL_NAME_PATTERN = /(?:^|[^a-z])(?:video|seedance|muse)(?:[^a-z]|$
 
 export function isPlazaVideoModel(model: CreateModelPlazaModel) {
     const name = String(model.name || "").trim();
-    return model.pricing?.billing_mode === "video" || VIDEO_MODEL_NAME_PATTERN.test(name);
+    return Boolean(model.video_capabilities) || model.pricing?.billing_mode === "video" || VIDEO_MODEL_NAME_PATTERN.test(name);
 }
 
 export function plazaVideoBillingUnit(model: CreateModelPlazaModel): "second" | "request" {
@@ -84,21 +84,30 @@ export function plazaVideoReferenceSummary(model: CreateModelPlazaModel): PlazaV
 
 export function plazaVideoCapabilityLabels(model: CreateModelPlazaModel) {
     const profile = getVideoModelProfile(model.name, model.video_capabilities);
-    const labels = ["文生视频", "图生视频"];
-    if (profile.maxImages > 0) labels.push("参考图");
-    if (profile.maxVideos > 0) labels.push("参考视频");
-    if (profile.maxAudios > 0) labels.push("参考音频");
-    if (profile.supportsGenerateAudio) labels.push("输出音频");
+    const labels: string[] = [];
+    if (profile.modes.includes("text-to-video")) labels.push("文生视频");
+    if (profile.modes.includes("image-to-video")) labels.push("图生视频");
+    if (profile.modes.includes("first-last-frame")) labels.push("首尾帧");
+    if (profile.modes.includes("reference-images")) labels.push("参考图");
+    if (profile.modes.includes("reference-video")) labels.push("参考视频");
+    if (profile.modes.includes("video-edit")) labels.push("视频编辑");
+    if (profile.modes.includes("video-extension")) labels.push("视频续写");
+    if (profile.outputsAudio) labels.push("输出音频");
     return labels;
 }
 
 export function plazaVideoModelDescription(model: CreateModelPlazaModel) {
-    const name = String(model.name || "").toLowerCase();
-    if (name.includes("muse")) return "Muse 视频模型，适合快速生成短视频并支持参考图输入，可用时长以模型档位为准。";
-    if (name.includes("grok")) return "Grok 视频模型，支持文生视频、图生视频和参考素材创作，也可用于已有视频的编辑与续写。";
-    if (name.includes("wan3.0")) return "Wan 视频模型，支持较长视频生成及图生视频，部分模型可使用参考图和参考视频。";
-    if (name.includes("minimax")) return "MiniMax 视频模型，支持文生视频、图生视频及多参考素材，适合人物和场景一致性创作。";
-    if (name.includes("seedance")) return "Seedance 视频模型，适合文生视频、图生视频和多参考素材创作，实际能力由当前分组配置决定。";
-    return "通用视频生成模型，分辨率、时长和参考素材上限以工作台实际可用选项为准。";
+    const profile = getVideoModelProfile(model.name, model.video_capabilities);
+    const labels = plazaVideoCapabilityLabels(model);
+    const duration = `${profile.minDuration === profile.maxDuration ? profile.maxDuration : `${profile.minDuration}–${profile.maxDuration}`} 秒`;
+    const parts = [
+        labels.length ? `支持${labels.join("、")}` : "",
+        `时长 ${duration}`,
+        profile.resolutions.length ? `分辨率 ${profile.resolutions.join(" / ")}` : "",
+        profile.maxImages || profile.maxVideos || profile.maxAudios
+            ? `参考素材最多 ${profile.maxImages} 张图、${profile.maxVideos} 个视频、${profile.maxAudios} 段音频`
+            : "",
+    ].filter(Boolean);
+    return parts.length ? `${parts.join("；")}。` : "暂无中文简介。";
 }
 

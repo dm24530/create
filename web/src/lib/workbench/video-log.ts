@@ -4,7 +4,7 @@ import i18n from "@/i18n";
 import { autoSaveGeneratedFile, readGeneratedFileAsset } from "@/lib/desktop-save";
 import { computeVideoSize, inferVideoRatio } from "@/lib/media-size";
 import { normalizeVideoResolutionValue } from "@/components/video-settings-panel";
-import { clampVideoSecondsForProfile, getVideoModelProfile, isVideoRatioSupported, isVideoResolutionSupported, supportsVideoGenerateAudioToggle } from "@/lib/video-model-profile";
+import { clampVideoSecondsForProfile, getVideoModelProfile, isVideoRatioSupported, isVideoResolutionSupported, normalizeVideoModeValue, resolveVideoModeProfile, resolveVideoParameterValues, resolveVideoResolutionForProfile, supportsVideoGenerateAudioToggle } from "@/lib/video-model-profile";
 import { ensureImagePreview, resolveImageUrl } from "@/services/image-storage";
 import { getMediaBlob, resolveMediaUrl, setMediaBlob } from "@/services/file-storage";
 import { boolConfig, modelOptionName, videoCapabilityOf, type AiConfig } from "@/stores/use-config-store";
@@ -170,7 +170,8 @@ export function normalizeVideoLogConfig(log: Partial<VideoGenerationLog>): Video
         videoSeconds: log.config?.videoSeconds || log.seconds || "",
         videoGenerateAudio: log.config?.videoGenerateAudio || "true",
         videoWatermark: log.config?.videoWatermark || "false",
-        videoMode: log.config?.videoMode === "reference" ? "reference" : "frames",
+        videoMode: log.config?.videoMode || "frames",
+        videoParameters: log.config?.videoParameters && typeof log.config.videoParameters === "object" ? log.config.videoParameters : {},
     };
 }
 
@@ -209,7 +210,8 @@ export function buildVideoLog({
         videoSeconds: config.videoSeconds,
         videoGenerateAudio: config.videoGenerateAudio,
         videoWatermark: config.videoWatermark,
-        videoMode: config.videoMode === "reference" ? "reference" as const : "frames" as const,
+        videoMode: config.videoMode,
+        videoParameters: config.videoParameters,
     };
     return {
         id: id || nanoid(),
@@ -235,8 +237,11 @@ export function buildVideoLog({
 
 export function buildVideoConfig(config: AiConfig, model: string): AiConfig {
     const profile = getVideoModelProfile(modelOptionName(model), videoCapabilityOf(config, model));
+    const normalizedMode = normalizeVideoModeValue(config.videoMode, profile);
+    const videoMode = normalizedMode === "auto" ? profile.modes[0] || "text-to-video" : normalizedMode;
+    const modeProfile = resolveVideoModeProfile(profile, videoMode);
     const requestedResolution = normalizeVideoResolution(config.vquality);
-    const resolution = isVideoResolutionSupported(profile, requestedResolution) ? requestedResolution : profile.resolutions[0] || "720";
+    const resolution = isVideoResolutionSupported(modeProfile, requestedResolution) ? resolveVideoResolutionForProfile(modeProfile, requestedResolution) : modeProfile.resolutions[0] || "720";
     const requestedRatio = inferVideoRatio(config.size);
     const ratio = isVideoRatioSupported(profile, requestedRatio) ? requestedRatio : profile.aspectRatios[0] || "16:9";
     return {
@@ -244,11 +249,12 @@ export function buildVideoConfig(config: AiConfig, model: string): AiConfig {
         model,
         videoModel: model,
         size: computeVideoSize(resolution, ratio),
-        videoSeconds: clampVideoSecondsForProfile(config.videoSeconds, profile),
+        videoSeconds: clampVideoSecondsForProfile(config.videoSeconds, modeProfile),
         vquality: resolution,
         videoGenerateAudio: supportsVideoGenerateAudioToggle(profile) ? String(boolConfig(config.videoGenerateAudio, true)) : "false",
         videoWatermark: String(boolConfig(config.videoWatermark, false)),
-        videoMode: config.videoMode === "reference" ? "reference" : "frames",
+        videoMode,
+        videoParameters: resolveVideoParameterValues(profile, config.videoParameters),
     };
 }
 

@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { buildGenerationConfig, prepareCanvasReferenceImagesForRequest } from "../canvas-generation-helpers";
 import { createModelChannel, defaultConfig, encodeChannelModel } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
+import type { CanvasNodeData } from "@/types/canvas";
 
 vi.mock("@/services/image-storage", () => ({
     claimLegacyStoredImage: vi.fn(),
@@ -60,6 +61,30 @@ describe("buildGenerationConfig", () => {
         expect(built.vquality).toBe("720");
         expect(built.videoSeconds).toBe("10");
         expect(built.size).toBe("720x1280");
+    });
+
+    it("restores persisted video parameters from canvas node metadata", () => {
+        const capability = {
+            protocol: "momo_video",
+            min_duration: 4,
+            max_duration: 15,
+            default_duration: 5,
+            resolutions: ["720p"],
+            aspect_ratios: ["16:9"],
+            slots: { first_frame: 0, last_frame: 0, reference_image: 3, reference_video: 1, reference_audio: 1 },
+            parameters: [{ key: "seed", type: "integer" as const, min: 0, max: 100 }],
+        };
+        const channel = createModelChannel({
+            id: "channel",
+            name: "channel",
+            baseUrl: "https://example.com/v1",
+            apiKey: "key",
+            models: [{ name: "parameter-video", capability: "video", videoCapabilities: capability }],
+        });
+        const config = { ...defaultConfig, channels: [channel], videoModel: encodeChannelModel(channel.id, "parameter-video") };
+        const node = { id: "node", metadata: { videoParameters: { seed: 77 } } } as unknown as CanvasNodeData;
+
+        expect(buildGenerationConfig(config, node, "video").videoParameters).toEqual({ seed: 77 });
     });
 });
 describe("prepareCanvasReferenceImagesForRequest", () => {

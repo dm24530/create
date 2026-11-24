@@ -1,6 +1,7 @@
 param(
     [int]$MockPort = 9890,
-    [int]$WebPort = 3003
+    [int]$WebPort = 3003,
+    [string]$Test = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -73,8 +74,17 @@ try {
             "test/mock-account-smoke.js",
             "test/mock-image-generation-smoke.js",
             "test/mock-video-generation-smoke.js",
-            "test/mock-canvas-generation-smoke.js"
+            "test/mock-canvas-generation-smoke.js",
+            "test/mock-product-detail-smoke.js",
+            "test/mock-navigation-smoke.js",
+            "test/mock-video-31-capabilities-smoke.js",
+            "test/mock-video-reference-media-smoke.js",
+            "test/mock-video-mode-matrix-smoke.js"
         )
+        if ($Test) {
+            $tests = @($tests | Where-Object { $_ -like "*$Test*" })
+            if (-not $tests.Count) { throw "No mock test matched: $Test" }
+        }
         foreach ($test in $tests) {
             Write-Host "Running $test"
             & node $test

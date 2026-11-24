@@ -3,14 +3,14 @@ import { nanoid } from "nanoid";
 
 import i18n from "@/i18n";
 import { dataUrlToFile, readFileAsDataUrl } from "@/lib/image-utils";
-import { computeVideoSize, inferVideoRatio } from "@/lib/media-size";
+import { computeVideoSize, inferVideoRatio, normalizeVideoResolutionToken } from "@/lib/media-size";
 import { getMediaBlob, resolveMediaUrl, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { createRequest } from "@/services/create-api";
 import { useUserStore } from "@/stores/use-user-store";
 import { prepareImageRequestDataUrls } from "@/services/image-storage";
 import { boolConfig, buildApiUrl, modelOptionName, resolveModelRequestConfig, resolveModelScript, videoCapabilityOf, withLocalProxy, type AiConfig } from "@/stores/use-config-store";
 import { runModelPlugin } from "./model-plugin";
-import { clampVideoSecondsForProfile, getVideoModelProfile, type VideoModelProfile, type VideoModelProvider } from "@/lib/video-model-profile";
+import { clampVideoSecondsForProfile, getVideoModelProfile, isVideoResolutionSupported, resolveVideoModeForMedia, resolveVideoModeMediaPolicy, resolveVideoModeProfile, resolveVideoParameterValues, resolveVideoResolutionForProfile, type VideoMediaFieldSpec, type VideoMediaRole, type VideoModelProfile, type VideoModelProvider, type VideoRequestSchema } from "@/lib/video-model-profile";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 
@@ -60,86 +60,187 @@ export type VideoProviderRequestInput = {
     imageUrls: string[];
     videoUrls: string[];
     audioUrls: string[];
-    imageMode: "frames" | "reference";
+    imageMode?: "frames" | "reference";
+    selectedMode?: string;
+    parameters?: Record<string, unknown>;
 };
 
+const VIDEO_REQUEST_PROTECTED_KEYS = new Set([
+    "model", "prompt", "duration", "seconds", "resolution", "aspect_ratio", "size", "mode",
+    "content", "ratio", "generate_audio", "images", "image_urls", "keyframes", "first_frame_image_url",
+    "last_frame_image_url", "reference_image_urls", "reference_audio_urls", "reference_video_urls",
+    "reference_video_url", "first_frame_url", "last_frame_url", "image", "video",
+]);
+
+const DEFAULT_VIDEO_MEDIA_FIELDS: Record<VideoMediaRole, VideoMediaFieldSpec> = {
+    first_frame: "first_frame_image_url",
+    last_frame: "last_frame_image_url",
+    image: "first_frame_image_url",
+    reference_images: "reference_image_urls",
+    reference_videos: "reference_video_urls",
+    reference_audio: "reference_audio_urls",
+    edit_video: { field: "reference_video_urls", multiple: true },
+    extension_video: { field: "reference_video_urls", multiple: true },
+    keyframes: { field: "keyframe_image_urls", multiple: true },
+};
+
+function mediaFieldFor(profile: VideoModelProfile, provider: VideoModelProvider, role: VideoMediaRole): VideoMediaFieldSpec {
+    const configured = profile.requestSchema.media_fields?.[role];
+    if (configured) return configured;
+    if (provider === "momo_video") {
+        if (role === "image") return { field: "images", multiple: true };
+        if (role === "edit_video" || role === "extension_video") return { field: "reference_video_url", multiple: false };
+    }
+    if (role === "image" && provider === "seedance_video") return { field: "images", multiple: true };
+    if (role === "reference_images" || role === "reference_videos" || role === "reference_audio") {
+        return { field: DEFAULT_VIDEO_MEDIA_FIELDS[role] as string, multiple: true };
+    }
+    return DEFAULT_VIDEO_MEDIA_FIELDS[role];
+}
+
+function writeVideoMedia(body: Record<string, unknown>, profile: VideoModelProfile, provider: VideoModelProvider, role: VideoMediaRole, urls: string[]) {
+    if (!urls.length) return;
+    const spec = mediaFieldFor(profile, provider, role);
+    const field = typeof spec === "string" ? spec : spec.field;
+    const multiple = typeof spec === "string" ? false : spec.multiple === true;
+    if (!field) return;
+    body[field] = multiple ? [...urls] : urls[0];
+}
+
+function applyVideoMedia(body: Record<string, unknown>, mode: string, input: VideoProviderRequestInput, provider: VideoModelProvider, profile: VideoModelProfile) {
+    const policy = resolveVideoModeMediaPolicy(profile, mode);
+    if (provider === "momo_video" && mode === "keyframes") {
+        const urls = input.imageUrls.slice(0, policy.max_images);
+        if (urls.length) body.keyframes = urls.map((image_url, index) => ({ timestamp_s: index + 1, image_url }));
+        return;
+    }
+    if (mode === "first-last-frame") {
+        writeVideoMedia(body, profile, provider, "first_frame", input.imageUrls.slice(0, Math.min(1, policy.max_images)));
+        writeVideoMedia(body, profile, provider, "last_frame", input.imageUrls.slice(1, Math.min(2, policy.max_images)));
+        return;
+    }
+    writeVideoMedia(body, profile, provider, policy.image_role, input.imageUrls.slice(0, policy.max_images));
+    if (policy.max_videos > 0) writeVideoMedia(body, profile, provider, policy.video_role, input.videoUrls.slice(0, policy.max_videos));
+    if (policy.max_audios > 0) writeVideoMedia(body, profile, provider, policy.audio_role, input.audioUrls.slice(0, policy.max_audios));
+}
+
+function protectedVideoRequestKeys(profile: VideoModelProfile, provider: VideoModelProvider) {
+    const keys = new Set(VIDEO_REQUEST_PROTECTED_KEYS);
+    for (const role of Object.keys(DEFAULT_VIDEO_MEDIA_FIELDS) as VideoMediaRole[]) {
+        const spec = mediaFieldFor(profile, provider, role);
+        keys.add(typeof spec === "string" ? spec : spec.field);
+    }
+    return keys;
+}
+
+function applyVideoParameters(body: Record<string, unknown>, input: VideoProviderRequestInput, profile: VideoModelProfile, provider: VideoModelProvider) {
+    const parameters = resolveVideoParameterValues(profile, input.parameters);
+    const protectedKeys = protectedVideoRequestKeys(profile, provider);
+    for (const [key, value] of Object.entries(parameters)) {
+        if (protectedKeys.has(key) || value === undefined) continue;
+        body[key] = value;
+    }
+}
+
+function expandVideoPath(template: string, requestId: string, model: string) {
+    return template
+        .replaceAll("{id}", encodeURIComponent(requestId))
+        .replaceAll("{model}", encodeURIComponent(model));
+}
+
+function defaultVideoCreatePath(provider: VideoModelProvider) {
+    if (provider === "seedance") return "/contents/generations/tasks";
+    if (provider === "openai_video") return "/videos";
+    return "/video/generations";
+}
+
+function defaultVideoTaskPath(provider: VideoModelProvider, requestId: string, model: string) {
+    const id = encodeURIComponent(requestId);
+    if (provider === "seedance") return `/contents/generations/tasks/${id}`;
+    if (provider === "grok") return `/videos/${id}`;
+    return `/videos/${id}?model=${encodeURIComponent(model)}`;
+}
+
+function defaultVideoContentPath(provider: VideoModelProvider, requestId: string, model: string) {
+    const id = encodeURIComponent(requestId);
+    if (provider === "seedance") return `/contents/generations/tasks/${id}/content`;
+    if (provider === "grok") return `/videos/${id}/content`;
+    return `/videos/${id}/content?model=${encodeURIComponent(model)}`;
+}
+
 export function buildVideoProviderRequest(provider: VideoModelProvider, input: VideoProviderRequestInput, profile?: VideoModelProfile): { path: string; body: Record<string, unknown> } {
+    const effectiveProfile = profile || getVideoModelProfile(input.model);
+    if ((provider === "seedance" || provider === "openai_video") && Object.keys(effectiveProfile.requestSchema.media_fields || {}).length) {
+        throw new Error(apiText("unsupportedMediaSchema", { protocol: provider }));
+    }
+    const mode = resolveVideoModeForMedia(effectiveProfile, input.selectedMode || input.imageMode, {
+        imageCount: input.imageUrls.length,
+        videoCount: input.videoUrls.length,
+        audioCount: input.audioUrls.length,
+    });
+    const modeProfile = resolveVideoModeProfile(effectiveProfile, mode);
+    const requestedResolution = normalizeVideoResolution(input.resolution);
+    const resolution = isVideoResolutionSupported(modeProfile, requestedResolution) ? resolveVideoResolutionForProfile(modeProfile, requestedResolution) : modeProfile.resolutions[0] || requestedResolution;
+    const durationSeconds = Number(clampVideoSecondsForProfile(input.durationSeconds, modeProfile));
+    const aspectRatio = resolveVideoAspectRatio(input.aspectRatio, modeProfile);
+    const createPath = effectiveProfile.requestSchema.create_path || defaultVideoCreatePath(provider);
     if (provider === "seedance") {
         const content: Array<Record<string, unknown>> = [{ type: "text", text: input.prompt }];
+        const imageRole = mode === "first-last-frame" ? "frame" : mode === "image-to-video" ? "first_frame" : "reference_image";
         input.imageUrls.forEach((url, index) => {
-            const role = input.imageMode === "frames" ? (index === 0 ? "first_frame" : "last_frame") : "reference_image";
-            content.push({ type: "image_url", image_url: { url }, role });
+            content.push({
+                type: "image_url",
+                image_url: { url },
+                role: imageRole === "frame" ? (index === 0 ? "first_frame" : "last_frame") : imageRole,
+            });
         });
         input.videoUrls.forEach((url) => content.push({ type: "video_url", video_url: { url }, role: "reference_video" }));
         input.audioUrls.forEach((url) => content.push({ type: "audio_url", audio_url: { url }, role: "reference_audio" }));
         const body: Record<string, unknown> = {
             model: input.model,
             content,
-            resolution: normalizeVideoResolution(input.resolution),
-            ratio: input.aspectRatio,
+            resolution: normalizeVideoResolution(resolution),
+            ratio: aspectRatio,
             generate_audio: input.generateAudio,
+            mode,
         };
-        if (!input.durationAuto) body.duration = input.durationSeconds;
-        return { path: "/contents/generations/tasks", body };
+        if (!input.durationAuto) body.duration = durationSeconds;
+        applyVideoParameters(body, input, effectiveProfile, provider);
+        return { path: createPath, body };
     }
 
     if (provider === "openai_video") {
         const body: Record<string, unknown> = {
             model: input.model,
             prompt: input.prompt,
-            resolution: normalizeVideoResolution(input.resolution),
-            aspect_ratio: input.aspectRatio,
+            resolution: normalizeVideoResolution(resolution),
+            aspect_ratio: aspectRatio,
             generate_audio: input.generateAudio,
+            mode,
         };
         if (!input.durationAuto) {
-            body.seconds = input.durationSeconds;
-            body.duration = input.durationSeconds;
+            body.seconds = durationSeconds;
+            body.duration = durationSeconds;
         }
-        if (input.imageUrls[0]) body.image = { url: input.imageUrls[0] };
-        if (input.videoUrls[0]) body.video = { url: input.videoUrls[0] };
-        return { path: "/videos", body };
+        applyVideoMedia(body, mode, input, provider, effectiveProfile);
+        applyVideoParameters(body, input, effectiveProfile, provider);
+        return { path: createPath, body };
     }
 
     const body: Record<string, unknown> = {
         model: input.model,
         prompt: input.prompt,
-        resolution: normalizeVideoResolution(input.resolution),
-        aspect_ratio: input.aspectRatio,
+        resolution: normalizeVideoResolution(resolution),
+        aspect_ratio: aspectRatio,
     };
-    if (!input.durationAuto) body.duration = input.durationSeconds;
-    if (profile?.supportsGenerateAudio) body.generate_audio = input.generateAudio;
-
-    const sendMode = provider === "seedance_video" || provider === "grok";
-    const supportsFrames = profile?.modes.includes("image-to-video") ?? input.imageMode === "frames";
-    const useFrames = input.imageMode === "frames" && supportsFrames && !input.videoUrls.length;
-    if (input.videoUrls.length) {
-        if (sendMode) body.mode = "reference-video";
-        body.reference_video_urls = input.videoUrls;
-        if (input.imageUrls.length) body.reference_image_urls = input.imageUrls;
-        if (input.audioUrls.length) body.reference_audio_urls = input.audioUrls;
-    } else if (useFrames && input.imageUrls.length) {
-        if (input.imageUrls.length > 1) {
-            body.mode = "first-last-frame";
-            body.first_frame_image_url = input.imageUrls[0];
-            body.last_frame_image_url = input.imageUrls[1];
-        } else if (provider === "seedance_video") {
-            body.mode = "image-to-video";
-            body.images = [input.imageUrls[0]];
-        } else {
-            body.mode = "image-to-video";
-            body.first_frame_image_url = input.imageUrls[0];
-        }
-        if (input.audioUrls.length) body.reference_audio_urls = input.audioUrls;
-    } else if (input.imageUrls.length || input.audioUrls.length) {
-        if (sendMode) body.mode = "reference-images";
-        if (input.imageUrls.length) body.reference_image_urls = input.imageUrls;
-        if (input.audioUrls.length) body.reference_audio_urls = input.audioUrls;
-    } else if (sendMode) {
-        body.mode = "text-to-video";
-    }
-    return { path: "/video/generations", body };
+    // Momo infers media modes from their fields; only edit/extension require an explicit mode.
+    if (provider !== "momo_video" || mode === "video-edit" || mode === "video-extension") body.mode = mode;
+    if (!input.durationAuto) body.duration = durationSeconds;
+    if (modeProfile.supportsGenerateAudio) body.generate_audio = input.generateAudio;
+    applyVideoMedia(body, mode, input, provider, effectiveProfile);
+    applyVideoParameters(body, input, effectiveProfile, provider);
+    return { path: createPath, body };
 }
-
 /** Results for scripted (plugin) video models, which run their own create+poll in one shot at task creation. */
 const pluginVideoResults = new Map<string, VideoGenerationResult>();
 
@@ -209,6 +310,8 @@ async function createPluginVideoTask(config: AiConfig, model: string, script: st
     const refs = (await prepareImageRequestDataUrls(references, options)).map((image) => image.dataUrl);
     const videos = await Promise.all((options?.videos || []).map((video) => referenceMediaToFile(video, "ref.mp4", "invalidReferenceVideo", options)));
     const audios = await Promise.all((options?.audios || []).map((audio) => referenceMediaToFile(audio, "ref.mp3", "invalidReferenceAudio", options)));
+    const profile = getVideoModelProfile(modelOptionName(model), videoCapabilityOf(config, model));
+    const mode = resolveVideoModeForMedia(profile, config.videoMode, { imageCount: refs.length, videoCount: videos.length, audioCount: audios.length });
     const result = videoPluginResult(
         await runModelPlugin({
             capability: "video",
@@ -219,13 +322,14 @@ async function createPluginVideoTask(config: AiConfig, model: string, script: st
             videos,
             audios,
             params: {
+                ...resolveVideoParameterValues(profile, config.videoParameters),
                 seconds: normalizeVideoSecondsForModel(config.videoSeconds, model, config),
                 size: normalizeVideoSize(config.size, config.vquality),
                 resolution: normalizeVideoResolution(config.vquality),
-                ratio: videoAspectRatio(config.size),
+                ratio: resolveVideoAspectRatio(config.size, profile),
                 generateAudio: boolConfig(config.videoGenerateAudio, true),
                 watermark: boolConfig(config.videoWatermark, false),
-                mode: resolveVideoMode(config.videoMode, refs.length, getVideoModelProfile(modelOptionName(model), videoCapabilityOf(config, model))),
+                mode,
             },
             signal: options?.signal,
         }),
@@ -276,12 +380,13 @@ async function createVendorVideoTask(config: AiConfig, model: string, prompt: st
         durationSeconds: Number(clampVideoSecondsForProfile(config.videoSeconds, profile)) || profile.defaultDuration,
         durationAuto: config.videoDurationAuto === true,
         resolution: normalizeVideoResolution(config.vquality),
-        aspectRatio: videoAspectRatio(config.size),
+        aspectRatio: resolveVideoAspectRatio(config.size, profile),
         generateAudio: boolConfig(config.videoGenerateAudio, true),
         imageUrls,
         videoUrls,
         audioUrls,
-        imageMode: resolveVideoMode(config.videoMode, imageUrls.length, profile),
+        selectedMode: config.videoMode,
+        parameters: config.videoParameters,
     }, profile);
     return createJsonVideoTask(config, request.path, request.body, model, options);
 }
@@ -318,9 +423,10 @@ async function pollOpenAIVideoTask(config: AiConfig, task: VideoGenerationTask, 
     const model = modelOptionName(task.model);
     const provider = getVideoModelProfile(model, videoCapabilityOf(config, task.model)).provider;
     try {
-        const video = unwrapVideoResponse((await axios.get<ApiVideoResponse>(aiApiUrl(config, videoTaskPath(provider, task.id, model)), { headers: aiHeaders(config), signal: options?.signal, timeout: 30_000 })).data);
+        const profile = getVideoModelProfile(model, videoCapabilityOf(config, task.model));
+        const video = unwrapVideoResponse((await axios.get<ApiVideoResponse>(aiApiUrl(config, videoTaskPath(provider, task.id, model, profile.requestSchema)), { headers: aiHeaders(config), signal: options?.signal, timeout: 30_000 })).data);
         if (isCompletedVideoStatus(video.status)) {
-            const content = await axios.get<Blob>(aiApiUrl(config, videoContentPath(provider, task.id, model)), { headers: aiHeaders(config), responseType: "blob", signal: options?.signal, timeout: 120_000 });
+            const content = await axios.get<Blob>(aiApiUrl(config, videoContentPath(provider, task.id, model, profile.requestSchema)), { headers: aiHeaders(config), responseType: "blob", signal: options?.signal, timeout: 120_000 });
             await assertVideoBlob(content.data);
             return { status: "completed", result: { blob: content.data } };
         }
@@ -331,18 +437,14 @@ async function pollOpenAIVideoTask(config: AiConfig, task: VideoGenerationTask, 
     }
 }
 
-export function videoTaskPath(provider: VideoModelProvider, requestId: string, model: string) {
-    const id = encodeURIComponent(requestId);
-    if (provider === "seedance") return `/contents/generations/tasks/${id}`;
-    if (provider === "grok") return `/videos/${id}`;
-    return `/videos/${id}?model=${encodeURIComponent(model)}`;
+export function videoTaskPath(provider: VideoModelProvider, requestId: string, model: string, schema?: VideoRequestSchema) {
+    if (schema?.task_path) return expandVideoPath(schema.task_path, requestId, model);
+    return defaultVideoTaskPath(provider, requestId, model);
 }
 
-export function videoContentPath(provider: VideoModelProvider, requestId: string, model: string) {
-    const id = encodeURIComponent(requestId);
-    if (provider === "seedance") return `/contents/generations/tasks/${id}/content`;
-    if (provider === "grok") return `/videos/${id}/content`;
-    return `/videos/${id}/content?model=${encodeURIComponent(model)}`;
+export function videoContentPath(provider: VideoModelProvider, requestId: string, model: string, schema?: VideoRequestSchema) {
+    if (schema?.content_path) return expandVideoPath(schema.content_path, requestId, model);
+    return defaultVideoContentPath(provider, requestId, model);
 }
 
 function isCompletedVideoStatus(status?: string) {
@@ -358,11 +460,12 @@ async function createGeminiVideoTask(config: AiConfig, model: string, prompt: st
     const videos = await Promise.all((options?.videos || []).map((video) => referenceMediaToFile(video, "ref.mp4", "invalidReferenceVideo", options)));
     const audios = await Promise.all((options?.audios || []).map((audio) => referenceMediaToFile(audio, "ref.mp3", "invalidReferenceAudio", options)));
     const profile = getVideoModelProfile(modelOptionName(model), videoCapabilityOf(config, model));
-    const mode = resolveVideoMode(config.videoMode, images.length, profile);
+    if (Object.keys(profile.requestSchema.media_fields || {}).length) throw new Error(apiText("unsupportedMediaSchema", { protocol: "gemini" }));
+    const mode = resolveVideoModeForMedia(profile, config.videoMode, { imageCount: images.length, videoCount: videos.length, audioCount: audios.length });
     const instance: Record<string, unknown> = { prompt };
-    if (mode === "frames") {
+    if (mode === "first-last-frame" || mode === "image-to-video") {
         if (images[0]) instance.image = parseDataUrlInline(images[0]);
-        if (images[1]) instance.lastFrame = parseDataUrlInline(images[1]);
+        if (mode === "first-last-frame" && images[1]) instance.lastFrame = parseDataUrlInline(images[1]);
     } else {
         instance.referenceImages = images.map((dataUrl) => ({ image: parseDataUrlInline(dataUrl), referenceType: "asset" }));
     }
@@ -370,7 +473,8 @@ async function createGeminiVideoTask(config: AiConfig, model: string, prompt: st
     if (audios[0]) instance.audio = await fileToGeminiInline(audios[0]);
     try {
         const parameters: Record<string, unknown> = {
-            aspectRatio: videoAspectRatio(config.size),
+            ...resolveVideoParameterValues(profile, config.videoParameters),
+            aspectRatio: resolveVideoAspectRatio(config.size, profile),
             resolution: normalizeVideoResolution(config.vquality),
             generateAudio: boolConfig(config.videoGenerateAudio, true),
             addWatermark: boolConfig(config.videoWatermark, false),
@@ -436,9 +540,10 @@ function geminiVideoHeaders(config: Pick<AiConfig, "apiKey">) {
     return { "x-goog-api-key": config.apiKey, "Content-Type": "application/json" };
 }
 
-function videoAspectRatio(size: string) {
+function resolveVideoAspectRatio(size: string, profile?: VideoModelProfile) {
     const ratio = inferVideoRatio(size);
-    return ratio === "auto" ? "16:9" : ratio;
+    if (ratio !== "auto") return ratio;
+    return profile?.supportsAdaptiveRatio ? "adaptive" : "16:9";
 }
 
 function parseDataUrlInline(dataUrl: string, fallbackType = "image/png"): GeminiInlineData {
@@ -470,14 +575,6 @@ function normalizeVideoSecondsForModel(value: string, model: string, config: AiC
     return clampVideoSecondsForProfile(value, getVideoModelProfile(modelOptionName(model), videoCapabilityOf(config, model)));
 }
 
-function resolveVideoMode(mode: string | undefined, imageCount: number, profile: VideoModelProfile) {
-    const framesSupported = profile.modes.includes("image-to-video") || profile.modes.includes("first-last-frame");
-    const referenceSupported = profile.modes.includes("reference-images");
-    if (!framesSupported && referenceSupported) return "reference";
-    if (mode === "reference" || imageCount > 2) return "reference";
-    return "frames";
-}
-
 function normalizeVideoSize(value: string, resolution?: string) {
     if (value === "auto") return null;
     if (/^\d+x\d+$/.test(value || "")) return value;
@@ -489,8 +586,8 @@ function normalizeVideoSize(value: string, resolution?: string) {
 function normalizeVideoResolution(value: string) {
     if (value === "low") return "480p";
     if (value === "auto" || value === "high" || value === "medium") return "720p";
-    const resolution = value.replace(/p$/i, "") || "720";
-    return `${resolution}p`;
+    const token = normalizeVideoResolutionToken(value) || "720";
+    return /^[248]k$/i.test(token) ? token : `${token}p`;
 }
 
 function unwrapVideoResponse(payload: ApiVideoResponse) {

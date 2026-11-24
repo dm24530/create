@@ -24,6 +24,7 @@ import { createUserWorkbenchLogStore } from "@/services/workbench-log-storage";
 import { buildImageLog as buildLog, pruneImageLogs, readImageLogs, resolveStoredLogImage, serializeImageLog as serializeLog } from "@/lib/workbench/image-log";
 import { configureCreateWorkspace, getManagedKeySelection, listCreateManagedKeys, managedKeySupportsImage, switchManagedKey, type CreateManagedKey } from "@/services/create-managed-channel";
 import { WorkbenchModelSelect } from "@/components/workbench/model-select";
+import { useModelPlazaDetails } from "@/hooks/use-model-plaza-details";
 import { PanelResizeHandle, useStoredPanelWidth } from "@/components/workbench/panel-resize-handle";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useUserStore } from "@/stores/use-user-store";
@@ -62,6 +63,7 @@ export default function ImagePage() {
     const addAsset = useAssetStore((state) => state.addAsset);
     const cleanupAssets = useAssetStore((state) => state.cleanupImages);
     const session = useUserStore((state) => state.session);
+    const modelPlazaDetails = useModelPlazaDetails(session);
     const [imageKeys, setImageKeys] = useState<CreateManagedKey[]>([]);
     const [imageKeysLoading, setImageKeysLoading] = useState(false);
     const [selectedImageKeyId, setSelectedImageKeyId] = useState(() => getManagedKeySelection().imageKeyId);
@@ -830,6 +832,7 @@ export default function ImagePage() {
                             <div className="flex min-h-10 items-center justify-between gap-2 px-2.5 pb-2">
                                 <div className="min-w-0 max-w-[300px] flex-1">
                                     <WorkbenchModelSelect
+                                        details={modelPlazaDetails}
                                         label="生图模型"
                                         value={imageModelGroups.some((group) => group.models.some((item) => item.value === model)) ? model : ""}
                                         groups={imageModelGroups}

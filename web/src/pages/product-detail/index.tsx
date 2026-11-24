@@ -479,7 +479,7 @@ export default function ProductDetailPage() {
     ];
 
     return (
-        <div className="relative flex h-[calc(100dvh-3.5rem)] min-h-0 overflow-hidden bg-[#f7f6f2] text-[#22211f] dark:bg-[#151412] dark:text-stone-100">
+        <div className="relative flex h-[calc(100dvh-3.5rem)] min-h-0 overflow-hidden bg-[#f7f6f2] text-[#22211f] dark:bg-[#151412] dark:text-stone-100" data-testid="product-detail-workbench">
             <ProjectRail projects={workspace.projects} skills={workspace.skills} activeProjectId={activeProject?.id} onSelect={(id) => { selectProject(id); setRightTab("brief"); setDetailOpen(false); }} onCreate={createProjectNow} onDelete={deleteProjectNow} onOpenSkills={() => setSkillOpen(true)} />
             {activeProject ? (
                 <>

@@ -5,7 +5,7 @@ import { resolveMediaUrl } from "@/services/file-storage";
 import { imageMetadata, referenceUrl } from "@/lib/canvas/canvas-node-factory";
 import { normalizeImageBackground, normalizeImageOutputFormat } from "@/lib/image-output-format";
 import { computeVideoSize, inferVideoRatio } from "@/lib/media-size";
-import { clampVideoSecondsForProfile, getVideoModelProfile, isVideoRatioSupported, isVideoResolutionSupported } from "@/lib/video-model-profile";
+import { clampVideoSecondsForProfile, getVideoModelProfile, isVideoRatioSupported, isVideoResolutionSupported, normalizeVideoModeValue, resolveVideoModeProfile } from "@/lib/video-model-profile";
 import type { NodeGenerationInput } from "@/components/canvas/canvas-node-generation";
 import type { CanvasNodeGenerationMode } from "@/components/canvas/canvas-node-prompt-panel";
 import type { CanvasImageAngleParams } from "@/components/canvas/canvas-node-angle-dialog";
@@ -167,10 +167,14 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
     const requestedVquality = node?.metadata?.vquality || config.vquality || defaultConfig.vquality;
     const requestedSeconds = node?.metadata?.seconds || config.videoSeconds || defaultConfig.videoSeconds;
     const videoProfile = mode === "video" ? getVideoModelProfile(modelOptionName(model), videoCapabilityOf(config, model)) : null;
+    const requestedVideoMode = node?.metadata?.videoMode || config.videoMode || defaultConfig.videoMode;
+    const normalizedVideoMode = videoProfile ? normalizeVideoModeValue(requestedVideoMode, videoProfile) : requestedVideoMode;
+    const videoMode = videoProfile && normalizedVideoMode === "auto" ? videoProfile.modes[0] || "text-to-video" : normalizedVideoMode;
+    const modeProfile = videoProfile ? resolveVideoModeProfile(videoProfile, videoMode) : null;
     const requestedRatio = inferVideoRatio(requestedSize);
-    const videoResolution = videoProfile && isVideoResolutionSupported(videoProfile, requestedVquality)
+    const videoResolution = modeProfile && isVideoResolutionSupported(modeProfile, requestedVquality)
         ? requestedVquality
-        : videoProfile?.resolutions[0] || requestedVquality;
+        : modeProfile?.resolutions[0] || requestedVquality;
     const videoRatio = videoProfile && isVideoRatioSupported(videoProfile, requestedRatio)
         ? requestedRatio
         : videoProfile?.aspectRatios[0] || requestedRatio;
@@ -182,11 +186,12 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
         size: videoProfile ? computeVideoSize(videoResolution, videoRatio) : requestedSize,
         background,
         outputFormat,
-        videoSeconds: videoProfile ? clampVideoSecondsForProfile(requestedSeconds, videoProfile) : requestedSeconds,
+        videoSeconds: modeProfile ? clampVideoSecondsForProfile(requestedSeconds, modeProfile) : requestedSeconds,
         vquality: videoProfile ? videoResolution : requestedVquality,
         videoGenerateAudio: node?.metadata?.generateAudio || config.videoGenerateAudio || defaultConfig.videoGenerateAudio,
         videoWatermark: node?.metadata?.watermark || config.videoWatermark || defaultConfig.videoWatermark,
-        videoMode: node?.metadata?.videoMode || config.videoMode || defaultConfig.videoMode,
+        videoMode,
+        videoParameters: node?.metadata?.videoParameters || config.videoParameters || defaultConfig.videoParameters,
         audioVoice: node?.metadata?.audioVoice || config.audioVoice || defaultConfig.audioVoice,
         audioFormat: node?.metadata?.audioFormat || config.audioFormat || defaultConfig.audioFormat,
         audioSpeed: node?.metadata?.audioSpeed || config.audioSpeed || defaultConfig.audioSpeed,

@@ -10,4 +10,6 @@ export type ReferenceImage = {
     height?: number;
     bytes?: number;
     requestDataUrlPrepared?: boolean;
+    /** Video-workbench usage chosen when the image was added. */
+    videoRole?: "reference" | "first_frame" | "last_frame" | "keyframe";
 };

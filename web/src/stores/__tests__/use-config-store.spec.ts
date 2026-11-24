@@ -20,6 +20,12 @@ function configWithManagedImageModel(): AiConfig {
     };
 }
 
+describe("video duration defaults", () => {
+    it("defaults to automatic duration", () => {
+        expect(defaultConfig.videoDurationAuto).toBe(true);
+    });
+});
+
 describe("managed model recovery", () => {
     it("moves a stale managed-channel model to the current channel", () => {
         const config = configWithManagedImageModel();
