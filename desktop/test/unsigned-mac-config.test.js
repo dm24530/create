@@ -33,6 +33,8 @@ test("macOS package includes the desktop web assets required to launch", () => {
   const extraResources = packageJson.build.extraResources || [];
   assert.ok(extraResources.some((item) => item.from === "../web/dist-desktop" && item.to === "web-dist"));
   assert.deepEqual(packageJson.build.mac.target, ["dmg", "zip"]);
+  assert.equal(packageJson.build.win.artifactName, "Create-Setup-${version}-win-${arch}.${ext}");
+  assert.equal(packageJson.build.mac.artifactName, "Create-${version}-mac-${arch}.${ext}");
   assert.match(workflow, /name: create-canvas-desktop-web/);
   assert.match(workflow, /path: web\/dist-desktop/);
   const main = readFileSync(path.resolve(__dirname, "../src/main.js"), "utf8");
