@@ -409,7 +409,7 @@ function LandingAction({ icon, title, description, onClick }: { icon: React.Reac
     );
 }
 
-function MessageRow({ message, isLatestAssistant, showGenerationConfirmation, busy, hasTextModel, allAssets, canRequestNextStep, onQuickReply, onRequestNextStep, onAction }: {
+export function MessageRow({ message, isLatestAssistant, showGenerationConfirmation, busy, hasTextModel, allAssets, canRequestNextStep, onQuickReply, onRequestNextStep, onAction }: {
     message: ProductDetailConversationMessage;
     isLatestAssistant: boolean;
     showGenerationConfirmation: boolean;
@@ -423,6 +423,16 @@ function MessageRow({ message, isLatestAssistant, showGenerationConfirmation, bu
 }) {
     const questionOptions = isLatestAssistant && !showGenerationConfirmation ? message.turn?.question?.options : undefined;
     const actions = isLatestAssistant ? message.turn?.actions : undefined;
+    const [selectedOptions, setSelectedOptions] = useState<string[]>([]);
+    useEffect(() => { setSelectedOptions([]); }, [message.id]);
+    const toggleOption = (option: string) => {
+        setSelectedOptions((current) => current.includes(option) ? current.filter((item) => item !== option) : [...current, option]);
+    };
+    const submitOptions = () => {
+        if (!selectedOptions.length) return;
+        onQuickReply(selectedOptions.join("；"));
+        setSelectedOptions([]);
+    };
 
     if (message.role === "user") {
         return (
@@ -455,12 +465,20 @@ function MessageRow({ message, isLatestAssistant, showGenerationConfirmation, bu
                     <div className="mt-3 text-xs font-medium text-stone-600 dark:text-stone-300">{message.turn.question.prompt}</div>
                 ) : null}
                 {questionOptions?.length ? (
-                    <div className="mt-3 flex flex-wrap gap-2">
-                        {questionOptions.map((option) => (
-                            <button key={option} type="button" disabled={busy || !hasTextModel} onClick={() => onQuickReply(option)} className="rounded-full border border-black/[0.09] bg-white/70 px-3 py-1.5 text-xs text-stone-600 transition hover:border-black/20 hover:bg-white hover:text-stone-950 disabled:cursor-not-allowed disabled:opacity-40 dark:border-white/10 dark:bg-white/[0.04] dark:text-stone-300 dark:hover:border-white/20 dark:hover:bg-white/[0.08] dark:hover:text-white">
-                                {option}
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                        {questionOptions.map((option) => {
+                            const selected = selectedOptions.includes(option);
+                            return (
+                                <button key={option} type="button" aria-pressed={selected} disabled={busy || !hasTextModel} onClick={() => toggleOption(option)} className={`rounded-full border px-3 py-1.5 text-xs transition disabled:cursor-not-allowed disabled:opacity-40 ${selected ? "border-stone-900 bg-stone-900 font-medium text-white dark:border-stone-100 dark:bg-stone-100 dark:text-stone-950" : "border-black/[0.09] bg-white/70 text-stone-600 hover:border-black/20 hover:bg-white hover:text-stone-950 dark:border-white/10 dark:bg-white/[0.04] dark:text-stone-300 dark:hover:border-white/20 dark:hover:bg-white/[0.08] dark:hover:text-white"}`}>
+                                    {selected ? "✓ " : ""}{option}
+                                </button>
+                            );
+                        })}
+                        {selectedOptions.length ? (
+                            <button type="button" disabled={busy || !hasTextModel} onClick={submitOptions} className="rounded-full border border-emerald-600 bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-40">
+                                发送选择
                             </button>
-                        ))}
+                        ) : null}
                     </div>
                 ) : null}
                 {actions?.length ? (

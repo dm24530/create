@@ -5,7 +5,7 @@ Independent Create application built from the pinned
 
 This source tree is intentionally separate from the existing Vue Web and
 `canvas-app/`. The upstream MIT license is retained at
-`../LICENSE.infinite-canvas`.
+`LICENSE.infinite-canvas`.
 
 ## Current Implementation
 
@@ -21,7 +21,7 @@ This source tree is intentionally separate from the existing Vue Web and
 ## One-Click Local Test
 
 ```powershell
-cd C:\项目\code\create\create-canvas-app
+cd C:\项目\code\create-app
 .\start-local.ps1
 ```
 
@@ -39,7 +39,7 @@ stops both background servers. Mock login accepts any email/password.
 ## Web Development
 
 ```powershell
-cd create-canvas-app/web
+cd web
 npm install --legacy-peer-deps
 npm run dev
 ```
@@ -53,15 +53,15 @@ The Vite development server proxies `/api` and `/v1` to
 npm run build
 ```
 
-Output: `create-canvas-app/web/dist`.
+Output: `web/dist`.
 
 ## Desktop Build
 
 ```powershell
-cd create-canvas-app/web
+cd web
 npm run build:desktop
 
-cd ../desktop
+cd ..\desktop
 npm install --legacy-peer-deps
 npm start
 ```
@@ -83,7 +83,7 @@ cors:
 ## Desktop Tests
 
 ```powershell
-cd create-canvas-app/desktop
+cd desktop
 npm run check
 npm run test:smoke
 ```

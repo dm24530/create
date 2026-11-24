@@ -32,7 +32,7 @@ export default function ProductDetailPage() {
     const config = useEffectiveConfig();
     const {
         workspace, load, createProject, selectProject, deleteProject, updateBrief, appendMessage,
-        setStoryboard, confirmStoryboard, addAsset, removeAsset, createSkill, updateSkill, saveProjectSkill, deleteSkill, toggleSkill, attachSkill, setProjectModel,
+        setStoryboard, confirmStoryboard, setProjectStatus, addAsset, removeAsset, createSkill, updateSkill, saveProjectSkill, deleteSkill, toggleSkill, attachSkill, setProjectModel,
     } = useProductDetailStore();
     const [skillOpen, setSkillOpen] = useState(false);
     const [prompt, setPrompt] = useState("");
@@ -253,6 +253,8 @@ export default function ProductDetailPage() {
         }
         const queue = project.storyboard.pages.filter((item) => !item.generatedAssetId && item.status !== "generating");
         if (!queue.length) {
+            const allReady = project.storyboard.pages.length > 0 && project.storyboard.pages.every((page) => Boolean(page.generatedAssetId));
+            if (allReady) setProjectStatus(activeProject.id, "review");
             if (manageProgress) message.info("当前没有需要生成的页面。");
             return { total: 0, success: 0, failed: 0 };
         }
@@ -271,6 +273,10 @@ export default function ProductDetailPage() {
                 }
             };
             await Promise.all([worker(), worker()]);
+            const latestProject = useProductDetailStore.getState().workspace.projects.find((item) => item.id === activeProject.id);
+            const latestPages = latestProject?.storyboard?.pages || [];
+            const allReady = latestPages.length > 0 && latestPages.every((page) => Boolean(page.generatedAssetId));
+            setProjectStatus(activeProject.id, allReady || success > 0 ? "review" : "failed");
             openWorkspace("results");
             if (!success && failed) message.warning(`本轮生成失败：${failed} 页。`);
             else if (failed) message.warning(`本轮生成完成：成功 ${success} 页，失败 ${failed} 页。`);
@@ -390,8 +396,9 @@ export default function ProductDetailPage() {
                 { ...config, model: textModelValue, textModel: textModelValue },
                 { brief: activeProject.brief, messages: activeProject.messages, skill: activeSkill, userMessage: text, attachments: visualAttachments, storyboard: includeStoryboard ? activeProject.storyboard : undefined },
             );
-            const nextBrief = turn.briefPatch ? mergeProductBrief(activeProject.brief, turn.briefPatch) : activeProject.brief;
             if (turn.briefPatch) updateBrief(activeProject.id, turn.briefPatch);
+            const committedProject = useProductDetailStore.getState().workspace.projects.find((item) => item.id === activeProject.id);
+            const nextBrief = committedProject?.brief || (turn.briefPatch ? mergeProductBrief(activeProject.brief, turn.briefPatch) : activeProject.brief);
             const ready = isProductBriefReady(nextBrief);
             const missing = ready ? [] : missingProductBriefFields(nextBrief);
             const normalizedTurn = {
