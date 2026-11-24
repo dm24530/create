@@ -4,7 +4,7 @@ import { Button, Dropdown, Input, Modal, Select, Spin, Tooltip } from "antd";
 import type { TextAreaRef } from "antd/es/input/TextArea";
 import { useTranslation } from "react-i18next";
 
-import { isProductBriefReady, missingProductBriefFields } from "@/lib/product-detail/brief";
+import { isProductBriefReady, questionAllowsMultiple, missingProductBriefFields } from "@/lib/product-detail/brief";
 import { imageFilesFromClipboardData } from "@/lib/product-detail/clipboard-images";
 import { DetailImagePreview } from "@/components/product-detail/detail-image-preview";
 import { formatDetailText } from "@/lib/product-detail/conversation";
@@ -421,12 +421,17 @@ export function MessageRow({ message, isLatestAssistant, showGenerationConfirmat
     onRequestNextStep: () => void;
     onAction: (action: ProductDetailAgentAction, message: ProductDetailConversationMessage) => void;
 }) {
-    const questionOptions = isLatestAssistant && !showGenerationConfirmation ? message.turn?.question?.options : undefined;
+    const question = isLatestAssistant && !showGenerationConfirmation ? message.turn?.question : undefined;
+    const questionOptions = question?.options;
     const actions = isLatestAssistant ? message.turn?.actions : undefined;
+    const multipleOptions = question ? questionAllowsMultiple(question) : false;
     const [selectedOptions, setSelectedOptions] = useState<string[]>([]);
-    useEffect(() => { setSelectedOptions([]); }, [message.id]);
+    useEffect(() => { setSelectedOptions([]); }, [message.id, question?.prompt, questionOptions?.join("\u0000")]);
     const toggleOption = (option: string) => {
-        setSelectedOptions((current) => current.includes(option) ? current.filter((item) => item !== option) : [...current, option]);
+        setSelectedOptions((current) => {
+            if (!multipleOptions) return [option];
+            return current.includes(option) ? current.filter((item) => item !== option) : [...current, option];
+        });
     };
     const submitOptions = () => {
         if (!selectedOptions.length) return;

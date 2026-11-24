@@ -3,9 +3,14 @@ import { getPluginRuntime } from "@/lib/canvas/plugin-runtime";
 import { usePluginStore, type InstalledPlugin } from "@/stores/canvas/use-plugin-store";
 import type { CanvasPlugin } from "@/types/canvas-plugin";
 import { publicAsset } from "@/lib/managed-mode";
+import { isCreateProductMode } from "@/lib/create-product";
 import i18n from "@/i18n";
 
 const cleanups = new Map<string, () => void>();
+
+export function isPluginAllowedForMode(record: Pick<InstalledPlugin, "local">, createProductMode = isCreateProductMode()) {
+    return !createProductMode || record.local === true;
+}
 
 // A remote plugin may export CanvasPlugin directly or a factory that receives runtime and returns CanvasPlugin.
 // The factory uses runtime.React so the bundle does not need its own React copy.
@@ -98,7 +103,7 @@ export async function ensurePluginsLoaded() {
     loaded = true;
     await usePluginStore.persist.rehydrate();
     await loadLocalPlugins(); // Discover disabled local plugins first, then activate all enabled records.
-    const records = usePluginStore.getState().plugins.filter((record) => record.enabled);
+    const records = usePluginStore.getState().plugins.filter((record) => record.enabled && isPluginAllowedForMode(record));
     await Promise.all(
         records.map(async (record) => {
             try {
@@ -152,6 +157,7 @@ async function loadLocalPlugins() {
 // During local development, refetch VITE_DEV_PLUGINS URLs without caching or persistence on every startup.
 // Together with watch builds, refreshing the page loads code changes without reinstalling the plugin.
 async function loadDevPlugins() {
+    if (isCreateProductMode()) return;
     const raw = import.meta.env.VITE_DEV_PLUGINS;
     if (!raw) return;
     const urls = raw.split(",").map((item) => item.trim()).filter(Boolean);

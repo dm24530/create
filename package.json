@@ -10,7 +10,9 @@
     "test": "npm --prefix web test && npm --prefix desktop run check",
     "build": "npm --prefix web run build:desktop",
     "build:desktop": "npm --prefix web run build:desktop",
-    "pack:local": "npm --prefix desktop run dist:dir:local"
+    "pack:local": "npm --prefix desktop run dist:dir:local",
+    "version:sync": "node scripts/sync-version-from-web.mjs",
+    "version:check": "node scripts/check-app-version.mjs"
   },
   "engines": {
     "node": ">=24"

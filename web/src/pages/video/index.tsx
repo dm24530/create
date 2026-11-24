@@ -21,6 +21,7 @@ import { deleteStoredMedia, getMediaBlob, resolveMediaUrl, setMediaBlob, uploadM
 import { resolveImageUrl, ensureImagePreview, getImagePreviewRevision, previewUrlFor, subscribeImagePreviews, uploadImage } from "@/services/image-storage";
 import { createVideoGenerationTask, isRetryableVideoPollingError, pollVideoGenerationTask, storeGeneratedVideo, type VideoGenerationTask, type VideoGenerationTaskState } from "@/services/api/video";
 import { createUserWorkbenchLogStore } from "@/services/workbench-log-storage";
+import { buildVideoConfig, buildVideoLog as buildLog, normalizeVideoResolution as normalizeResolution, readVideoLogs, recoverVideoFromLocalFile, serializeVideoLog as serializeLog } from "@/lib/workbench/video-log";
 import { configureCreateWorkspace, getManagedKeySelection, listCreateManagedKeys, managedKeySupportsVideo, switchManagedKey, type CreateManagedKey } from "@/services/create-managed-channel";
 import { WorkbenchModelSelect } from "@/components/workbench/model-select";
 import { PanelResizeHandle, useStoredPanelWidth } from "@/components/workbench/panel-resize-handle";
@@ -30,68 +31,8 @@ import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
 import { boolConfig, encodeChannelModel, modelOptionName, useConfigStore, useEffectiveConfig, videoCapabilityOf, type AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
+import type { GeneratedVideo, VideoGenerationLog as GenerationLog, VideoGenerationLogConfig as GenerationLogConfig, VideoGenerationResult as GenerationResult, VideoRequestSnapshot } from "@/types/workbench";
 import i18n from "@/i18n";
-
-type GeneratedVideo = {
-    id: string;
-    url: string;
-    storageKey: string;
-    durationMs: number;
-    width: number;
-    height: number;
-    bytes: number;
-    mimeType: string;
-    localPath?: string;
-    prompt?: string;
-    model?: string;
-};
-
-type VideoRequestSnapshot = {
-    text: string;
-    model: string;
-    config: AiConfig;
-    references: ReferenceImage[];
-    referenceVideos: ReferenceVideo[];
-    referenceAudios: ReferenceAudio[];
-};
-
-type GenerationResult = {
-    id: string;
-    logId?: string;
-    status: "pending" | "success" | "failed";
-    video?: GeneratedVideo;
-    error?: string;
-    prompt?: string;
-    model?: string;
-    config?: AiConfig;
-    references?: ReferenceImage[];
-    referenceVideos?: ReferenceVideo[];
-    referenceAudios?: ReferenceAudio[];
-};
-
-type GenerationLog = {
-    id: string;
-    userId?: number;
-    createdAt: number;
-    title: string;
-    prompt: string;
-    time: string;
-    model: string;
-    config: GenerationLogConfig;
-    references: ReferenceImage[];
-    referenceVideos: ReferenceVideo[];
-    referenceAudios: ReferenceAudio[];
-    durationMs: number;
-    size: string;
-    resolution: string;
-    seconds: string;
-    status: "pending" | "success" | "failed";
-    task?: VideoGenerationTask;
-    video?: GeneratedVideo;
-    error?: string;
-};
-
-type GenerationLogConfig = Pick<AiConfig, "model" | "videoModel" | "size" | "vquality" | "videoSeconds" | "videoDurationAuto" | "videoGenerateAudio" | "videoWatermark" | "videoMode">;
 
 const LOG_STORE_KEY = "infinite-canvas:video_generation_logs";
 const MAX_REFERENCE_IMAGES = 9;
@@ -690,7 +631,7 @@ export default function VideoPage() {
     };
 
     const refreshLogs = async (resumePending = true) => {
-        const nextLogs = await readStoredLogs();
+        const nextLogs = await readVideoLogs(logStore, ensureLogStoreMigrated);
         setLogs(nextLogs);
         if (resumePending) resumePendingLogs(nextLogs);
         return nextLogs;
@@ -1559,155 +1500,6 @@ function LogCard({ log, selected, active, onSelectedChange, onClick }: { log: Ge
     );
 }
 
-async function readStoredLogs() {
-    if (typeof window === "undefined") return [];
-    try {
-        await ensureLogStoreMigrated();
-        const logs: GenerationLog[] = [];
-        await logStore.iterate<GenerationLog, void>((value) => {
-            logs.push(value);
-        });
-        const normalized = await Promise.all(logs.map(async (stored) => {
-            const log = await normalizeLog(stored);
-            if (log.video && (log.video.storageKey !== stored.video?.storageKey || log.video.localPath !== stored.video?.localPath)) {
-                await logStore.setItem(log.id, serializeLog(log)).catch(() => undefined);
-            }
-            return log;
-        }));
-        return normalized.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-    } catch {
-        return [];
-    }
-}
-
-async function normalizeLog(log: Partial<GenerationLog>): Promise<GenerationLog> {
-    const video = await resolveStoredVideoForDisplay(log.video);
-    const storedReferences = Array.isArray(log.references) ? log.references : [];
-    const storedReferenceVideos = Array.isArray(log.referenceVideos) ? log.referenceVideos : [];
-    const storedReferenceAudios = Array.isArray(log.referenceAudios) ? log.referenceAudios : [];
-    const references = await Promise.all(
-        storedReferences.map(async (item) => {
-            void ensureImagePreview(item.storageKey);
-            try {
-                return { ...item, dataUrl: await resolveImageUrl(item.storageKey, item.dataUrl) };
-            } catch {
-                return item;
-            }
-        }),
-    );
-    const referenceVideos = await Promise.all(storedReferenceVideos.map(async (item) => {
-        try {
-            return { ...item, url: await resolveMediaUrl(item.storageKey, item.url) };
-        } catch {
-            return item;
-        }
-    }));
-    const referenceAudios = await Promise.all(storedReferenceAudios.map(async (item) => {
-        try {
-            return { ...item, url: await resolveMediaUrl(item.storageKey, item.url) };
-        } catch {
-            return item;
-        }
-    }));
-    const config = normalizeLogConfig(log);
-    return {
-        id: log.id || nanoid(),
-        userId: log.userId || Number(useUserStore.getState().user?.id) || undefined,
-        createdAt: log.createdAt || Date.now(),
-        title: log.title || log.model || i18n.t("workbench.untitled"),
-        prompt: log.prompt || "",
-        time: log.time || new Date().toLocaleString(i18n.resolvedLanguage, { hour12: false }),
-        model: log.model || config.videoModel || "",
-        config,
-        references,
-        referenceVideos,
-        referenceAudios,
-        durationMs: log.durationMs || 0,
-        size: log.size || config.size || "",
-        resolution: normalizeResolution(log.resolution || config.vquality || ""),
-        seconds: log.seconds || config.videoSeconds || "",
-        status: log.status || "success",
-        task: log.task,
-        video,
-        error: log.error,
-    };
-}
-
-async function recoverVideoFromLocalFile(video: GeneratedVideo): Promise<GeneratedVideo | null> {
-    try {
-        const recovered = await readGeneratedFileAsset({
-            kind: "video",
-            path: video.localPath,
-            filename: video.localPath?.split(/[\\/]/).pop() || undefined,
-            size: video.bytes,
-            mimeType: video.mimeType,
-        });
-        if (!recovered?.blob.size) return null;
-        const storageKey = video.storageKey?.trim() || `video:${nanoid()}`;
-        let url = "";
-        try {
-            url = await setMediaBlob(storageKey, recovered.blob);
-        } catch {
-            url = URL.createObjectURL(recovered.blob);
-        }
-        return {
-            ...video,
-            storageKey,
-            localPath: recovered.savePath || video.localPath || "",
-            url,
-            bytes: recovered.blob.size,
-            mimeType: recovered.blob.type || video.mimeType || "video/mp4",
-        };
-    } catch {
-        return null;
-    }
-}
-async function resolveStoredVideoForDisplay(video?: GeneratedVideo): Promise<GeneratedVideo | undefined> {
-    if (!video) return undefined;
-    let localPath = video.localPath?.trim() || "";
-    let url = "";
-    if (video.storageKey) {
-        url = await resolveMediaUrl(video.storageKey, "").catch(() => "");
-    }
-    if (!localPath) {
-        const savedFile = await readGeneratedFileAsset({
-            kind: "video",
-            size: video.bytes,
-            mimeType: video.mimeType,
-        }).catch(() => null);
-        if (savedFile?.blob.size) {
-            localPath = savedFile.savePath;
-            if (!url) {
-                const storageKey = video.storageKey || `video:${nanoid()}`;
-                url = await setMediaBlob(storageKey, savedFile.blob).catch(() => URL.createObjectURL(savedFile.blob));
-                if (!video.storageKey) video = { ...video, storageKey };
-            }
-        }
-    }
-    if (url && !localPath && video.storageKey) {
-        const blob = await getMediaBlob(video.storageKey).catch(() => null);
-        if (blob?.size) {
-            const saved = await autoSaveGeneratedFile(blob, "video", video.mimeType || blob.type || "video/mp4").catch(() => null);
-            localPath = saved?.savePath || "";
-        }
-    }
-    if (!url) {
-        const recovered = await recoverVideoFromLocalFile({ ...video, localPath });
-        if (recovered) return recovered;
-    }
-    const durableFallback = video.url && !video.url.startsWith("blob:") ? video.url : "";
-    return { ...video, ...(localPath ? { localPath } : {}), url: url || durableFallback };
-}
-function serializeLog(log: GenerationLog): GenerationLog {
-    return {
-        ...log,
-        references: log.references.map((item) => ({ ...item, dataUrl: item.storageKey ? "" : item.dataUrl })),
-        referenceVideos: log.referenceVideos.map((item) => ({ ...item, url: item.storageKey ? "" : item.url })),
-        referenceAudios: log.referenceAudios.map((item) => ({ ...item, url: item.storageKey ? "" : item.url })),
-        video: log.video?.storageKey ? { ...log.video, url: "" } : log.video,
-    };
-}
-
 function moveListItem<T>(items: T[], index: number, offset: number) {
     const targetIndex = index + offset;
     if (targetIndex < 0 || targetIndex >= items.length) return items;
@@ -1724,101 +1516,6 @@ function ReferenceOrderButtons({ index, total, onMove }: { index: number; total:
             <Button size="small" className="!h-6 !w-6 !min-w-6 !rounded-full !bg-white/85 !p-0 !shadow-sm" icon={<ArrowRight className="size-3" />} disabled={index >= total - 1} onClick={() => onMove(1)} />
         </div>
     );
-}
-
-function normalizeLogConfig(log: Partial<GenerationLog>): GenerationLogConfig {
-    return {
-        model: log.config?.model || log.model || "",
-        videoModel: log.config?.videoModel || log.model || "",
-        size: log.config?.size || log.size || "",
-        vquality: normalizeResolution(log.config?.vquality || log.resolution || ""),
-        videoSeconds: log.config?.videoSeconds || log.seconds || "",
-        videoGenerateAudio: log.config?.videoGenerateAudio || "true",
-        videoWatermark: log.config?.videoWatermark || "false",
-        videoMode: log.config?.videoMode === "reference" ? "reference" : "frames",
-    };
-}
-
-function buildLog({
-    id,
-    prompt,
-    model,
-    config,
-    references,
-    referenceVideos,
-    referenceAudios,
-    durationMs,
-    status,
-    task,
-    video,
-    error,
-}: {
-    id?: string;
-    prompt: string;
-    model: string;
-    config: AiConfig;
-    references: ReferenceImage[];
-    referenceVideos: ReferenceVideo[];
-    referenceAudios: ReferenceAudio[];
-    durationMs: number;
-    status: GenerationLog["status"];
-    task?: VideoGenerationTask;
-    video?: GeneratedVideo;
-    error?: string;
-}): GenerationLog {
-    const logConfig = {
-        model: config.model,
-        videoModel: config.videoModel,
-        size: config.size,
-        vquality: normalizeResolution(config.vquality),
-        videoSeconds: config.videoSeconds,
-        videoGenerateAudio: config.videoGenerateAudio,
-        videoWatermark: config.videoWatermark,
-        videoMode: config.videoMode === "reference" ? "reference" : "frames",
-    };
-    return {
-        id: id || nanoid(),
-        createdAt: Date.now(),
-        title: prompt.slice(0, 12) || i18n.t("workbench.untitled"),
-        prompt,
-        time: new Date().toLocaleString(i18n.resolvedLanguage, { hour12: false }),
-        model,
-        config: logConfig,
-        references,
-        referenceVideos,
-        referenceAudios,
-        durationMs,
-        size: logConfig.size,
-        resolution: logConfig.vquality,
-        seconds: logConfig.videoSeconds,
-        status,
-        task,
-        video,
-        error,
-    };
-}
-
-function buildVideoConfig(config: AiConfig, model: string): AiConfig {
-    const profile = getVideoModelProfile(modelOptionName(model), videoCapabilityOf(config, model));
-    const requestedResolution = normalizeResolution(config.vquality);
-    const resolution = isVideoResolutionSupported(profile, requestedResolution) ? requestedResolution : profile.resolutions[0] || "720";
-    const requestedRatio = inferVideoRatio(config.size);
-    const ratio = isVideoRatioSupported(profile, requestedRatio) ? requestedRatio : profile.aspectRatios[0] || "16:9";
-    return {
-        ...config,
-        model,
-        videoModel: model,
-        size: computeVideoSize(resolution, ratio),
-        videoSeconds: clampVideoSecondsForProfile(config.videoSeconds, profile),
-        vquality: resolution,
-        videoGenerateAudio: supportsVideoGenerateAudioToggle(profile) ? String(boolConfig(config.videoGenerateAudio, true)) : "false",
-        videoWatermark: String(boolConfig(config.videoWatermark, false)),
-        videoMode: config.videoMode === "reference" ? "reference" : "frames",
-    };
-}
-
-function normalizeResolution(value: string) {
-    return normalizeVideoResolutionValue(value);
 }
 
 function delay(ms: number) {

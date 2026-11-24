@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { createEmptyBrief } from "@/lib/product-detail/brief";
 import { createEmptySkill } from "@/lib/product-detail/defaults";
-import { BRIEF_CHANGED_STORYBOARD_WARNING, createFallbackStoryboard, ensureStoryboardVisualPrompts, isStoryboardStale, isStoryboardUsable, keepStoryboardForEditing, normalizeStoryboard, reorderStoryboard, updateStoryboardPage } from "@/lib/product-detail/storyboard";
+import { BRIEF_CHANGED_STORYBOARD_WARNING, createFallbackStoryboard, ensureStoryboardVisualPrompts, isStoryboardStale, isStoryboardUsable, keepStoryboardForEditing, normalizeStoryboard, reorderStoryboard, resolveStoryboardGenerationStatus, updateStoryboardPage } from "@/lib/product-detail/storyboard";
 
 const brief = {
     ...createEmptyBrief("taobao"),
@@ -156,6 +156,20 @@ describe("product detail storyboard", () => {
         }, briefWithAssets, createEmptySkill(1));
 
         expect(normalized.pages.every((page) => page.referenceAssetIds.includes("product-1") && page.referenceAssetIds.includes("reference-1"))).toBe(true);
+    });
+
+    it("marks generation review only when every page has an output", () => {
+        const storyboard = createFallbackStoryboard(brief, createEmptySkill(1));
+        const ready = storyboard.pages.map((page, index) => ({
+            ...page,
+            status: "ready" as const,
+            generatedAssetId: `asset-${index + 1}`,
+        }));
+        const partial = ready.map((page, index) => index === 1 ? { ...page, status: "failed" as const, generatedAssetId: undefined } : page);
+
+        expect(resolveStoryboardGenerationStatus(ready)).toBe("review");
+        expect(resolveStoryboardGenerationStatus(partial)).toBe("failed");
+        expect(resolveStoryboardGenerationStatus([])).toBe("failed");
     });
 
     it("injects learned category guidance into visual prompts", () => {

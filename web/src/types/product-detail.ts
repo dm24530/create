@@ -113,6 +113,7 @@ export type ProductDetailAssistantTurn = {
         field: keyof ProductBrief;
         prompt: string;
         options?: string[];
+        multiple?: boolean;
     };
     readyToPlan: boolean;
     assumptions: string[];

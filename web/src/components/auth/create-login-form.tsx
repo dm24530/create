@@ -30,7 +30,7 @@ export function CreateLoginForm({ onAuthenticated }: { onAuthenticated: (session
     };
 
     return (
-        <main className="create-login-shell">
+        <main className="create-login-shell" data-testid="create-login-form">
             <aside className="create-login-visual" aria-hidden="true">
                 <div className="create-login-visual-image" />
                 <div className="create-login-visual-shade" />

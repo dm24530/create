@@ -13,7 +13,7 @@ import { RenderPreview } from "@/components/product-detail/render-preview";
 import { isProductBriefReady, mergeProductBrief, missingProductBriefFields } from "@/lib/product-detail/brief";
 import { PRODUCT_DETAIL_PLATFORM_PROFILES } from "@/lib/product-detail/defaults";
 import { classifyProductDetailGenerationIntent } from "@/lib/product-detail/intent";
-import { isStoryboardStale, keepStoryboardForEditing, normalizeStoryboard, reorderStoryboard, updateStoryboardPage } from "@/lib/product-detail/storyboard";
+import { isStoryboardStale, keepStoryboardForEditing, normalizeStoryboard, reorderStoryboard, resolveStoryboardGenerationStatus, updateStoryboardPage } from "@/lib/product-detail/storyboard";
 import { buildSkillCandidate, findBestSkill } from "@/lib/product-detail/skills";
 import { resolveProductDetailImageModel, resolveProductDetailTextModel } from "@/lib/product-detail/models";
 import { hasProductImageReference } from "@/lib/product-detail/reference-selection";
@@ -276,7 +276,7 @@ export default function ProductDetailPage() {
             const latestProject = useProductDetailStore.getState().workspace.projects.find((item) => item.id === activeProject.id);
             const latestPages = latestProject?.storyboard?.pages || [];
             const allReady = latestPages.length > 0 && latestPages.every((page) => Boolean(page.generatedAssetId));
-            setProjectStatus(activeProject.id, allReady || success > 0 ? "review" : "failed");
+            setProjectStatus(activeProject.id, resolveStoryboardGenerationStatus(latestPages));
             openWorkspace("results");
             if (!success && failed) message.warning(`本轮生成失败：${failed} 页。`);
             else if (failed) message.warning(`本轮生成完成：成功 ${success} 页，失败 ${failed} 页。`);

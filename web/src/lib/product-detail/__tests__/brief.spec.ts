@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { createEmptyBrief, isProductBriefReady, mergeProductBrief, missingProductBriefFields, sanitizeProductBriefPatch } from "@/lib/product-detail/brief";
+import { createEmptyBrief, isProductBriefReady, mergeProductBrief, missingProductBriefFields, questionAllowsMultiple, sanitizeProductBriefPatch } from "@/lib/product-detail/brief";
 
 describe("product detail brief", () => {
     it("keeps confirmed facts and increments revision when a patch is merged", () => {
@@ -52,5 +52,12 @@ describe("product detail brief", () => {
     it("accepts string selling points returned by the model", () => {
         const patch = sanitizeProductBriefPatch({ sellingPoints: ["便携外出"] });
         expect(patch?.sellingPoints).toEqual([{ id: "fact-1", text: "便携外出", source: "user" }]);
+    });
+
+    it("distinguishes single-value and multi-value quick replies", () => {
+        expect(questionAllowsMultiple({ field: "platform" })).toBe(false);
+        expect(questionAllowsMultiple({ field: "scenarios" })).toBe(true);
+        expect(questionAllowsMultiple({ field: "platform", multiple: true })).toBe(true);
+        expect(questionAllowsMultiple({ field: "scenarios", multiple: false })).toBe(false);
     });
 });

@@ -49,6 +49,9 @@ jobs:
           path: create-canvas-version-sync.log
           if-no-files-found: ignore
 
+      - name: Verify version consistency
+        run: npm run version:check
+
       - name: Install Web dependencies
         working-directory: web
         run: npm install --legacy-peer-deps --no-audit --no-fund
@@ -105,6 +108,9 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/create-canvas-v')
         run: node scripts/sync-version-from-web.mjs
 
+      - name: Verify version consistency
+        run: npm run version:check
+
       - name: Restore Desktop Web assets
         uses: actions/download-artifact@v4
         with:
@@ -114,6 +120,11 @@ jobs:
       - name: Install Desktop dependencies
         working-directory: desktop
         run: npm install --legacy-peer-deps --no-audit --no-fund
+
+      - name: Verify Desktop startup
+        if: matrix.arch == 'x64'
+        working-directory: desktop
+        run: npm run test:smoke
 
       - name: Verify Desktop shell
         working-directory: desktop
@@ -233,6 +244,9 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/create-canvas-v')
         run: node scripts/sync-version-from-web.mjs
 
+      - name: Verify version consistency
+        run: npm run version:check
+
       - name: Check macOS signing credentials
         if: startsWith(github.ref, 'refs/tags/create-canvas-v')
         shell: bash
@@ -311,6 +325,11 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
             exit "$status"
           fi
+
+      - name: Verify Desktop startup
+        if: matrix.arch == 'arm64'
+        working-directory: desktop
+        run: npm run test:smoke
 
       - name: Package macOS ${{ matrix.arch }}
         working-directory: desktop

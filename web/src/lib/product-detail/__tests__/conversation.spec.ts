@@ -14,13 +14,14 @@ describe("product detail conversation", () => {
     it("parses agent actions and quick-reply questions", () => {
         const turn = parseProductDetailAssistantTurn(JSON.stringify({
             message: "请选择目标平台",
-            question: { field: "platform", prompt: "投放到哪个平台？", options: ["淘宝", "京东"] },
+            question: { field: "platform", prompt: "投放到哪个平台？", options: ["淘宝", "京东"], multiple: false },
             actions: [{ type: "plan_storyboard", label: "生成分镜" }],
             readyToPlan: true,
             assumptions: [],
             risks: [],
         }));
         expect(turn.question?.options).toEqual(["淘宝", "京东"]);
+        expect(turn.question?.multiple).toBe(false);
         expect(turn.actions).toEqual([{ type: "plan_storyboard", label: "生成分镜" }]);
     });
     it("returns a safe retry message for malformed output", () => {
@@ -83,6 +84,7 @@ describe("product detail conversation", () => {
         expect(welcome.createdAt).toBe(123);
         expect(welcome.turn?.question?.field).toBe("platform");
         expect(welcome.turn?.question?.options).toEqual(["淘宝/天猫", "京东", "拼多多"]);
+        expect(welcome.turn?.question?.multiple).toBe(false);
         expect(welcome.content).toContain("商品图");
     });
 

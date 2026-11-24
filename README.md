@@ -97,5 +97,7 @@ Create login screen renders through the `app://create` protocol.
 - Desktop refresh-token storage currently uses the persistent Electron profile,
   not Windows DPAPI or macOS Keychain.
 - The first milestone intentionally keeps upstream UI and IndexedDB persistence.
+- Managed product mode allows only bundled canvas plugins; third-party and
+  remote plugin execution is disabled.
 - Real account login and generation require the configured Create server and
   database-backed test credentials.

@@ -88,6 +88,18 @@ function send(response, status, payload) {
   response.end(JSON.stringify(payload));
 }
 
+function sendVideo(response) {
+  const payload = Buffer.from("mock-video-bytes");
+  response.writeHead(200, {
+    "Content-Type": "video/mp4",
+    "Content-Length": payload.length,
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Headers": "Authorization, Content-Type, Accept, Accept-Language",
+    "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+  });
+  response.end(payload);
+}
+
 const server = http.createServer(async (request, response) => {
   const url = new URL(request.url, `http://${request.headers.host}`);
   const path = url.pathname;
@@ -195,6 +207,15 @@ const server = http.createServer(async (request, response) => {
   }
   if (path === "/v1/images/generations" && method === "POST") {
     return send(response, 200, { created: Math.floor(Date.now() / 1000), data: [{ url: `data:image/png;base64,${png}` }] });
+  }
+  if (path === "/v1/video/generations" && method === "POST") {
+    return send(response, 200, { code: 0, data: { id: "mock-video-task", status: "queued" } });
+  }
+  if (path === "/v1/videos/mock-video-task" && method === "GET") {
+    return send(response, 200, { code: 0, data: { id: "mock-video-task", status: "completed" } });
+  }
+  if (path === "/v1/videos/mock-video-task/content" && method === "GET") {
+    return sendVideo(response);
   }
 
   if (path === "/api/v1/canvas/projects" && method === "GET") {

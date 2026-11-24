@@ -21,6 +21,7 @@ import { requestEdit, requestGeneration, submitPersistentImageTask, waitForPersi
 import { deleteStoredImages, ensureImagePreview, getImageBlob, getImagePreviewRevision, prepareReferenceImagesForRequest, previewUrlFor, resolveImageUrl, setImageBlob, subscribeImagePreviews, uploadImage } from "@/services/image-storage";
 import { saveClientRequestTiming } from "@/services/client-request-timing";
 import { createUserWorkbenchLogStore } from "@/services/workbench-log-storage";
+import { buildImageLog as buildLog, pruneImageLogs, readImageLogs, resolveStoredLogImage, serializeImageLog as serializeLog } from "@/lib/workbench/image-log";
 import { configureCreateWorkspace, getManagedKeySelection, listCreateManagedKeys, managedKeySupportsImage, switchManagedKey, type CreateManagedKey } from "@/services/create-managed-channel";
 import { WorkbenchModelSelect } from "@/components/workbench/model-select";
 import { PanelResizeHandle, useStoredPanelWidth } from "@/components/workbench/panel-resize-handle";
@@ -28,65 +29,10 @@ import { useAssetStore } from "@/stores/use-asset-store";
 import { useUserStore } from "@/stores/use-user-store";
 import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
 import type { ReferenceImage } from "@/types/image";
+import type { GeneratedImage, ImageGenerationLog as GenerationLog, ImageGenerationLogConfig as GenerationLogConfig, ImageGenerationResult as GenerationResult } from "@/types/workbench";
 import i18n from "@/i18n";
 
-type GeneratedImage = {
-    id: string;
-    dataUrl: string;
-    storageKey?: string;
-    durationMs: number;
-    width: number;
-    height: number;
-    bytes: number;
-    mimeType?: string;
-    localPath?: string;
-    prompt?: string;
-    model?: string;
-    prepareDurationMs?: number;
-    generationDurationMs?: number;
-};
-
-type GenerationResult = {
-    id: string;
-    logId?: string;
-    status: "pending" | "success" | "failed";
-    image?: GeneratedImage;
-    error?: string;
-    prompt?: string;
-    model?: string;
-    config?: AiConfig;
-    references?: ReferenceImage[];
-    phase?: "compressing" | "generating";
-    phaseStartedAt?: number;
-    prepareDurationMs?: number;
-    clientRequestId?: string;
-};
-
-type GenerationLog = {
-    id: string;
-    userId?: number;
-    createdAt: number;
-    title: string;
-    prompt: string;
-    time: string;
-    model: string;
-    config: GenerationLogConfig;
-    references: ReferenceImage[];
-    durationMs: number;
-    successCount: number;
-    failCount: number;
-    imageCount: number;
-    size: string;
-    quality: string;
-    status: "success" | "failed";
-    images: GeneratedImage[];
-    error?: string;
-};
-
-type GenerationLogConfig = Pick<AiConfig, "model" | "imageModel" | "quality" | "size" | "count">;
-
 const LOG_STORE_KEY = "infinite-canvas:image_generation_logs";
-const MAX_WORKBENCH_LOGS = 100;
 const MAX_IMAGE_REFERENCES = 14;
 const RESULT_ACTION_BUTTON_CLASS = "min-w-0 px-1.5 [&_.ant-btn-icon]:shrink-0 [&>span:last-child]:min-w-0 [&>span:last-child]:truncate";
 const { store: logStore, ensureMigrated: ensureLogStoreMigrated } = createUserWorkbenchLogStore("image_generation_logs");
@@ -257,7 +203,7 @@ export default function ImagePage() {
 
     useEffect(() => {
         void (async () => {
-            const pruned = await pruneStoredLogs();
+            const pruned = await pruneImageLogs(logStore, ensureLogStoreMigrated);
             await refreshLogs();
             if (pruned) cleanupAssets();
         })();
@@ -587,13 +533,13 @@ export default function ImagePage() {
         const userId = Number(useUserStore.getState().user?.id);
         const ownedLog = userId > 0 ? { ...log, userId } : log;
         void logStore.setItem(ownedLog.id, serializeLog(ownedLog)).then(async () => {
-            const pruned = await pruneStoredLogs();
+            const pruned = await pruneImageLogs(logStore, ensureLogStoreMigrated);
             await refreshLogs();
             if (pruned) cleanupAssets();
         });
     };
 
-    const refreshLogs = async () => setLogs(await readStoredLogs());
+    const refreshLogs = async () => setLogs(await readImageLogs(logStore, ensureLogStoreMigrated));
 
     const previewGenerationLog = async (log: GenerationLog) => {
         setPreviewLog(log);
@@ -831,7 +777,7 @@ export default function ImagePage() {
     }
 
     return (
-        <div className="flex h-full flex-col overflow-hidden bg-stone-50 text-stone-900 dark:bg-stone-950 dark:text-stone-100">
+        <div className="flex h-full flex-col overflow-hidden bg-stone-50 text-stone-900 dark:bg-stone-950 dark:text-stone-100" data-testid="image-workbench">
             <main className="grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-y-auto p-3 lg:overflow-hidden" style={layoutStyle}>
                 <section className="workbench-split-grid grid gap-3 lg:min-h-0 lg:overflow-hidden">
                     <div ref={workbenchPanelRef} className="thin-scrollbar flex min-w-0 flex-col rounded-xl border border-stone-200 bg-card p-4 shadow-sm dark:border-stone-800 lg:min-h-0 lg:overflow-y-auto [&>*]:shrink-0">
@@ -1576,143 +1522,6 @@ function LogCard({ log, selected, active, onSelectedChange, onClick }: { log: Ge
     );
 }
 
-async function readStoredLogs() {
-    if (typeof window === "undefined") return [];
-    try {
-        await ensureLogStoreMigrated();
-        const values: GenerationLog[] = [];
-        await logStore.iterate<GenerationLog, void>((value) => {
-            values.push(value);
-        });
-        const logs = await Promise.all(values.map(async (stored) => {
-            const log = await normalizeLog(stored);
-            const changed = log.images.some((image, index) => {
-                const previous = stored.images?.[index];
-                return image.storageKey !== previous?.storageKey || image.localPath !== previous?.localPath;
-            });
-            if (changed) {
-                await logStore.setItem(log.id, serializeLog(log)).catch(() => undefined);
-            }
-            return log;
-        }));
-        return logs.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-    } catch {
-        return [];
-    }
-}
-
-async function pruneStoredLogs() {
-    await ensureLogStoreMigrated();
-    const logs: GenerationLog[] = [];
-    await logStore.iterate<GenerationLog, void>((value) => {
-        if (value && typeof value === "object") logs.push(value);
-    });
-    if (logs.length <= MAX_WORKBENCH_LOGS) return false;
-    const removable = logs.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0)).slice(0, logs.length - MAX_WORKBENCH_LOGS);
-    if (!removable.length) return false;
-    await Promise.all(removable.map((log) => logStore.removeItem(log.id)));
-    return true;
-}
-
-async function resolveStoredLogImage(image: GeneratedImage): Promise<GeneratedImage> {
-    let storageKey = image.storageKey?.trim() || "";
-    let localPath = image.localPath?.trim() || "";
-    let blob = storageKey ? await getImageBlob(storageKey).catch(() => null) : null;
-
-    if (!blob || !localPath) {
-        const recovered = await readGeneratedFileAsset({
-            kind: "image",
-            path: localPath,
-            filename: localPath.split(/[\\/]/).pop() || undefined,
-            size: image.bytes,
-            mimeType: image.mimeType,
-        }).catch(() => null);
-        if (recovered?.blob.size) {
-            blob = recovered.blob;
-            localPath = recovered.savePath || localPath;
-        }
-    }
-
-    if (!blob && image.dataUrl && !image.dataUrl.startsWith("blob:")) {
-        blob = await resolveGeneratedImageBlob({ dataUrl: image.dataUrl }).catch(() => null);
-    }
-    if (blob?.size && !localPath) {
-        const saved = await autoSaveGeneratedFile(blob, "image", image.mimeType || blob.type || "image/png").catch(() => null);
-        localPath = saved?.savePath || "";
-    }
-    if (blob && !storageKey) storageKey = `image:${nanoid()}`;    if (blob && storageKey) {
-        await setImageBlob(storageKey, blob).catch(() => undefined);
-    }
-    if (storageKey) {
-        void ensureImagePreview(storageKey);
-        const dataUrl = await resolveImageUrl(storageKey, "").catch(() => "");
-        if (dataUrl) {
-            return { ...image, storageKey, ...(localPath ? { localPath } : {}), dataUrl };
-        }
-    }
-    if (blob) {
-        return {
-            ...image,
-            ...(storageKey ? { storageKey } : {}),
-            ...(localPath ? { localPath } : {}),
-            dataUrl: URL.createObjectURL(blob),
-            mimeType: blob.type || image.mimeType,
-        };
-    }
-
-    // A blob: URL only belongs to the previous renderer session. Never persist
-    // or display it as a durable source after restart.
-    const durableFallback = image.dataUrl && !image.dataUrl.startsWith("blob:") ? image.dataUrl : "";
-    return { ...image, ...(storageKey ? { storageKey } : {}), ...(localPath ? { localPath } : {}), dataUrl: durableFallback };
-}async function normalizeLog(log: Partial<GenerationLog>): Promise<GenerationLog> {
-    const references = await Promise.all(
-        (log.references || []).map(async (item) => {
-            void ensureImagePreview(item.storageKey);
-            return { ...item, dataUrl: await resolveImageUrl(item.storageKey, item.dataUrl) };
-        }),
-    );
-    const images = await Promise.all((log.images || []).map((item) => resolveStoredLogImage(item)));
-    const config = normalizeLogConfig(log);
-    return {
-        id: log.id || nanoid(),
-        userId: log.userId || Number(useUserStore.getState().user?.id) || undefined,
-        createdAt: log.createdAt || Date.now(),
-        title: log.title || log.model || i18n.t("workbench.untitled"),
-        prompt: log.prompt || log.title || "",
-        time: log.time || new Date().toLocaleString(i18n.resolvedLanguage, { hour12: false }),
-        model: log.model || config.imageModel || "",
-        config,
-        references,
-        durationMs: log.durationMs || 0,
-        successCount: log.successCount ?? log.imageCount ?? 0,
-        failCount: log.failCount || 0,
-        imageCount: log.imageCount || log.successCount || 0,
-        size: log.size || config.size || "",
-        quality: log.quality || config.quality || "",
-        status: log.status || "success",
-        images,
-        error: log.error,
-    };
-}
-
-function serializeLog(log: GenerationLog): GenerationLog {
-    return {
-        ...log,
-        references: log.references.map((item) => ({ ...item, dataUrl: item.storageKey ? "" : item.dataUrl })),
-        images: log.images.map((image) => ({ ...image, dataUrl: image.storageKey ? "" : image.dataUrl })),
-    };
-}
-
-function normalizeLogConfig(log: Partial<GenerationLog>): GenerationLogConfig {
-    return {
-        model: log.config?.model || log.model || "",
-        imageModel: log.config?.imageModel || log.model || "",
-        quality: log.config?.quality || log.quality || "",
-        size: log.config?.size || log.size || "",
-        count: log.config?.count || String(log.imageCount || log.successCount || 1),
-    };
-}
-
 function moveListItem<T>(items: T[], index: number, offset: number) {
     const targetIndex = index + offset;
     if (targetIndex < 0 || targetIndex >= items.length) return items;
@@ -1729,57 +1538,4 @@ function ReferenceOrderButtons({ index, total, onMove }: { index: number; total:
             <Button size="small" className="!h-6 !w-6 !min-w-6 !rounded-full !bg-white/85 !p-0 !shadow-sm" icon={<ArrowRight className="size-3" />} disabled={index >= total - 1} onClick={() => onMove(1)} />
         </div>
     );
-}
-
-function buildLog({
-    id,
-    prompt,
-    model,
-    config,
-    references,
-    durationMs,
-    successCount,
-    failCount,
-    status,
-    images,
-    error,
-}: {
-    id?: string;
-    prompt: string;
-    model: string;
-    config: GenerationLogConfig;
-    references: ReferenceImage[];
-    durationMs: number;
-    successCount: number;
-    failCount: number;
-    status: GenerationLog["status"];
-    images: GeneratedImage[];
-    error?: string;
-}): GenerationLog {
-    const logConfig = {
-        model: config.model,
-        imageModel: config.imageModel,
-        quality: config.quality,
-        size: config.size,
-        count: config.count,
-    };
-    return {
-        id: id || nanoid(),
-        createdAt: Date.now(),
-        title: prompt.slice(0, 12) || i18n.t("workbench.untitled"),
-        prompt,
-        time: new Date().toLocaleString(i18n.resolvedLanguage, { hour12: false }),
-        model,
-        config: logConfig,
-        references,
-        durationMs,
-        successCount,
-        failCount,
-        imageCount: Number(logConfig.count) || successCount,
-        size: logConfig.size,
-        quality: logConfig.quality,
-        status,
-        images,
-        error,
-    };
 }

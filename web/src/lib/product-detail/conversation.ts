@@ -12,7 +12,7 @@ import type {
 
 const SYSTEM_PROMPT = `你是 Create 商品详情页工作台的策划 Agent。你的目标是通过简短多轮对话，帮助用户形成可执行的商品详情页 Brief，并在用户确认后调用页面动作。
 规则：
-1. 每轮最多问一个最关键的问题，不要重复询问已知信息。只有存在有限、明确且必须由用户决定的选项时才提供 2-4 个短选项，选项必须来自当前商品和参考图，不得使用通用风格模板。
+1. 每轮最多问一个最关键的问题，不要重复询问已知信息。只有存在有限、明确且必须由用户决定的选项时才提供 2-4 个短选项；同时用 multiple 明确这是单选还是多选。选项必须来自当前商品和参考图，不得使用通用风格模板。
 2. 如果本轮提供了商品图或参考图，必须先分析并简短说明你从图中看到的商品、配色、材质、花型、空间氛围和版式特征，再只追问仍缺失的关键信息。
 3. 不要先问用户“选什么颜色/什么风格”。参考图已经体现的信息直接以 visible 来源写入 briefPatch；只有图片无法判断且会明显影响结果时，才请用户确认。
 4. Skill 只代表页面结构和类目经验，不代表已经决定品牌色、字体或视觉调性。Skill 中的对应字段为空时，不得自行补全。
@@ -26,7 +26,7 @@ const SYSTEM_PROMPT = `你是 Create 商品详情页工作台的策划 Agent。�
 12. 可以在 skillCandidate 中总结用户明确确认且可复用的视觉偏好，但不得从内置 Skill 或参考图之外自动假定风格，也不得自动保存。
 13. 必须只输出一个 JSON 对象，不要输出 Markdown 代码围栏或额外解释。
 JSON 结构：
-{"message":"给用户的简短回复","briefPatch":{},"question":{"field":"productName","prompt":"问题","options":[]},"readyToPlan":false,"assumptions":[],"risks":[],"skillCandidate":null,"storyboard":null,"actions":[]}`;
+{"message":"给用户的简短回复","briefPatch":{},"question":{"field":"productName","prompt":"问题","options":[],"multiple":false},"readyToPlan":false,"assumptions":[],"risks":[],"skillCandidate":null,"storyboard":null,"actions":[]}`;
 
 export function createProductDetailWelcomeMessage(createdAt = Date.now()): ProductDetailConversationMessage {
     const message = "先发商品图和参考图，或直接告诉我商品名称和类目。我会先分析图片中的商品、配色、材质和版式，再只追问缺失的信息。";
@@ -41,6 +41,7 @@ export function createProductDetailWelcomeMessage(createdAt = Date.now()): Produ
                 field: "platform",
                 prompt: "这个详情页准备投放到哪个平台？",
                 options: ["淘宝/天猫", "京东", "拼多多"],
+                multiple: false,
             },
             readyToPlan: false,
             assumptions: [],
@@ -65,6 +66,7 @@ export function parseProductDetailAssistantTurn(raw: string): ProductDetailAssis
                     field: parsed.question.field,
                     prompt: parsed.question.prompt.trim(),
                     options: parsed.question.field === "visualStyle" || parsed.question.field === "colorPreference" ? undefined : sanitizeOptions(parsed.question.options),
+                    multiple: typeof parsed.question.multiple === "boolean" ? parsed.question.multiple : undefined,
                 }
                 : undefined,
             readyToPlan: parsed.readyToPlan === true,

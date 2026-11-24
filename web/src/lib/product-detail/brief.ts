@@ -47,6 +47,24 @@ const PAGE_ROLES = new Set<ProductPageRole>([
     "trust",
     "closing",
 ]);
+const MULTI_VALUE_BRIEF_FIELDS = new Set<keyof ProductBrief>([
+    "sellingPoints",
+    "targetAudience",
+    "scenarios",
+    "visualStyle",
+    "colorPreference",
+    "copyTone",
+    "forbiddenContent",
+    "referenceAssetIds",
+    "productAssetIds",
+    "requiredModules",
+    "assumptions",
+]);
+
+export function questionAllowsMultiple(question: { field: keyof ProductBrief; multiple?: boolean }) {
+    return typeof question.multiple === "boolean" ? question.multiple : MULTI_VALUE_BRIEF_FIELDS.has(question.field);
+}
+
 const BRIEF_FIELDS = new Set<keyof ProductBrief>([
     "productName",
     "category",

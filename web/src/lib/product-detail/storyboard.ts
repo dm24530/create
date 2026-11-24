@@ -255,3 +255,7 @@ function safePageText(value: unknown) {
 function hasTrustFact(brief: ProductBrief) {
     return brief.sellingPoints.some((item) => item.source === "user" && /认证|检测|质保|专利|奖项/.test(item.text));
 }
+
+export function resolveStoryboardGenerationStatus(pages: StoryboardPage[]): "review" | "failed" {
+    return pages.length > 0 && pages.every((page) => Boolean(page.generatedAssetId)) ? "review" : "failed";
+}

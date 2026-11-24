@@ -93,4 +93,54 @@ describe("商品详情快捷选项", () => {
 
         await act(async () => root.unmount());
     });
+
+    it("单选问题只保留最后一次选择", async () => {
+        const message: ProductDetailConversationMessage = {
+            id: "assistant-2",
+            role: "assistant",
+            content: "这个详情页准备投放到哪个平台？",
+            createdAt: 2,
+            turn: {
+                message: "这个详情页准备投放到哪个平台？",
+                question: { field: "platform", prompt: "投放平台", options: ["淘宝/天猫", "京东"], multiple: false },
+                readyToPlan: false,
+                assumptions: [],
+                risks: [],
+            },
+        };
+        const onQuickReply = vi.fn();
+        const host = document.createElement("div");
+        document.body.appendChild(host);
+        const root = createRoot(host);
+
+        await act(async () => {
+            root.render(
+                <MessageRow
+                    message={message}
+                    isLatestAssistant
+                    showGenerationConfirmation={false}
+                    busy={false}
+                    hasTextModel
+                    allAssets={[]}
+                    canRequestNextStep={false}
+                    onQuickReply={onQuickReply}
+                    onRequestNextStep={() => {}}
+                    onAction={() => {}}
+                />,
+            );
+        });
+
+        const taobao = [...document.querySelectorAll("button")].find((button) => button.textContent?.trim() === "淘宝/天猫") as HTMLButtonElement;
+        const jd = [...document.querySelectorAll("button")].find((button) => button.textContent?.trim() === "京东") as HTMLButtonElement;
+        await act(async () => taobao.click());
+        await act(async () => jd.click());
+        expect(taobao.getAttribute("aria-pressed")).toBe("false");
+        expect(jd.getAttribute("aria-pressed")).toBe("true");
+
+        const submit = [...document.querySelectorAll("button")].find((button) => button.textContent?.trim() === "发送选择") as HTMLButtonElement | undefined;
+        await act(async () => submit?.click());
+        expect(onQuickReply).toHaveBeenCalledWith("京东");
+
+        await act(async () => root.unmount());
+    });
 });

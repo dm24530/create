@@ -77,10 +77,10 @@ async function openVideo(page) {
     await loginIfNeeded(page);
     await openVideo(page);
     const body = await page.locator("body").innerText();
-    if (!body.includes("grok-imagine-video")) throw new Error("video model grok-imagine-video is missing");
+    if (!body.includes("brand-new-video")) throw new Error("video model brand-new-video is missing");
     if (body.includes("gpt-image-2")) throw new Error("image model leaked into video workbench");
-    const fullHd = page.getByRole("button", { name: "1080P", exact: true });
-    if (!(await fullHd.isDisabled())) throw new Error("1080P should be disabled for grok-imagine-video");
+    await page.getByRole("button", { name: "720P", exact: true }).waitFor({ timeout: 15000 });
+    if (await page.getByRole("button", { name: "1080P", exact: true }).count()) throw new Error("1080P should not be offered for brand-new-video");
     await page.locator("textarea:visible").first().fill(promptText);
     await page.getByRole("button", { name: "开始生成", exact: true }).click();
     const savedPath = await waitForGeneratedFile(settings.videoDir);
