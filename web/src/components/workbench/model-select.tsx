@@ -2,12 +2,12 @@ import { Popover, Select } from "antd";
 
 import { isPlazaVideoModel, plazaVideoBillingUnit, plazaVideoCapabilityLabels, plazaVideoDurationLabel, plazaVideoModelDescription, plazaVideoPricingRows, plazaVideoReferenceSummary } from "@/lib/plaza-video-model";
 import type { CreateModelPlazaModel } from "@/services/create-account";
-import type { WorkbenchModelDetails } from "@/hooks/use-model-plaza-details";
+import type { WorkbenchModelDetail, WorkbenchModelDetails } from "@/hooks/use-model-plaza-details";
 
 export type WorkbenchModelGroup = {
     id: string;
     name: string;
-    models: Array<{ value: string; label: string }>;
+    models: Array<{ value: string; label: string; detailKey?: string }>;
 };
 
 type WorkbenchModelSelectProps = {
@@ -23,42 +23,45 @@ function formatPrice(value: number) {
     return value >= 0.01 ? value.toFixed(2).replace(/\.?0+$/, "") : value.toFixed(4).replace(/0+$/, "").replace(/\.$/, "");
 }
 
-function priceLines(model: CreateModelPlazaModel) {
+export function workbenchPriceLines(model: CreateModelPlazaModel, rate = 1) {
     const pricing = model.pricing;
     if (!pricing) return [];
     const lines: string[] = [];
     if (pricing.billing_mode === "video") {
         const unit = plazaVideoBillingUnit(model) === "second" ? "/ 秒" : "/ 次";
         const rows = plazaVideoPricingRows(model);
-        for (const row of rows.slice(0, 5)) lines.push(`${row.resolution} · ￥${formatPrice(row.price)} ${unit}`);
-        if (!lines.length && pricing.per_request_price != null) lines.push(`￥${formatPrice(Number(pricing.per_request_price))} / 次`);
+        for (const row of rows.slice(0, 5)) lines.push(`${row.resolution} · ￥${formatPrice(row.price * rate)} ${unit}`);
+        if (!lines.length && pricing.per_request_price != null) lines.push(`￥${formatPrice(Number(pricing.per_request_price) * rate)} / 次`);
         return lines;
     }
     if (pricing.billing_mode === "image") {
         const intervals = (pricing.intervals || []).filter((interval) => interval.per_request_price != null);
         for (const interval of intervals) {
-            lines.push(`${interval.tier_label || "标准"} · 每张 ￥${formatPrice(Number(interval.per_request_price))}`);
+            lines.push(`${interval.tier_label || "标准"} · 每张 ￥${formatPrice(Number(interval.per_request_price) * rate)}`);
         }
-        if (!lines.length && pricing.per_request_price != null) lines.push(`每张 ￥${formatPrice(Number(pricing.per_request_price))}`);
+        if (!lines.length && pricing.per_request_price != null) lines.push(`每张 ￥${formatPrice(Number(pricing.per_request_price) * rate)}`);
         return lines;
     }
     if (pricing.input_price != null || pricing.output_price != null) {
-        if (pricing.input_price != null) lines.push(`输入：每百万词元 ￥${formatPrice(Number(pricing.input_price) * 1_000_000)}`);
-        if (pricing.output_price != null) lines.push(`输出：每百万词元 ￥${formatPrice(Number(pricing.output_price) * 1_000_000)}`);
+        if (pricing.input_price != null) lines.push(`输入：每百万词元 ￥${formatPrice(Number(pricing.input_price) * 1_000_000 * rate)}`);
+        if (pricing.output_price != null) lines.push(`输出：每百万词元 ￥${formatPrice(Number(pricing.output_price) * 1_000_000 * rate)}`);
         return lines;
     }
     const intervals = (pricing.intervals || []).filter((interval) => interval.per_request_price != null);
-    for (const interval of intervals) lines.push(`${interval.tier_label || "标准"} · 每次 ￥${formatPrice(Number(interval.per_request_price))}`);
-    if (!lines.length && pricing.per_request_price != null) lines.push(`每次 ￥${formatPrice(Number(pricing.per_request_price))}`);
+    for (const interval of intervals) lines.push(`${interval.tier_label || "标准"} · 每次 ￥${formatPrice(Number(interval.per_request_price) * rate)}`);
+    if (!lines.length && pricing.per_request_price != null) lines.push(`每次 ￥${formatPrice(Number(pricing.per_request_price) * rate)}`);
     return lines;
 }
 
-function ModelDetailCard({ model }: { model?: CreateModelPlazaModel }) {
+function ModelDetailCard({ detail }: { detail?: WorkbenchModelDetail }) {
+    const model = detail?.model;
     const rawDescription = (model?.description || "").replace(/\r/g, "").split("\n").map((line) => line.trim()).filter(Boolean).join("\n");
     const video = Boolean(model && isPlazaVideoModel(model));
+    const billingMode = model?.pricing?.billing_mode;
+    const rate = video ? (detail?.videoRate ?? 1) : billingMode === "image" ? (detail?.imageRate ?? 1) : (detail?.rate ?? 1);
     const hasChineseDescription = /[\u3400-\u9fff]/.test(rawDescription);
     const description = hasChineseDescription ? rawDescription : model && video ? plazaVideoModelDescription(model) : "该模型暂无中文简介。";
-    const lines = model ? priceLines(model) : [];
+    const lines = model ? workbenchPriceLines(model, rate) : [];
     const capability = model?.video_capabilities;
     const capabilityLabels = model && video ? plazaVideoCapabilityLabels(model) : [];
     const references = model && video ? plazaVideoReferenceSummary(model) : null;
@@ -92,12 +95,13 @@ function ModelDetailCard({ model }: { model?: CreateModelPlazaModel }) {
             ) : null}
             <div className="space-y-1 border-t border-stone-200 pt-2 dark:border-stone-700">
                 <div className="text-[11px] font-medium text-stone-400">价格（{billingLabel}）</div>
+                {detail ? <div className="text-[10px] text-stone-400">{detail.groupName}{rate !== 1 ? ` · 分组倍率 ×${formatPrice(rate)}` : ""}</div> : null}
                 {video && priceRows.length ? (
                     <div className="space-y-1">
                         {priceRows.map((row) => (
                             <div key={row.key} className="grid grid-cols-[1fr_auto] gap-3 text-xs">
                                 <span className="text-stone-500 dark:text-stone-300">{row.resolution}</span>
-                                <span className="whitespace-nowrap font-mono text-stone-700 dark:text-stone-200">{pricePrefix} ￥{formatPrice(row.price)}</span>
+                                <span className="whitespace-nowrap font-mono text-stone-700 dark:text-stone-200">{pricePrefix} ￥{formatPrice(row.price * rate)}</span>
                             </div>
                         ))}
                     </div>
@@ -130,7 +134,9 @@ export function WorkbenchModelSelect({ label, value, groups, details, onChange, 
             notFoundContent="暂无云端模型"
             getPopupContainer={() => document.body}
             optionRender={(option) => {
-                const data = option.data as unknown as { value: string; label: string };
+                const data = option.data as unknown as { value: string; label: string; detailKey?: string };
+                const detail = (data.detailKey ? details?.byGroupModel[data.detailKey] : undefined)
+                    || details?.byModel[data.label.trim().toLowerCase()];
                 return (
                     <Popover
                         placement="rightTop"
@@ -140,7 +146,7 @@ export function WorkbenchModelSelect({ label, value, groups, details, onChange, 
                         arrow={false}
                         mouseEnterDelay={0.2}
                         destroyOnHidden
-                        content={<ModelDetailCard model={details?.[data.label]} />}
+                        content={<ModelDetailCard detail={detail} />}
                     >
                         <div className="w-full py-0.5" data-model-option={data.label}>{data.label}</div>
                     </Popover>

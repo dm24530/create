@@ -134,6 +134,8 @@ export type CreateModelPlazaGroup = {
     peak_end?: string;
     peak_rate_multiplier?: number;
     is_exclusive?: boolean;
+    image_rate_independent?: boolean;
+    image_rate_multiplier?: number | null;
     video_rate_independent?: boolean;
     video_rate_multiplier?: number | null;
     models: CreateModelPlazaModel[];

@@ -23,8 +23,8 @@ import { createVideoGenerationTask, isRetryableVideoPollingError, pollVideoGener
 import { createUserWorkbenchLogStore } from "@/services/workbench-log-storage";
 import { buildVideoConfig, buildVideoLog as buildLog, normalizeVideoResolution as normalizeResolution, readVideoLogs, recoverVideoFromLocalFile, serializeVideoLog as serializeLog } from "@/lib/workbench/video-log";
 import { configureCreateWorkspace, getManagedKeySelection, listCreateManagedKeys, managedKeySupportsVideo, switchManagedKey, type CreateManagedKey } from "@/services/create-managed-channel";
-import { WorkbenchModelSelect } from "@/components/workbench/model-select";
-import { useModelPlazaDetails } from "@/hooks/use-model-plaza-details";
+import { WorkbenchModelSelect, type WorkbenchModelGroup } from "@/components/workbench/model-select";
+import { useModelPlazaDetails, workbenchModelDetailKey } from "@/hooks/use-model-plaza-details";
 import { PanelResizeHandle, useStoredPanelWidth } from "@/components/workbench/panel-resize-handle";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useUserStore } from "@/stores/use-user-store";
@@ -187,9 +187,9 @@ export default function VideoPage() {
         : null;
     const videoChannels = selectedVideoChannel ? [selectedVideoChannel] : effectiveConfig.channels;
     const hasVideoModels = videoChannels.some((channel) => channel.models.some((item) => item.capability === "video"));
-    const videoModelGroups = videoChannels
+    const videoModelGroups: WorkbenchModelGroup[] = videoChannels
         .map((channel) => {
-            const models = channel.models.filter((item) => !hasVideoModels || item.capability === "video").map((item) => ({ value: encodeChannelModel(channel.id, item.name), label: item.name }));
+            const models = channel.models.filter((item) => !hasVideoModels || item.capability === "video").map((item) => ({ value: encodeChannelModel(channel.id, item.name), label: item.name, detailKey: workbenchModelDetailKey(channel.name, item.name) }));
             return { id: channel.id, name: channel.name, models };
         })
         .filter((group) => group.models.length > 0);

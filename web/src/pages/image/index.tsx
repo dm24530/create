@@ -23,8 +23,8 @@ import { saveClientRequestTiming } from "@/services/client-request-timing";
 import { createUserWorkbenchLogStore } from "@/services/workbench-log-storage";
 import { buildImageLog as buildLog, pruneImageLogs, readImageLogs, resolveStoredLogImage, serializeImageLog as serializeLog } from "@/lib/workbench/image-log";
 import { configureCreateWorkspace, getManagedKeySelection, listCreateManagedKeys, managedKeySupportsImage, switchManagedKey, type CreateManagedKey } from "@/services/create-managed-channel";
-import { WorkbenchModelSelect } from "@/components/workbench/model-select";
-import { useModelPlazaDetails } from "@/hooks/use-model-plaza-details";
+import { WorkbenchModelSelect, type WorkbenchModelGroup } from "@/components/workbench/model-select";
+import { useModelPlazaDetails, workbenchModelDetailKey } from "@/hooks/use-model-plaza-details";
 import { PanelResizeHandle, useStoredPanelWidth } from "@/components/workbench/panel-resize-handle";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useUserStore } from "@/stores/use-user-store";
@@ -108,9 +108,9 @@ export default function ImagePage() {
         : null;
     const imageChannels = selectedImageChannel ? [selectedImageChannel] : effectiveConfig.channels;
     const hasImageModels = imageChannels.some((channel) => channel.models.some((item) => item.capability === "image"));
-    const imageModelGroups = imageChannels
+    const imageModelGroups: WorkbenchModelGroup[] = imageChannels
         .map((channel) => {
-            const models = channel.models.filter((item) => !hasImageModels || item.capability === "image").map((item) => ({ value: encodeChannelModel(channel.id, item.name), label: item.name }));
+            const models = channel.models.filter((item) => !hasImageModels || item.capability === "image").map((item) => ({ value: encodeChannelModel(channel.id, item.name), label: item.name, detailKey: workbenchModelDetailKey(channel.name, item.name) }));
             return { id: channel.id, name: channel.name, models };
         })
         .filter((group) => group.models.length > 0);
