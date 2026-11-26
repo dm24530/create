@@ -145,7 +145,51 @@ export type CreateModelPlaza = {
     description?: string;
     groups: CreateModelPlazaGroup[];
 };
+export type CreateImagePerformancePoint = {
+    bucket_start: string;
+    sample_count?: number;
+    success_rate: number | null;
+    avg_duration_ms?: number | null;
+};
 
+export type CreateImagePerformanceModel = {
+    group_id: number;
+    model: string;
+    sample_count?: number;
+    data_sufficient?: boolean;
+    success_rate: number | null;
+    avg_duration_ms: number | null;
+    last_used_at?: string | null;
+    series?: CreateImagePerformancePoint[];
+};
+
+export type CreateImagePerformanceResponse = {
+    range: "24h" | "7d";
+    bucket: string;
+    start_at: string;
+    end_at: string;
+    models: CreateImagePerformanceModel[];
+};
+
+export type CreateVideoPerformanceMetric = {
+    success_rate: number | null;
+    avg_latency_ms: number | null;
+    series: Array<{ bucket_start: string; success_rate: number }> | null;
+};
+
+export type CreateVideoPerformanceModel = {
+    model: string;
+    last_24h: CreateVideoPerformanceMetric | null;
+    last_7d: CreateVideoPerformanceMetric | null;
+};
+
+export type CreateVideoPerformanceResponse = {
+    group: string;
+    refreshed_at: string;
+    stale?: boolean;
+    partial?: boolean;
+    models: CreateVideoPerformanceModel[];
+};
 export type CreatePaymentMethod = {
     payment_type: string;
     currency: string;
@@ -180,6 +224,17 @@ export type CreatePaymentOrderResult = {
 
 export async function getCreateModelPlaza(session: CreateSession) {
     return createRequest<CreateModelPlaza>("/model-plaza", { accessToken: session.accessToken });
+}
+export function getCreateImageModelPerformance(session: CreateSession, range: "24h" | "7d" = "24h") {
+    return createRequest<CreateImagePerformanceResponse>(`/usage/image-model-performance?range=${range}`, {
+        accessToken: session.accessToken,
+    });
+}
+
+export function getCreateVideoModelPerformance(session: CreateSession) {
+    return createRequest<CreateVideoPerformanceResponse>("/model-plaza/video-performance", {
+        accessToken: session.accessToken,
+    });
 }
 
 export async function getCreateCheckoutInfo(session: CreateSession) {

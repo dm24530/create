@@ -1,6 +1,6 @@
-import { ArrowLeft, ArrowRight, CheckSquare, ChevronDown, ClipboardPaste, Copy, Download, FolderPlus, History, ImagePlus, LoaderCircle, PenLine, Plus, RefreshCw, Sparkles, Trash2, Upload } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, CheckSquare, ChevronDown, ClipboardPaste, Copy, Download, FolderPlus, History, ImagePlus, LoaderCircle, PenLine, Plus, RefreshCw, Sparkles, Trash2, Upload } from "lucide-react";
 import { type CSSProperties, type ClipboardEvent as ReactClipboardEvent, useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { App, Button, Checkbox, Drawer, Empty, Image, Modal, Popover, Tag, Tooltip, Typography } from "antd";
+import { App, Button, Checkbox, Drawer, Empty, Image, Modal, Popover, Select, Tag, Tooltip, Typography } from "antd";
 import localforage from "localforage";
 import { useTranslation } from "react-i18next";
 
@@ -9,22 +9,25 @@ import { FailedTaskDetailModal, type FailedTaskDetail } from "@/components/workb
 import { GeneratedMediaDetailModal, type GeneratedMediaDetailData } from "@/components/workbench/generated-media-detail-modal";
 import { resolveGeneratedImageBlob } from "@/lib/generated-image-download";
 import { generationFailureReason } from "@/lib/generation-error";
+import { buildImageRetrySnapshot } from "@/lib/workbench/image-retry";
+import { buildCapabilityModelGroups } from "@/lib/workbench/model-boundary";
 import { isCreateProductMode } from "@/lib/create-product";
 import { imageReferenceLabel } from "@/lib/image-reference-prompt";
 import { normalizeImageBackground, normalizeImageOutputFormat, supportsTransparentImageBackground } from "@/lib/image-output-format";
+import { effectiveImageQualityForRequest, imageQualityFallbackNote, imageQualityOptionsForModel, isGptImageModel, normalizeImageQuality, type GptImageQualityCeiling } from "@/lib/workbench/image-quality";
 import { computeMediaSize, inferMediaRatio, inferMediaScale, mediaRatioOptions, parsePixelSize } from "@/lib/media-size";
-import { encodeChannelModel, modelOptionName, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+import { modelOptionName, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { nanoid } from "nanoid";
 import { autoSaveGeneratedFile, deleteGeneratedFile, generatedFileExtension, readGeneratedFileAsset, saveGeneratedFile } from "@/lib/desktop-save";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
-import { requestEdit, requestGeneration, submitPersistentImageTask, waitForPersistentImageTask } from "@/services/api/image";
+import { fetchImageQualityCapabilities, requestEdit, requestGeneration, submitPersistentImageTask, waitForPersistentImageTask } from "@/services/api/image";
 import { deleteStoredImages, ensureImagePreview, getImageBlob, getImagePreviewRevision, prepareReferenceImagesForRequest, previewUrlFor, resolveImageUrl, setImageBlob, subscribeImagePreviews, uploadImage } from "@/services/image-storage";
 import { saveClientRequestTiming } from "@/services/client-request-timing";
 import { createUserWorkbenchLogStore } from "@/services/workbench-log-storage";
 import { buildImageLog as buildLog, pruneImageLogs, readImageLogs, resolveStoredLogImage, serializeImageLog as serializeLog } from "@/lib/workbench/image-log";
 import { configureCreateWorkspace, getManagedKeySelection, listCreateManagedKeys, managedKeySupportsImage, switchManagedKey, type CreateManagedKey } from "@/services/create-managed-channel";
-import { WorkbenchModelSelect, type WorkbenchModelGroup } from "@/components/workbench/model-select";
-import { useModelPlazaDetails, workbenchModelDetailKey } from "@/hooks/use-model-plaza-details";
+import { WorkbenchModelSelect } from "@/components/workbench/model-select";
+import { useModelPlazaDetails } from "@/hooks/use-model-plaza-details";
 import { PanelResizeHandle, useStoredPanelWidth } from "@/components/workbench/panel-resize-handle";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useUserStore } from "@/stores/use-user-store";
@@ -88,6 +91,7 @@ export default function ImagePage() {
     const [failedDetail, setFailedDetail] = useState<FailedTaskDetail | null>(null);
     const [isReferenceDragActive, setIsReferenceDragActive] = useState(false);
     const [autoRunToken, setAutoRunToken] = useState(0);
+    const [gptImageQualityMax, setGptImageQualityMax] = useState<GptImageQualityCeiling>("high");
     const messageRef = useRef(message);
     messageRef.current = message;
     const imageCommand = useWorkbenchAgentStore((state) => state.imageCommand);
@@ -107,23 +111,14 @@ export default function ImagePage() {
         ? effectiveConfig.channels.find((channel) => channel.apiKey === selectedImageKey.key) || null
         : null;
     const imageChannels = selectedImageChannel ? [selectedImageChannel] : effectiveConfig.channels;
-    const hasImageModels = imageChannels.some((channel) => channel.models.some((item) => item.capability === "image"));
-    const imageModelGroups: WorkbenchModelGroup[] = imageChannels
-        .map((channel) => {
-            const models = channel.models.filter((item) => !hasImageModels || item.capability === "image").map((item) => ({ value: encodeChannelModel(channel.id, item.name), label: item.name, detailKey: workbenchModelDetailKey(channel.name, item.name) }));
-            return { id: channel.id, name: channel.name, models };
-        })
-        .filter((group) => group.models.length > 0);
-    if (!selectedImageChannel && model && !imageModelGroups.some((group) => group.models.some((item) => item.value === model))) {
-        imageModelGroups.push({ id: "current-model", name: "当前模型", models: [{ value: model, label: modelOptionName(model) }] });
-    }
+    const imageModelGroups = buildCapabilityModelGroups(imageChannels, "image");
     const imageModelOptions = imageModelGroups.flatMap((group) => group.models.map((item) => item.value));
     useEffect(() => {
         if (!selectedImageChannel || !imageModelOptions.length) return;
         if (!imageModelOptions.includes(model)) updateConfig("imageModel", imageModelOptions[0]);
     }, [imageModelOptions.join("|"), model, selectedImageChannel?.id, updateConfig]);
 
-    const canGenerate = Boolean(prompt.trim());
+    const canGenerate = Boolean(prompt.trim()) && imageModelOptions.includes(model);
     const generationCount = Math.max(1, Math.min(10, Number(config.count) || 1));
     const selectedRatio = inferMediaRatio(effectiveConfig.size);
     const selectedSize = workbenchSizePixels(effectiveConfig.size, selectedRatio);
@@ -133,9 +128,31 @@ export default function ImagePage() {
     const sizeSelectionOption = WORKBENCH_SIZE_GROUPS.flatMap((group) => group.options).find((option) => option.value === sizeSelectionValue);
     const sizeSelectionLabel = sizeSelectionValue === "auto" ? "自动（由模型决定）" : sizeSelectionValue === "current" ? currentSizeIsRatio ? `${effectiveConfig.size} · 自动分辨率` : `自定义 ${selectedSize.width}x${selectedSize.height}` : sizeSelectionOption ? `${sizeSelectionOption.ratio} ${sizeSelectionOption.value}` : effectiveConfig.size;
     const outputFormat = normalizeImageOutputFormat(effectiveConfig.outputFormat);
+    const modelQualityOptions = imageQualityOptionsForModel(model);
+    const selectedModelQuality = normalizeImageQuality(effectiveConfig.quality);
+    const effectiveModelQuality = effectiveImageQualityForRequest(model, effectiveConfig.quality, gptImageQualityMax);
+    const modelQualityFallbackNote = imageQualityFallbackNote(model, effectiveConfig.quality, gptImageQualityMax);
     const transparentSupported = supportsTransparentImageBackground(effectiveConfig.model || model);
     const transparentAvailable = transparentSupported && outputFormat === "png";
     const transparentEnabled = transparentAvailable && normalizeImageBackground(effectiveConfig.model || model, effectiveConfig.background, outputFormat) === "transparent";
+    useEffect(() => {
+        setGptImageQualityMax("high");
+        if (!isGptImageModel(model) || !effectiveConfig.baseUrl || !effectiveConfig.apiKey) return;
+        let cancelled = false;
+        void fetchImageQualityCapabilities(effectiveConfig).then((ceiling) => {
+            if (!cancelled) setGptImageQualityMax(ceiling);
+        });
+        return () => {
+            cancelled = true;
+        };
+    }, [model, effectiveConfig.baseUrl, effectiveConfig.apiKey]);
+
+    useEffect(() => {
+        const allowed = imageQualityOptionsForModel(model);
+        if (!allowed.length) return;
+        const current = normalizeImageQuality(effectiveConfig.quality);
+        if (!allowed.includes(current)) updateConfig("quality", allowed.includes("high") ? "high" : allowed[allowed.length - 1]);
+    }, [model, effectiveConfig.quality, updateConfig]);
 
     const loadImageKeys = useCallback(async (force = false) => {
         if (!session) {
@@ -561,6 +578,10 @@ export default function ImagePage() {
             message.error(t("imageWorkbench.promptRequired"));
             return null;
         }
+        if (!imageModelOptions.includes(model)) {
+            message.warning(t("imageWorkbench.noImageModel"));
+            return null;
+        }
         if (!isAiConfigReady(effectiveConfig, model)) {
             message.warning(t(isCreateProductMode() ? "workbench.managedConfigUnavailable" : "workbench.configFirst"));
             if (!isCreateProductMode()) openConfigDialog(true);
@@ -574,6 +595,7 @@ export default function ImagePage() {
         try {
             setResults((value) => updateResultById(value, resultId, { phase: "compressing", phaseStartedAt: prepareStartedAt, clientRequestId }));
             const requestReferences = snapshot.references.length ? await prepareReferenceImagesForRequest(snapshot.references) : [];
+            const requestConfig: AiConfig = { ...snapshot.config, quality: effectiveImageQualityForRequest(snapshot.config.model, snapshot.config.quality, gptImageQualityMax) };
             const requestStartedAt = performance.now();
             const prepareDurationMs = requestStartedAt - prepareStartedAt;
             setResults((value) => updateResultById(value, resultId, { phase: "generating", phaseStartedAt: requestStartedAt, prepareDurationMs }));
@@ -603,12 +625,12 @@ export default function ImagePage() {
                     );
                 },
             };
-            const persistentTask = await submitPersistentImageTask(snapshot.config, snapshot.text, requestReferences, requestOptions);
+            const persistentTask = await submitPersistentImageTask(requestConfig, snapshot.text, requestReferences, requestOptions);
             const result = persistentTask
-                ? await waitForPersistentImageTask(snapshot.config, persistentTask, requestOptions)
+                ? await waitForPersistentImageTask(requestConfig, persistentTask, requestOptions)
                 : requestReferences.length
-                  ? await requestEdit(snapshot.config, snapshot.text, requestReferences, requestOptions)
-                  : await requestGeneration(snapshot.config, snapshot.text, requestOptions);
+                  ? await requestEdit(requestConfig, snapshot.text, requestReferences, requestOptions)
+                  : await requestGeneration(requestConfig, snapshot.text, requestOptions);
             const requestCompletedAt = performance.now();
             const generationDurationMs = requestCompletedAt - requestStartedAt;
             const totalDurationMs = requestCompletedAt - prepareStartedAt;
@@ -707,27 +729,55 @@ export default function ImagePage() {
     };
 
     const retryResult = async (resultId: string) => {
-        const snapshot = buildRequestSnapshot();
-        if (!snapshot) return;
+        const currentResult = results.find((item) => item.id === resultId);
+        const historyLogId = resultId.startsWith("history-failed:")
+            ? resultId.slice("history-failed:".length)
+            : currentResult?.logId || resultId;
+        const historicalLog = logs.find((item) => item.id === historyLogId);
+        const retrySource = currentResult || (historicalLog ? {
+            prompt: historicalLog.prompt,
+            model: historicalLog.model,
+            config: historicalLog.config,
+            references: historicalLog.references,
+        } : {});
+        const snapshot = buildImageRetrySnapshot(retrySource, effectiveConfig, prompt);
+        if (!snapshot) {
+            message.error(t("imageWorkbench.retryPromptUnavailable"));
+            return;
+        }
+        if (!isAiConfigReady(snapshot.config, snapshot.model)) {
+            message.warning(t(isCreateProductMode() ? "workbench.managedConfigUnavailable" : "workbench.configFirst"));
+            if (!isCreateProductMode()) openConfigDialog(true);
+            return;
+        }
+
+        const retryTargetId = currentResult?.id || historyLogId;
         setPreviewLog(null);
         const retryStartedAt = performance.now();
         const clientRequestId = nanoid();
-        setResults((value) => updateResultById(value, resultId, {
-            status: "pending",
+        const pendingResult = {
+            status: "pending" as const,
             error: undefined,
             image: undefined,
+            prompt: snapshot.text,
+            model: snapshot.model,
+            config: snapshot.config,
+            references: snapshot.references,
             clientRequestId,
-            phase: snapshot.references.length ? "compressing" : "generating",
+            phase: snapshot.references.length ? "compressing" as const : "generating" as const,
             phaseStartedAt: retryStartedAt,
             prepareDurationMs: undefined,
-        }));
+        };
+        setResults((value) => currentResult
+            ? updateResultById(value, retryTargetId, pendingResult)
+            : [{ id: retryTargetId, ...pendingResult }, ...value]);
         setActiveGenerations((value) => value + 1);
         try {
-            const image = await runGenerationSlot(resultId, snapshot, clientRequestId);
+            const image = await runGenerationSlot(retryTargetId, snapshot, clientRequestId);
             saveLog(
                 buildLog({
                     prompt: snapshot.text,
-                    model,
+                    model: modelOptionName(snapshot.config.model),
                     config: { ...snapshot.config, count: "1" },
                     references: snapshot.references,
                     durationMs: performance.now() - retryStartedAt,
@@ -747,7 +797,6 @@ export default function ImagePage() {
             });
         }
     };
-
     const displayedResults: GenerationResult[] = [...results];
     const displayedResultIds = new Set(results.map((result) => result.id));
     const displayedImageIds = new Set(results.flatMap((result) => (result.image ? [result.image.id] : [])));
@@ -780,9 +829,9 @@ export default function ImagePage() {
 
     return (
         <div className="flex h-full flex-col overflow-hidden bg-stone-50 text-stone-900 dark:bg-stone-950 dark:text-stone-100" data-testid="image-workbench">
-            <main className="grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-y-auto p-3 lg:overflow-hidden" style={layoutStyle}>
+            <main className="grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-y-auto py-3 pr-3 pl-0 lg:overflow-hidden" style={layoutStyle}>
                 <section className="workbench-split-grid grid gap-3 lg:min-h-0 lg:overflow-hidden">
-                    <div ref={workbenchPanelRef} className="thin-scrollbar flex min-w-0 flex-col rounded-xl border border-stone-200 bg-card p-4 shadow-sm dark:border-stone-800 lg:min-h-0 lg:overflow-y-auto [&>*]:shrink-0">
+                    <div ref={workbenchPanelRef} className="thin-scrollbar flex min-w-0 flex-col rounded-r-xl border border-l-0 border-stone-200 bg-card p-4 shadow-sm dark:border-stone-800 lg:min-h-0 lg:overflow-y-auto [&>*]:shrink-0">
                         <h1 className="text-[26px] font-semibold leading-8 tracking-tight text-stone-950 dark:text-stone-100">{t("imageWorkbench.title")}</h1>
 
                         <div className="mt-3 flex items-center gap-2">
@@ -977,39 +1026,48 @@ export default function ImagePage() {
                         </div>
 
                         <div className="mt-3 grid grid-cols-[1.08fr_0.92fr] gap-4">
-                            <div className="min-w-0">
-                                <div className="mb-2 text-sm font-semibold text-stone-900 dark:text-stone-100">质量</div>
-                                <div className="grid grid-cols-4 rounded-xl border border-stone-200 bg-stone-100/60 p-1 dark:border-stone-700 dark:bg-stone-900/60">
-                                    {WORKBENCH_RESOLUTION_OPTIONS.map((value) => (
-                                        <button
-                                            key={value}
-                                            type="button"
-                                            className={`h-9 min-w-0 rounded-lg px-1 text-sm transition ${activeResolutionScale === value ? "bg-stone-100 font-semibold !text-stone-950 shadow-sm dark:bg-stone-100 dark:!text-stone-950" : "text-stone-500 hover:text-stone-900 dark:hover:text-stone-100"}`}
-                                            onClick={() => selectResolutionScale(value)}
-                                        >
-                                            {value === "auto" ? t("settingsPanels.common.auto") : value.toUpperCase()}
-                                        </button>
-                                    ))}
+                            {modelQualityOptions.length ? (
+                                <div className="min-w-0">
+                                    <div className="mb-2 flex items-center justify-between gap-2 text-sm font-semibold text-stone-900 dark:text-stone-100">
+                                        <span>模型质量</span>
+                                        <span className="text-[11px] font-normal text-stone-400">调用 {effectiveModelQuality.toUpperCase()}</span>
+                                    </div>
+                                    <Select
+                                        aria-label="模型质量"
+                                        className="w-full"
+                                        value={selectedModelQuality}
+                                        options={modelQualityOptions.map((option) => ({ value: option, label: t(`settingsPanels.common.${option}`) }))}
+                                        onChange={(value) => updateConfig("quality", value)}
+                                        popupMatchSelectWidth
+                                    />
                                 </div>
-                            </div>
+                            ) : null}
                             <div className="min-w-0">
                                 <div className="mb-2 text-sm font-semibold text-stone-900 dark:text-stone-100">格式</div>
-                                <div className="grid grid-cols-2 rounded-xl border border-stone-200 bg-stone-100/60 p-1 dark:border-stone-700 dark:bg-stone-900/60">
+                                <Select
+                                    aria-label="输出格式"
+                                    className="w-full"
+                                    value={outputFormat}
+                                    options={[{ value: "png", label: "PNG" }, { value: "jpeg", label: "JPEG" }]}
+                                    onChange={(value) => selectOutputFormat(value)}
+                                    popupMatchSelectWidth
+                                />
+                            </div>
+                        </div>
+                        {modelQualityFallbackNote ? <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-300">{modelQualityFallbackNote}</div> : null}
+                        <div className="mt-3">
+                            <div className="mb-2 text-sm font-semibold text-stone-900 dark:text-stone-100">分辨率</div>
+                            <div className="grid grid-cols-4 rounded-xl border border-stone-200 bg-stone-100/60 p-1 dark:border-stone-700 dark:bg-stone-900/60">
+                                {WORKBENCH_RESOLUTION_OPTIONS.map((value) => (
                                     <button
+                                        key={value}
                                         type="button"
-                                        className={`h-9 rounded-lg text-sm transition ${outputFormat === "png" ? "bg-stone-100 font-semibold !text-stone-950 shadow-sm dark:bg-stone-100 dark:!text-stone-950" : "text-stone-500 hover:text-stone-900 dark:hover:text-stone-100"}`}
-                                        onClick={() => selectOutputFormat("png")}
+                                        className={`h-9 min-w-0 rounded-lg px-1 text-sm transition ${activeResolutionScale === value ? "bg-stone-100 font-semibold !text-stone-950 shadow-sm dark:bg-stone-100 dark:!text-stone-950" : "text-stone-500 hover:text-stone-900 dark:hover:text-stone-100"}`}
+                                        onClick={() => selectResolutionScale(value)}
                                     >
-                                        PNG
+                                        {value === "auto" ? t("settingsPanels.common.auto") : value.toUpperCase()}
                                     </button>
-                                    <button
-                                        type="button"
-                                        className={`h-9 rounded-lg text-sm transition ${outputFormat === "jpeg" ? "bg-stone-100 font-semibold !text-stone-950 shadow-sm dark:bg-stone-100 dark:!text-stone-950" : "text-stone-500 hover:text-stone-900 dark:hover:text-stone-100"}`}
-                                        onClick={() => selectOutputFormat("jpeg")}
-                                    >
-                                        JPEG
-                                    </button>
-                                </div>
+                                ))}
                             </div>
                         </div>
 
@@ -1238,13 +1296,6 @@ export default function ImagePage() {
 }
 
 function SizeRatioOption({ value, label, selected, onClick }: { value: string; label: string; selected: boolean; onClick: () => void }) {
-    const pixels = parsePixelSize(value);
-    const ratioParts = value.split(":").map(Number);
-    const widthUnits = pixels?.width || (ratioParts.length === 2 && ratioParts[0] > 0 ? ratioParts[0] : 1);
-    const heightUnits = pixels?.height || (ratioParts.length === 2 && ratioParts[1] > 0 ? ratioParts[1] : 1);
-    const aspect = widthUnits / Math.max(1, heightUnits);
-    const previewWidth = aspect >= 1 ? 26 : Math.max(8, Math.round(26 * aspect));
-    const previewHeight = aspect >= 1 ? Math.max(8, Math.round(26 / aspect)) : 26;
     return (
         <button
             type="button"
@@ -1253,10 +1304,8 @@ function SizeRatioOption({ value, label, selected, onClick }: { value: string; l
             className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition ${selected ? "bg-stone-200 font-semibold text-stone-950 dark:bg-stone-700 dark:text-white" : "text-stone-700 hover:bg-stone-100 dark:text-stone-200 dark:hover:bg-stone-800"}`}
             onClick={onClick}
         >
-            <span className="flex size-7 shrink-0 items-center justify-center">
-                <span className={`rounded-[3px] border-2 ${selected ? "border-stone-900 dark:border-white" : "border-stone-400/75 dark:border-stone-500"}`} style={{ width: previewWidth, height: previewHeight }} />
-            </span>
-            <span className="min-w-0 truncate text-sm">{label}</span>
+            <span className="min-w-0 flex-1 truncate text-sm">{label}</span>
+            {selected ? <Check className="size-4 shrink-0 text-cyan-500" /> : null}
         </button>
     );
 }

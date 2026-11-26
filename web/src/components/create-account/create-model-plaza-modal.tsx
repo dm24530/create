@@ -1,11 +1,13 @@
 import { App, Input, Modal, Spin, Tag } from "antd";
-import { Copy, RefreshCw, Search } from "lucide-react";
+import { Copy, RefreshCw, Search, Sparkles } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
-import { getCreateModelPlaza, type CreateModelPlaza, type CreateModelPlazaGroup, type CreateModelPlazaModel, type CreateModelPricingInterval } from "@/services/create-account";
+import { getCreateImageModelPerformance, getCreateModelPlaza, getCreateVideoModelPerformance, type CreateImagePerformanceModel, type CreateModelPlaza, type CreateModelPlazaGroup, type CreateModelPlazaModel, type CreateModelPricingInterval, type CreateVideoPerformanceModel } from "@/services/create-account";
+import { buildImagePerformanceMap, buildPerformanceBars, buildVideoPerformanceMap, findImagePerformance, formatPerformanceDuration, formatPerformanceRate, performanceColor, performanceLevel, videoVendorLabel } from "@/lib/plaza-performance";
 import type { CreateSession } from "@/services/create-auth";
 import { plazaVideoCapabilityLabels, plazaVideoReferenceSummary } from "@/lib/plaza-video-model";
 import { cn } from "@/lib/utils";
+import { publicAsset } from "@/lib/managed-mode";
 
 type PriceColumn = { key: string; label: string };
 type VideoUnit = "second" | "request";
@@ -19,15 +21,44 @@ export function CreateModelPlazaModal({ open, onClose, session }: { open: boolea
     const [groupId, setGroupId] = useState("all");
     const [search, setSearch] = useState("");
     const [refreshNonce, setRefreshNonce] = useState(0);
+    const [imagePerformance24h, setImagePerformance24h] = useState<CreateImagePerformanceModel[]>([]);
+    const [imagePerformance7d, setImagePerformance7d] = useState<CreateImagePerformanceModel[]>([]);
+    const [imagePerformanceEndAt, setImagePerformanceEndAt] = useState("");
+    const [videoPerformance, setVideoPerformance] = useState<CreateVideoPerformanceModel[]>([]);
+    const [videoPerformanceRefreshedAt, setVideoPerformanceRefreshedAt] = useState("");
 
     useEffect(() => {
         if (!open || !session) return;
         let cancelled = false;
         setLoading(true);
         setError("");
-        void getCreateModelPlaza(session)
-            .then((result) => {
-                if (!cancelled) setData(result);
+        void Promise.all([
+            getCreateModelPlaza(session),
+            Promise.allSettled([
+                getCreateImageModelPerformance(session, "24h"),
+                getCreateImageModelPerformance(session, "7d"),
+                getCreateVideoModelPerformance(session),
+            ]),
+        ])
+            .then(([result, performance]) => {
+                if (cancelled) return;
+                setData(result);
+                const [image24, image7d, video] = performance;
+                if (image24.status === "fulfilled") {
+                    setImagePerformance24h(image24.value.models || []);
+                    setImagePerformanceEndAt(image24.value.end_at || "");
+                } else {
+                    setImagePerformance24h([]);
+                    setImagePerformanceEndAt("");
+                }
+                setImagePerformance7d(image7d.status === "fulfilled" ? image7d.value.models || [] : []);
+                if (video.status === "fulfilled") {
+                    setVideoPerformance(video.value.models || []);
+                    setVideoPerformanceRefreshedAt(video.value.refreshed_at || "");
+                } else {
+                    setVideoPerformance([]);
+                    setVideoPerformanceRefreshedAt("");
+                }
             })
             .catch((cause) => {
                 if (!cancelled) setError(cause instanceof Error ? cause.message : "加载模型广场失败");
@@ -41,6 +72,8 @@ export function CreateModelPlazaModal({ open, onClose, session }: { open: boolea
     }, [open, refreshNonce, session]);
 
     const groups = data?.groups || [];
+    const imagePerformance24hMap = useMemo(() => buildImagePerformanceMap(imagePerformance24h), [imagePerformance24h]);
+    const imagePerformance7dMap = useMemo(() => buildImagePerformanceMap(imagePerformance7d), [imagePerformance7d]);
     const modelCount = useMemo(() => groups.reduce((total, group) => total + group.models.length, 0), [groups]);
     const filteredGroups = useMemo(() => {
         const query = search.trim().toLowerCase();
@@ -116,7 +149,7 @@ export function CreateModelPlazaModal({ open, onClose, session }: { open: boolea
                         <div className="space-y-4">
                             {data?.description ? <p className="rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 text-sm leading-6 text-stone-600 dark:border-stone-700 dark:bg-stone-900/50 dark:text-stone-300">{data.description}</p> : null}
                             {filteredGroups.map(({ group, models }) => (
-                                <ModelPlazaGroupCard key={group.id} group={group} models={models} onCopy={copyModelName} />
+                                <ModelPlazaGroupCard key={group.id} group={group} models={models} onCopy={copyModelName} imagePerformance24h={imagePerformance24hMap} imagePerformance7d={imagePerformance7dMap} imagePerformanceEndAt={imagePerformanceEndAt} videoPerformance={videoPerformance} videoPerformanceRefreshedAt={videoPerformanceRefreshedAt} />
                             ))}
                         </div>
                     ) : null}
@@ -144,30 +177,35 @@ function FilterChip({ active, label, count, onClick }: { active: boolean; label:
     );
 }
 
-function ModelPlazaGroupCard({ group, models, onCopy }: { group: CreateModelPlazaGroup; models: CreateModelPlazaModel[]; onCopy: (name: string) => void }) {
+function ModelPlazaGroupCard({ group, models, onCopy, imagePerformance24h, imagePerformance7d, imagePerformanceEndAt, videoPerformance, videoPerformanceRefreshedAt }: { group: CreateModelPlazaGroup; models: CreateModelPlazaModel[]; onCopy: (name: string) => void; imagePerformance24h: Map<string, CreateImagePerformanceModel>; imagePerformance7d: Map<string, CreateImagePerformanceModel>; imagePerformanceEndAt: string; videoPerformance: CreateVideoPerformanceModel[]; videoPerformanceRefreshedAt: string }) {
     const videoModels = models.filter(isVideoPricingModel);
     const standardModels = models.filter((model) => !isVideoPricingModel(model));
     const { requestModels, tokenModels } = splitStandardPricingModels(standardModels);
-    const mixedStandardPricing = requestModels.length > 0 && tokenModels.length > 0;
+    const imageModels = requestModels.filter(isImagePricingModel);
+    const otherRequestModels = requestModels.filter((model) => !isImagePricingModel(model));
+    const mixedStandardPricing = otherRequestModels.length > 0 && tokenModels.length > 0;
     return (
         <section className="overflow-hidden rounded-xl border border-teal-500/25 bg-white shadow-sm dark:border-teal-700/45 dark:bg-[#252525]">
             <div className="border-b border-stone-200 bg-stone-50/80 px-4 py-4 dark:border-stone-700 dark:bg-[#292929]">
                 <div className="inline-flex items-center rounded-md bg-cyan-50 px-2 py-1 text-sm font-medium text-cyan-700 dark:bg-cyan-950/50 dark:text-cyan-300">{group.name}</div>
                 {group.description ? <p className="mt-3 text-sm text-stone-500 dark:text-stone-300">{group.description}</p> : null}
             </div>
-            {requestModels.length ? (
+            {imageModels.length ? (
+                <ImagePricingCards group={group} models={imageModels} onCopy={onCopy} imagePerformance24h={imagePerformance24h} imagePerformance7d={imagePerformance7d} imagePerformanceEndAt={imagePerformanceEndAt} />
+            ) : null}
+            {otherRequestModels.length ? (
                 <div>
-                    {mixedStandardPricing ? <PricingSectionLabel>图片 / 按次计费</PricingSectionLabel> : null}
-                    <StandardPricingTable models={requestModels} mode="request" onCopy={onCopy} />
+                    {mixedStandardPricing ? <PricingSectionLabel>按次计费</PricingSectionLabel> : null}
+                    <StandardPricingTable models={otherRequestModels} mode="request" onCopy={onCopy} />
                 </div>
             ) : null}
             {tokenModels.length ? (
-                <div className={requestModels.length ? "border-t border-stone-200 dark:border-stone-700" : ""}>
+                <div className={otherRequestModels.length ? "border-t border-stone-200 dark:border-stone-700" : ""}>
                     {mixedStandardPricing ? <PricingSectionLabel>文本 / Token 计费</PricingSectionLabel> : null}
                     <StandardPricingTable models={tokenModels} mode="token" onCopy={onCopy} />
                 </div>
             ) : null}
-            {videoModels.length ? <VideoPricingCards group={group} models={videoModels} onCopy={onCopy} /> : null}
+            {videoModels.length ? <VideoPricingCards group={group} models={videoModels} onCopy={onCopy} videoPerformance={videoPerformance} videoPerformanceRefreshedAt={videoPerformanceRefreshedAt} /> : null}
         </section>
     );
 }
@@ -176,7 +214,94 @@ function PricingSectionLabel({ children }: { children: React.ReactNode }) {
     return <div className="bg-stone-50/60 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-stone-500 dark:bg-stone-900/30 dark:text-stone-400">{children}</div>;
 }
 
-function VideoPricingCards({ group, models, onCopy }: { group: CreateModelPlazaGroup; models: CreateModelPlazaModel[]; onCopy: (name: string) => void }) {
+function ImagePricingCards({ group, models, onCopy, imagePerformance24h, imagePerformance7d, imagePerformanceEndAt }: { group: CreateModelPlazaGroup; models: CreateModelPlazaModel[]; onCopy: (name: string) => void; imagePerformance24h: Map<string, CreateImagePerformanceModel>; imagePerformance7d: Map<string, CreateImagePerformanceModel>; imagePerformanceEndAt: string }) {
+    const effectiveRate = group.user_rate_multiplier ?? group.rate_multiplier ?? 1;
+    const imageRate = group.image_rate_independent ? Math.max(0, Number(group.image_rate_multiplier ?? 1)) : effectiveRate;
+    return (
+        <div className="grid gap-4 p-4 xl:grid-cols-2">
+            {models.map((model) => (
+                <ImagePricingCard
+                    key={`${model.platform}:${model.name}`}
+                    model={model}
+                    rate={Math.max(0, Number(imageRate) || 0)}
+                    onCopy={onCopy}
+                    performance24h={findImagePerformance(imagePerformance24h, group.id, model.name)}
+                    performance7d={findImagePerformance(imagePerformance7d, group.id, model.name)}
+                    performanceEndAt={imagePerformanceEndAt}
+                />
+            ))}
+        </div>
+    );
+}
+
+function ImagePricingCard({ model, rate, onCopy, performance24h, performance7d, performanceEndAt }: { model: CreateModelPlazaModel; rate: number; onCopy: (name: string) => void; performance24h: CreateImagePerformanceModel | null; performance7d: CreateImagePerformanceModel | null; performanceEndAt: string }) {
+    const [expanded, setExpanded] = useState(false);
+    const interval = model.pricing?.intervals?.find((item) => item.per_request_price != null);
+    const requestPrice = interval?.per_request_price ?? model.pricing?.per_request_price;
+    const price = requestPrice == null ? "-" : `¥${formatPrice(requestPrice * rate)} / 张`;
+    const icon = imageModelIcon(model.name);
+    return (
+        <article className="grid min-w-0 grid-cols-[82px_minmax(0,1fr)] gap-4 rounded-2xl border border-stone-200/80 bg-white p-4 shadow-sm transition hover:border-stone-300 hover:shadow-md dark:border-stone-700/80 dark:bg-stone-800/35 dark:hover:border-stone-600">
+            <div className="flex justify-center pt-1">
+                <span className="flex size-16 shrink-0 items-center justify-center rounded-2xl bg-stone-50 ring-1 ring-stone-100 dark:bg-stone-700/50 dark:ring-stone-700">
+                    {icon ? <img src={icon} alt="" className={cn("size-11", /openai/i.test(icon) && "dark:invert")} /> : <Sparkles className="size-11 text-stone-500 dark:text-stone-300" />}
+                </span>
+            </div>
+            <div className="min-w-0">
+                <div className="flex min-w-0 items-center gap-1.5">
+                    <span className="min-w-0 truncate text-base font-semibold text-stone-900 dark:text-white">{model.name}</span>
+                    <button type="button" className="shrink-0 rounded-md p-1 text-stone-400 transition hover:bg-stone-100 hover:text-cyan-600 dark:hover:bg-stone-700 dark:hover:text-cyan-400" title="复制模型名称" aria-label={`复制模型名称 ${model.name}`} onClick={() => onCopy(model.name)}>
+                        <Copy className="size-3.5" />
+                    </button>
+                </div>
+                <div className="mt-1 text-xs text-stone-400">按图片计费 <strong className="ml-1 font-mono text-sm font-semibold text-stone-700 dark:text-stone-200">{price}</strong></div>
+                <ImagePricingPerformance metric24h={performance24h} metric7d={performance7d} endAt={performanceEndAt} />
+                <div className="mt-1 flex justify-end">
+                    <button type="button" className="text-xs font-medium text-stone-500 hover:text-cyan-600 dark:text-stone-300 dark:hover:text-cyan-400" onClick={() => setExpanded((value) => !value)}>
+                        详情 <span aria-hidden="true">{expanded ? "⌃" : "›"}</span>
+                    </button>
+                </div>
+                {expanded ? (
+                    <div className="mt-2 rounded-lg border border-stone-100 bg-stone-50 px-3 py-2 text-xs text-stone-500 dark:border-stone-700 dark:bg-stone-900/50 dark:text-stone-300">
+                        {cleanDescription(model.description) || "暂无模型说明"}
+                        {(model.pricing?.intervals || []).filter((item) => item.per_request_price != null).map((item) => (
+                            <div key={item.tier_label || item.per_request_price || "tier"} className="mt-1 flex justify-between gap-3">
+                                <span>{item.tier_label || "标准"}</span>
+                                <span>¥{formatPrice(Number(item.per_request_price) * rate)} / 张</span>
+                            </div>
+                        ))}
+                    </div>
+                ) : null}
+            </div>
+        </article>
+    );
+}
+
+function ImagePricingPerformance({ metric24h, metric7d, endAt }: { metric24h: CreateImagePerformanceModel | null; metric7d: CreateImagePerformanceModel | null; endAt: string }) {
+    const bars = buildPerformanceBars(metric24h, endAt);
+    const metricText = (metric: CreateImagePerformanceModel | null) => metric?.success_rate == null
+        ? "数据不足 · 数据不足"
+        : `${formatPerformanceRate(metric.success_rate)} · ${formatPerformanceDuration(metric.avg_duration_ms)}`;
+    return (
+        <div className="mt-3 border-t border-stone-100 pt-3 dark:border-stone-700/60">
+            <div className="flex items-center gap-3">
+                <span className="shrink-0 whitespace-nowrap text-[11px] text-stone-400">近24小时（每小时）</span>
+                <div className="grid min-w-0 flex-1 gap-1" style={{ gridTemplateColumns: "repeat(24, minmax(0, 1fr))" }}>
+                    {bars.map((bar) => {
+                        const level = performanceLevel(bar.rate);
+                        return <span key={bar.key} className="h-3.5 min-w-0 rounded-[2px]" style={{ backgroundColor: performanceColor(level) }} title={`${new Date(bar.key).toLocaleString([], { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false })} · ${formatPerformanceRate(bar.rate)}`} />;
+                    })}
+                </div>
+            </div>
+            <div className="mt-3 grid grid-cols-2 gap-4">
+                <div><div className="text-[11px] text-stone-400">24小时 成功率/耗时</div><div className="mt-1 whitespace-nowrap text-sm font-semibold text-stone-700 dark:text-stone-200">{metricText(metric24h)}</div></div>
+                <div><div className="text-[11px] text-stone-400">7天 成功率/耗时</div><div className="mt-1 whitespace-nowrap text-sm font-semibold text-stone-700 dark:text-stone-200">{metricText(metric7d)}</div></div>
+            </div>
+        </div>
+    );
+}
+function VideoPricingCards({ group, models, onCopy, videoPerformance, videoPerformanceRefreshedAt }: { group: CreateModelPlazaGroup; models: CreateModelPlazaModel[]; onCopy: (name: string) => void; videoPerformance: CreateVideoPerformanceModel[]; videoPerformanceRefreshedAt: string }) {
+    const videoPerformanceMap = buildVideoPerformanceMap(videoPerformance);
     const effectiveRate = group.user_rate_multiplier ?? group.rate_multiplier ?? 1;
     const videoRate = group.video_rate_independent ? Math.max(0, Number(group.video_rate_multiplier ?? 1)) : effectiveRate;
     const rate = Math.max(0, Number(videoRate) || 0);
@@ -192,7 +317,7 @@ function VideoPricingCards({ group, models, onCopy }: { group: CreateModelPlazaG
                                 <button type="button" className="shrink-0 rounded p-0.5 text-stone-400 transition hover:bg-stone-100 hover:text-cyan-600 dark:hover:bg-stone-700 dark:hover:text-cyan-400" title="复制模型名称" aria-label={`复制模型名称 ${model.name}`} onClick={() => onCopy(model.name)}>
                                     <Copy className="size-3.5" />
                                 </button>
-                                <PlatformBadge platform={model.platform} />
+                                <VendorBadge model={model.name} />
                                 <BillingBadge model={model} />
                             </div>
                             <span className="rounded-full border border-orange-200 bg-orange-50 px-2.5 py-1 text-[11px] font-medium text-orange-700 dark:border-orange-900/60 dark:bg-orange-950/30 dark:text-orange-300">
@@ -200,6 +325,7 @@ function VideoPricingCards({ group, models, onCopy }: { group: CreateModelPlazaG
                             </span>
                         </div>
                         {cleanDescription(model.description) ? <p className="mt-2 whitespace-pre-line break-words text-xs leading-5 text-stone-500 dark:text-stone-300">{cleanDescription(model.description)}</p> : null}
+                        <ModelPerformancePanel metric24h={videoPerformanceMap.get(model.name.trim().toLowerCase())?.last_24h} metric7d={videoPerformanceMap.get(model.name.trim().toLowerCase())?.last_7d} endAt={videoPerformanceRefreshedAt} />
                         <div className="mt-2 flex flex-wrap gap-1.5">
                             {plazaVideoCapabilityLabels(model).map((label) => (
                                 <Tag key={label} className="m-0 rounded px-1.5 py-0.5 text-[11px]">{label}</Tag>
@@ -278,6 +404,7 @@ function StandardPricingTable({ models, mode, onCopy }: { models: CreateModelPla
                                 <BillingBadge model={model} />
                             </div>
                             {model.description ? <p className="mt-2 text-sm leading-6 text-stone-500 dark:text-stone-400">{model.description}</p> : null}
+
                         </div>
                         <div className="grid items-center gap-3 overflow-x-auto px-4 py-4" style={{ gridTemplateColumns: `repeat(${columns.length}, minmax(110px, 1fr))` }}>
                             {columns.map((column) => <PriceValue key={column.key} model={model} column={column} />)}
@@ -289,6 +416,38 @@ function StandardPricingTable({ models, mode, onCopy }: { models: CreateModelPla
     );
 }
 
+type PerformanceMetricLike = {
+    success_rate: number | null;
+    avg_latency_ms?: number | null;
+    avg_duration_ms?: number | null;
+    series?: Array<{ bucket_start: string; success_rate: number | null }> | null;
+};
+
+function ModelPerformancePanel({ metric24h, metric7d, endAt }: { metric24h: PerformanceMetricLike | null | undefined; metric7d: PerformanceMetricLike | null | undefined; endAt: string }) {
+    const bars = buildPerformanceBars(metric24h, endAt);
+    const metricText = (metric: PerformanceMetricLike | null | undefined) => `${formatPerformanceRate(metric?.success_rate)} · ${formatPerformanceDuration(metric?.avg_latency_ms ?? metric?.avg_duration_ms)}`;
+    return (
+        <div className="mt-3 rounded-lg border border-stone-100 bg-stone-50/60 px-3 py-2.5 dark:border-stone-700/60 dark:bg-stone-900/30">
+            <div className="flex items-center gap-2">
+                <span className="shrink-0 text-[10px] text-stone-400">24h</span>
+                <div className="grid min-w-0 flex-1 gap-1" style={{ gridTemplateColumns: "repeat(24, minmax(0, 1fr))" }}>
+                    {bars.map((bar) => {
+                        const level = performanceLevel(bar.rate);
+                        return <span key={bar.key} className="h-3 min-w-0 rounded-[2px]" style={{ backgroundColor: performanceColor(level) }} title={`${new Date(bar.key).toLocaleString([], { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false })} · ${formatPerformanceRate(bar.rate)}`} />;
+                    })}
+                </div>
+            </div>
+            <div className="mt-2 grid grid-cols-2 gap-3 text-xs">
+                <div><span className="text-stone-400">24小时 </span><span className="font-medium text-stone-700 dark:text-stone-200">{metricText(metric24h)}</span></div>
+                <div><span className="text-stone-400">7天 </span><span className="font-medium text-stone-700 dark:text-stone-200">{metricText(metric7d)}</span></div>
+            </div>
+        </div>
+    );
+}
+
+function VendorBadge({ model }: { model: string }) {
+    return <Tag className="m-0 rounded border-violet-200 bg-violet-50 px-1.5 py-0.5 text-xs text-violet-700 dark:border-violet-800/60 dark:bg-violet-950/40 dark:text-violet-300">{videoVendorLabel(model)}</Tag>;
+}
 function PlatformBadge({ platform }: { platform: string }) {
     const normalized = platform.toLowerCase();
     const color = normalized.includes("gemini")
@@ -398,6 +557,12 @@ function hasTokenPrice(interval: CreateModelPricingInterval) {
         || pricedValue(interval.output_price) != null
         || pricedValue(interval.cache_read_price) != null
         || pricedValue(interval.cache_write_price) != null;
+}
+
+function isImagePricingModel(model: CreateModelPlazaModel) {
+    if (model.pricing?.billing_mode === "image") return true;
+    const name = model.name.toLowerCase();
+    return name.includes("image") || name.includes("banana") || name.includes("imagen") || name.includes("seedream") || name.includes("flux") || name.includes("sdxl");
 }
 
 function isVideoPricingModel(model: CreateModelPlazaModel) {
@@ -520,6 +685,16 @@ function formatPrice(value: number) {
 }
 function requestUnit(model: CreateModelPlazaModel) {
     return model.pricing?.billing_mode === "image" ? "张" : "次";
+}
+function imageModelIcon(model: string) {
+    const name = model.toLowerCase();
+    if (name.includes("gpt") || name.includes("openai") || name.includes("dall-e")) return publicAsset("icons/openai.svg");
+    if (name.includes("gemini") || name.includes("banana") || name.includes("google") || name.includes("imagen")) return publicAsset("icons/gemini.svg");
+    if (name.includes("grok")) return publicAsset("icons/grok.svg");
+    if (name.includes("claude") || name.includes("anthropic")) return publicAsset("icons/claude.svg");
+    if (name.includes("deepseek")) return publicAsset("icons/deepseek.svg");
+    if (name.includes("glm")) return publicAsset("icons/glm.svg");
+    return "";
 }
 function platformLabel(platform: string) {
     const normalized = platform.toLowerCase();

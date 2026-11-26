@@ -16,6 +16,7 @@ import { computeVideoSize, inferVideoRatio, normalizeVideoResolutionToken, parse
 import { clampVideoSecondsForProfile, getVideoModelProfile, isVideoDurationOptionAllowed, isVideoRatioSupported, isVideoResolutionSupported, resolveVideoModeForReferencePlan, resolveVideoModeMediaPolicy, resolveVideoModeProfile, resolveVideoResolutionForProfile, supportsVideoGenerateAudioToggle, videoResolutionChoices } from "@/lib/video-model-profile";
 import { autoSaveGeneratedFile, deleteGeneratedFile, readGeneratedFileAsset } from "@/lib/desktop-save";
 import { captureVideoAssetCover } from "@/lib/video-asset-cover";
+import { buildCapabilityModelGroups } from "@/lib/workbench/model-boundary";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
 import { deleteStoredMedia, getMediaBlob, resolveMediaUrl, setMediaBlob, uploadMediaFile } from "@/services/file-storage";
 import { resolveImageUrl, ensureImagePreview, getImagePreviewRevision, previewUrlFor, subscribeImagePreviews, uploadImage } from "@/services/image-storage";
@@ -23,13 +24,13 @@ import { createVideoGenerationTask, isRetryableVideoPollingError, pollVideoGener
 import { createUserWorkbenchLogStore } from "@/services/workbench-log-storage";
 import { buildVideoConfig, buildVideoLog as buildLog, normalizeVideoResolution as normalizeResolution, readVideoLogs, recoverVideoFromLocalFile, serializeVideoLog as serializeLog } from "@/lib/workbench/video-log";
 import { configureCreateWorkspace, getManagedKeySelection, listCreateManagedKeys, managedKeySupportsVideo, switchManagedKey, type CreateManagedKey } from "@/services/create-managed-channel";
-import { WorkbenchModelSelect, type WorkbenchModelGroup } from "@/components/workbench/model-select";
-import { useModelPlazaDetails, workbenchModelDetailKey } from "@/hooks/use-model-plaza-details";
+import { WorkbenchModelSelect } from "@/components/workbench/model-select";
+import { useModelPlazaDetails } from "@/hooks/use-model-plaza-details";
 import { PanelResizeHandle, useStoredPanelWidth } from "@/components/workbench/panel-resize-handle";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useUserStore } from "@/stores/use-user-store";
 import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
-import { boolConfig, encodeChannelModel, modelOptionName, useConfigStore, useEffectiveConfig, videoCapabilityOf, type AiConfig } from "@/stores/use-config-store";
+import { boolConfig, modelOptionName, useConfigStore, useEffectiveConfig, videoCapabilityOf, type AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 import type { GeneratedVideo, VideoGenerationLog as GenerationLog, VideoGenerationLogConfig as GenerationLogConfig, VideoGenerationResult as GenerationResult, VideoRequestSnapshot } from "@/types/workbench";
@@ -186,23 +187,14 @@ export default function VideoPage() {
         ? effectiveConfig.channels.find((channel) => channel.apiKey === selectedVideoKey.key) || null
         : null;
     const videoChannels = selectedVideoChannel ? [selectedVideoChannel] : effectiveConfig.channels;
-    const hasVideoModels = videoChannels.some((channel) => channel.models.some((item) => item.capability === "video"));
-    const videoModelGroups: WorkbenchModelGroup[] = videoChannels
-        .map((channel) => {
-            const models = channel.models.filter((item) => !hasVideoModels || item.capability === "video").map((item) => ({ value: encodeChannelModel(channel.id, item.name), label: item.name, detailKey: workbenchModelDetailKey(channel.name, item.name) }));
-            return { id: channel.id, name: channel.name, models };
-        })
-        .filter((group) => group.models.length > 0);
-    if (!selectedVideoChannel && model && !videoModelGroups.some((group) => group.models.some((item) => item.value === model))) {
-        videoModelGroups.push({ id: "current-model", name: "当前模型", models: [{ value: model, label: modelOptionName(model) }] });
-    }
+    const videoModelGroups = buildCapabilityModelGroups(videoChannels, "video");
     const videoModelOptions = videoModelGroups.flatMap((group) => group.models.map((item) => item.value));
     useEffect(() => {
         if (!selectedVideoChannel || !videoModelOptions.length) return;
         if (!videoModelOptions.includes(model)) updateConfig("videoModel", videoModelOptions[0]);
     }, [model, selectedVideoChannel?.id, updateConfig, videoModelOptions.join("|")]);
 
-    const canGenerate = Boolean(prompt.trim());
+    const canGenerate = Boolean(prompt.trim()) && videoModelOptions.includes(model);
     const requestedResolution = normalizeVideoResolutionToken(effectiveConfig.vquality || modeProfile.resolutions[0] || "720");
     const selectedResolution = requestedResolution === "768" ? "720" : requestedResolution;
     const effectiveResolution = isVideoResolutionSupported(modeProfile, requestedResolution) ? resolveVideoResolutionForProfile(modeProfile, requestedResolution) : modeProfile.resolutions[0] || "720";
@@ -619,6 +611,10 @@ export default function VideoPage() {
             message.error(t("videoWorkbench.promptRequired"));
             return null;
         }
+        if (!videoModelOptions.includes(model)) {
+            message.warning(t("videoWorkbench.noVideoModel"));
+            return null;
+        }
         if (!isAiConfigReady(effectiveConfig, model)) {
             message.warning(t(isCreateProductMode() ? "workbench.managedConfigUnavailable" : "workbench.configFirst"));
             if (!isCreateProductMode()) openConfigDialog(true);
@@ -934,9 +930,9 @@ export default function VideoPage() {
 
     return (
         <div className="flex h-full flex-col overflow-hidden bg-stone-50 text-stone-900 dark:bg-stone-950 dark:text-stone-100">
-            <main className="grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-y-auto p-3 lg:overflow-hidden" style={layoutStyle}>
+            <main className="grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-y-auto py-3 pr-3 pl-0 lg:overflow-hidden" style={layoutStyle}>
                 <section className="workbench-split-grid grid gap-3 lg:min-h-0 lg:overflow-hidden">
-                    <div ref={workbenchPanelRef} className="thin-scrollbar flex min-w-0 flex-col rounded-xl border border-stone-200 bg-card p-4 shadow-sm dark:border-stone-800 lg:min-h-0 lg:overflow-y-auto [&>*]:shrink-0">
+                    <div ref={workbenchPanelRef} className="thin-scrollbar flex min-w-0 flex-col rounded-r-xl border border-l-0 border-stone-200 bg-card p-4 shadow-sm dark:border-stone-800 lg:min-h-0 lg:overflow-y-auto [&>*]:shrink-0">
                         <h1 className="text-[26px] font-semibold leading-8 tracking-tight text-stone-950 dark:text-stone-100">{t("videoWorkbench.title")}</h1>
 
                         <div className="mt-3 flex items-center gap-2">

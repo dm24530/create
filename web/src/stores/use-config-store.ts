@@ -126,7 +126,7 @@ export const defaultConfig: AiConfig = {
     systemPrompt: "",
     reasoningEffort: "auto",
     models: ["default::gpt-image-2", "default::grok-imagine-video", "default::gpt-5.5", "default::gpt-4o-mini-tts"],
-    quality: "auto",
+    quality: "high",
     size: "1:1",
     background: "",
     outputFormat: "png",

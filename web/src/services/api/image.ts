@@ -12,6 +12,7 @@ import { imageSizePresets, inferMediaScale } from "@/lib/media-size";
 import { isGeminiImageModel } from "@/lib/image-model";
 import { shouldSkipClientImageNormalization } from "@/lib/image-normalization-policy";
 import { imageOutputMimeType, normalizeImageBackground, normalizeImageOutputFormat } from "@/lib/image-output-format";
+import type { GptImageQualityCeiling } from "@/lib/workbench/image-quality";
 import type { ReferenceImage } from "@/types/image";
 import { reportCanvasImageDisplay } from "@/services/image-display";
 import { isLocalImagePassthrough, localImagePassthroughHeaders } from "@/lib/local-image-passthrough";
@@ -1441,6 +1442,23 @@ export async function requestImageQuestion(config: AiConfig, messages: AiTextMes
     }
 }
 
+export async function fetchImageQualityCapabilities(
+    config: Pick<AiConfig, "baseUrl" | "apiKey">,
+): Promise<GptImageQualityCeiling> {
+    try {
+        const response = await axios.get<{ data?: Record<string, { effective_max?: string }> }>(
+            aiApiUrl(config as AiConfig, "/images/quality-capabilities"),
+            {
+                headers: { Authorization: `Bearer ${config.apiKey}` },
+                timeout: IMAGE_MODEL_READ_TIMEOUT_MS,
+            },
+        );
+        const value = String(response.data?.data?.["gpt-image"]?.effective_max || "").trim().toLowerCase();
+        return value === "max" || value === "xhigh" ? value : "high";
+    } catch {
+        return "high";
+    }
+}
 export async function fetchImageModels(config: Pick<AiConfig, "baseUrl" | "apiKey" | "apiFormat">) {
     try {
         if (config.apiFormat === "gemini") {

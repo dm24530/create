@@ -36,6 +36,18 @@ const apiKey = {
   quota_used: 1.25,
   group,
 };
+const videoBoundaryGroup = {
+  ...group,
+  id: 2,
+  name: "Mock Video Boundary",
+  description: "Image-enabled group whose key only exposes video models",
+};
+const imageBoundaryGroup = {
+  ...group,
+  id: 3,
+  name: "Mock Image Boundary",
+  description: "Video-enabled group whose key only exposes image models",
+};
 const secondKey = {
   id: 2,
   user_id: user.id,
@@ -46,6 +58,28 @@ const secondKey = {
   quota: 0,
   quota_used: 0.5,
   group,
+};
+const videoBoundaryKey = {
+  id: 3,
+  user_id: user.id,
+  key: "sk-create-mock-video-boundary",
+  name: "Mock Video Key",
+  group_id: videoBoundaryGroup.id,
+  status: "active",
+  quota: 20,
+  quota_used: 0,
+  group: videoBoundaryGroup,
+};
+const imageBoundaryKey = {
+  id: 4,
+  user_id: user.id,
+  key: "sk-create-mock-image-boundary",
+  name: "Mock Image Key",
+  group_id: imageBoundaryGroup.id,
+  status: "active",
+  quota: 20,
+  quota_used: 0,
+  group: imageBoundaryGroup,
 };
 const mockRoot = path.dirname(fileURLToPath(import.meta.url));
 const videoCatalog = JSON.parse(readFileSync(path.resolve(mockRoot, "../web/src/lib/__tests__/fixtures/momoapi-video-31.json"), "utf8")).models;
@@ -148,6 +182,8 @@ const projects = new Map();
 const assets = new Map();
 const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nX0AAAAASUVORK5CYII=";
 const mockStartedAt = Date.now();
+let failNextImageGeneration = false;
+let lastImageRequest = null;
 const mockUsageLogs = [
   { id: 1, api_key_id: 1, model: "gpt-image-2", group_id: 1, input_tokens: 120, output_tokens: 80, total_cost: 0.03, actual_cost: 0.02, stream: false, created_at: new Date(mockStartedAt - 10 * 60 * 1000).toISOString() },
   { id: 2, api_key_id: 2, model: "grok-imagine-video", group_id: 1, input_tokens: 200, output_tokens: 150, total_cost: 0.09, actual_cost: 0.06, stream: false, created_at: new Date(mockStartedAt - 20 * 60 * 1000).toISOString() },
@@ -246,9 +282,9 @@ const server = http.createServer(async (request, response) => {
     }});
   }
   if (path === "/api/v1/keys") {
-    return send(response, 200, { code: 0, data: { items: [apiKey, secondKey], total: 2, page: 1, page_size: 100, pages: 1 } });
+    return send(response, 200, { code: 0, data: { items: [apiKey, secondKey, videoBoundaryKey, imageBoundaryKey], total: 4, page: 1, page_size: 100, pages: 1 } });
   }
-  if (path === "/api/v1/groups/available") return send(response, 200, { code: 0, data: [group] });
+  if (path === "/api/v1/groups/available") return send(response, 200, { code: 0, data: [group, videoBoundaryGroup, imageBoundaryGroup] });
   if (path === "/api/v1/models/available") {
     return send(response, 200, { code: 0, data: [{
       name: "Mock Composite Channel",
@@ -258,13 +294,58 @@ const server = http.createServer(async (request, response) => {
         groups: [group],
         supported_models: [
           { name: "gpt-image-2", platform: "composite", pricing: null },
+          { name: "gpt-image-2-alt", platform: "composite", pricing: null },
           { name: "gpt-5.5", platform: "composite", pricing: null },
           ...videoModelEntries,
         ],
       }],
     }]});
   }
-  if (path === "/api/v1/model-plaza") {
+  if (path === "/v1/images/quality-capabilities" && method === "GET") {
+    return send(response, 200, {
+      object: "image.quality_capabilities",
+      data: {
+        "gpt-image": {
+          display_max: "max",
+          effective_max: "high",
+        },
+      },
+    });
+  }
+  if (path === "/api/v1/usage/image-model-performance" && method === "GET") {
+    const range = url.searchParams.get("range") === "7d" ? "7d" : "24h";
+    const now = new Date().toISOString();
+    return send(response, 200, { code: 0, message: "success", data: {
+      range,
+      bucket: range === "24h" ? "hour" : "day",
+      start_at: now,
+      end_at: now,
+      models: [{
+        group_id: group.id,
+        model: "gpt-image-2",
+        sample_count: 12,
+        data_sufficient: true,
+        success_rate: range === "24h" ? 0.86 : 0.92,
+        avg_duration_ms: range === "24h" ? 32000 : 35000,
+        last_used_at: now,
+        series: range === "24h" ? [{ bucket_start: now, sample_count: 12, success_rate: 0.86, avg_duration_ms: 32000 }] : [],
+      }],
+    }});
+  }
+  if (path === "/api/v1/model-plaza/video-performance" && method === "GET") {
+    const now = new Date().toISOString();
+    return send(response, 200, { code: 0, message: "success", data: {
+      group: "all",
+      refreshed_at: now,
+      stale: false,
+      partial: false,
+      models: [{
+        model: videoModelEntries[0]?.name || "mock-video",
+        last_24h: { success_rate: 0.75, avg_latency_ms: 180000, series: [{ bucket_start: now, success_rate: 0.75 }] },
+        last_7d: { success_rate: 0.9, avg_latency_ms: 200000, series: null },
+      }],
+    }});
+  }  if (path === "/api/v1/model-plaza") {
     return send(response, 200, { code: 0, data: {
       description: "Mock model plaza",
       groups: [{
@@ -275,6 +356,7 @@ const server = http.createServer(async (request, response) => {
         rate_multiplier: 1,
         models: [
           { name: "gpt-image-2", platform: "composite", description: "图像模型模拟数据", pricing: { billing_mode: "image", per_request_price: 0.02, intervals: [{ tier_label: "1K", per_request_price: 0.02 }, { tier_label: "2K", per_request_price: 0.04 }, { tier_label: "4K", per_request_price: 0.08 }] } },
+          { name: "gpt-image-2-alt", platform: "composite", description: "图像模型模拟数据（备用）", pricing: { billing_mode: "image", per_request_price: 0.03, intervals: [{ tier_label: "1K", per_request_price: 0.03 }, { tier_label: "2K", per_request_price: 0.05 }, { tier_label: "4K", per_request_price: 0.09 }] } },
           { name: "gpt-5.5", platform: "composite", description: "文本模型模拟数据", pricing: { billing_mode: "text", input_price: 0.5, output_price: 1.5, intervals: [] } },
           ...videoModelEntries,
         ],
@@ -297,14 +379,47 @@ const server = http.createServer(async (request, response) => {
   }
 
   if (path === "/v1/models") {
-    return send(response, 200, { object: "list", data: [
-      { id: "gpt-image-2", object: "model" },
-      { id: "gpt-5.5", object: "model" },
-      ...videoModelEntries.map((model) => ({ id: model.name, object: "model" })),
-    ]});
+    const authorization = String(request.headers.authorization || "");
+    let modelIds = [
+      "gpt-image-2",
+      "gpt-image-2-alt",
+      "gpt-5.5",
+      ...videoModelEntries.map((model) => model.name),
+    ];
+    if (authorization.includes("sk-create-mock-video-boundary")) {
+      modelIds = videoModelEntries.map((model) => model.name);
+    } else if (authorization.includes("sk-create-mock-image-boundary")) {
+      modelIds = ["gpt-image-2", "gpt-image-2-alt", "gpt-5.5"];
+    }
+    return send(response, 200, { object: "list", data: modelIds.map((id) => ({ id, object: "model" })) });
   }
   if (path === "/v1/images/generations" && method === "POST") {
+    const payload = await body(request);
+    lastImageRequest = {
+      model: String(payload?.model || ""),
+      prompt: String(payload?.prompt || ""),
+      size: String(payload?.size || ""),
+      quality: String(payload?.quality || ""),
+      output_format: String(payload?.output_format || ""),
+      createdAt: Date.now(),
+    };
+    if (failNextImageGeneration) {
+      failNextImageGeneration = false;
+      return send(response, 500, { error: { message: "mock image generation failure" } });
+    }
     return send(response, 200, { created: Math.floor(Date.now() / 1000), data: [{ url: `data:image/png;base64,${png}` }] });
+  }
+  if (path === "/__mock/reset-image-state" && method === "POST") {
+    failNextImageGeneration = false;
+    lastImageRequest = null;
+    return send(response, 200, { data: { ok: true } });
+  }
+  if (path === "/__mock/fail-next-image" && method === "POST") {
+    failNextImageGeneration = true;
+    return send(response, 200, { data: { ok: true } });
+  }
+  if (path === "/__mock/last-image-request" && method === "GET") {
+    return send(response, 200, { data: lastImageRequest });
   }
   if (path === "/v1/images/edits" && method === "POST") {
     await body(request);
